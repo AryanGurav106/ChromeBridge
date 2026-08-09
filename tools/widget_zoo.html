@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Widget zoo — real-library shapes that broke us</title>
+<style>
+  body { font-family: sans-serif; margin: 16px; }
+  section { border: 1px solid #ccc; margin: 10px 0; padding: 8px; }
+  .pop { position: absolute; background: #fff; border: 1px solid #999; z-index: 60; width: 260px; }
+  .row { padding: 6px; cursor: pointer; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<h1>Widget zoo</h1>
+<p>Every section here reproduces a shape that a REAL library produces and that a
+fixture-green change got wrong on a live page. Driven by tools/test_widgets.py.</p>
+
+<!-- W1: backing-control discipline. A hidden CSRF token and a VISIBLE sibling input
+     must NOT be adopted as a custom select's backing control (audit-2 finding 3). -->
+<section id="w1">
+  <h3>W1 CSRF token beside a custom select</h3>
+  <form>
+    <input type="hidden" name="_token" value="abc123deadbeef">
+    <span class="w1-wrap"><span class="w1-trigger" role="combobox" aria-haspopup="listbox"
+      style="display:inline-block;width:200px;height:28px;cursor:pointer">Choose a plan</span></span>
+  </form>
+</section>
+
+<section id="w1b">
+  <h3>W1b visible sibling text input beside a trigger</h3>
+  <div>
+    <input type="text" name="qty" value="7" style="width:60px" aria-label="Quantity">
+    <span class="w1b-wrap"><span class="w1b-trigger" role="combobox" aria-haspopup="listbox"
+      style="display:inline-block;width:160px;height:28px;cursor:pointer">Unit</span></span>
+  </div>
+</section>
+
+<!-- W1c: a GENUINE hidden <select> backing — must be recognised. -->
+<section id="w1c">
+  <h3>W1c genuine hidden select backing (select2 shape)</h3>
+  <div>
+    <select id="w1c-native" style="display:none"><option value="ak" selected>Alaska</option><option value="hi">Hawaii</option></select>
+    <span class="w1c-wrap"><span class="w1c-trigger" role="combobox" aria-haspopup="listbox"
+      style="display:inline-block;width:200px;height:28px;cursor:pointer">Alaska</span></span>
+  </div>
+</section>
+
+<!-- W2: popover whose FIRST input is a "select all" checkbox, with the real search
+     input after it. Document order must not win over selector priority (finding 5). -->
+<section id="w2" style="position:relative;height:170px">
+  <button id="w2-trigger" aria-controls="w2-pop" aria-expanded="true">Filter</button>
+  <div id="w2-pop" class="pop" data-state="open" style="top:34px;left:0">
+    <label><input type="checkbox" id="w2-all"> Select all</label>
+    <input type="search" id="w2-search" placeholder="Search options" style="width:96%">
+    <div role="option">Ontario</div>
+    <div role="option">Quebec</div>
+  </div>
+</section>
+
+<!-- W3: Headless-UI shape — aria-controls names the LISTBOX, and the filter input is
+     the listbox's SIBLING, so a scope-only query finds nothing (finding 6). -->
+<section id="w3" style="position:relative;height:170px">
+  <button id="w3-trigger" aria-controls="w3-list" aria-expanded="true">Assignee</button>
+  <div class="pop" data-state="open" style="top:34px;left:0">
+    <input type="text" id="w3-filter" aria-autocomplete="list" placeholder="Filter people" style="width:96%">
+    <ul id="w3-list" role="listbox" style="margin:0;padding:0;list-style:none">
+      <li role="option">Ada Lovelace</li>
+      <li role="option">Grace Hopper</li>
+    </ul>
+  </div>
+</section>
+
+<!-- W4: a static, ALWAYS-VISIBLE listbox elsewhere on the page (plan picker misusing
+     aria-selected) must not make a closed combobox look open (finding 8). -->
+<section id="w4">
+  <h3>W4 foreign always-visible options + a CLOSED combobox</h3>
+  <div role="listbox" aria-label="Plans">
+    <div role="option" aria-selected="true">Free</div>
+    <div role="option" aria-selected="false">Pro</div>
+    <div role="option" aria-selected="false">Team</div>
+  </div>
+  <button id="w4-trigger" role="combobox" aria-controls="w4-pop" aria-expanded="false">Pick a region</button>
+  <div id="w4-pop" role="listbox" style="display:none"><div role="option">eu-west</div></div>
+</section>
+
+<!-- W5: aria-controls pointing at the widget's own SELECTION box (which contains the
+     trigger) — harvesting there would click a chosen tag (finding 9). -->
+<section id="w5" style="position:relative;height:150px">
+  <div id="w5-sel">
+    <span class="row">Tag Alpha</span><span class="row">Tag Beta</span>
+    <span id="w5-trigger" role="combobox" aria-controls="w5-sel" aria-expanded="true"
+          style="display:inline-block;width:80px;height:24px;cursor:pointer">+</span>
+  </div>
+  <div class="pop" data-radix-popper-content-wrapper data-state="open" style="top:40px;left:0">
+    <div class="row" onclick="window.__w5Picked=this.textContent.trim()">Gamma Option</div>
+    <div class="row" onclick="window.__w5Picked=this.textContent.trim()">Delta Option</div>
+  </div>
+</section>
+
+<!-- W6: a field with NO <form> ancestor while an unrelated one-button dialog is open.
+     Submit auto-detect must NOT return the toast's button (finding 2). -->
+<section id="w6">
+  <h3>W6 div-form + unrelated one-button toast</h3>
+  <div id="w6-divform">
+    <input type="text" id="w6-field" aria-label="Project name">
+    <button id="w6-save">Save project</button>
+  </div>
+  <div role="dialog" aria-label="Announcement" style="border:1px solid #888;padding:6px;width:220px">
+    <p>We updated our terms.</p><button id="w6-toast-btn">Got it</button>
+  </div>
+</section>
+
+<!-- W7: handler-only clickable card containing exactly 2 icon buttons. Must survive the
+     delegation-root drop (finding 10). -->
+<section id="w7">
+  <h3>W7 clickable card with 2 inner buttons</h3>
+  <div id="w7-card" style="border:1px solid #99a;padding:8px;width:260px">
+    Deploy pipeline
+    <button aria-label="Edit pipeline">E</button>
+    <button aria-label="Delete pipeline">D</button>
+  </div>
+</section>
+
+<!-- W8: heading that legitimately ends in '#' AND carries a hash permalink (finding 12) -->
+<section id="w8">
+  <h2 id="w8-h">Working with C#<a href="#w8-h" aria-label="Permalink">#</a></h2>
+</section>
+
+<!-- W11: the select2 shape the zoo was MISSING. Trigger is genuinely OPEN
+     (aria-expanded=true) and its options are real and visible — but aria-controls points
+     at a container that holds NO option rows (select2 points it at the selection
+     container, not the results list). Scoping the option COUNT to that target therefore
+     returns 0 forever and stalls the whole open->pick chain. Caught in a benchmark run,
+     not here, because W4 only covered a CLOSED combobox. -->
+<section id="w11" style="position:relative;height:190px">
+  <span id="w11-sel">
+    <span id="w11-trigger" role="combobox" aria-controls="w11-sel" aria-expanded="true"
+          style="display:inline-block;width:200px;height:26px;cursor:pointer">Alaska</span>
+  </span>
+  <div class="pop" data-state="open" style="top:34px;left:0">
+    <div role="option">Alaska</div>
+    <div role="option">Hawaii</div>
+    <div role="option">Nevada</div>
+  </div>
+</section>
+
+<script>
+  document.getElementById('w7-card').addEventListener('click', () => { window.__w7Clicks = (window.__w7Clicks||0)+1; });
+</script>
+</body>
+</html>
+
+<!-- W10: the picker has NO filter input of its own, but a DIFFERENT labelled form
+     field sits within four ancestors. Measured live on Google Flights: the widening
+     walk left the widget and typed the value into the add-another-origin box while
+     the targeted field kept its old value, and the tool reported success. Typing
+     into someone else's field must be refused, not guessed. -->
+<!-- Hidden by default. An always-open popover with role="option" children is a
+     GLOBAL fixture, and the option picker prefers open popovers by design — so
+     leaving this visible made two unrelated checks (W5, W11) start selecting from
+     THIS listbox. The W10 test un-hides it only for its own evaluate. -->
+<section id="w10" style="position:relative;height:170px;display:none">
+  <label for="w10-other">Where else?</label>
+  <input type="text" id="w10-other" role="combobox" aria-controls="w10-otherlist" style="width:200px">
+  <ul id="w10-otherlist" role="listbox" hidden></ul>
+  <button id="w10-trigger" aria-controls="w10-list" aria-expanded="true">Where from?</button>
+  <div class="pop" data-state="open" style="top:60px;left:0">
+    <ul id="w10-list" role="listbox" style="margin:0;padding:0;list-style:none">
+      <li role="option">Heathrow LHR</li>
+    </ul>
+  </div>
+</section>

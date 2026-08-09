@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="color-scheme" content="light dark" />
+<title>ChromeBridge</title>
+<style>
+/* ---------------------------------------------------------------------------
+   ChromeBridge side panel.
+   Light-first, with a dark block so it doesn't glare in a dark Chrome.
+   Every colour is a token on :root; the dark block only re-points the tokens.
+   Layout targets a 320px panel and stays comfortable up to ~520px.
+--------------------------------------------------------------------------- */
+:root {
+  --canvas:      #fbfbfd;
+  --surface:     #ffffff;
+  --surface-sub: #f7f7fa;
+  --line:        #ecedf2;
+  --line-soft:   #f2f3f7;
+
+  --text:        #16171c;
+  --text-2:      #565a67;
+  --text-3:      #8b90a0;
+
+  --brand:       #5b4be8;
+  --brand-2:     #8b3dea;
+  --brand-tint:  rgba(91, 75, 232, .08);
+  --brand-ring:  rgba(91, 75, 232, .35);
+
+  --ok:          #16a34a;
+  --ok-bg:       #ecfdf3;
+  --ok-line:     #c3ebd4;
+  --bad:         #dc2626;
+  --bad-bg:      #fef2f2;
+  --bad-line:    #f6cfcf;
+  --warn:        #b45309;
+  --warn-bg:     #fffbeb;
+  --warn-line:   #f2e0b5;
+
+  --shadow-sm: 0 1px 2px rgba(16, 17, 28, .04);
+  --shadow-md: 0 1px 2px rgba(16, 17, 28, .04), 0 10px 28px -14px rgba(16, 17, 28, .18);
+
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 14px;
+
+  --font: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont,
+          Inter, system-ui, sans-serif;
+  --mono: "Cascadia Code", ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas:      #0e0f13;
+    --surface:     #16171d;
+    --surface-sub: #1b1c23;
+    --line:        #26282f;
+    --line-soft:   #1f2127;
+
+    --text:        #f2f3f7;
+    --text-2:      #a8adbb;
+    --text-3:      #71768a;
+
+    --brand:       #8b7dff;
+    --brand-2:     #b06bff;
+    --brand-tint:  rgba(139, 125, 255, .12);
+    --brand-ring:  rgba(139, 125, 255, .45);
+
+    --ok:          #4ade80;
+    --ok-bg:       rgba(22, 163, 74, .12);
+    --ok-line:     rgba(74, 222, 128, .25);
+    --bad:         #f87171;
+    --bad-bg:      rgba(220, 38, 38, .12);
+    --bad-line:    rgba(248, 113, 113, .25);
+    --warn:        #fbbf24;
+    --warn-bg:     rgba(180, 83, 9, .14);
+    --warn-line:   rgba(251, 191, 36, .22);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
+    --shadow-md: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 30px -16px rgba(0, 0, 0, .8);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--canvas);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 520px; margin: 0 auto; padding: 0 14px 20px; }
+
+/* ---------- header ------------------------------------------------------- */
+.hero {
+  position: relative;
+  padding: 18px 14px 16px;
+  margin: 0 -14px 14px;
+  overflow: hidden;
+}
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(90% 120% at 0% 0%,   rgba(91, 75, 232, .13), transparent 62%),
+    radial-gradient(80% 110% at 100% 0%, rgba(139, 61, 234, .10), transparent 60%);
+  pointer-events: none;
+}
+.hero > * { position: relative; }
+
+.brand { display: flex; align-items: center; gap: 11px; }
+.brand svg {
+  width: 34px; height: 34px; flex: none;
+  border-radius: 9px;
+  box-shadow: 0 4px 14px -4px rgba(91, 75, 232, .55);
+}
+.brand-text { min-width: 0; }
+.brand h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -.015em;
+  line-height: 1.2;
+}
+.brand p {
+  margin: 1px 0 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+  letter-spacing: -.005em;
+}
+
+/* ---------- status chip -------------------------------------------------- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: -.005em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  transition: background .2s ease, color .2s ease, border-color .2s ease;
+}
+.chip.is-ok   { background: var(--ok-bg);   color: var(--ok);   border-color: var(--ok-line); }
+.chip.is-bad  { background: var(--bad-bg);  color: var(--bad);  border-color: var(--bad-line); }
+.chip.is-wait { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-line); }
+
+.dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; position: relative; }
+.chip.is-ok .dot::after {
+  content: "";
+  position: absolute; inset: -3px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  animation: ping 2s cubic-bezier(0, 0, .2, 1) infinite;
+}
+.chip.is-wait .dot { animation: blink 1.1s ease-in-out infinite; }
+@keyframes ping  { 0% { opacity: .7; transform: scale(.6); } 75%, 100% { opacity: 0; transform: scale(1.5); } }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+/* ---------- cards -------------------------------------------------------- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  padding: 13px 14px;
+  margin-bottom: 11px;
+}
+
+.label {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 0 0 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ---------- connection card ---------------------------------------------- */
+.conn-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 11px; }
+.conn-state { font-size: 15px; font-weight: 650; letter-spacing: -.015em; line-height: 1.25; }
+.conn-sub { font-size: 11.5px; color: var(--text-3); margin-top: 1px; font-variant-numeric: tabular-nums; }
+
+.endpoint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-sub);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  padding: 7px 8px 7px 10px;
+}
+.endpoint code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-2);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alert {
+  margin-top: 9px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  font-size: 11.5px;
+  line-height: 1.45;
+  background: var(--bad-bg);
+  border: 1px solid var(--bad-line);
+  color: var(--bad);
+  word-break: break-word;
+}
+.alert.is-hint { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }
+.alert b { font-weight: 650; }
+
+/* ---------- buttons ------------------------------------------------------ */
+button {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -.005em;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, transform .08s ease, box-shadow .15s ease;
+}
+button:hover  { background: var(--surface-sub); border-color: var(--text-3); }
+button:active { transform: translateY(.5px); }
+button:disabled { opacity: .5; cursor: default; transform: none; }
+button:focus-visible,
+input:focus-visible,
+summary:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 2px; }
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--brand), var(--brand-2));
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(16, 17, 28, .12), 0 6px 16px -8px var(--brand-ring);
+}
+.btn-primary:hover { background: linear-gradient(135deg, var(--brand), var(--brand-2)); filter: brightness(1.06); border-color: transparent; }
+.btn-block { width: 100%; }
+
+.btn-icon {
+  padding: 5px;
+  line-height: 0;
+  border-radius: 7px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-3);
+  flex: none;
+}
+.btn-icon:hover { background: var(--surface); border-color: var(--line); color: var(--text-2); }
+.btn-icon svg { width: 14px; height: 14px; display: block; }
+.btn-icon.is-done { color: var(--ok); }
+.btn-icon.is-done svg { display: none; }
+.btn-icon.is-done::after { content: "✓"; font-size: 12px; font-weight: 700; line-height: 14px; }
+#eye_icon .slash { display: none; }
+.btn-icon.is-revealed #eye_icon .slash { display: block; }
+
+.btn-mini {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: -.005em;
+  text-transform: none;
+  padding: 3px 7px;
+  border-radius: 6px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-3);
+}
+.btn-mini:hover { background: var(--surface-sub); border-color: var(--line); color: var(--text-2); }
+
+/* ---------- active tab --------------------------------------------------- */
+.tab-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.favicon {
+  width: 26px; height: 26px; flex: none;
+  border-radius: 7px;
+  background: var(--surface-sub);
+  border: 1px solid var(--line-soft);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.favicon img { width: 16px; height: 16px; display: block; }
+.favicon span { font-size: 11px; font-weight: 650; color: var(--text-3); }
+
+.tab-meta { min-width: 0; flex: 1; }
+.tab-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tab-url {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.tab-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+.tab-foot .when { margin-left: auto; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+/* ---------- op badge ----------------------------------------------------- */
+.op {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2.5px 7px;
+  border-radius: 6px;
+  background: var(--brand-tint);
+  color: var(--brand);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.op.k-read { background: rgba(37, 99, 235, .10);  color: #2563eb; }
+.op.k-act  { background: rgba(139, 61, 234, .10); color: #8b3dea; }
+.op.k-nav  { background: rgba(13, 148, 136, .10); color: #0d9488; }
+.op.k-exec { background: rgba(217, 119, 6, .12);  color: #b45309; }
+@media (prefers-color-scheme: dark) {
+  .op.k-read { background: rgba(96, 165, 250, .14);  color: #93c5fd; }
+  .op.k-act  { background: rgba(176, 107, 255, .16); color: #ccaaff; }
+  .op.k-nav  { background: rgba(45, 212, 191, .14);  color: #5eead4; }
+  .op.k-exec { background: rgba(251, 191, 36, .14);  color: #fcd34d; }
+}
+
+/* ---------- activity feed ------------------------------------------------ */
+.feed { list-style: none; margin: 0; padding: 0; position: relative; }
+.feed::before {
+  content: "";
+  position: absolute;
+  left: 3.5px; top: 6px; bottom: 6px;
+  width: 1px;
+  background: var(--line);
+}
+.feed li {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 5px 0 5px 18px;
+  min-width: 0;
+  animation: rise .28s cubic-bezier(.16, 1, .3, 1) both;
+}
+.feed li::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 10px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--line);
+}
+.feed li.is-latest::before { border-color: var(--brand); }
+.feed .where {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feed .when { font-size: 10.5px; color: var(--text-3); flex: none; font-variant-numeric: tabular-nums; }
+@keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* ---------- empty states ------------------------------------------------- */
+.empty {
+  text-align: center;
+  padding: 8px 8px 6px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.empty svg { width: 20px; height: 20px; opacity: .55; margin-bottom: 5px; display: inline-block; }
+
+/* ---------- settings ----------------------------------------------------- */
+details.card { padding: 0; overflow: hidden; }
+details > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -.005em;
+  user-select: none;
+}
+details > summary::-webkit-details-marker { display: none; }
+summary .caret { margin-left: auto; color: var(--text-3); transition: transform .2s ease; line-height: 0; }
+summary .caret svg { width: 14px; height: 14px; display: block; }
+details[open] summary .caret { transform: rotate(90deg); }
+details[open] > summary { border-bottom: 1px solid var(--line-soft); }
+.settings-body { padding: 13px 14px 14px; }
+
+.field { margin-bottom: 11px; }
+.field:last-of-type { margin-bottom: 13px; }
+.field label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 5px;
+  letter-spacing: -.005em;
+}
+.field .hint { font-weight: 400; color: var(--text-3); }
+
+input {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-sub);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+  transition: border-color .15s ease, background .15s ease;
+}
+input::placeholder { color: var(--text-3); font-family: var(--font); }
+input:hover { border-color: var(--text-3); }
+input:focus { background: var(--surface); border-color: var(--brand); outline: none; box-shadow: 0 0 0 3px var(--brand-tint); }
+
+.input-wrap { position: relative; display: flex; align-items: center; }
+.input-wrap input { padding-right: 34px; }
+.input-wrap .btn-icon { position: absolute; right: 4px; }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 88px; gap: 9px; }
+
+/* ---------- footer ------------------------------------------------------- */
+.note {
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-3);
+  padding: 2px 2px 0;
+}
+.note code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  background: var(--surface-sub);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.note strong { color: var(--text-2); font-weight: 600; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap" style="padding-bottom:0">
+    <div class="brand">
+      <!-- Same geometry as tools/make_icons.py — keep the two in sync. -->
+      <svg viewBox="0 0 32 32" aria-hidden="true">
+        <defs>
+          <linearGradient id="cbMark" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#4f46e5"/>
+            <stop offset="1" stop-color="#9333ea"/>
+          </linearGradient>
+        </defs>
+        <rect x=".64" y=".64" width="30.72" height="30.72" rx="7.52" fill="url(#cbMark)"/>
+        <path d="M6.4 21.92 A9.6 11.2 0 0 1 25.6 21.92"
+              fill="none" stroke="#fff" stroke-width="3.36" stroke-linecap="round"/>
+        <circle cx="6.4"  cy="21.92" r="4.16" fill="#fff"/>
+        <circle cx="25.6" cy="21.92" r="4.16" fill="#fff"/>
+      </svg>
+      <div class="brand-text">
+        <h1>ChromeBridge</h1>
+        <p>Local MCP bridge for Claude Code</p>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- connection ---------------------------------------------------------- -->
+  <section class="card" aria-labelledby="conn-h">
+    <h2 id="conn-h" class="sr-only">Connection</h2>
+    <div class="conn-head">
+      <div>
+        <div class="conn-state" id="conn_state">Disconnected</div>
+        <div class="conn-sub" id="conn_sub">Not linked to the bridge</div>
+      </div>
+      <span class="chip is-bad" id="status" role="status" aria-live="polite">
+        <span class="dot"></span><span id="status_text">offline</span>
+      </span>
+    </div>
+
+    <div class="endpoint">
+      <code id="endpoint">ws://127.0.0.1:8765</code>
+      <button class="btn-icon" id="copy_endpoint" title="Copy endpoint" aria-label="Copy endpoint">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round" id="copy_icon">
+          <rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/>
+          <path d="M10.5 5.5v-1a1.8 1.8 0 0 0-1.8-1.8H4.3A1.8 1.8 0 0 0 2.5 4.5v4.4a1.8 1.8 0 0 0 1.8 1.8h1"/>
+        </svg>
+      </button>
+    </div>
+
+    <div id="conn_alert" hidden></div>
+    <div id="conn_action" style="margin-top:10px" hidden>
+      <button class="btn-primary btn-block" id="reconnect">Reconnect</button>
+    </div>
+  </section>
+
+  <!-- active tab ---------------------------------------------------------- -->
+  <section class="card" aria-labelledby="tab-h">
+    <div class="label" id="tab-h">Acting on</div>
+    <div id="tab_empty" class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9h18"/>
+      </svg>
+      <div>No activity yet.<br>Ask Claude Code to browse something.</div>
+    </div>
+    <div id="tab_live" hidden>
+      <div class="tab-row">
+        <div class="favicon" id="favicon"><span id="favicon_letter">?</span></div>
+        <div class="tab-meta">
+          <div class="tab-title" id="tab_title">—</div>
+          <div class="tab-url" id="tab_url">—</div>
+        </div>
+      </div>
+      <div class="tab-foot">
+        <span class="op" id="last_op">—</span>
+        <span class="when" id="last_ts">—</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- activity ------------------------------------------------------------ -->
+  <section class="card" aria-labelledby="act-h">
+    <div class="label" id="act-h">
+      <span>Recent operations</span>
+      <button class="btn-mini" id="clear_log" hidden>Clear</button>
+    </div>
+    <div id="feed_empty" class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/>
+      </svg>
+      <div>Operations will stream in here.</div>
+    </div>
+    <ul class="feed" id="feed" hidden></ul>
+  </section>
+
+  <!-- settings ------------------------------------------------------------ -->
+  <details class="card" id="settings">
+    <summary>
+      Connection settings
+      <span class="caret">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
+      </span>
+    </summary>
+    <div class="settings-body">
+      <div class="field">
+        <label for="token">Bridge token <span class="hint">— from <code>.env</code></span></label>
+        <div class="input-wrap">
+          <input id="token" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="paste BRIDGE_TOKEN" />
+          <button class="btn-icon" id="toggle_token" title="Show token" aria-label="Show token">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                 stroke-linecap="round" stroke-linejoin="round" id="eye_icon">
+              <path d="M1.5 8S3.8 3.8 8 3.8 14.5 8 14.5 8 12.2 12.2 8 12.2 1.5 8 1.5 8Z"/>
+              <circle cx="8" cy="8" r="2"/>
+              <path class="slash" d="M2.5 13.5 13.5 2.5"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="field grid-2">
+        <div>
+          <label for="host">Host</label>
+          <input id="host" type="text" value="127.0.0.1" spellcheck="false" />
+        </div>
+        <div>
+          <label for="port">Port</label>
+          <input id="port" type="number" value="8765" />
+        </div>
+      </div>
+
+      <button class="btn-primary btn-block" id="save">Save &amp; Connect</button>
+    </div>
+  </details>
+
+  <p class="note">
+    ChromeBridge only talks to the local bridge at the address above — nothing
+    leaves your machine. Ops run on the tab Claude Code targets, using your real
+    session. Remove it any time from <code>chrome://extensions</code>.
+  </p>
+
+</div>
+<script src="panel.js"></script>
+</body>
+</html>

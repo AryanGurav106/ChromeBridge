@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Generality zoo</title>
+<!--
+  Shapes that are NOT English, NOT light-DOM, and NOT built by a library we can
+  name. Each one is a class of page the collector must handle without knowing
+  anything site-specific about it. Driven by tools/test_generality.py.
+-->
+<style>
+  body { font-family: system-ui, sans-serif; margin: 16px; }
+  section { border-top: 1px solid #ddd; padding: 10px 0; }
+  .combo { width: 220px; height: 32px; border: 1px solid #999; display: block; }
+  #gc-icon::before { content: "閉じる"; }        /* CJK icon-font ligature label */
+  .editor { width: 420px; height: 120px; font-family: Menlo, monospace; white-space: pre;
+            position: relative; border: 1px solid #bbb; }
+  .editor textarea { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .gutter { color: #999; display: inline-block; width: 2em; }
+</style>
+
+<div id="ge-host"></div>   <!-- the page's real <h1>, inside a component -->
+
+<section id="gt-live">
+  <h2>Shapes found by live agents, not by fixtures</h2>
+  <!-- Date grid. Name resolves EMPTY and the text is a bare "29"; the only thing
+       distinguishing this cell from the same date in three other months is the
+       child's aria-label. find() ranked 29 October first for a query naming
+       29 August because both were listed as the bare string "29". -->
+  <div id="gt-day" role="gridcell" tabindex="-1" data-iso="2026-08-29" style="width:36px;height:32px">
+    <div aria-label="Saturday, 29 August 2026" style="width:36px;height:32px">29</div></div>
+  <!-- A non-media container wrapping an image must NOT adopt the image's src:
+       doing so put a page logo's URL on a header <div> and made one plot read as
+       two separate images. -->
+  <div id="gt-sec" role="button" tabindex="0" aria-label="Plot pod" style="width:200px;height:80px">
+    <img id="gt-inner" src="/assets/plot.png" alt="Plot" style="display:inline-block;width:120px;height:60px"></div>
+  <!-- A link wrapping an image SHOULD still adopt it — that is how clickable
+       media is built, and the narrowing must not break it. -->
+  <a id="gt-alink" href="/gallery2"><img src="/assets/thumb2.png" alt="Thumb2" style="width:60px;height:40px"></a>
+  <!-- Alt text as CONTENT: longer than the old 60-char cap. A cut here must be
+       visibly marked, or "≈40." reads as a finished number. -->
+  <img id="gt-longalt" src="/assets/eq.png" style="display:inline-block;width:300px;height:40px"
+       alt="integral_(-20)^20 sqrt(1 + (-x cos(x) + sin(x))^2/x^4)dx≈40.485121134668 and the expression continues well past any sixty character boundary so the marker matters">
+</section>
+
+
+<section>
+  <h2>Non-Latin labels</h2>
+  <div><div><button id="gb-data" style="width:32px;height:32px" data-testid="検索"></button></div></div>
+  <div><div><button id="gc-icon" style="width:32px;height:32px"></button></div></div>
+  <!-- Icon + badge: the only handle is the glyph's class, and on an <svg> that
+       class is an SVGAnimatedString, not a string. -->
+  <div><div><button id="gn-svg-icon" aria-label="3" style="width:34px;height:34px">
+    <svg class="lucide lucide-bell" width="16" height="16" viewBox="0 0 24 24"></svg>
+  </button></div></div>
+</section>
+
+<section>
+  <h2>Tiny native controls</h2>
+  <!-- A real control the site renders 8x4: semantics must outrank pixels. -->
+  <button id="gg-tiny" aria-label="Expand language menu"
+          style="width:8px;height:4px;padding:0;border:0;background:#333"></button>
+  <!-- Same geometry, no name: still decoration, still dropped. -->
+  <a id="gh-tiny-unnamed" href="#" style="display:inline-block;width:8px;height:4px;background:#ccc"></a>
+</section>
+
+<section>
+  <h2>Comboboxes with no English in them</h2>
+  <!-- Placeholder marked only by CLASS (the cross-library convention). -->
+  <div id="gk-empty" class="combo" role="combobox" aria-haspopup="listbox" tabindex="0">
+    <span class="x-select__placeholder">Bitte wählen</span>
+  </div>
+  <!-- Real chosen value: must NOT be mistaken for a placeholder. -->
+  <div id="gk-filled" class="combo" role="combobox" aria-haspopup="listbox" tabindex="0">
+    <span class="x-select__value">Deutschland</span>
+  </div>
+</section>
+
+<section>
+  <h2>Code editors nobody has heard of</h2>
+  <!-- No CodeMirror/Monaco/Ace class anywhere: hidden textarea + monospace host. -->
+  <div id="gf-editor" class="editor">
+    <textarea></textarea><span class="gutter">1</span>function greet(name) {
+<span class="gutter">2</span>  return "hi " + name;
+<span class="gutter">3</span>}</div>
+  <!-- Two hidden textareas that are NOT editors: an autogrow shim in a
+       proportional-font box, and a readonly copy-to-clipboard shim inside a
+       monospace code block (which passes every geometry and font test). -->
+  <div id="go-code-block" style="width:420px;height:80px;font-family:monospace;white-space:pre">
+    <textarea readonly style="position:absolute;width:1px;height:1px;opacity:0">npm install chromebridge</textarea>npm install chromebridge</div>
+  <!-- A document longer than the 60-char field cap: an agent asking "what code
+       is in here" must be able to get it without dumping the whole page. -->
+  <div id="gr-editor" style="width:520px;height:200px;font-family:monospace;white-space:pre;position:relative"><textarea style="position:absolute;width:1px;height:1px;opacity:0"></textarea>int alpha(int x) { return x * 2; }
+int bravo(int x) { return x * 3; }
+int charlie(int x) { return x * 4; }
+int delta(int x) { return x * 5; }</div>
+  <div id="gm-not-editor" style="width:300px;height:60px;font-family:Arial">
+    <textarea style="width:1px;height:1px;opacity:0"></textarea>
+    <div>Draft comment saved a moment ago</div>
+  </div>
+</section>
+
+<section>
+  <h2>Emoji at the truncation boundary</h2>
+  <button id="gl-emoji" style="width:200px;height:30px"></button>
+</section>
+
+<section id="gd-detail">
+  <h2>Detail levels</h2>
+  <!-- A link whose URL is the answer, an image that is not clickable at all
+       (invisible to any listing at any filter level), a clickable image, and a
+       data: URI that must never be emitted as if it were fetchable. -->
+  <a id="gd-link" href="/downloads/report.pdf?v=2">Download the report</a>
+  <img id="gd-plain" src="/assets/hero.gif" alt="Hero animation" style="display:inline-block;width:120px;height:60px">
+  <a id="gd-imglink" href="/gallery"><img src="/assets/thumb.png" alt="Thumb" style="display:inline-block;width:80px;height:40px"></a>
+  <img id="gd-data" alt="Inline pixel" style="width:40px;height:40px"
+       src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+  <img id="gd-tracker" src="/px.gif" alt="" style="width:1px;height:1px">
+  <!-- HTML-AAM: a button-like input's VALUE is its label, not its contents. -->
+  <form id="gp-form"><input id="gp-submit" type="submit" name="login-button" value="Login"></form>
+  <!-- A leaf control an agent would scope to after find() returns its ref. -->
+  <input id="gp-leaf" type="text" name="q" placeholder="Search" style="width:180px">
+  <!-- The most common way to put a picture on a page: CSS background-image.
+       No src, not an <img>, invisible to find/get_page_text/any filter level. -->
+  <div id="gq-bg" aria-label="Hero banner"
+       style="width:300px;height:120px;background-image:url('/assets/banner.jpg')"></div>
+  <!-- A gradient is decoration, not content, and must NOT be listed as media. -->
+  <div id="gq-grad" style="width:300px;height:120px;background-image:linear-gradient(#fff,#000)"></div>
+</section>
+
+<section id="gs-silent">
+  <h2>Silently-deleted shapes</h2>
+  <!-- Bootstrap 4's .custom-control-input: a real checkbox at opacity:0 behind
+       its styled label. The most deployed custom-form pattern on the web. -->
+  <div style="position:relative;padding-left:24px">
+    <input type="checkbox" id="gs-cb" style="position:absolute;left:0;top:0;width:16px;height:20px;opacity:0;z-index:-1">
+    <label for="gs-cb" style="cursor:pointer">Accept terms and conditions</label></div>
+  <!-- Control: opacity:0 with NO visible label is a mirror/decoy — stays dropped. -->
+  <input type="text" id="gs-decoy" style="width:120px;height:20px;opacity:0">
+  <!-- A clickable news card: handler on the card, heading + prose + 3 inner links. -->
+  <div id="gs-card" style="width:340px;height:150px;border:1px solid #ccc">
+    <h3>Quarterly results beat expectations</h3><p>Revenue rose 12% on strong demand.</p>
+    <a href="#a">Markets</a> <a href="#b">Earnings</a> <a href="#c">By J. Smith</a></div>
+  <!-- A month calendar: block-rendered bare integers that are NOT a gutter. -->
+  <div id="gs-cal">1<br>2<br>3<br>4<br>5<br>6<br>7</div>
+</section>
+
+<section id="gu-text">
+  <h2>Text visibility: collapsed vs boxless</h2>
+  <!-- A CLOSED dropdown parks its panel at ~1px with the content overflowing
+       hidden. Chrome's checkVisibility() calls it visible, so get_page_text used
+       to emit ~2,300 chars of install snippets from a menu nobody had opened. -->
+  <div id="gu-collapsed" style="width:1px;height:60px;overflow:hidden">
+    <pre>pip install this-is-inside-a-closed-menu-and-must-not-be-read</pre></div>
+  <!-- display:contents generates NO BOX for the element itself while its children
+       paint normally, so it measures 0x0. Treating that as "collapsed" deleted
+       MDN's entire 31k-char article and returned only sidebar nav. -->
+  <div id="gu-boxless" style="display:contents">
+    <p>This paragraph is inside a boxless container and is plainly readable.</p></div>
+</section>
+
+<footer><h3>Products</h3><h3>Company</h3></footer>
+<h2 style="position:absolute;width:1px;height:1px;overflow:hidden">Utility navigation</h2>
+
+<section>
+  <h2>Shadow DOM</h2>
+  <div id="gj-host"></div>       <!-- label[for] + required marker inside a shadow root -->
+  <div id="gi-host" aria-hidden="true"></div>  <!-- host is aria-hidden; button lives inside -->
+</section>
+
+<script>
+  // A label exactly at the 60-char truncation boundary, ending on an astral
+  // character — slicing UTF-16 units here produces a lone surrogate.
+  document.getElementById('gl-emoji').textContent = 'x'.repeat(59) + '\u{1F600}';
+
+  const gj = document.getElementById('gj-host').attachShadow({ mode: 'open' });
+  gj.innerHTML = '<label for="pw">Passwort *</label>' +
+                 '<input id="pw" type="password" style="width:200px;height:24px">';
+
+  const gi = document.getElementById('gi-host').attachShadow({ mode: 'open' });
+  gi.innerHTML = '<button style="width:140px;height:30px">Hidden twin</button>';
+
+  const ge = document.getElementById('ge-host').attachShadow({ mode: 'open' });
+  ge.innerHTML = '<h1>コンポーネント内の見出し</h1>';
+
+  // Opened on demand by the test, so the rest of the page stays observable.
+  document.getElementById('gs-card').addEventListener('click', function () {});
+
+  window.__openShadowDialog = function () {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const r = host.attachShadow({ mode: 'open' });
+    r.innerHTML =
+      '<div role="dialog" aria-modal="true" style="position:fixed;left:5%;top:5%;' +
+      'width:90%;height:80%;background:#fff;border:1px solid #333;z-index:9999">' +
+      '<h2>アカウントを削除しますか</h2>' +
+      '<p>この操作は取り消せません。</p>' +
+      '<button>キャンセル</button><button>削除</button></div>';
+  };
+</script>

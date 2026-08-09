@@ -1,0 +1,7 @@
+.env
+secrets/local_secrets.json
+temp/
+__pycache__/
+*.pyc
+.venv/
+browser_storage/

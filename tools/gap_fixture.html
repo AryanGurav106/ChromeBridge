@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>DOM-fetch gap fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 16px; }
+  section { border: 1px solid #ccc; margin: 10px 0; padding: 8px; }
+  .handler-div { padding: 6px; background: #eee; width: 220px; }   /* no cursor, no role */
+  .hovermenu .submenu { display: none; position: absolute; background: #fff; border: 1px solid #999; }
+  .hovermenu:hover .submenu { display: block; }
+  #innerscroll { height: 120px; overflow-y: auto; border: 1px solid #66a; width: 320px; }
+  #innerscroll .row { height: 40px; border-bottom: 1px solid #eee; }
+  .sticky { position: sticky; top: 0; background: #ffd; z-index: 5; padding: 4px; }
+  #editor { border: 1px solid #aaa; min-height: 60px; padding: 6px; }
+  #cnv { border: 1px solid #888; }
+  .offscreen-x { position: absolute; left: -9999px; }
+  .clip { width: 1px; height: 1px; overflow: hidden; position: absolute; } /* sr-only style */
+</style>
+</head>
+<body>
+  <h1>Gap fixture</h1>
+
+  <!-- G1: bare div with a JS click handler — no role, no cursor, no tabindex -->
+  <section id="g1">
+    <div class="handler-div" id="hd">Handler div (JS listener only)</div>
+  </section>
+
+  <!-- G2: same-origin iframe with a button inside + a cross-origin iframe -->
+  <section id="g2">
+    <iframe id="frame1" srcdoc="&lt;button id='iframe-btn' onclick='parent.__iframeClicks=(parent.__iframeClicks||0)+1'&gt;Iframe button&lt;/button&gt;&lt;label for='fi'&gt;Frame field&lt;/label&gt;&lt;input id='fi' type='text'&gt;" width="400" height="60"></iframe>
+    <iframe id="frame2" src="https://example.com/" title="External widget" width="300" height="60"></iframe>
+  </section>
+
+  <!-- G3: inner scroll container; rows 4..8 scrolled out of its viewport -->
+  <section id="g3">
+    <div id="innerscroll">
+      <div class="row"><a href="#r1">Inner row 1</a></div>
+      <div class="row"><a href="#r2">Inner row 2</a></div>
+      <div class="row"><a href="#r3">Inner row 3</a></div>
+      <div class="row"><a href="#r4">Inner row 4 (scrolled out)</a></div>
+      <div class="row"><a href="#r5">Inner row 5 (scrolled out)</a></div>
+      <div class="row"><a href="#r6">Inner row 6 (scrolled out)</a></div>
+      <div class="row"><a href="#r7">Inner row 7 (scrolled out)</a></div>
+      <div class="row"><a href="#r8">Inner row 8 (scrolled out)</a></div>
+    </div>
+  </section>
+
+  <!-- G4: hover-revealed submenu -->
+  <section id="g4">
+    <div class="hovermenu" style="position:relative">
+      <button id="menu-trigger">Products ▾</button>
+      <div class="submenu" role="menu">
+        <a role="menuitem" href="#p1">Hover item A</a><br>
+        <a role="menuitem" href="#p2">Hover item B</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- G5: contenteditable rich-text editor -->
+  <section id="g5">
+    <div id="editor" contenteditable="true" aria-label="Notes editor"><p>Type here…</p></div>
+  </section>
+
+  <!-- G6: canvas with a click handler (canvas-drawn UI) -->
+  <section id="g6">
+    <canvas id="cnv" width="200" height="60" aria-label="Drawing area"></canvas>
+  </section>
+
+  <!-- G7: ARIA grid datepicker (42 gridcells) -->
+  <section id="g7">
+    <div role="grid" aria-label="June 2026" id="cal"></div>
+  </section>
+
+  <!-- G8: misc form control types -->
+  <section id="g8">
+    <label for="d1">Pick date</label><input type="date" id="d1">
+    <label for="rg">Volume</label><input type="range" id="rg" min="0" max="10">
+    <label for="fl">Upload CV</label><input type="file" id="fl">
+    <label for="cl">Favorite color</label><input type="color" id="cl">
+    <details><summary id="sum">More options</summary><a href="#hidden-link">Link inside details</a></details>
+    <audio controls src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=" aria-label="Sample audio"></audio>
+  </section>
+
+  <!-- G9: aria-describedby pollution risk + sr-only label -->
+  <section id="g9">
+    <button id="desc-btn" aria-describedby="desc-text">Save draft</button>
+    <span id="desc-text">Saves your work every 30 seconds automatically without publishing anything publicly.</span>
+    <button id="sr-btn"><span class="clip">Close notifications panel</span>✕</button>
+  </section>
+
+  <!-- G10: disabled control + readonly input + aria-disabled fake -->
+  <section id="g10">
+    <button id="dis" disabled>Disabled real</button>
+    <button id="ariadis" aria-disabled="true">Aria-disabled (still focusable)</button>
+    <input id="ro" readonly value="read only value" aria-label="Readonly field">
+  </section>
+
+  <!-- G11: element visually hidden by sticky header overlap (occlusion edge) -->
+  <section id="g11" style="position:relative; height: 90px; overflow:auto">
+    <div class="sticky">Sticky header bar</div>
+    <button id="under-sticky" style="position:relative; top:-28px">Partially under sticky</button>
+  </section>
+
+  <!-- G12: link with target=_blank + download link + mailto -->
+  <section id="g12">
+    <a href="https://example.com" target="_blank" id="ext">External docs</a>
+    <a href="data:text/plain,hi" download="hi.txt" id="dl">Download report</a>
+    <a href="mailto:x@y.z" id="ml">Email support</a>
+  </section>
+
+  <!-- G13: CodeMirror-5-style code editor (styled view + hidden mirror textarea) -->
+  <section id="g13">
+    <div class="CodeMirror" style="border:1px solid #aaa;height:60px;cursor:text" aria-label="HTML editor">
+      <div style="overflow:hidden;position:relative;width:3px;height:0"><textarea id="cm-mirror" style="position:absolute;padding:0;width:1000px;height:1em" autocorrect="off"></textarea></div>
+      <div class="CodeMirror-lines" style="cursor:text"><pre>&lt;h1&gt;Hello&lt;/h1&gt;</pre></div>
+    </div>
+  </section>
+
+  <!-- G14: MUI-style date field — operable sections under an opacity:0 wrapper -->
+  <section id="g14">
+    <div role="group" style="border:1px solid #888;width:200px;padding:4px">
+      <div style="opacity:0">
+        <span role="spinbutton" contenteditable="true" tabindex="0" aria-label="Month">MM</span>
+        <span role="spinbutton" contenteditable="true" tabindex="0" aria-label="Day">DD</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- G15: unlabeled sliver anchor (pane-resize splitter pattern) -->
+  <section id="g15" style="position:relative;height:220px">
+    <a href="#resize" id="splitter" style="display:block;position:absolute;width:10px;height:200px;background:#ddd"></a>
+  </section>
+
+  <!-- G16: menu trigger with aria-haspopup + collapsed disclosure -->
+  <section id="g16">
+    <button id="menubtn" aria-haspopup="menu">Actions</button>
+    <button id="discbtn" aria-expanded="false" aria-controls="disc-panel">Advanced settings</button>
+    <div id="disc-panel" hidden></div>
+  </section>
+
+  <!-- G17: same-box twins — label-overlay span on an unnamed input[submit] -->
+  <section id="g17" style="position:relative;height:50px">
+    <input type="submit" value="" style="position:absolute;left:0;top:0;width:120px;height:34px">
+    <span style="position:absolute;left:0;top:0;width:120px;height:34px;display:flex;align-items:center;justify-content:center;cursor:pointer">Apply filters</span>
+  </section>
+
+  <!-- G18: ARIA widget roles with NO tabindex/cursor (pure-div widgets) -->
+  <section id="g18">
+    <div role="slider" aria-label="Price range" aria-valuemin="0" aria-valuemax="100" aria-valuenow="40"
+         style="width:200px;height:12px;background:#cde"></div>
+    <svg role="switch" aria-label="Dark mode" aria-checked="false" width="40" height="20"><rect width="40" height="20" rx="10" fill="#bbb"/></svg>
+    <div role="searchbox" style="width:180px;height:28px;border:1px solid #999"></div>
+  </section>
+
+  <!-- G19: German (non-English) native select — structural unselected -->
+  <section id="g19">
+    <label for="gsel">Land</label>
+    <select id="gsel" required>
+      <option value="">Bitte wählen…</option>
+      <option value="de">Deutschland</option>
+      <option value="at">Österreich</option>
+    </select>
+  </section>
+
+  <!-- G20: explicit role=separator splitter (semantic, labeled-by-nothing) -->
+  <section id="g20" style="position:relative;height:120px">
+    <a href="#g20-resize" id="sep-splitter" role="separator" style="display:block;position:absolute;width:24px;height:100px;background:#eee;cursor:col-resize"></a>
+  </section>
+
+  <!-- G21: tiny-but-real role widget (6x6 styled checkbox) -->
+  <section id="g21">
+    <span role="checkbox" aria-checked="false" aria-label="Compact toggle" tabindex="0"
+          style="display:inline-block;width:6px;height:6px;background:#88a"></span>
+  </section>
+
+  <!-- G23: custom-styled radio — 1x1 visually-hidden input under a styled label
+       (SurveyJS/Bootstrap/Tailwind pattern; the label is the visible control) -->
+  <section id="g23">
+    <label style="display:inline-block;width:48px;height:48px;border:1px solid #888;border-radius:50%;text-align:center;line-height:48px">
+      <input type="radio" name="nps" value="7" style="position:absolute;width:1px;height:1px;clip:rect(0,0,0,0)">7</label>
+    <label style="display:inline-block;width:48px;height:48px;border:1px solid #888;border-radius:50%;text-align:center;line-height:48px">
+      <input type="radio" name="nps" value="8" checked style="position:absolute;width:1px;height:1px;clip:rect(0,0,0,0)">8</label>
+  </section>
+
+  <!-- G24: shadcn-style DISABLED submit — pointer-events:none must NOT hide it
+       (Boxsy's "Add Investor" submit vanished and the agent picked Cancel) -->
+  <section id="g24">
+    <button type="submit" disabled style="pointer-events:none;opacity:.5">Add Investor</button>
+  </section>
+
+  <!-- G22: text-less anchor wrapping a web component whose label lives in its shadow root
+       (archive.org onboarding-tile pattern: host.innerText is EMPTY for shadow content) -->
+  <section id="g22">
+    <a href="#tile" id="tile-link" style="display:block;width:240px;height:60px"><x-tile></x-tile></a>
+  </section>
+
+  <!-- G25: the Boxsy multi-select failure — a CUSTOM picker (clickable rows, NO
+       role=option) open via aria-controls, while a STALE closed menu portal
+       (Radix exit-transition leftover) still has [role=menuitem] nodes mounted.
+       _pickOptionPage must fall back to harvesting the custom rows: the stale
+       invisible ARIA matches must NOT block the fallback.
+       (LAST section on purpose — its absolute popover must not shift the
+       geometry of the checks above.) -->
+  <section id="g25" style="position:relative;height:200px">
+    <button id="g25-trigger" aria-controls="g25-pop" aria-expanded="true">Select focus areas...</button>
+    <div data-state="closed" style="display:none">
+      <div role="menuitem">Stale menu item A</div>
+      <div role="menuitem">Stale menu item B</div>
+    </div>
+    <div id="g25-pop" data-radix-popper-content-wrapper data-state="open"
+         style="position:absolute;top:36px;left:0;width:240px;background:#fff;border:1px solid #999;z-index:50">
+      <div style="padding:6px;cursor:pointer" onclick="window.__g25Picked=this.textContent.trim()">Alpha One</div>
+      <div style="padding:6px;cursor:pointer" onclick="window.__g25Picked=this.textContent.trim()">Beta Two</div>
+      <div style="padding:6px;cursor:pointer" onclick="window.__g25Picked=this.textContent.trim()">Gamma Three</div>
+    </div>
+  </section>
+  <script>
+    customElements.define('x-tile', class extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode: 'open' });
+        root.innerHTML = '<div style="padding:8px">How to search the archive</div>';
+      }
+    });
+  </script>
+
+  <!-- G26: double-initialized JS combobox. The LIVE widget is wired to the
+       hidden native <select> it replaced and has collapsed to a 4px sliver;
+       the ORPHAN is wide, fully visible, and backed by nothing. Reproduces the
+       select2.org state where geometry and pixels both point at the dead one. -->
+  <h3>G26 dead-duplicate custom combobox</h3>
+  <!-- Nesting mirrors real select2 (container > selection-wrapper > trigger) and
+       the two widgets have DELIBERATELY DIVERGENT WIDTHS (2px live vs 400px
+       orphan). That combination is what makes this fixture discriminating: a
+       geometry-based wrapper walk climbs to different depths for the two and
+       gives them different signatures, so they never get compared and the flag
+       silently never fires — the exact bug that shipped and had to be caught on
+       a live page instead of here. -->
+  <div id="g26">
+    <select class="g26-hidden-accessible" style="display:none"><option>Alaska</option><option>Hawaii</option></select>
+    <span class="g26-container"><span class="g26-inner"><span class="g26-selection" role="combobox" aria-haspopup="listbox" aria-expanded="false"
+      style="display:inline-block;width:2px;height:28px;overflow:hidden;cursor:pointer">G26 Widget</span></span></span>
+    <span class="g26-container"><span class="g26-inner"><span class="g26-selection" role="combobox" aria-haspopup="listbox" aria-expanded="false"
+      style="display:inline-block;width:400px;height:28px;cursor:pointer">G26 Widget</span></span></span>
+  </div>
+
+  <!-- G27: FALSE-POSITIVE GUARD. Two structurally identical framework triggers
+       (Radix/shadcn/HeadlessUI/Base UI shape) with no native form control
+       anywhere. No member of the group is backed, so the comparative rule must
+       flag NEITHER. If this ever reports flagged, the rule has become absolute
+       and would smear "DEAD DUPLICATE" across every modern component library. -->
+  <h3>G27 framework combobox triggers (must never be flagged)</h3>
+  <button role="combobox" aria-haspopup="listbox" aria-expanded="false" style="width:200px;height:32px">G27 Framework Trigger A</button>
+  <button role="combobox" aria-haspopup="listbox" aria-expanded="false" style="width:200px;height:32px">G27 Framework Trigger B</button>
+
+  <!-- G29: requested option ABSENT from the list. _pickOptionPage must FAIL, not
+       click an arbitrary row and report success. -->
+  <h3>G29 no matching option</h3>
+  <button id="g29-trigger" role="combobox" aria-controls="g29-list" aria-expanded="true">G29 Trigger</button>
+  <div id="g29-list" role="listbox" data-state="open">
+    <div role="option">Alpha One</div>
+    <div role="option">Alpha Two</div>
+  </div>
+
+  <!-- G30: a real chosen value that happens to start with "Select". Must NOT be
+       flagged (unselected) just because of the English wordlist, because a backing
+       native control proves a selection exists. -->
+  <h3>G30 real value starting with "Select"</h3>
+  <div>
+    <select id="g30-native" style="display:none"><option value="all" selected>Select All Regions</option></select>
+    <span class="g30-wrap"><span class="g30-trigger" role="combobox" aria-haspopup="listbox"
+      style="display:inline-block;width:220px;height:28px;cursor:pointer">Select All Regions</span></span>
+  </div>
+
+  <!-- G28: far below the fold. Must be absent from the STRING listing (token
+       discipline) but present in the STRUCTURED array that backs find(). -->
+  <div style="height:3000px"></div>
+  <button id="g28">Deep below fold action</button>
+
+  <script>
+    // G1 handler
+    document.getElementById('hd').addEventListener('click', () => { window.__divClicks = (window.__divClicks||0)+1; });
+    // G6 canvas handler
+    const c = document.getElementById('cnv'); const ctx = c.getContext('2d');
+    ctx.fillStyle = '#4a90d9'; ctx.fillRect(20, 15, 100, 30);
+    ctx.fillStyle = '#fff'; ctx.fillText('OK button', 40, 34);
+    c.addEventListener('click', () => { window.__canvasClicks = (window.__canvasClicks||0)+1; });
+    // G7 calendar: 6x7 grid of gridcells
+    const cal = document.getElementById('cal');
+    let day = 1;
+    for (let r = 0; r < 6; r++) {
+      const row = document.createElement('div'); row.setAttribute('role','row');
+      for (let col = 0; col < 7; col++) {
+        const cell = document.createElement('span');
+        cell.setAttribute('role','gridcell'); cell.tabIndex = -1;
+        cell.style.cssText = 'display:inline-block;width:32px;height:24px;text-align:center;cursor:pointer';
+        if (day <= 30) { cell.textContent = day; cell.setAttribute('aria-label', `June ${day}, 2026`); day++; }
+        row.appendChild(cell);
+      }
+      cal.appendChild(row);
+    }
+  </script>
+</body>
+</html>

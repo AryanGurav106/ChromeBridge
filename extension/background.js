@@ -1,0 +1,7666 @@
+﻿// ChromeBridge — service worker.
+//
+// Connects to ws://127.0.0.1:<port>/ (the Python bridge), authenticates with a
+// per-session token from chrome.storage.local, then services ops from the
+// agent. All page interaction goes through chrome.scripting.executeScript so we
+// stay on the user's already-running Chrome with their real profile/cookies.
+//
+// Operations served: ping, get_active_tab, get_url, get_dom_text,
+// get_interactive_elements (string or structured), click, enter_text,
+// press_keys, screenshot, navigate, page_fingerprint.
+
+const DEFAULTS = { host: "127.0.0.1", port: 8765, token: "" };
+let ws = null;
+let reconnectDelayMs = 1000;
+let lastStatus = { connected: false, last_error: "" };
+
+// Make clicking the toolbar icon open the side panel (otherwise the action
+// button is silent and there's no obvious way to reach panel.html).
+try {
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((e) => console.warn("[bridge] setPanelBehavior failed:", e));
+} catch (e) {
+  console.warn("[bridge] sidePanel API not available:", e);
+}
+
+// --------------------- WS lifecycle -----------------------------------------
+async function getConfig() {
+  const stored = await chrome.storage.local.get(["bridge_host", "bridge_port", "bridge_token"]);
+  return {
+    host: stored.bridge_host || DEFAULTS.host,
+    port: parseInt(stored.bridge_port || DEFAULTS.port, 10),
+    token: stored.bridge_token || DEFAULTS.token,
+  };
+}
+
+async function setBadge(text, color) {
+  try {
+    await chrome.action.setBadgeText({ text });
+    if (color) await chrome.action.setBadgeBackgroundColor({ color });
+  } catch (e) {}
+}
+
+// `since` is the moment the CURRENT connection came up (0 when down) — the side
+// panel renders it as a live uptime, so it must not be refreshed by later
+// setStatus(true) calls for the same socket.
+let _connectedSince = 0;
+async function setStatus(connected, err) {
+  if (connected && !lastStatus.connected) _connectedSince = Date.now();
+  if (!connected) _connectedSince = 0;
+  lastStatus = { connected, last_error: err || "", since: _connectedSince };
+  try { await chrome.storage.local.set({ bridge_status: lastStatus }); } catch (e) {}
+  try { chrome.runtime.sendMessage({ kind: "status", status: lastStatus }); } catch (e) {}
+  await setBadge(connected ? "ON" : "OFF", connected ? "#16a34a" : "#dc2626");
+}
+
+// Rolling op history for the side panel's activity feed. Kept in
+// chrome.storage.local because the panel document is destroyed whenever the
+// panel closes, and this service worker is evicted on its own schedule — either
+// one alone loses the log.
+const ACTION_LOG_MAX = 40;
+let _lastAction = null;
+let _actionLog = [];
+let _actionLogLoaded = false;
+
+async function _loadActionLog() {
+  if (_actionLogLoaded) return;
+  _actionLogLoaded = true;
+  try {
+    const s = await chrome.storage.local.get(["bridge_action_log"]);
+    if (Array.isArray(s.bridge_action_log)) {
+      _actionLog = s.bridge_action_log.slice(-ACTION_LOG_MAX);
+    }
+  } catch (e) {}
+}
+
+async function broadcastAction(op, tab) {
+  await _loadActionLog();
+  _lastAction = {
+    op,
+    tab_title: tab && tab.title ? tab.title : "",
+    tab_url: tab && tab.url ? tab.url : "",
+    tab_favicon: tab && tab.favIconUrl ? tab.favIconUrl : "",
+    tab_id: tab && tab.id,
+    ts: Date.now(),
+  };
+  _actionLog.push(_lastAction);
+  if (_actionLog.length > ACTION_LOG_MAX) {
+    _actionLog = _actionLog.slice(-ACTION_LOG_MAX);
+  }
+  try {
+    await chrome.storage.local.set({
+      bridge_last_action: _lastAction,
+      bridge_action_log: _actionLog,
+    });
+  } catch (e) {}
+  try { chrome.runtime.sendMessage({ kind: "action", action: _lastAction }); } catch (e) {}
+}
+
+let reconnectTimer = null;
+async function connect() {
+  // Don't open a duplicate socket if one is already in flight or open.
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+  const cfg = await getConfig();
+  if (!cfg.token) {
+    await setStatus(false, "no token set — open the side panel and paste it");
+    return;
+  }
+  const url = `ws://${cfg.host}:${cfg.port}`;
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    await setStatus(false, `bad ws url: ${e}`);
+    scheduleReconnect();
+    return;
+  }
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ hello: cfg.token }));
+  };
+
+  ws.onmessage = async (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    if (msg.welcome) {
+      await setStatus(true, "");
+      reconnectDelayMs = 1000;
+      return;
+    }
+    if (msg.id && msg.op) {
+      await handleOp(msg);
+    }
+  };
+
+  ws.onerror = async (ev) => {
+    await setStatus(false, "ws error");
+  };
+
+  ws.onclose = async (ev) => {
+    ws = null;
+    await setStatus(false, ev.reason ? `closed (${ev.code}: ${ev.reason})` : `closed (${ev.code})`);
+    scheduleReconnect();
+  };
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, reconnectDelayMs);
+  reconnectDelayMs = Math.min(reconnectDelayMs * 2, 15000);
+}
+
+async function reply(id, ok, payload) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const body = ok ? { id, ok: true, result: payload } : { id, ok: false, error: String(payload) };
+  ws.send(JSON.stringify(body));
+}
+
+// Boot: connect on install, on browser start, and re-connect if storage changes.
+chrome.runtime.onInstalled.addListener(() => { connect(); });
+chrome.runtime.onStartup.addListener(() => { connect(); });
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") return;
+  if (changes.bridge_token || changes.bridge_host || changes.bridge_port) {
+    try { ws && ws.close(); } catch (e) {}
+  }
+});
+// Also kick a connect when the SW first wakes.
+connect();
+
+// --------------------- helpers ----------------------------------------------
+async function activeTab() {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab) throw new Error("no active tab in last-focused window");
+  return tab;
+}
+
+// MCP-style per-tab routing: ops may carry an explicit tabId; fall back to the
+// active tab for backward compatibility with the legacy (active-tab-only) path.
+async function resolveTab(params) {
+  if (params && params.tabId != null) {
+    const id = parseInt(params.tabId, 10);
+    if (!Number.isFinite(id)) throw new Error(`invalid tabId: ${params.tabId}`);
+    try {
+      return await chrome.tabs.get(id);
+    } catch (e) {
+      throw new Error(`tab ${id} not found (closed?) — call tabs_context_mcp for fresh tab IDs`);
+    }
+  }
+  return await activeTab();
+}
+
+async function runInTab(tabId, func, args = [], frameId = null) {
+  const target = (frameId !== null && frameId !== undefined)
+    ? { tabId, frameIds: [frameId] }
+    : { tabId, allFrames: false };
+  const [res] = await chrome.scripting.executeScript({
+    target,
+    world: "MAIN",
+    func, args,
+  });
+  return res && res.result;
+}
+
+// --------------------- cross-origin frame routing ---------------------
+// Cross-origin iframe contents can't be reached from the top frame's JS, but
+// chrome.scripting CAN inject into them per-frameId. Their listing entries
+// carry mmid "f<frameId>:<n>"; this strips the prefix back into a frame-local
+// selector + target frameId for every action op.
+function resolveFrameSelector(selector) {
+  const m = /\[mmid=['"]?f(\d+):(\d+)['"]?\]/.exec(selector || '');
+  if (!m) return { frameId: null, selector };
+  return { frameId: parseInt(m[1], 10), selector: `[mmid='${m[2]}']` };
+}
+// tabId -> Map(frameId -> {x, y}) — each cross-origin frame's shell offset in
+// TOP-document coordinates, captured at collection time. CDP trusted input
+// always dispatches in top-document coords, so in-frame rects need this added.
+const _frameShells = new Map();
+
+// --------------------- live element highlight (S4) ---------------------
+// Pulses a colored outline on whichever element the agent is about to touch,
+// so the user can see what's happening on their actual screen in real time —
+// instead of staring at a terminal log and wondering which button got clicked.
+function _highlightPage(selector, kind) {
+  // Registry-first resolve: [mmid='N'] may target an element inside an open
+  // shadow root, which document.querySelector cannot reach. window.__mmidReg is
+  // rebuilt by every collection walk (see _collectInteractivePage).
+  const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+  const el = q(selector);
+  if (!el) return false;
+  // Inject the style into the element's OWN document — for elements inside
+  // same-origin iframes, a top-document stylesheet can't style them.
+  const doc = el.ownerDocument || document;
+  if (!doc.getElementById('__chromebridge_hl_style__')) {
+    const s = doc.createElement('style');
+    s.id = '__chromebridge_hl_style__';
+    s.textContent = `
+      @keyframes __ab_pulse__ {
+        0%   { box-shadow: 0 0 0 0   var(--ab-color, rgba(255,64,64,.85)), 0 0 0 0 var(--ab-color, rgba(255,64,64,.85)); }
+        50%  { box-shadow: 0 0 0 4px var(--ab-color, rgba(255,64,64,.85)), 0 0 12px 4px var(--ab-color, rgba(255,64,64,.45)); }
+        100% { box-shadow: 0 0 0 0   var(--ab-color, rgba(255,64,64,0)),   0 0 0 0 var(--ab-color, rgba(255,64,64,0)); }
+      }
+      .__ab_highlight__ {
+        outline: 2px solid var(--ab-color, rgba(255,64,64,.85)) !important;
+        outline-offset: 1px !important;
+        animation: __ab_pulse__ 0.9s ease-out 1 !important;
+        z-index: 2147483647 !important;
+      }`;
+    doc.documentElement.appendChild(s);
+  }
+  const color = ({ click: 'rgba(64,180,255,.9)',
+                   type:  'rgba(120,255,64,.9)',
+                   submit:'rgba(255,180,64,.95)' })[kind] || 'rgba(255,64,64,.9)';
+  el.style.setProperty('--ab-color', color);
+  el.classList.add('__ab_highlight__');
+  setTimeout(() => { try { el.classList.remove('__ab_highlight__'); } catch (e) {} }, 1000);
+  return true;
+}
+
+async function highlightInTab(tabId, selector, kind) {
+  // Best-effort — never block an action because of UI sugar.
+  try {
+    const rt = resolveFrameSelector(selector);
+    await runInTab(tabId, _highlightPage, [rt.selector, kind], rt.frameId);
+  } catch (e) {}
+}
+
+// --------------------- MCP tab group ----------------------------------------
+// Claude-in-Chrome-style session model: agent tabs live in one dedicated Chrome
+// tab group so the user can see (and close) everything the agent owns at once.
+let _mcpGroupId = null;
+
+async function _getMcpGroup(create) {
+  if (_mcpGroupId == null) {
+    try {
+      const st = await chrome.storage.local.get("mcp_group_id");
+      if (st && st.mcp_group_id != null) _mcpGroupId = st.mcp_group_id;
+    } catch (e) {}
+  }
+  if (_mcpGroupId != null) {
+    try {
+      await chrome.tabGroups.get(_mcpGroupId);
+      return _mcpGroupId;
+    } catch (e) { _mcpGroupId = null; } // group was closed
+  }
+  if (!create) return null;
+  // active:false — creating the agent's tab must NOT pull the user away from what they
+  // are looking at. Trusted input works on background tabs via ensureInputReady()
+  // (Emulation.setFocusEmulationEnabled + Page.setWebLifecycleState), so there is no
+  // functional reason to activate it. Reported by the user twice: the view jumping to
+  // the newest tab mid-task is exactly the disruption this project exists to avoid.
+  const tab = await chrome.tabs.create({ url: "about:blank", active: false });
+  const gid = await chrome.tabs.group({ tabIds: [tab.id] });
+  try { await chrome.tabGroups.update(gid, { title: "Claude", color: "orange" }); } catch (e) {}
+  _mcpGroupId = gid;
+  try { await chrome.storage.local.set({ mcp_group_id: gid }); } catch (e) {}
+  return gid;
+}
+
+async function _mcpGroupTabs(gid) {
+  const tabs = await chrome.tabs.query({ groupId: gid });
+  return tabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: !!t.active }));
+}
+
+// --------------------- chrome.debugger (trusted input) ---------------------
+// Lazy, per-tab attach. Used ONLY when an action explicitly asks for trusted
+// input (login buttons, payment, file pickers, OAuth, "Continue with Google",
+// or a normal click that produced no effect). Chrome will show its yellow
+// "ChromeBridge started debugging this browser" infobar on those
+// tabs — accepted tradeoff for trusted events.
+const _attachedTabs = new Map(); // tabId -> true
+
+// Chrome refuses chrome.debugger.attach for the WHOLE TAB if ANY frame in it is a
+// chrome-extension:// URL owned by a DIFFERENT extension: ExtensionMayAttachToURL
+// is applied across the entire frame tree, not just the main document. Password
+// managers, form fillers and grammar checkers inject exactly such frames — and
+// they inject them on LOGIN PAGES, which is precisely where trusted input matters.
+//
+// MEASURED, after four wrong theories (reload-poisoned tabs, service-worker
+// termination, cross-process navigation, our own CDP ordering — all disproved):
+// on a saucedemo login tab, Passbolt injected an iframe when the username field
+// was focused. The first trusted click succeeded, Chrome then fired onDetach with
+// `target_closed`, and every later attach was refused with the cross-extension
+// error while the tab's own URL was plainly https. A control run of three trusted
+// ops on a page with NO login form kept its session and never detached.
+//
+// This is Chrome policy. It cannot be recovered by detaching, by retrying, or by
+// opening a new tab on the same URL — the other extension injects there too. Say
+// so precisely, name the extension, and name what still works.
+async function blockingExtensionFrames(tabId) {
+  const me = chrome.runtime.id;
+  try {
+    const frames = await chrome.webNavigation.getAllFrames({ tabId });
+    const bad = [];
+    for (const f of frames || []) {
+      const u = String((f && f.url) || "");
+      if (u.indexOf("chrome-extension://") !== 0) continue;
+      const host = u.slice("chrome-extension://".length).split("/")[0];
+      if (host && host !== me) bad.push({ id: host, url: u.slice(0, 100) });
+    }
+    return bad;
+  } catch (e) { return []; }
+}
+
+// The EXPLANATION must not depend on the ENUMERATION succeeding. First cut made
+// the good message conditional on blockingExtensionFrames() returning rows, and
+// live it returned none — chrome.webNavigation.getAllFrames does not report other
+// extensions' frames — so the caller fell through to the old misleading text on
+// the one page that proves the bug. Chrome's own error string is already
+// conclusive that some other extension owns a frame here; naming which one is a
+// bonus, not a precondition.
+function crossExtensionAttachError(tabId, where, bad) {
+  const ids = Array.from(new Set((bad || []).map((b) => b.id)));
+  const who = ids.length
+    ? `another extension (${ids.join(", ")}) has injected an iframe into this page`
+    : `another extension has injected an iframe into this page (Chrome will not tell ` +
+      `us which — likely a password manager, form filler or grammar checker; check ` +
+      `chrome://extensions for one active on this site)`;
+  const example = bad && bad.length ? ` Example frame: ${bad[0].url}` : "";
+  return new Error(
+    `Trusted input is unavailable on tab ${tabId}${where}: ${who}, and Chrome refuses ` +
+    `chrome.debugger.attach to any tab containing a frame owned by a different ` +
+    `extension — it checks the whole frame tree, so the page's own https URL is not ` +
+    `the problem.${example}
+` +
+    `NOT recoverable by retrying or by opening a new tab on the same URL: a password ` +
+    `manager re-injects as soon as a login field is focused.
+` +
+    `STILL WORKS on this tab: read_page, find, get_page_text, form_input, fill_form, ` +
+    `and click (the untrusted pointer-event path, which handles most sites).
+` +
+    `For trusted input here, disable that extension for this site at chrome://extensions.`);
+}
+
+// Chrome emits the cross-extension refusal from MORE than debugger.attach — a
+// sendCommand on an already-attached session fails with the same string once the
+// other extension's iframe appears. Translating it only at the attach site meant
+// the good explanation was skipped on the most common live path (measured: the
+// raw string still reached the caller through cdpSend's recovery branch). Any
+// site that can surface a chrome.debugger error routes through here.
+async function asCrossExtensionError(tabId, err) {
+  const m = (err && err.message) ? err.message : String(err);
+  if (!/different extension/i.test(m)) return null;
+  let where = '';
+  try { const t = await chrome.tabs.get(tabId); where = ` url=${String(t && t.url).slice(0, 80)}`; } catch (e) {}
+  return crossExtensionAttachError(tabId, where, await blockingExtensionFrames(tabId));
+}
+
+async function attachDebugger(tabId) {
+  if (_attachedTabs.get(tabId)) return;
+  try {
+    await chrome.debugger.attach({ tabId }, "1.3");
+  } catch (e) {
+    // ORPHANED SESSION RECOVERY. Reloading the extension (constant during
+    // development) or an MV3 service-worker restart leaves the PREVIOUS instance's
+    // debugger session registered on every tab it had attached. The new instance
+    // cannot attach over it.
+    //
+    // CAUTION: this branch used to also claim ownership of the error "Cannot access
+    // a chrome-extension:// URL of different extension" on a plain https tab. That
+    // attribution was WRONG and cost two debugging rounds. That error has a
+    // completely different cause — another extension's injected iframe — handled
+    // below, and it is NOT recoverable by detaching. Do not merge the two.
+    //
+    // The session belongs to the same extension ID, so THIS instance is allowed to
+    // detach it. Do that and attach again.
+    let recovered = false;
+    try {
+      await chrome.debugger.detach({ tabId });
+      await chrome.debugger.attach({ tabId }, "1.3");
+      recovered = true;
+    } catch (e2) {}
+    if (!recovered) {
+      const m = e && e.message ? e.message : String(e);
+      let where = '';
+      try { const t = await chrome.tabs.get(tabId); where = ` url=${String(t && t.url).slice(0, 80)}`; } catch (e3) {}
+      const xe = await asCrossExtensionError(tabId, e);
+      if (xe) throw xe;
+      throw new Error(`${m}  [debugger.attach tab=${tabId}${where}; detach+retry also failed — ` +
+                      `this tab may hold a debugger session from a previous extension instance. ` +
+                      `Open a new tab with tabs_create_mcp and retry there.]`);
+    }
+    _inputReady.delete(tabId);   // the new session starts without the CDP switches
+  }
+  _attachedTabs.set(tabId, true);
+}
+
+// EVERY CDP call goes through here. `_attachedTabs` is service-worker memory and
+// Chrome can drop the real session without telling us — the user dismisses the
+// yellow infobar, DevTools takes over, or the extension is reloaded while a tab is
+// open. attachDebugger then early-returns on a map that lies, and every subsequent
+// command throws "Debugger is not attached to the tab with id: N" — which is what
+// happened on the very first live test after this round's reload. Same family as
+// the _inputReady bug above: cached state trusted over reality. Recover once,
+// silently, instead of surfacing an error the caller cannot act on.
+async function cdpSend(tabId, method, params) {
+  const label = (e) => {
+    const m = e && e.message ? e.message : String(e);
+    // NAME THE FAILING CALL. chrome.* rejections carry no stack through our
+    // frames, so a bare message named neither the CDP method nor the tab and
+    // cost several rounds of blind bisection to locate.
+    const err = new Error(`${m}  [cdp ${method} tab=${tabId}]`);
+    return err;
+  };
+  try {
+    return await chrome.debugger.sendCommand({ tabId }, method, params);
+  } catch (e) {
+    // "Detached while handling command" is the SAME class as "not attached" and
+    // was not matched here: the session dies mid-flight (another extension injects
+    // an iframe, Chrome tears the target down) and the command is lost. Observed
+    // live on a login page, where it surfaced raw with no recovery attempted. Retry
+    // once through the same path; if re-attach is refused, the caller gets the
+    // precise cross-extension explanation instead of this bare string.
+    const xe0 = await asCrossExtensionError(tabId, e);
+    if (xe0) throw xe0;
+    if (!/not attached|detached while handling/i.test(String(e && e.message || e))) throw label(e);
+    const first = e && e.message ? e.message : String(e);
+    _attachedTabs.delete(tabId);
+    _inputReady.delete(tabId);          // its CDP switches died with the session
+    try {
+      await attachDebugger(tabId);
+      await ensureInputReady(tabId);
+      return await chrome.debugger.sendCommand({ tabId }, method, params);
+    } catch (e2) {
+      // Report BOTH. Surfacing only the recovery error hid the real cause: the
+      // original was "not attached", and the re-attach failure replaced it with an
+      // unrelated-looking permission message.
+      const xe2 = await asCrossExtensionError(tabId, e2);
+      if (xe2) throw xe2;
+      const m2 = e2 && e2.message ? e2.message : String(e2);
+      throw new Error(`${first}  [cdp ${method} tab=${tabId}; re-attach also failed: ${m2}]`);
+    }
+  }
+}
+
+async function detachDebugger(tabId) {
+  if (!_attachedTabs.get(tabId)) return;
+  try { await chrome.debugger.detach({ tabId }); } catch (e) { /* already gone */ }
+  _attachedTabs.delete(tabId);
+  // CLEAR THE READINESS FLAG TOO. chrome.debugger.onDetach fires only for
+  // EXTERNAL detaches (user cancels the infobar, DevTools takes over, tab
+  // closes) — never when we detach ourselves. mcp_server sends detach_debugger
+  // on every shutdown, which resets the target's CDP emulation state while this
+  // set still claimed the tab was ready. On the next session ensureInputReady
+  // early-returned, focus emulation was never re-applied, and trusted clicks
+  // into the (normally backgrounded) agent tab were silently dropped again while
+  // the tool reported success. That is fix #12 exactly, resurrected by one
+  // missing line.
+  _inputReady.delete(tabId);
+}
+
+async function detachAllDebuggers() {
+  const ids = Array.from(_attachedTabs.keys());
+  await Promise.all(ids.map(detachDebugger));
+}
+
+// NO STARTUP DEBUGGER SWEEP. A previous version swept chrome.debugger.getTargets()
+// on service-worker start and detached everything already attached, to clear
+// sessions orphaned by an extension reload. It was wrong twice over: detaching does
+// NOT make a poisoned tab attachable again (measured — detach+attach still fails),
+// and because the sweep is async it finished AFTER an in-flight op had attached and
+// tore down that op's brand-new session. The symptom was a fresh tab reporting
+// "Debugger is not attached" on its first Input command, i.e. the sweep broke the
+// working case while failing to fix the broken one.
+//
+// A tab that held a session from a previous extension instance stays unusable for
+// trusted input; attachDebugger detects that and says to open a new tab.
+
+// User hit "Cancel" on the yellow bar, opened DevTools, or the tab closed.
+// KEEP THE REASON. Chrome hands us exactly why the session ended — target_closed,
+// canceled_by_user, replaced_with_devtools — and this listener discarded it, so
+// "the session vanished seconds after a successful click, inside a live service
+// worker" had no explanation available anywhere. sw_info reports it now.
+let _lastDetach = null;
+chrome.debugger.onDetach.addListener((source, reason) => {
+  if (source.tabId !== undefined) {
+    _lastDetach = { tabId: source.tabId, reason: String(reason), atSec: Math.round((Date.now() - _SW_BORN) / 1000) };
+    _attachedTabs.delete(source.tabId);
+    _inputReady.delete(source.tabId);
+  }
+});
+chrome.tabs.onRemoved.addListener((tabId) => {
+  _attachedTabs.delete(tabId);
+  _inputReady.delete(tabId);
+  _frameShells.delete(tabId);
+  _netBuf.delete(tabId);
+  _netOrigin.delete(tabId);
+});
+
+// Returns the viewport-relative center point of `selector` (CSS px).
+function _rectForPage(selector) {
+  const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+  const el = q(selector);
+  if (!el) return null;
+  // behavior:"instant" is LOAD-BEARING, not cosmetic. Sites that set CSS
+  // `scroll-behavior: smooth` (Bootstrap docs, most doc sites) turn
+  // scrollIntoView into an ANIMATION: the rect measured on the next line is the
+  // pre-scroll one, so a trusted CDP click gets dispatched at coordinates the
+  // element no longer occupies. Worse, Chrome throttles smooth-scroll animations
+  // in NON-FOCUSED tabs — and the agent's tab is usually in the background — so
+  // the scroll never happens at all and the click lands outside the viewport
+  // entirely. Observed live: a button at y=2365 in a 1301px viewport stayed at
+  // y=2365 (scrollY never left 0) and the click hit nothing.
+  // "instant" overrides the CSS and scrolls synchronously.
+  try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {
+    try { el.scrollIntoView({ block: "center", inline: "center" }); } catch (e2) {}
+  }
+  const r = el.getBoundingClientRect();
+  // Same-origin iframe content: the rect is relative to the FRAME's viewport,
+  // but CDP Input.dispatchMouseEvent takes TOP-document CSS pixels — add the
+  // accumulated frame offsets (incl. iframe border via clientLeft/Top).
+  // SCALE-AWARE. Adding frameRect.left to an untransformed inner rect is only
+  // correct when the iframe is unscaled. A `transform: scale(.5)` frame — mobile
+  // preview panes, page-builder canvases, responsive-embed tricks — made every
+  // coordinate inside it wrong by the scale factor while the tool reported
+  // success: the same failure family as fixes #10/#11/#12. getBoundingClientRect
+  // IS transformed; offsetWidth is not, so their ratio is the accumulated scale.
+  let px = r.left, py = r.top, kx = 1, ky = 1;
+  try {
+    let w = el.ownerDocument ? el.ownerDocument.defaultView : null;
+    while (w && w !== window && w.frameElement) {
+      const fe = w.frameElement;
+      const fr = fe.getBoundingClientRect();
+      const ow = fe.offsetWidth || fr.width, oh = fe.offsetHeight || fr.height;
+      const sx = ow ? fr.width / ow : 1, sy = oh ? fr.height / oh : 1;
+      px = fr.left + (fe.clientLeft || 0) * sx + px * sx;
+      py = fr.top + (fe.clientTop || 0) * sy + py * sy;
+      kx *= sx; ky *= sy;
+      w = w.parent;
+    }
+  } catch (e) {}
+  // OCCLUSION PRE-FLIGHT. The listing's (occluded/blocked) tag is observation-time
+  // and cannot protect action time: a consent modal, a toast or a sticky bar that
+  // appears AFTER the read means the trusted click lands on whatever is now on
+  // top — plausibly that overlay's own "Accept all" — and the tool reports it
+  // clicked your element. Deciding this here, in the page, right after the scroll
+  // and right before the coordinates are used, is the only moment it is true.
+  //
+  // Deliberately conservative: refuse ONLY when a different, painting,
+  // pointer-events-accepting element is positively on top. An empty hit-stack
+  // (point outside the viewport) or any uncertainty proceeds as before, so this
+  // cannot invent failures on flows that work today.
+  let blockedBy = '';
+  try {
+    const od = el.ownerDocument || document;
+    const cpx = r.left + r.width / 2, cpy = r.top + r.height / 2;
+    const stack = od.elementsFromPoint(cpx, cpy) || [];
+    const up = (n) => n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
+    const rel = (a, b) => { let n = b; while (n) { if (n === a) return true; n = up(n); } return false; };
+    for (const t of stack) {
+      if (t === el || rel(el, t) || rel(t, el)) break;            // reached us: clear
+      let cs2; try { cs2 = getComputedStyle(t); } catch (e2) { break; }
+      if (cs2.pointerEvents === 'none') continue;                 // clicks pass through
+      if (parseFloat(cs2.opacity || '1') === 0) continue;         // paints nothing
+      // A control's OWN label sitting over it is the styled-input pattern, not an
+      // obstruction — clicking the label operates the control. (Bootstrap's
+      // opacity:0 checkbox lives exactly under its label.)
+      if (t.tagName === 'LABEL' && (t.control === el || (el.id && t.getAttribute('for') === el.id))) break;
+      blockedBy = t.tagName.toLowerCase() +
+        ((t.innerText || '').trim() ? ' "' + (t.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 40) + '"' : '');
+      break;
+    }
+  } catch (e) {}
+  return {
+    x: px + (r.width * kx) / 2, y: py + (r.height * ky) / 2,
+    w: r.width * kx, h: r.height * ky,
+    visible: r.width > 0 && r.height > 0,
+    blockedBy,
+  };
+}
+
+// Current top-document offset of a cross-origin frame, re-measured at ACTION time.
+// Two bugs live here historically:
+//   - Using the offset cached at collection time goes stale the moment the page
+//     scrolls between read_page and the click.
+//   - Re-matching the cached shell to fresh shells BY SIZE picks the wrong sibling
+//     whenever two frames are the same size — which is the normal case for payment
+//     forms (Stripe Elements ships expiry and CVC as identically-sized iframes), and
+//     was WORSE than the stale cache because it broke even with zero scrolling.
+// Match on src (identity), fall back to nearest-position, and only then to size.
+async function frameOffsetNow(tabId, frameId) {
+  const cached = (_frameShells.get(tabId) || new Map()).get(frameId);
+  let fresh = [];
+  try { fresh = await runInTab(tabId, _frameShellsPage) || []; } catch (e) {}
+  if (!fresh.length) return cached || null;
+  if (cached && cached.src) {
+    const bySrc = fresh.filter(sh => sh.src && sh.src === cached.src);
+    if (bySrc.length === 1) return { x: bySrc[0].x, y: bySrc[0].y };
+    if (bySrc.length > 1) {
+      // Same src more than once: the one nearest its last known position is ours.
+      let best = bySrc[0], bd = Infinity;
+      for (const sh of bySrc) {
+        const d = Math.abs(sh.x - cached.x) + Math.abs(sh.y - cached.y);
+        if (d < bd) { bd = d; best = sh; }
+      }
+      return { x: best.x, y: best.y };
+    }
+  }
+  if (cached) {
+    // No src match (src attr drifted). Position is a better discriminator than size
+    // because scrolling moves every frame by the SAME delta, so relative order holds.
+    let best = null, bd = Infinity;
+    for (const sh of fresh) {
+      const d = Math.abs(sh.w - cached.w) + Math.abs(sh.h - cached.h);
+      const pd = Math.abs(sh.x - cached.x);   // x rarely changes on vertical scroll
+      const score = d * 10 + pd;
+      if (score < bd) { bd = score; best = sh; }
+    }
+    if (best) return { x: best.x, y: best.y };
+  }
+  return cached || null;
+}
+
+// Make a BACKGROUND tab accept trusted input WITHOUT touching the user's focus.
+//
+// Chrome drops CDP Input.dispatchMouseEvent when the target tab's RenderWidget is hidden
+// — proven by instrumenting the page: a click at verified-correct coordinates produced
+// ZERO events in a capturing listener while document.visibilityState was "hidden".
+//
+// The WRONG fix (briefly shipped, immediately reverted) was to activate the tab and focus
+// its window. That works, and it is intolerable: it yanks the user out of whatever they
+// are doing, every single click. The entire point of this project is to drive the browser
+// while the user gets on with something else.
+//
+// The RIGHT fix is two CDP switches that make the renderer behave as focused and unthrottled
+// while the tab stays exactly where it is, in the background:
+//   Emulation.setFocusEmulationEnabled — the page believes it holds focus, so input is
+//     accepted and :focus/focusin behave normally.
+//   Page.setWebLifecycleState('active') — undoes background throttling/freezing, so timers,
+//     rAF and (critically) smooth-scroll animations run.
+// This is the same mechanism Playwright uses to drive many pages concurrently without
+// activating any of them. Both are per-target and cost one round trip on attach.
+const _inputReady = new Set();   // tabs whose CDP readiness switches are already set
+// SERVICE-WORKER IDENTITY + BIRTH TIME. An MV3 worker is terminated aggressively,
+// and when it goes every chrome.debugger session goes with it — which looks
+// identical, from the maps, to Chrome having detached us. Both leave _attachedTabs
+// empty, so the two causes were indistinguishable while debugging "one trusted
+// click per tab". A fresh id here across two consecutive ops proves the worker
+// restarted; a stable id proves it did not and the detach came from Chrome.
+const _SW_ID = Math.random().toString(36).slice(2, 8);
+const _SW_BORN = Date.now();
+const swAge = () => `sw=${_SW_ID}+${Math.round((Date.now() - _SW_BORN) / 1000)}s`;
+async function ensureInputReady(tabId) {
+  if (_inputReady.has(tabId)) return;   // idempotent: these are per-target and sticky
+  const dbg = { tabId };
+  let _lastErr = '';
+  let _focusOk = false;
+  try {
+    await chrome.debugger.sendCommand(dbg, "Emulation.setFocusEmulationEnabled", { enabled: true });
+    _focusOk = true;
+  } catch (e) { _lastErr = String(e && e.message || e).slice(0, 90); }
+  // NO Page.enable. CDP *commands* do not require their domain to be enabled — only
+  // EVENTS do — and enabling Page makes Chrome stream every Page.* event to this service
+  // worker over the debugger channel. On a busy page that flood measurably slowed the
+  // whole pipeline: a warm Page.captureScreenshot on a Wikipedia article took ~25s with
+  // Page.enable in place. setWebLifecycleState works fine without it.
+  let _lifecycleOk = false;
+  try {
+    await chrome.debugger.sendCommand(dbg, "Page.setWebLifecycleState", { state: "active" });
+    _lifecycleOk = true;
+  } catch (e) { _lastErr = String(e && e.message || e).slice(0, 90); }
+  // Only remember success. Both commands were swallowed and the tab marked ready
+  // regardless, so ONE transient failure (a command racing a cross-process
+  // navigation, a target swap) permanently disabled the background-input fix for
+  // that tab — every later click dropped silently and reported success. Retrying
+  // costs one round trip; being wrong costs the whole mechanism.
+  if (_focusOk || _lifecycleOk) _inputReady.add(tabId);
+  // RETURN THE OUTCOME. Swallowing both failures is what let the fix-#12
+  // regression hide, and it is also why a session that dies immediately after
+  // attach looked like a healthy one until the first Input command failed.
+  // Callers can now say what actually happened.
+  return { focusOk: _focusOk, lifecycleOk: _lifecycleOk, err: _lastErr };
+}
+
+async function clickTrusted(tabId, selector, frameIdOverride = null) {
+  // ATTACH FIRST, then measure. Chrome's "extension is debugging this browser"
+  // infobar appears on attach and PUSHES THE PAGE CONTENT DOWN by ~32px.
+  // If we read getBoundingClientRect before the bar appears, coordinates are
+  // stale by the time we dispatch — for short elements (32px option rows) the
+  // click lands ABOVE the target and hits empty space. This was the silent
+  // failure mode behind Boxsy's combobox options never selecting.
+  await attachDebugger(tabId);
+  const _ready = await ensureInputReady(tabId);   // background tabs accept input; no focus stealing
+  // Give the page one paint to settle after the infobar shifts the viewport.
+  await new Promise(r => setTimeout(r, 50));
+  const rt = (frameIdOverride !== null && frameIdOverride !== undefined)
+    ? { frameId: frameIdOverride, selector }
+    : resolveFrameSelector(selector);
+  const rect = await runInTab(tabId, _rectForPage, [rt.selector], rt.frameId);
+  if (!rect) return { ok: false, msg: `Element ${selector} not found.` };
+  if (!rect.visible) return { ok: false, msg: `Element ${selector} is not visible.` };
+  if (rect.blockedBy) {
+    return { ok: false, msg:
+      `Element ${selector} is COVERED by ${rect.blockedBy} — did not click. Something is on top of ` +
+      `it at the click point (a modal, consent layer, toast or sticky bar that appeared after you ` +
+      `last read the page). Re-observe: the blocker is probably what you need to handle first. ` +
+      `Nothing was clicked, so no action was taken on your behalf.` };
+  }
+  const dbg = { tabId };
+  let x = rect.x, y = rect.y;
+  // Cross-origin frame: the rect is frame-relative; CDP dispatches in TOP
+  // document coordinates — add the frame shell's offset captured at the last
+  // collection.
+  if (rt.frameId !== null) {
+    const off = await frameOffsetNow(tabId, rt.frameId);
+    if (!off) {
+      // NO GUESS. Without the shell offset these are FRAME-LOCAL coordinates, and
+      // dispatching them as top-document ones clicks an arbitrary spot on the host
+      // page while reporting success — the fix-#10 family. The cache is
+      // service-worker memory and is wiped by any MV3 eviction, so this is a
+      // routine state, not an exotic one.
+      return { ok: false, msg:
+        `Element ${selector} is inside a cross-origin frame whose position is no longer known ` +
+        `(the extension's frame cache was cleared). Nothing was clicked. Call read_page on this ` +
+        `tab to re-measure the frame, then retry.` };
+    }
+    x += off.x; y += off.y;
+  }
+  // CDP Input.dispatchMouseEvent takes viewport-relative CSS pixels.
+  // If the session is already gone by here, say what the readiness probes saw —
+  // they are the first CDP round trips after attach and therefore the earliest
+  // evidence of a session that never really lived.
+  try {
+    await cdpSend(tabId, "Input.dispatchMouseEvent",
+      { type: "mouseMoved",   x, y, button: "none" });
+  } catch (e) {
+    throw new Error(`${e && e.message ? e.message : e}  [inputReady focus=${_ready && _ready.focusOk} ` +
+                    `lifecycle=${_ready && _ready.lifecycleOk}` +
+                    `${_ready && _ready.err ? ' firstErr=' + _ready.err : ''}]`);
+  }
+  await cdpSend(tabId, "Input.dispatchMouseEvent",
+    { type: "mousePressed", x, y, button: "left", clickCount: 1, buttons: 1 });
+  await cdpSend(tabId, "Input.dispatchMouseEvent",
+    { type: "mouseReleased", x, y, button: "left", clickCount: 1, buttons: 0 });
+  return { ok: true, msg: `Clicked ${selector} via TRUSTED input at (${Math.round(x)},${Math.round(y)}).` };
+}
+
+// --------------------- MCP `computer` op (CDP mouse/keyboard) ---------------
+// Coordinate-level trusted input, Claude-in-Chrome style. Reuses the SAME
+// attach-then-settle ordering as clickTrusted (fix #10): the debugger infobar
+// pushes content down ~32px, so attach FIRST, wait a paint, THEN measure.
+const _CDP_MOD_BITS = { alt: 1, ctrl: 2, control: 2, meta: 4, cmd: 4, win: 4, windows: 4, shift: 8 };
+
+function _modBits(modifiers) {
+  let bits = 0;
+  for (const m of String(modifiers || "").toLowerCase().split("+")) {
+    const b = _CDP_MOD_BITS[m.trim()];
+    if (b) bits |= b;
+  }
+  return bits;
+}
+
+const _KEYMAP = {
+  enter: { key: "Enter", code: "Enter", vk: 13, text: "\r" },
+  return: { key: "Enter", code: "Enter", vk: 13, text: "\r" },
+  tab: { key: "Tab", code: "Tab", vk: 9, text: "\t" },
+  backspace: { key: "Backspace", code: "Backspace", vk: 8 },
+  delete: { key: "Delete", code: "Delete", vk: 46 },
+  del: { key: "Delete", code: "Delete", vk: 46 },
+  escape: { key: "Escape", code: "Escape", vk: 27 },
+  esc: { key: "Escape", code: "Escape", vk: 27 },
+  space: { key: " ", code: "Space", vk: 32, text: " " },
+  up: { key: "ArrowUp", code: "ArrowUp", vk: 38 },
+  arrowup: { key: "ArrowUp", code: "ArrowUp", vk: 38 },
+  down: { key: "ArrowDown", code: "ArrowDown", vk: 40 },
+  arrowdown: { key: "ArrowDown", code: "ArrowDown", vk: 40 },
+  left: { key: "ArrowLeft", code: "ArrowLeft", vk: 37 },
+  arrowleft: { key: "ArrowLeft", code: "ArrowLeft", vk: 37 },
+  right: { key: "ArrowRight", code: "ArrowRight", vk: 39 },
+  arrowright: { key: "ArrowRight", code: "ArrowRight", vk: 39 },
+  home: { key: "Home", code: "Home", vk: 36 },
+  end: { key: "End", code: "End", vk: 35 },
+  pageup: { key: "PageUp", code: "PageUp", vk: 33 },
+  pagedown: { key: "PageDown", code: "PageDown", vk: 34 },
+  insert: { key: "Insert", code: "Insert", vk: 45 },
+};
+for (let i = 1; i <= 12; i++) _KEYMAP[`f${i}`] = { key: `F${i}`, code: `F${i}`, vk: 111 + i };
+
+function _keyInfo(name) {
+  const n = String(name || "").trim();
+  const mapped = _KEYMAP[n.toLowerCase()];
+  if (mapped) return mapped;
+  if (n.length === 1) {
+    const ch = n;
+    const upper = ch.toUpperCase();
+    // PUNCTUATION NEEDS A REAL VK. `ch.toUpperCase().charCodeAt(0)` is correct for
+    // letters and digits only by coincidence (VK_A === 'A'). For punctuation it
+    // produces the ASCII code, which COLLIDES with control keys: "." -> 46, which
+    // is VK_DELETE (the real keyCode is 190), and "-" -> 45 = VK_INSERT. A grid
+    // that branches on legacy e.keyCode (older ag-Grid/Handsontable bind 46 to
+    // delete-row) received a Delete when the agent typed a full stop — a
+    // destructive wrong action, reported as success.
+    const P = { '.': [190, 'Period'], ',': [188, 'Comma'], '-': [189, 'Minus'], '=': [187, 'Equal'],
+                ';': [186, 'Semicolon'], "'": [222, 'Quote'], '/': [191, 'Slash'], '\\': [220, 'Backslash'],
+                '[': [219, 'BracketLeft'], ']': [221, 'BracketRight'], '`': [192, 'Backquote'], ' ': [32, 'Space'] };
+    // Shifted US-layout characters map to the same physical key as their base.
+    const SH = { '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8',
+                 '(': '9', ')': '0', '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';',
+                 '"': "'", '<': ',', '>': '.', '?': '/', '~': '`' };
+    if (P[ch]) return { key: ch, code: P[ch][1], vk: P[ch][0], text: ch };
+    if (SH[ch]) {
+      const base = SH[ch];
+      const bp = P[base];
+      return { key: ch, code: bp ? bp[1] : `Digit${base}`, vk: bp ? bp[0] : base.charCodeAt(0), text: ch };
+    }
+    const code = /[a-z]/i.test(ch) ? `Key${upper}` : (/[0-9]/.test(ch) ? `Digit${ch}` : "");
+    return { key: ch, code, vk: upper.charCodeAt(0), text: ch };
+  }
+  // Unknown named key — pass through and hope the page handles `key` alone.
+  return { key: n, code: n, vk: 0 };
+}
+
+// Editing commands that pages can't see as raw key events when the browser
+// consumes them — mirror Playwright/puppeteer by attaching CDP `commands`.
+const _KEY_COMMANDS = { "ctrl+a": ["selectAll"], "ctrl+c": ["copy"], "ctrl+v": ["paste"], "ctrl+x": ["cut"], "ctrl+z": ["undo"], "ctrl+y": ["redo"], "ctrl+shift+z": ["redo"], "cmd+a": ["selectAll"], "cmd+c": ["copy"], "cmd+v": ["paste"], "cmd+x": ["cut"], "cmd+z": ["undo"] };
+
+// Press one chord like "Enter" or "ctrl+shift+t" (extra modifier bits OR-ed in).
+async function _cdpPressChord(tabId, chord, extraBits) {
+  const parts = String(chord).split("+").map(s => s.trim()).filter(Boolean);
+  const keyName = parts[parts.length - 1];
+  let bits = extraBits | _modBits(parts.slice(0, -1).join("+"));
+  const info = _keyInfo(keyName);
+  const dbg = { tabId };
+  const commands = _KEY_COMMANDS[String(chord).toLowerCase().replace(/\s+/g, "")] || [];
+  const hasNonShiftMod = (bits & ~8) !== 0;
+  const down = {
+    type: (info.text && !hasNonShiftMod) ? "keyDown" : "rawKeyDown",
+    modifiers: bits, key: info.key, code: info.code,
+    windowsVirtualKeyCode: info.vk, nativeVirtualKeyCode: info.vk,
+  };
+  if (info.text && !hasNonShiftMod) down.text = bits & 8 ? info.text.toUpperCase() : info.text;
+  if (commands.length) down.commands = commands;
+  await cdpSend(tabId, "Input.dispatchKeyEvent", down);
+  await cdpSend(tabId, "Input.dispatchKeyEvent", {
+    type: "keyUp", modifiers: bits, key: info.key, code: info.code,
+    windowsVirtualKeyCode: info.vk, nativeVirtualKeyCode: info.vk,
+  });
+}
+
+// Resolve the action point: explicit coordinate (top-document CSS px) or a
+// selector's center (with cross-origin frame shell offsets, like clickTrusted).
+async function _computerPoint(tabId, params) {
+  if (Array.isArray(params.coordinate) && params.coordinate.length === 2) {
+    return { x: +params.coordinate[0], y: +params.coordinate[1] };
+  }
+  if (params.selector) {
+    const rt = resolveFrameSelector(params.selector);
+    const rect = await runInTab(tabId, _rectForPage, [rt.selector], rt.frameId);
+    if (!rect) throw new Error(`element ${params.selector} not found`);
+    if (!rect.visible) throw new Error(`element ${params.selector} is not visible`);
+    let x = rect.x, y = rect.y;
+    if (rt.frameId !== null) {
+      // Same re-measure as clickTrusted — `computer(left_click, ref="f3:7")` was
+      // still using the collection-time cache, so after any scroll it landed at the
+      // frame's old position while the `click` op landed correctly.
+      const off = await frameOffsetNow(tabId, rt.frameId);
+      if (off) { x += off.x; y += off.y; }
+    }
+    return { x, y };
+  }
+  // default: viewport center (used by scroll without coordinates)
+  const vp = await runInTab(tabId, () => ({ w: innerWidth, h: innerHeight }));
+  return { x: (vp && vp.w || 800) / 2, y: (vp && vp.h || 600) / 2 };
+}
+
+async function computerOp(t, params) {
+  const action = String(params.action || "");
+  const dbg = { tabId: t.id };
+
+  if (action === "scroll_to") {
+    if (!params.selector) throw new Error("scroll_to requires a ref");
+    const rt = resolveFrameSelector(params.selector);
+    const rect = await runInTab(t.id, _rectForPage, [rt.selector], rt.frameId); // scrollIntoViews
+    if (!rect) throw new Error(`element ${params.selector} not found`);
+    return `Scrolled ${params.selector} into view (center at ${Math.round(rect.x)},${Math.round(rect.y)}).`;
+  }
+
+  // Everything below is trusted CDP input. Fix #10: attach FIRST, settle, then measure.
+  // Whether the debugger was ALREADY attached matters for COORDINATE clicks: the
+  // "is debugging" infobar appears on attach and pushes page content down ~32px.
+  // Selector-based actions re-measure after attaching so they're safe, but a
+  // coordinate the model read off a screenshot taken BEFORE the first attach now
+  // refers to a layout that has since shifted. We can't retroactively correct a
+  // number we didn't produce, so say so instead of silently clicking the wrong row.
+  const _wasAttached = _attachedTabs.get(t.id) === true;
+  await attachDebugger(t.id);
+  await ensureInputReady(t.id);   // background tabs accept input; no focus stealing
+  await new Promise(r => setTimeout(r, 50));
+  const _actNote = "";
+  const _shiftWarn = (!_wasAttached && !params.selector &&
+                      (Array.isArray(params.coordinate) || Array.isArray(params.start_coordinate)))
+    ? " NOTE: the debugger infobar was attached by this call, which shifts page content down ~32px." +
+      " If this coordinate came from a screenshot taken earlier, it may now be off by roughly that much —" +
+      " re-screenshot and re-click if the result looks wrong, or use a ref instead (refs are re-measured after attach)."
+    : "";
+  const bits = _modBits(params.modifiers);
+
+  if (action === "key") {
+    const seq = String(params.text || "").trim().split(/\s+/).filter(Boolean);
+    if (!seq.length) throw new Error('key requires text, e.g. "Enter" or "ctrl+a"');
+    const repeat = Math.min(Math.max(+params.repeat || 1, 1), 100);
+    for (let i = 0; i < repeat; i++) {
+      for (const chord of seq) await _cdpPressChord(t.id, chord, bits);
+    }
+    return `Pressed ${seq.join(" ")}${repeat > 1 ? ` x${repeat}` : ""}.`;
+  }
+
+  if (action === "type") {
+    if (params.selector) {
+      // focus the target first so the text lands in the right field
+      const rt = resolveFrameSelector(params.selector);
+      const focused = await runInTab(t.id, (sel) => {
+        const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+        const el = q(sel);
+        if (!el) return false;
+        try { el.scrollIntoView({ block: "center", behavior: "instant" }); } catch (e) {}
+        try { el.focus({ preventScroll: true }); } catch (e) {}
+        return true;
+      }, [rt.selector], rt.frameId);
+      // FAIL LOUDLY when the ref doesn't resolve. This used to focus best-effort and
+      // then insert the text ANYWAY — into whatever happened to be focused, usually
+      // <body>, where it goes nowhere — while returning "Typed ... into the focused
+      // element." Found while diagnosing something else: on a page whose mmids had not
+      // been injected, `computer(type, ref=ref_13)` reported success having typed into
+      // nothing. Every other ref-taking action already errors on an unresolvable ref.
+      if (!focused) {
+        throw new Error(
+          `element ${params.selector} not found, so nothing was typed. The ref is stale or ` +
+          `this page has not been observed yet — call read_page (or find) first to get ` +
+          `current refs.`
+        );
+      }
+    }
+    await cdpSend(t.id, "Input.insertText", { text: String(params.text || "") });
+    return `Typed ${JSON.stringify(String(params.text || "").slice(0, 80))} into the focused element.`;
+  }
+
+  if (action === "scroll") {
+    const pt = await _computerPoint(t.id, params);
+    const ticks = Math.min(Math.max(+params.scroll_amount || 3, 1), 10);
+    const dirMap = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+    const d = dirMap[String(params.scroll_direction || "down")];
+    if (!d) throw new Error(`invalid scroll_direction ${params.scroll_direction}`);
+    await cdpSend(t.id, "Input.dispatchMouseEvent", {
+      type: "mouseWheel", x: pt.x, y: pt.y,
+      deltaX: d[0] * ticks * 120, deltaY: d[1] * ticks * 120,
+    });
+    return `Scrolled ${params.scroll_direction || "down"} ${ticks} tick(s) at (${Math.round(pt.x)},${Math.round(pt.y)}).${_shiftWarn}`;
+  }
+
+  if (action === "hover") {
+    const pt = await _computerPoint(t.id, params);
+    await cdpSend(t.id, "Input.dispatchMouseEvent",
+      { type: "mouseMoved", x: pt.x, y: pt.y, button: "none", modifiers: bits });
+    return `Hovering at (${Math.round(pt.x)},${Math.round(pt.y)}).${_shiftWarn}`;
+  }
+
+  if (action === "left_click_drag") {
+    if (!Array.isArray(params.start_coordinate) || !Array.isArray(params.coordinate)) {
+      throw new Error("left_click_drag requires start_coordinate and coordinate");
+    }
+    const [sx, sy] = params.start_coordinate.map(Number);
+    const [ex, ey] = params.coordinate.map(Number);
+    await cdpSend(t.id, "Input.dispatchMouseEvent",
+      { type: "mouseMoved", x: sx, y: sy, button: "none", modifiers: bits });
+    await cdpSend(t.id, "Input.dispatchMouseEvent",
+      { type: "mousePressed", x: sx, y: sy, button: "left", clickCount: 1, buttons: 1, modifiers: bits });
+    const steps = 12;
+    for (let i = 1; i <= steps; i++) {
+      await cdpSend(t.id, "Input.dispatchMouseEvent", {
+        type: "mouseMoved", x: sx + (ex - sx) * i / steps, y: sy + (ey - sy) * i / steps,
+        button: "left", buttons: 1, modifiers: bits,
+      });
+    }
+    await cdpSend(t.id, "Input.dispatchMouseEvent",
+      { type: "mouseReleased", x: ex, y: ey, button: "left", clickCount: 1, buttons: 0, modifiers: bits });
+    return `Dragged from (${sx},${sy}) to (${ex},${ey}).${_shiftWarn}`;
+  }
+
+  const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_click: ["left", 2], triple_click: ["left", 3] };
+  if (clickKinds[action]) {
+    const [button, count] = clickKinds[action];
+    const pt = await _computerPoint(t.id, params);
+    await cdpSend(t.id, "Input.dispatchMouseEvent",
+      { type: "mouseMoved", x: pt.x, y: pt.y, button: "none", modifiers: bits });
+    for (let c = 1; c <= count; c++) {
+      await cdpSend(t.id, "Input.dispatchMouseEvent",
+        { type: "mousePressed", x: pt.x, y: pt.y, button, clickCount: c, buttons: button === "left" ? 1 : 2, modifiers: bits });
+      await cdpSend(t.id, "Input.dispatchMouseEvent",
+        { type: "mouseReleased", x: pt.x, y: pt.y, button, clickCount: c, buttons: 0, modifiers: bits });
+    }
+    return `${action} at (${Math.round(pt.x)},${Math.round(pt.y)})${params.selector ? ` on ${params.selector}` : ""}.${_actNote}${_shiftWarn}`;
+  }
+
+  throw new Error(`computer: unknown action ${action}`);
+}
+
+// --------------------- javascript_exec (CDP Runtime.evaluate) ---------------
+// DevTools-console semantics: replMode gives last-expression results and
+// tolerates redeclaration; awaitPromise resolves top-level await; and unlike
+// MAIN-world `new Function`, CDP evaluation is NOT blocked by the page's CSP.
+async function evalInTab(tabId, code) {
+  await attachDebugger(tabId);
+  const res = await cdpSend(tabId, "Runtime.evaluate", {
+    expression: String(code ?? ""),
+    replMode: true,
+    awaitPromise: true,
+    returnByValue: true,
+    userGesture: true,
+    timeout: 15000,
+  });
+  if (res && res.exceptionDetails) {
+    const ex = res.exceptionDetails;
+    const desc = (ex.exception && (ex.exception.description || ex.exception.value)) || ex.text || "evaluation error";
+    return { ok: false, error: String(desc).slice(0, 4000) };
+  }
+  const rv = (res && res.result) || {};
+  if (rv.type === "undefined") return { ok: true, result: "undefined" };
+  if ("value" in rv) return { ok: true, result: rv.value };
+  return { ok: true, result: rv.description || `[${rv.type}]` };
+}
+
+// --------------------- network capture (read_network_requests) --------------
+// chrome.webRequest listeners buffer request metadata per tab. Listeners are
+// registered at SW top level so they survive service-worker respawns (the
+// buffer itself does not — best-effort, like Claude-in-Chrome's).
+const _netBuf = new Map();    // tabId -> [{url, method, type, statusCode, ...}]
+const _netOrigin = new Map(); // tabId -> origin of the current main document
+const _NET_CAP = 500;
+
+function _netPush(tabId, entry) {
+  if (tabId === undefined || tabId < 0) return;
+  let arr = _netBuf.get(tabId);
+  if (!arr) { arr = []; _netBuf.set(tabId, arr); }
+  arr.push(entry);
+  if (arr.length > _NET_CAP) arr.splice(0, arr.length - _NET_CAP);
+}
+
+// IN-FLIGHT requests, per tab. The buffer above records only what has FINISHED,
+// so nothing in the system could tell that a page was still fetching. That blind
+// spot produced four separate live-agent defects: a listing whose x-coordinates
+// were all 116px stale because the hero image had not loaded and the layout was
+// about to reflow; "Complete visible text" emitted over a spinner; a Wolfram pod
+// that streamed in AFTER the read and so simply did not exist in it; and phantom
+// refs from lazy-load placeholders that were replaced seconds later. All four
+// reported confidently. document.readyState cannot see any of them — it goes
+// 'complete' while XHR-driven content is still arriving.
+const _netPending = new Map();   // tabId -> Map(requestId -> resourceType)
+
+// Page-side half of the readiness check. Deliberately cheap — it runs on every
+// observation — and deliberately structural: aria-busy and role=progressbar are
+// the ARIA-standard "this region is updating" signals, so no site-specific
+// spinner-class list is involved. Images are counted only when they occupy real
+// space, because those are the ones whose load will REFLOW the page and
+// invalidate every box() we are about to print.
+function _readinessPage() {
+  const o = { ready: document.readyState, imgs: 0, busy: 0, prog: 0 };
+  try {
+    // NEAR THE VIEWPORT ONLY. A lazy image below the fold has complete === false
+    // indefinitely — it has not started loading and will not until it is scrolled
+    // to — so counting every unloaded image pinned BBC at "14 images still
+    // loading" forever, on a page that was completely settled. A permanently-on
+    // warning is worse than none: it trains the reader to ignore it. The set that
+    // matters is the one that will REFLOW what we are about to print, i.e. images
+    // in or just outside the viewport. The margin covers an image straddling the
+    // fold whose load still pushes visible content down.
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+    const M = 200;
+    for (const im of document.querySelectorAll('img')) {
+      if (im.complete) continue;
+      const r = im.getBoundingClientRect();
+      if (r.width <= 8 || r.height <= 8) continue;
+      if (r.bottom < -M || r.top > vh + M || r.right < 0 || r.left > vw) continue;
+      o.imgs++;
+    }
+  } catch (e) {}
+  try { o.busy = document.querySelectorAll('[aria-busy="true"]').length; } catch (e) {}
+  try {
+    o.prog = Array.from(document.querySelectorAll('[role="progressbar"],progress')).filter((n) => {
+      try {
+        const r = n.getBoundingClientRect();
+        if (r.width <= 1 || r.height <= 1) return false;
+        return !n.checkVisibility || n.checkVisibility();
+      } catch (e) { return false; }
+    }).length;
+  } catch (e) {}
+  return o;
+}
+
+// Returns '' when the page is settled, or a banner naming exactly what is still
+// moving. Stated as one line at the TOP of an observation, because it changes how
+// everything below should be read — coordinates, absences and refs alike.
+async function readinessNote(tabId) {
+  let r = null;
+  try { r = await runInTab(tabId, _readinessPage); } catch (e) {}
+  const pend = _netPending.get(tabId);
+  // Ignore long-lived streams: an open EventSource/WebSocket-ish fetch would
+  // otherwise mark a finished page as permanently loading.
+  let net = 0;
+  if (pend) for (const t of pend.values()) if (t !== 'websocket' && t !== 'media') net++;
+  if (!r) return '';
+  const bits = [];
+  if (r.ready !== 'complete') bits.push(`document.readyState="${r.ready}"`);
+  if (r.imgs) bits.push(`${r.imgs} image(s) still loading`);
+  if (net) bits.push(`${net} network request(s) in flight`);
+  if (r.prog) bits.push(`${r.prog} progress indicator(s) visible`);
+  if (r.busy) bits.push(`${r.busy} region(s) marked aria-busy`);
+  if (!bits.length) return '';
+  return `*** PAGE IS STILL SETTLING (${bits.join('; ')}). Content may still be arriving, ` +
+         `and box() coordinates may shift as it does — re-observe before trusting a coordinate, ` +
+         `and do NOT conclude something is absent from this read alone. Refs are re-measured at ` +
+         `click time, so acting BY REF is safe. ***\n`;
+}
+
+function _pendDrop(tabId, requestId) {
+  const m = _netPending.get(tabId);
+  if (m) { m.delete(requestId); if (!m.size) _netPending.delete(tabId); }
+}
+
+// SEPARATE try. Registering this inside the block below put it AHEAD of the
+// onCompleted/onErrorOccurred registrations, so anything that made it throw took
+// the whole network buffer down with it — a readiness nicety disabling a shipped
+// feature. Caught by test_ops, which mocks only the listeners it needs.
+try {
+  chrome.webRequest.onBeforeRequest.addListener((d) => {
+    if (d.tabId === undefined || d.tabId < 0) return;
+    let m = _netPending.get(d.tabId);
+    if (!m) { m = new Map(); _netPending.set(d.tabId, m); }
+    m.set(d.requestId, d.type);
+    // Never let a dropped/aborted request pin a tab as "loading" forever.
+    setTimeout(() => _pendDrop(d.tabId, d.requestId), 15000);
+  }, { urls: ["<all_urls>"] });
+} catch (e) {}
+
+try {
+  chrome.webRequest.onCompleted.addListener((d) => {
+    _pendDrop(d.tabId, d.requestId);
+    _netPush(d.tabId, { url: d.url, method: d.method, type: d.type, statusCode: d.statusCode, fromCache: !!d.fromCache, ts: d.timeStamp });
+  }, { urls: ["<all_urls>"] });
+  chrome.webRequest.onErrorOccurred.addListener((d) => {
+    _pendDrop(d.tabId, d.requestId);
+    _netPush(d.tabId, { url: d.url, method: d.method, type: d.type, error: d.error, ts: d.timeStamp });
+  }, { urls: ["<all_urls>"] });
+  // Clear the buffer when the tab's main document moves to a different origin
+  // (same contract as Claude-in-Chrome's read_network_requests).
+  chrome.webNavigation.onCommitted.addListener((d) => {
+    if (d.frameId !== 0) return;
+    let origin = "";
+    try { origin = new URL(d.url).origin; } catch (e) {}
+    if (_netOrigin.get(d.tabId) !== origin) {
+      _netBuf.delete(d.tabId);
+      _netOrigin.set(d.tabId, origin);
+    }
+  });
+} catch (e) { /* webRequest unavailable — read_network_requests will error */ }
+
+// Focus + clear the field, then insert text via CDP so it's trusted (isTrusted=true).
+// --------------------- combobox / native-select handling ---------------
+// fill_form treats `<button role="combobox">` and native `<select>` as
+// dropdowns, not text inputs. Setting .value on a button silently fails
+// (we observed this hard on Boxsy: Investor Type / Status / Focus Areas /
+// Regions / Stages / Decision Time are all Radix Select triggers — typing
+// into them sets nothing, so the form's validation fails on submit).
+function _fieldKindPage(selector) {
+  const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+  const el = q(selector);
+  if (!el) return null;
+  const tag = el.tagName.toLowerCase();
+  const role = el.getAttribute('role');
+  // Combobox classification — KEEP IN SYNC with fill_form's fieldKinds probe.
+  // A click-then-pick dropdown announces itself via role=combobox/listbox OR
+  // aria-haspopup=listbox/menu/true on a non-typeable trigger (Reach UI and
+  // many a11y-first selects use a plain <button aria-haspopup="listbox">,
+  // which the old role-only check classified as TEXT — typing into a button
+  // silently no-ops). Input-comboboxes (autocomplete) also route to
+  // fillDropdown: its click → type-in-search → pick flow commits a selection.
+  const hp = (el.getAttribute('aria-haspopup') || '').toLowerCase();
+  const popupTrigger = ['listbox', 'menu', 'true'].includes(hp) && tag !== 'input' && tag !== 'textarea';
+  return {
+    tag, role,
+    is_native_select: tag === 'select',
+    is_combobox: role === 'combobox' || role === 'listbox' || role === 'menubutton' || popupTrigger,
+    is_checkbox_button: role === 'checkbox' || role === 'switch' ||
+      (tag === 'input' && (el.type === 'checkbox' || el.type === 'radio')),
+  };
+}
+
+// Set a checkbox/switch/radio to the requested state. text semantics:
+// "checked"/"true"/"yes"/"on"/"1" -> checked; "unchecked"/"false"/"no"/"off"/"0"
+// -> unchecked; anything else -> toggle. Was previously mis-routed to the TEXT
+// path, which set button.value (a no-op) and reported success — a silent lie.
+async function setCheckboxState(tabId, selector, text) {
+  const rt = resolveFrameSelector(selector);
+  // RADIO + A LABEL: retarget to the option the caller actually named. The ref may
+  // be any member of the group (find/read_page hands back whichever one matched),
+  // and clicking it regardless selects the wrong option while reporting success.
+  if (text) {
+    let rm = null;
+    try { rm = await runInTab(tabId, _radioMatchPage, [rt.selector, String(text)], rt.frameId); } catch (e) {}
+    if (rm && rm.err === 'no-match') {
+      return { ok: false, actual: '', msg:
+        `no radio in this group is labelled ${JSON.stringify(String(text))}` +
+        (rm.options && rm.options.length
+          ? `. The options are: ${rm.options.map(o => JSON.stringify(o)).join(', ')}. Pass one of these.`
+          : '.') + ' Nothing was clicked.' };
+    }
+    if (rm && rm.mmid && !rm.same) {
+      // Act on the named option instead of the ref we were handed.
+      selector = `[mmid='${rm.mmid}']`;
+      Object.assign(rt, resolveFrameSelector(selector));
+      text = 'true';
+    } else if (rm && rm.same) {
+      text = 'true';
+    }
+  }
+  const read = () => runInTab(tabId, (sel) => {
+    const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+    const el = q(sel);
+    if (!el) return null;
+    const ac = el.getAttribute('aria-checked');
+    return { cur: ac != null ? ac === 'true' : (el.checked === true) };
+  }, [rt.selector], rt.frameId);
+  const st = await read();
+  if (!st) return { ok: false, actual: '', msg: `Element ${selector} not found.` };
+  const want = String(text || '').trim().toLowerCase();
+  const target = ['1', 'true', 'yes', 'on', 'checked', 'check'].includes(want) ? true
+               : ['0', 'false', 'no', 'off', 'unchecked', 'uncheck'].includes(want) ? false
+               : ['toggle', 'flip', 'switch'].includes(want) ? null   // explicit toggle
+               : undefined;                                            // unrecognised
+  // An unrecognised value used to mean "toggle", so a non-English or label-shaped
+  // value (the model passing the field's caption, say) would FLIP a checkbox that
+  // was already correct — turning a no-op into damage, and reporting success. Only
+  // an explicit toggle word toggles now; anything else is refused loudly.
+  // RADIOS are not checkboxes. `kind=checkbox` covers input[type=radio] too, and the
+  // natural way to drive a radio group is form_input(ref, "Male") — a LABEL, not a
+  // state word. Refusing that (the checkbox over-correction) broke every radio group.
+  // For a radio, any unrecognised value means "select this one", which is the only
+  // sensible action: radios cannot be unchecked by clicking.
+  let _isRadio = false;
+  try { _isRadio = (await runInTab(tabId, (sel) => {
+    const q = (x) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(x || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(x); };
+    const e2 = q(sel); if (!e2) return false;
+    return (e2.tagName === 'INPUT' && (e2.type || '').toLowerCase() === 'radio') || e2.getAttribute('role') === 'radio';
+  }, [rt.selector], rt.frameId)) === true; } catch (e) {}
+  const _target = (target === undefined && _isRadio) ? true : target;
+  if (_target === undefined) {
+    return {
+      ok: false,
+      actual: st.cur ? 'checked' : 'unchecked',
+      msg: `cannot interpret ${JSON.stringify(String(text || ''))} as a checkbox state. ` +
+           `Pass true/false (or "checked"/"unchecked"), or "toggle" to invert it. ` +
+           `Left as-is (currently ${st.cur ? 'checked' : 'unchecked'}).`,
+    };
+  }
+  if (_target !== null && st.cur === _target) {
+    return { ok: true, actual: st.cur ? 'checked' : 'unchecked', msg: `already ${st.cur ? 'checked' : 'unchecked'} — no action needed` };
+  }
+  await runInTab(tabId, _clickPage, [rt.selector], rt.frameId);
+  // Poll for the state flip (React state round-trip)
+  let st2 = await read();
+  const t0 = Date.now();
+  while (st2 && st2.cur === st.cur && Date.now() - t0 < 800) {
+    await new Promise(r => setTimeout(r, 100));
+    st2 = await read();
+  }
+  if (!st2 || st2.cur === st.cur) {
+    // Synthetic click didn't register — escalate to trusted CDP input.
+    try { await clickTrusted(tabId, selector); } catch (e) {}
+    await new Promise(r => setTimeout(r, 200));
+    st2 = await read();
+  }
+  const now = st2 ? st2.cur : st.cur;
+  const ok = st2 && (_target === null ? now !== st.cur : now === _target);
+  return {
+    ok: !!ok,
+    actual: now ? 'checked' : 'unchecked',
+    msg: ok ? `checkbox now ${now ? 'checked' : 'unchecked'}`
+            : `checkbox click did not change state (still ${now ? 'checked' : 'unchecked'})`,
+  };
+}
+
+function _pickOptionPage(text, triggerSel) {
+  // Find a visible option in the CURRENTLY-OPEN popover/listbox. Two filters
+  // weed out stale options from popovers that just closed (Radix keeps closing
+  // portal nodes around briefly during exit transitions; our stable-mmid change
+  // also preserves them across re-renders):
+  //   1. Exclude any option whose closest [data-state] ancestor is "closed"
+  //      (Radix sets data-state="closed" on the way out).
+  //   2. Exclude options inside an [aria-hidden="true"] subtree.
+  // After filtering, prefer options inside an explicitly OPEN container
+  // (data-state="open" or role=listbox/menu that's visible), falling back to
+  // any visible option otherwise.
+  //
+  // FALLBACK FOR CUSTOM PICKERS: many apps (e.g. Boxsy's multi-select Focus
+  // Areas) implement their own picker — a popover containing a search input
+  // and clickable <div> rows with NO role="option". To handle these without
+  // hard-coding the site, we ALSO accept clickable text-bearing rows that
+  // live inside a popover-shaped container (data-radix-popper-content-wrapper,
+  // or a [role=dialog]/[role=listbox]/[role=menu] that was JUST opened — i.e.
+  // its mmid is in the highest range, indicating it's freshly mounted).
+  // Deep query: options may render inside an OPEN shadow root (Lit/Shoelace-style
+  // selects). Recurse shadow roots; Radix/shadcn/MUI portals are light DOM and
+  // come back from the plain document scan anyway.
+  const deepQueryAll = (sel) => {
+    const acc = [];
+    const visit = (root) => {
+      try { root.querySelectorAll(sel).forEach(e => acc.push(e)); } catch (e) {}
+      root.querySelectorAll('*').forEach(e => { if (e.shadowRoot) visit(e.shadowRoot); });
+    };
+    visit(document);
+    return acc;
+  };
+  // 0) STRONGEST general signal: the trigger's aria-controls/aria-owns points
+  // at the exact listbox it opened (W3C combobox pattern). Search THERE first —
+  // no popover-shape guessing, works on every conforming library.
+  let scopeRoot = null;
+  if (triggerSel) {
+    try {
+      const qq = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+      const trig = qq(triggerSel);
+      const ref = trig && (trig.getAttribute('aria-controls') || trig.getAttribute('aria-owns'));
+      if (ref) {
+        const idRoot = (trig.getRootNode && trig.getRootNode().getElementById) ? trig.getRootNode() : document;
+        scopeRoot = ref.split(/\s+/).map(id => idRoot.getElementById(id)).find(Boolean) || null;
+        // A container that CONTAINS the trigger is not the popover — it's the widget's
+        // own selection box. select2-style multi-selects point aria-controls at it, and
+        // harvesting there clicks a chosen tag (deselecting it) instead of an option.
+        try { if (scopeRoot && trig && scopeRoot.contains(trig)) scopeRoot = null; } catch (e) {}
+      }
+    } catch (e) {}
+  }
+  // NO aria-controls (or it was rejected): fall back to the TOPMOST VISIBLE POPOVER as
+  // the scope rather than scanning the document. Without this, foreign always-visible
+  // options elsewhere on the page (a plan picker, tag chips misusing aria-selected)
+  // populate the pool, block the custom-picker harvest, and get offered to the model as
+  // "available options" for a widget they have nothing to do with.
+  if (!scopeRoot) {
+    try {
+      const cands = Array.from(document.querySelectorAll(
+        '[data-radix-popper-content-wrapper], [data-popper-placement], [data-floating-ui-portal], [role="listbox"], [role="menu"]'
+      )).filter(c => {
+        try {
+          const r = c.getBoundingClientRect();
+          if (!(r.width > 0 && r.height > 0)) return false;
+          const cs = getComputedStyle(c);
+          if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+          const qq2 = (x) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(x || ''); const r2 = window.__mmidReg; if (m && r2) { const n = r2.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(x); };
+          const tg = triggerSel ? qq2(triggerSel) : null;
+          if (tg && c.contains(tg)) return false;         // selection box, not a popover
+          return true;
+        } catch (e) { return false; }
+      });
+      if (cands.length) {
+        const zOf = (c) => { let z = 0, w = c; while (w && w !== document.body) { try { const v = parseInt(getComputedStyle(w).zIndex, 10); if (!isNaN(v)) z = Math.max(z, v); } catch (e) {} w = w.parentElement; } return z; };
+        cands.sort((a, b) => zOf(a) - zOf(b));
+        scopeRoot = cands[cands.length - 1];
+      }
+    } catch (e) {}
+  }
+  const OPTION_SEL = '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="treeitem"], li[data-value], [aria-selected]';
+  let via = null;   // debug: which discovery path produced the option pool
+  let all = [];
+  if (scopeRoot) { try { all = Array.from(scopeRoot.querySelectorAll(OPTION_SEL)); if (all.length) via = 'aria-controls-scope'; } catch (e) {} }
+  // Scope is a PREFERENCE, not an absolute. Making it absolute (an earlier attempt at
+  // this) broke select2: its trigger's aria-controls resolves to a container that does
+  // NOT hold the option rows, so scoping hard produced an empty pool and a spurious
+  // "no option matched". The cross-widget-contamination problem it was meant to solve
+  // is handled at the HARVEST GATE below instead, which asks whether any visible
+  // option lives inside the scope rather than whether any exists anywhere.
+  if (!all.length) { all = deepQueryAll(OPTION_SEL); if (all.length) via = 'aria-roles-deep'; }
+  // [aria-selected] also lives on tabs / grid cells / table rows — those are
+  // NOT pickable dropdown options; matching them would click page chrome.
+  all = all.filter(o => {
+    const ro = o.getAttribute && o.getAttribute('role');
+    return !ro || !['tab', 'row', 'gridcell', 'columnheader', 'rowheader'].includes(ro);
+  });
+  const isVisible = (o) => {
+    try {
+      const r = o.getBoundingClientRect();
+      if (!(r.width > 0 && r.height > 0)) return false;
+      const cs = getComputedStyle(o);
+      if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+      // Excluded if ANY ancestor marks the subtree non-interactive:
+      // aria-hidden / inert are the W3C-general signals; data-state="closed"
+      // is a Radix-specific booster (their exit-transition portals linger).
+      let w = o;
+      while (w) {
+        if (w.getAttribute) {
+          if (w.getAttribute('data-state') === 'closed') return false;
+          if (w.getAttribute('aria-hidden') === 'true') return false;
+          if (w.hasAttribute && w.hasAttribute('inert')) return false;
+        }
+        w = w.parentElement;
+      }
+      return true;
+    } catch (e) { return false; }
+  };
+  let vis = all.filter(isVisible);
+  // HARVEST FALLBACK GATE — on VISIBLE standard-ARIA options, NOT raw match
+  // count. The old `!all.length` gate had a flaky failure mode: a previously
+  // closed menu/popover whose portal is still mounted (Radix keeps
+  // data-state="closed" nodes around during exit transitions, sometimes
+  // longer) leaves 1-2 STALE [aria-selected]/menuitem matches in the page.
+  // Those raw matches blocked the fallback entirely, making custom pickers
+  // (clickable rows with NO role=option — Boxsy focus areas/regions/stages)
+  // unpickable whenever any stale portal existed. Visibility is the real
+  // signal for "did the standard-ARIA path find the open popover's options".
+  // HARVEST GATE. Previously "any visible ARIA option anywhere on the page" was enough
+  // to suppress the custom-picker harvest — so an unrelated open listbox elsewhere
+  // hijacked the pick (a second fixture listbox did exactly that to G25). When the
+  // trigger told us which container it controls, ask whether any visible option is
+  // actually IN it; foreign options must not vouch for this widget.
+  const visInScope = scopeRoot ? vis.filter(o => { try { return scopeRoot.contains(o); } catch (e) { return false; } }) : vis;
+  if (!visInScope.length) {
+    // No standard-ARIA options — try to find a popover-like container and
+    // harvest its clickable text rows as candidate options. Container query
+    // covers ARIA roles + the major positioning libraries' portal markers
+    // (Radix, Floating UI / Popper) as boosters.
+    const containers = (scopeRoot ? [scopeRoot] : Array.from(document.querySelectorAll(
+      '[data-radix-popper-content-wrapper], [data-popper-placement], [data-floating-ui-portal], [role="listbox"], [role="menu"], [role="dialog"]'
+    ))).filter(c => c.getBoundingClientRect().width > 0 && c.getBoundingClientRect().height > 0);
+    if (containers.length) {
+      // Pick the container that's actually ON TOP: highest effective z-index,
+      // DOM order as tie-break. (DOM order alone is wrong for apps that portal
+      // popovers to the START of <body>.)
+      const zOf = (c) => {
+        let z = 0, w = c;
+        while (w && w !== document.body) {
+          try { const v = parseInt(getComputedStyle(w).zIndex, 10); if (!isNaN(v)) z = Math.max(z, v); } catch (e) {}
+          w = w.parentElement;
+        }
+        return z;
+      };
+      containers.sort((a, b) => zOf(a) - zOf(b));   // stable: ties keep DOM order
+      const pop = containers[containers.length - 1];
+      const harvest = (requireClickable) => {
+        const rows = Array.from(pop.querySelectorAll('div, li, span, button, a')).filter(r => {
+          if (r === pop) return false;
+          let cs;
+          try { cs = getComputedStyle(r); } catch (e) { return false; }
+          if (requireClickable) {
+            // clickable-ish: cursor:pointer, real button/link, handler attr,
+            // or option-ish markers. NOTE: React/Vue handlers are NOT
+            // `onclick` attributes — that's why the relaxed pass exists.
+            const clickable = cs.cursor === 'pointer' || r.tagName.toLowerCase() === 'button'
+                           || r.tagName.toLowerCase() === 'a' || r.hasAttribute('onclick')
+                           || r.hasAttribute('data-value') || r.hasAttribute('aria-selected');
+            if (!clickable) return false;
+          }
+          const t = (r.innerText || '').trim();
+          if (!t || t.length < 1 || t.length > 80) return false;
+          const rect = r.getBoundingClientRect();
+          if (rect.width < 8 || rect.height < 8) return false;
+          // Skip the search input wrapper, headers, close buttons — these have
+          // short text but aren't options. The good filter: many sibling rows
+          // share the same parent. Options come in batches; chrome doesn't.
+          return true;
+        });
+        // Group by parent; the parent with the MOST candidate children is the
+        // options list. This filters out lone buttons (Close, Done) automatically.
+        const byParent = new Map();
+        for (const r of rows) {
+          const p = r.parentElement;
+          if (!p) continue;
+          if (!byParent.has(p)) byParent.set(p, []);
+          byParent.get(p).push(r);
+        }
+        let best = []; let bestSize = 0;
+        for (const [, kids] of byParent) {
+          if (kids.length > bestSize) { bestSize = kids.length; best = kids; }
+        }
+        return bestSize >= 2 ? best : [];   // need at least 2 siblings to be a list
+      };
+      // Pass 1: clickable-ish rows (original behavior). Pass 2: drop the
+      // clickability requirement — React rows with default cursor and
+      // framework-bound handlers satisfy NONE of the attribute checks, and
+      // the sibling-cluster structure is the real signal anyway.
+      let h = harvest(true), hv = 'harvest-clickable';
+      if (!h.length) { h = harvest(false); hv = 'harvest-relaxed'; }
+      // Only ADOPT the harvest when it actually found rows. Falling through with the
+      // globally-discovered ARIA options is what keeps select2 working, where the
+      // scoped container is empty but real options do exist in an open popover.
+      // Harvested rows go FIRST (they came from the scoped/topmost popover, so they win
+      // ties) but the ARIA pool is APPENDED rather than discarded: overwriting it meant
+      // a wrong-but-nonempty scope threw away the genuine options entirely.
+      if (h.length) { const prev = vis; all = h; via = hv; vis = all.filter(isVisible).concat(prev); }
+    }
+  }
+  // Prefer options under a clearly-open container (the popover that just opened
+  // is far more likely to be data-state=open than the page-level navigation menu).
+  const inOpen = vis.filter(o => {
+    let w = o.parentElement;
+    while (w) {
+      if (w.getAttribute && w.getAttribute('data-state') === 'open') return true;
+      if (w.getAttribute && ['listbox','menu','dialog'].includes(w.getAttribute('role'))) {
+        // is this container itself currently shown? data-state may be absent
+        // on simpler popovers — but if it IS present, must not be closed.
+        const ds = w.getAttribute('data-state');
+        if (!ds || ds === 'open') return true;
+      }
+      w = w.parentElement;
+    }
+    return false;
+  });
+  const pool = inOpen.length ? inOpen : vis;
+  // Locale-robust matching: Unicode NFC (composed accents — "México" typed NFC
+  // must match a page rendering NFD), whitespace collapse (icon + label options
+  // put newlines in innerText), locale-aware lowercase (Turkish Ä°/Ä±).
+  // Ranked: exact > prefix > substring — plain `.includes` alone made "India"
+  // match "Indiana" when the exact option existed later in the list.
+  const norm = (s) => { try { return (s || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase(); } catch (e) { return (s || '').trim().toLowerCase(); } };
+  const want = norm(text);
+  const dbgO = { via, found: all.length, vis: vis.length, inOpen: inOpen.length, pool: pool.length, scope: scopeRoot ? (scopeRoot.id || scopeRoot.tagName.toLowerCase()) : null };
+  let pick = null, tier = null;
+  if (want) {
+    const labOf = (o) => norm(o.innerText);
+    pick = pool.find(o => labOf(o) === want);                      if (pick) tier = 'exact';
+    if (!pick) { pick = pool.find(o => labOf(o).startsWith(want)); if (pick) tier = 'prefix'; }
+    if (!pick) { pick = pool.find(o => labOf(o).includes(want));   if (pick) tier = 'contains'; }
+  }
+  // NEVER click an arbitrary option when the requested text didn't match. The old
+  // `pick = pool[0]` fallback returned ok:true with msg 'picked option "…"', and
+  // fillDropdown's verifier then saw the trigger label CHANGE (to the wrong value)
+  // and confirmed success — so a mismatched request silently submitted whatever
+  // happened to be first. Common triggers: an AJAX dropdown whose options haven't
+  // arrived, or a date-picker misclassified as a combobox (its "options" are then
+  // whatever the harvest fallback scraped, possibly the parent dialog's buttons).
+  // Failing loudly with the option list lets the model correct itself.
+  // NO first-option fallback for an EMPTY request. `form_input(ref, "")` is a
+  // natural "clear this field" gesture, and the sibling-cluster harvest can vote a
+  // popover's FOOTER as the option row set — so clicking pool[0] pressed "Cancel"
+  // and reported 'picked option "Cancel"'. An empty request has no correct pick.
+  if (!pick && !want) {
+    return { ok: false, actual: '',
+      msg: 'no option text was given. A combobox needs the option TEXT to pick; ' +
+           'clicking the first row is not a safe guess (it can be a Cancel/Discard control). ' +
+           'Nothing was clicked.', dbg: dbgO };
+  }
+  if (!pick) {
+    const avail = pool.slice(0, 8).map(o => (o.innerText || '').trim().slice(0, 40)).filter(Boolean);
+    return {
+      ok: false, actual: '',
+      msg: want
+        ? `no option matched ${JSON.stringify(text)}` +
+          (avail.length ? `. Visible options are: ${avail.map(a => JSON.stringify(a)).join(', ')}` +
+                          `. Pass one of these exactly, or re-observe if the list is still loading.`
+                        : ' and no visible options were found (the list may still be loading).')
+        : 'no visible options to pick',
+      dbg: dbgO,
+    };
+  }
+  // ALREADY SELECTED -> DO NOT CLICK. In a multi-select listbox (and in any
+  // toggle-style menu) clicking a selected option DESELECTS it, so "make sure X is
+  // chosen" silently un-chose it and still reported success. Worse, the false
+  // negative in fillDropdown's verifier invites a retry, which toggles it again.
+  // Report the desired end state as already true.
+  try {
+    if (pick.getAttribute('aria-selected') === 'true' || pick.getAttribute('aria-checked') === 'true' ||
+        (pick.tagName === 'OPTION' && pick.selected)) {
+      return { ok: true, actual: (pick.innerText || '').trim().slice(0, 60),
+               msg: `option ${JSON.stringify(text)} was ALREADY selected — left it alone ` +
+                    `(clicking it again would have deselected it).`,
+               dbg: Object.assign({ alreadySelected: true }, dbgO) };
+    }
+  } catch (e) {}
+  // behavior:'instant' — see _rectForPage: CSS scroll-behavior:smooth makes this
+  // async, and a long option list scrolled mid-animation gets clicked at a stale
+  // rect (the option rows are ~32px, so even a small drift misses).
+  try { pick.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } catch (e) {}
+  // Debug: exactly WHAT we are about to click, where, and its container state.
+  let pickInfo = { tier };
+  try {
+    const rr0 = pick.getBoundingClientRect();
+    let ds = null, w = pick;
+    while (w && ds === null) { ds = w.getAttribute ? w.getAttribute('data-state') : null; w = w.parentElement; }
+    pickInfo = {
+      tier,
+      tag: pick.tagName.toLowerCase(),
+      role: pick.getAttribute('role'),
+      text: (pick.innerText || '').trim().slice(0, 60),
+      rect: { x: Math.round(rr0.left), y: Math.round(rr0.top), w: Math.round(rr0.width), h: Math.round(rr0.height) },
+      nearestDataState: ds,
+      ariaSelected: pick.getAttribute('aria-selected'),
+    };
+  } catch (e) {}
+  // FULL pointer sequence incl. hover + move — mirrors _clickPage (proven to
+  // register on Radix SelectItem where the bare down/up/click sequence was
+  // flaky): Radix arms items via pointermove/pointerover before accepting the
+  // selection click; custom div pickers often gate on pointerdown only.
+  try {
+    const rr = pick.getBoundingClientRect();
+    const x = rr.left + rr.width / 2, y = rr.top + rr.height / 2;
+    const base = { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, screenX: x, screenY: y, button: 0 };
+    const ptr  = { ...base, pointerType: 'mouse', pointerId: 1, isPrimary: true };
+    pick.dispatchEvent(new PointerEvent('pointerover',  ptr));
+    pick.dispatchEvent(new PointerEvent('pointerenter', { ...ptr, bubbles: false }));
+    pick.dispatchEvent(new MouseEvent  ('mouseover',    base));
+    pick.dispatchEvent(new MouseEvent  ('mouseenter',   { ...base, bubbles: false }));
+    pick.dispatchEvent(new PointerEvent('pointermove',  ptr));
+    pick.dispatchEvent(new MouseEvent  ('mousemove',    base));
+    pick.dispatchEvent(new PointerEvent('pointerdown', { ...ptr, buttons: 1 }));
+    pick.dispatchEvent(new MouseEvent  ('mousedown',   { ...base, buttons: 1 }));
+    pick.dispatchEvent(new PointerEvent('pointerup',   { ...ptr,  buttons: 0 }));
+    pick.dispatchEvent(new MouseEvent  ('mouseup',     { ...base, buttons: 0 }));
+  } catch (e) {}
+  pick.click();
+    {
+    // SAY WHEN THE MATCH WAS NOT EXACT. "10" matched "100" by prefix and "male"
+    // matched "Female" by contains, both reported as a plain success with the tier
+    // buried in dbg (which the driver strips). A wrong quantity or a wrong category
+    // committed silently is the worst outcome this function has; naming it costs
+    // one clause and lets the model catch it.
+    const _picked = (pick.innerText || '').trim().slice(0, 60);
+    const _inexact = (tier === 'prefix' || tier === 'contains') && _picked && _picked !== text;
+    return { ok: true, actual: _picked,
+      msg: _inexact
+        ? `no option exactly matched ${JSON.stringify(text)} — picked ${JSON.stringify(_picked)} by ${tier} match. ` +
+          `If that is the wrong one, re-read the options and pass the exact text.`
+        : `picked option ${JSON.stringify(text)}`,
+      dbg: dbgO };
+  }
+}
+
+// For a RADIO, the caller names the option they want ("Male"); the ref may be any
+// member of the group. Clicking the ref regardless silently selects the WRONG
+// option — verified: form_input(ref_of_male_radio, "Female") selected Male and
+// reported success. Resolve the label against the group and act on the match.
+function _radioMatchPage(selector, text) {
+  const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg;
+    if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {}
+    return document.querySelector(s); };
+  const el = q(selector);
+  if (!el || el.type !== 'radio') return null;
+  const norm = (x) => String(x || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
+  const want = norm(text);
+  if (!want) return null;
+  const labelOf = (n) => {
+    let t = '';
+    try {
+      const root = (n.getRootNode && n.getRootNode().querySelector) ? n.getRootNode() : document;
+      if (n.id) { const l = root.querySelector(`label[for="${CSS.escape(n.id)}"]`); if (l) t = l.innerText || ''; }
+      if (!t) { const w = n.closest && n.closest('label'); if (w) t = w.innerText || ''; }
+      if (!t) t = n.getAttribute('aria-label') || '';
+    } catch (e) {}
+    return norm(t) || norm(n.value);
+  };
+  const self = labelOf(el);
+  if (self === want) return { mmid: el.getAttribute('mmid'), label: self, same: true };
+  let group = [];
+  try {
+    const root = (el.getRootNode && el.getRootNode().querySelectorAll) ? el.getRootNode() : document;
+    group = el.name ? Array.from(root.querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name)}"]`)) : [el];
+  } catch (e) { group = [el]; }
+  const hit = group.find(r => labelOf(r) === want) || group.find(r => labelOf(r).startsWith(want));
+  if (hit) return { mmid: hit.getAttribute('mmid'), label: labelOf(hit), same: hit === el };
+  return { err: 'no-match', options: group.map(labelOf).filter(Boolean).slice(0, 10) };
+}
+
+function _selectNativePage(selector, text) {
+  const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+  const el = q(selector);
+  if (!el || el.tagName.toLowerCase() !== 'select') return { ok: false, actual: '', msg: 'not a <select>' };
+  const norm = (s) => { try { return (s || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase(); } catch (e) { return (s || '').trim().toLowerCase(); } };
+  const want = norm(text);
+  // Disabled options (and options inside a disabled optgroup) are states the user
+  // could never reach; assigning one submits a value the form should reject.
+  const opts = Array.from(el.options || []).filter(o => {
+    try { return !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled); }
+    catch (e) { return true; }
+  });
+  const pick = opts.find(o => norm(o.text) === want)
+            || opts.find(o => norm(o.value) === want)
+            || opts.find(o => norm(o.text).startsWith(want))
+            || opts.find(o => norm(o.text).includes(want));
+  if (!pick) return { ok: false, actual: el.value, msg: `no option matching ${JSON.stringify(text)}` };
+  el.value = pick.value;
+  el.dispatchEvent(new Event('input',  { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return { ok: true, actual: pick.text, msg: `selected "${pick.text}"` };
+}
+
+function _countVisibleOptionsPage(triggerSel) {
+  // SCOPE-AWARE (its old "same scope discipline as _pickOptionPage" comment was simply
+  // false — it had no scope handling at all). Without this, always-visible foreign
+  // [aria-selected]/role=option noise elsewhere on the page (a plan picker, tag chips
+  // misusing aria-selected) made pollCount non-zero, which suppressed the trusted-open
+  // escalation so the real dropdown never opened.
+  let _scope = null;
+  try {
+    const q = (x) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(x || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(x); };
+    const trig = triggerSel ? q(triggerSel) : null;
+    // THE TRIGGER'S OWN STATE IS THE GATE. If it says closed, nothing on the page can be
+    // this widget's open option list — that alone stops a foreign always-visible listbox
+    // (a plan picker, tag chips misusing aria-selected) from making a CLOSED combobox
+    // look open and suppressing the trusted-open escalation.
+    if (trig) {
+      const ex = trig.getAttribute('aria-expanded'), ds = trig.getAttribute('data-state');
+      if (ex === 'false' || ds === 'closed') return 0;
+    }
+    const ref = trig && (trig.getAttribute('aria-controls') || trig.getAttribute('aria-owns'));
+    if (ref) {
+      const idRoot = (trig.getRootNode && trig.getRootNode().getElementById) ? trig.getRootNode() : document;
+      _scope = ref.split(/\s+/).map(id => idRoot.getElementById(id)).find(Boolean) || null;
+      // A scope containing the trigger is the widget's own selection box, not a popover.
+      try { if (_scope && _scope.contains(trig)) _scope = null; } catch (e) {}
+    }
+  } catch (e) {}
+  // Same scope discipline as _pickOptionPage: only count options inside a
+  // popover that is actually OPEN right now (not transitioning out). Standard
+  // ARIA first; if zero found, fall back to clickable-rows-in-popover heuristic
+  // for custom pickers that don't use role=option.
+  const _dqa = (sel) => {
+    const acc = [];
+    const visit = (root) => {
+      try { root.querySelectorAll(sel).forEach(e => acc.push(e)); } catch (e) {}
+      root.querySelectorAll('*').forEach(e => { if (e.shadowRoot) visit(e.shadowRoot); });
+    };
+    visit(document);
+    return acc;
+  };
+  // KEEP IN SYNC with _pickOptionPage's queries/filters (page-injected
+  // functions are serialized independently — no shared consts).
+  const _OPT = '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="treeitem"], li[data-value], [aria-selected]';
+  const _scoped = _scope ? Array.from(_scope.querySelectorAll(_OPT)) : [];
+  // Preference, not absolute — select2's aria-controls target holds no option rows, so a
+  // hard scope counts 0 forever and the whole open/pick chain stalls.
+  const standard = (_scoped.length ? _scoped : _dqa(_OPT)).filter(o => {
+    try {
+      const ro = o.getAttribute && o.getAttribute('role');
+      if (ro && ['tab', 'row', 'gridcell', 'columnheader', 'rowheader'].includes(ro)) return false;
+      const r = o.getBoundingClientRect();
+      if (!(r.width > 0 && r.height > 0)) return false;
+      const cs = getComputedStyle(o);
+      if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+      let w = o;
+      while (w) {
+        if (w.getAttribute) {
+          if (w.getAttribute('data-state') === 'closed') return false;
+          if (w.getAttribute('aria-hidden') === 'true') return false;
+          if (w.hasAttribute && w.hasAttribute('inert')) return false;
+        }
+        w = w.parentElement;
+      }
+      return true;
+    } catch (e) { return false; }
+  });
+  if (standard.length) return standard.length;
+  // Fallback: count candidate rows inside the TOPMOST visible popover-container
+  // (highest effective z-index; DOM order tie-break).
+  // Scope the row-harvest fallback as well. Counting rows in ANY visible popover-shaped
+  // container made a closed combobox look open whenever some unrelated listbox existed
+  // on the page — which suppressed the trusted-open escalation entirely (zoo W4).
+  const containers = ((_scope && _scope.querySelector('div,li,span,button,a')) ? [_scope] : Array.from(document.querySelectorAll(
+    '[data-radix-popper-content-wrapper], [data-popper-placement], [data-floating-ui-portal], [role="listbox"], [role="menu"], [role="dialog"]'
+  ))).filter(c => c.getBoundingClientRect().width > 0 && c.getBoundingClientRect().height > 0);
+  if (!containers.length) return 0;
+  const zOf = (c) => {
+    let z = 0, w = c;
+    while (w && w !== document.body) {
+      try { const v = parseInt(getComputedStyle(w).zIndex, 10); if (!isNaN(v)) z = Math.max(z, v); } catch (e) {}
+      w = w.parentElement;
+    }
+    return z;
+  };
+  containers.sort((a, b) => zOf(a) - zOf(b));
+  const pop = containers[containers.length - 1];
+  const countRows = (requireClickable) => {
+    const rows = Array.from(pop.querySelectorAll('div, li, span, button, a')).filter(r => {
+      if (r === pop) return false;
+      let cs;
+      try { cs = getComputedStyle(r); } catch (e) { return false; }
+      if (requireClickable) {
+        const clickable = cs.cursor === 'pointer' || r.tagName.toLowerCase() === 'button'
+                       || r.tagName.toLowerCase() === 'a' || r.hasAttribute('onclick')
+                       || r.hasAttribute('data-value') || r.hasAttribute('aria-selected');
+        if (!clickable) return false;
+      }
+      const t = (r.innerText || '').trim();
+      if (!t || t.length > 80) return false;
+      const rect = r.getBoundingClientRect();
+      return rect.width >= 8 && rect.height >= 8;
+    });
+    // sibling-cluster heuristic
+    const byParent = new Map();
+    for (const r of rows) {
+      const p = r.parentElement; if (!p) continue;
+      byParent.set(p, (byParent.get(p) || 0) + 1);
+    }
+    let best = 0;
+    for (const [, n] of byParent) if (n > best) best = n;
+    return best >= 2 ? best : 0;
+  };
+  return countRows(true) || countRows(false);
+}
+
+function _typeIntoOpenPopoverSearchPage(text, triggerSel) {
+  // shadcn <Command>, Radix Combobox+Command, MUI Autocomplete and Headless UI all
+  // render a searchable input INSIDE the open popover. Find it and type.
+  //
+  // SCOPED TO THE POPOVER — deliberately NOT a document-wide query. The old version
+  // searched the whole document and took visible[0], with a "some ancestor within 8
+  // levels contains a [role=listbox]" sanity gate that ANY header search box with
+  // autocomplete satisfies (GitHub, MDN, most docs and e-commerce sites). So when a
+  // combobox failed to render options in time, this typed the option text into the
+  // SITE'S GLOBAL SEARCH, matched a search suggestion, and navigated away mid-form.
+  // Resolve the trigger's aria-controls target first (W3C combobox pattern), else
+  // the topmost popover-shaped container, and search only inside it.
+  let scope = null;
+  try {
+    const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+    const trig = triggerSel ? q(triggerSel) : null;
+    const ref = trig && (trig.getAttribute('aria-controls') || trig.getAttribute('aria-owns'));
+    if (ref) {
+      const idRoot = (trig.getRootNode && trig.getRootNode().getElementById) ? trig.getRootNode() : document;
+      scope = ref.split(/\s+/).map(id => idRoot.getElementById(id)).find(Boolean) || null;
+    }
+  } catch (e) {}
+  if (!scope) {
+    const containers = Array.from(document.querySelectorAll(
+      '[data-radix-popper-content-wrapper], [data-popper-placement], [data-floating-ui-portal], [role="listbox"], [role="menu"], [role="dialog"]'
+    )).filter(c => { const r = c.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+    if (!containers.length) return { ok: false, msg: 'no open popover to type into' };
+    const zOf = (c) => { let z = 0, w = c; while (w && w !== document.body) { try { const v = parseInt(getComputedStyle(w).zIndex, 10); if (!isNaN(v)) z = Math.max(z, v); } catch (e) {} w = w.parentElement; } return z; };
+    containers.sort((a, b) => zOf(a) - zOf(b));
+    scope = containers[containers.length - 1];
+  }
+  // PRIORITY ORDER, not document order. A comma-separated selector group returns
+  // DOCUMENT order, so the implied priority of this list never existed — and with the
+  // broad `input:not([type=hidden])` catch-all, a popover whose first input is a
+  // "Select all" checkbox got the option text written into it and returned ok:true.
+  // Iterate the sub-selectors most-specific-first and take the first VISIBLE hit.
+  const INPUT_TIERS = [
+    'input[cmdk-input]', '[cmdk-input]',
+    'input[role="combobox"]', 'input[role="searchbox"]', 'input[type="search"]',
+    'input[aria-autocomplete]',
+    // Last resort: any text-ish input. Never a checkbox/radio/button/file — typing an
+    // option name into those does nothing useful and silently reports success.
+    'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="file"]):not([type="range"])',
+  ];
+  const visibleIn = (root) => {
+    for (const sel of INPUT_TIERS) {
+      let hits = [];
+      try { hits = Array.from(root.querySelectorAll(sel)); } catch (e) { continue; }
+      for (const i of hits) {
+        try {
+          const r = i.getBoundingClientRect();
+          const cs = getComputedStyle(i);
+          if (r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden') return i;
+        } catch (e) {}
+      }
+    }
+    return null;
+  };
+  let inp = visibleIn(scope);
+  // Per the W3C combobox pattern aria-controls names the LISTBOX, not the popover — so
+  // widgets that put the filter input BESIDE the listbox (Headless UI Combobox and any
+  // conforming hand-rolled picker) have no input inside the scope at all. Widen once to
+  // the scope's nearest popover-shaped ancestor before giving up.
+  let _widened = false;
+  if (!inp) {
+    let anc = scope.parentElement, hops = 0;
+    while (anc && hops < 4 && !inp) {
+      inp = visibleIn(anc);
+      if (inp) { _widened = true; break; }
+      anc = anc.parentElement; hops++;
+    }
+  }
+  if (!inp) return { ok: false, msg: 'no search input inside the open popover' };
+  // WIDENING CAN LEAVE THE WIDGET. Climbing four ancestors to find "a visible
+  // input" found a DIFFERENT FORM FIELD on Google Flights: the text landed in the
+  // add-another-origin box ("Where else?") while the ref the caller passed still
+  // held its old value, and the tool reported success. Measured live; the agent
+  // had to reload the page to recover.
+  //
+  // A filter box inside a picker is anonymous or explicitly search-ish. A peer
+  // field carries its own identity — that is exactly what makes it someone else's
+  // field. Refuse those, and name what we found either way so a wrong guess is
+  // visible in the result instead of silent.
+  const _inpName = (() => {
+    try {
+      const lbl = inp.labels && inp.labels[0];
+      return (inp.getAttribute('aria-label') || (lbl && lbl.innerText) ||
+              inp.getAttribute('placeholder') || inp.getAttribute('name') || '').trim();
+    } catch (e) { return ''; }
+  })();
+  if (_widened) {
+    // A filter box BELONGS to the picker we opened, and says so structurally:
+    // aria-autocomplete is the W3C combobox filter signal, and aria-controls/owns
+    // names the listbox we are scoped to. Both are language-independent. Do NOT
+    // accept a bare role="combobox" — a peer autocomplete field (Flights' "Where
+    // else?") carries that too, which is precisely the control we must not touch.
+    // The fixture that caught an earlier, stricter version of this rule (W3) is a
+    // labelled "Filter people" input beside its listbox: legitimate, and named.
+    let _pointsHere = false;
+    try {
+      const _ac = (inp.getAttribute('aria-controls') || inp.getAttribute('aria-owns') || '').trim();
+      _pointsHere = !!_ac && _ac.split(/\s+/).some((id) => {
+        const tgt = document.getElementById(id);
+        return tgt && (tgt === scope || scope.contains(tgt) || tgt.contains(scope));
+      });
+    } catch (e) {}
+    const searchy = _pointsHere ||
+                    !!inp.getAttribute('aria-autocomplete') ||
+                    (inp.getAttribute('type') || '').toLowerCase() === 'search' ||
+                    (inp.getAttribute('role') || '').toLowerCase() === 'searchbox' ||
+                    !_inpName;
+    if (!searchy) {
+      return { ok: false, msg: `refused: the only input found is a DIFFERENT field ` +
+        `(${JSON.stringify(_inpName)}), reached by searching outside this widget — typing ` +
+        `there would silently fill the wrong control. Open the picker and choose an option ` +
+        `by its text, or pass the ref of the field you actually mean.` };
+    }
+  }
+  const visible = [inp];
+  try { inp.focus(); } catch (e) {}
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+  setter.call(inp, text || '');
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
+  inp.dispatchEvent(new Event('change', { bubbles: true }));
+  // NAME THE TARGET. "typed into popover search" gave the caller no way to tell
+  // which control received the text, which is what let the wrong-field bug above
+  // read as success.
+  return { ok: true, msg: `typed ${JSON.stringify(text)} into the picker's search input` +
+                          (_inpName ? ` (${JSON.stringify(_inpName)})` : ' (unlabeled)') +
+                          (_widened ? ' [found outside the popover scope]' : '') };
+}
+
+// STRUCTURAL selection evidence for a custom combobox trigger, so decisions don't
+// rest on an English wordlist. Returns the trigger's label plus two
+// language-independent signals:
+//   - hasPlaceholderAttr: [data-placeholder] on the trigger or its value node
+//     (Radix/TipTap/shadcn convention) — the trigger is showing hint text.
+//   - backing: the hidden native <select>/<input> the widget replaced, if one sits
+//     alongside the widget wrapper. Its value is DEFINITIVE: empty means nothing is
+//     selected regardless of what the trigger renders, in any language.
+function _triggerEvidencePage(sel) {
+  const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+  const el = q(sel);
+  if (!el) return null;
+  // Same structural placeholder test the collector uses (see _phMarked there):
+  // the token "placeholder" in a data-* name, a data-* value, or a class list.
+  // Kept in step deliberately — this evidence decides whether fillDropdown
+  // believes a pick landed, and having the two disagree meant a German or
+  // Japanese Chakra/PrimeVue widget was read one way when observed and another
+  // way when acted on.
+  let hasPlaceholderAttr = false;
+  try {
+    const txt = (el.innerText || '').trim();
+    const marked = (n) => {
+      if (!n || !n.attributes) return false;
+      for (const a of n.attributes) {
+        if (a.name.indexOf('aria-') === 0) continue;
+        if (a.name.indexOf('placeholder') !== -1) {
+          const v = (a.value || '').trim();
+          if (!v || v === 'true' || !txt || v === txt) return true;
+          continue;
+        }
+        if (a.name.indexOf('data-') === 0 && /(^|[\s,_-])placeholder([\s,_-]|$)/.test(a.value)) return true;
+      }
+      const cn = typeof n.className === 'string' ? n.className : (n.className && n.className.baseVal) || '';
+      return /(^|[\s_-])placeholder([\s_-]|$)/.test(cn);
+    };
+    hasPlaceholderAttr = marked(el);
+    if (!hasPlaceholderAttr) {
+      for (const c of el.querySelectorAll('*')) {
+        const ct = (c.innerText || '').trim();
+        if (marked(c) && ct && (!txt || ct === txt)) { hasPlaceholderAttr = true; break; }
+      }
+    }
+  } catch (e) {}
+  let backing = null;
+  try {
+    const isNative = (n) => {
+      // A backing control is a native control the library HID to render its own widget.
+      // Accepting any <input> was wrong: a hidden CSRF token, a neighbouring quantity
+      // field, or a same-row checkbox got adopted as "the backing control" and then drove
+      // four separate decisions (unselected, the ok:true short-circuit, backed-by=ref_N,
+      // DEAD-DUPLICATE). Require a <select> (always a replaced control in this pattern) or
+      // an <input> the page has VISUALLY HIDDEN — libraries always hide the original. A
+      // VISIBLE input beside a widget is a different field, never its backing.
+      if (!n || n === el) return false;
+      if (n.tagName === 'SELECT') return true;
+      if (n.tagName !== 'INPUT') return false;
+      if (['checkbox','radio','button','submit','file','range'].includes((n.type || '').toLowerCase())) return false;
+      try {
+        const r = n.getBoundingClientRect();
+        // type=hidden is NOT a library-hidden original. A widget library replaces a
+        // real control and hides it with CSS (display:none / 1px / sr-only) because it
+        // still needs to be focusable and form-serialisable; type=hidden can be neither.
+        // Meanwhile type=hidden is exactly what CSRF tokens, ids and nonces use — the
+        // zoo's W1 caught this adopting a Rails _token as a select's "backing control".
+        if ((n.type || '').toLowerCase() === 'hidden') return false;
+        if (r.width <= 4 || r.height <= 4) return true;
+        const cs = getComputedStyle(n);
+        return cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity || '1') === 0;
+      } catch (e) { return false; }
+    };
+    let w = el;
+    for (let d = 0; d < 3 && w && w !== document.body; d++) {
+      let cand = null;
+      if (isNative(w.previousElementSibling)) cand = w.previousElementSibling;
+      else if (isNative(w.nextElementSibling)) cand = w.nextElementSibling;
+      else { for (const ch of w.children) { if (ch !== el && isNative(ch)) { cand = ch; break; } } }
+      if (cand) {
+        const selText = (cand.tagName === 'SELECT' && cand.options && cand.options[cand.selectedIndex])
+          ? (cand.options[cand.selectedIndex].text || '').trim() : '';
+        backing = { tag: cand.tagName.toLowerCase(), value: String(cand.value || '').trim(), text: selText,
+                    weak: cand.tagName !== 'SELECT' };   // a hidden <input> is suggestive, not proof
+        break;
+      }
+      w = w.parentElement;
+    }
+  } catch (e) {}
+  return { label: (el.innerText || el.value || '').trim().slice(0, 80), hasPlaceholderAttr, backing };
+}
+
+function _triggerLabelPage(sel) {
+  const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+  const el = q(sel);
+  return el ? (el.innerText || el.value || '').trim().slice(0, 80) : '';
+}
+
+// Structural submit-button detection inside the current dialog/modal.
+// Used (a) when the caller omits submit_mmid, and (b) to RE-RESOLVE an
+// orphaned submit selector right before clicking - a disabled->enabled
+// submit is typically a NEW React node without the observed mmid.
+function _detectSubmitPage(fieldSel) {
+  // SCOPE: the field's own <form> first, then an open dialog. Previously this only
+  // ever looked inside a dialog, so on an ordinary non-modal page submit auto-detect
+  // returned null and `fill_form(submit=true)` filled the fields and quietly did not
+  // submit (it said so, but the caller asked for a submit and didn't get one). A
+  // <form> is every bit as structural a scope as a dialog, and scoping to the FIELD'S
+  // form avoids grabbing a search button from some unrelated form on the page.
+  let scoped = null, fieldResolved = false;
+  if (fieldSel) {
+    try {
+      const q = (x) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(x || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(x); };
+      const f = q(fieldSel);
+      if (f) fieldResolved = true;
+      // [role=form] included: React apps very often have NO <form> element at all, which
+      // is what made the global-dialog fallback the COMMON path rather than a rare one.
+      if (f && f.closest) scoped = f.closest('[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog, form, [role="form"]');
+    } catch (e) {}
+  }
+  const inside = (host) => {
+              // If the field RESOLVED but has no form/dialog ancestor, that is an
+              // answer — not a licence to search page-wide. Falling through to a global
+              // dialog query let an unrelated one-button toast ("Got it", newsletter)
+              // become the submit scope: tier 3 picked its sole button, the trusted
+              // click dismissed the toast, and realEffect saw dialogs 1->0 and reported
+              // "submit OK; modal closed" for a form that was never submitted.
+              const globalDialog = fieldResolved ? null
+                : document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog');
+              const dialog = host || scoped || globalDialog;
+              if (!dialog) return null;
+              const visible = (b) => {
+                try { const r = b.getBoundingClientRect(); const cs = getComputedStyle(b);
+                      return r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden' && !b.disabled; }
+                catch (e) { return false; }
+              };
+              const buttons = Array.from(dialog.querySelectorAll('button, [role="button"], input[type="submit"]')).filter(visible);
+              const pickFrom = (candidates) => {
+                if (!candidates.length) return null;
+                // Geometry tie-break: bottom action row, end-side button.
+                // "End" depends on text direction — RTL dialogs put the primary
+                // action on the LEFT.
+                const rtl = (document.documentElement.dir === 'rtl') ||
+                            (getComputedStyle(document.documentElement).direction === 'rtl');
+                candidates.sort((a, b) => {
+                  const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+                  return (br.top - ar.top) || (rtl ? (ar.left - br.left) : (br.left - ar.left));
+                });
+                const chosen = candidates[0];
+                return {
+                  mmid: chosen.getAttribute('mmid'),
+                  label: (chosen.innerText || chosen.value || chosen.getAttribute('aria-label') || '').trim().slice(0, 60),
+                };
+              };
+              // DESTRUCTIVE-WORD FILTER, applied to EVERY tier. Tiers 1 and 3 had
+              // none, and they are the ones that fire on ordinary HTML forms: a form
+              // with two type="submit" buttons, "Save changes" and "Delete account",
+              // resolved to DELETE, because pickFrom sorts bottom-most/end-side and
+              // geometry was the only input. Tier 3 additionally accepted type="reset"
+              // ("Clear form" wiped the fill that had just succeeded) and a lone
+              // "Delete permanently". Non-English destructive words are included
+              // because tier 1b already picked "Löschen" over "Speichern".
+              const DESTRUCTIVE = /^(cancel|close|back|dismiss|x|delete|remove|discard|clear|reset|revert|erase|abort|leave|logout|löschen|abbrechen|entfernen|supprimer|annuler|eliminar|cancelar|削除|キャンセル|삭제|удалить|отмена)\b/i;
+              const safeAction = (b) => {
+                const t = (b.getAttribute('type') || '').toLowerCase();
+                if (t === 'reset') return false;
+                const txt = ((b.innerText || b.value || b.getAttribute('aria-label') || '').trim());
+                return !DESTRUCTIVE.test(txt);
+              };
+              // 1) STRUCTURAL (language-independent): an explicit submit control.
+              //    type="submit" is the W3C way to mark the form's action button —
+              //    works on "Speichern"/"ä¿å­˜"/"Enregistrer" UIs where the English
+              //    wordlist below never matches.
+              const structural = buttons.filter(b =>
+                (b.getAttribute('type') || '').toLowerCase() === 'submit').filter(safeAction);
+              const s = pickFrom(structural);
+              if (s) return s;
+              // 1b) IMPLICIT SUBMIT (also structural, also language-independent).
+              // Per HTML, a <button> with NO type attribute inside a <form> defaults
+              // to type=submit. Tier 1 only tested the ATTRIBUTE, so these fell
+              // through to the English keyword tier below — meaning a German dialog
+              // with "Abbrechen"/"Speichern" and no explicit types got no structural
+              // answer at all. Cancel-ish siblings are excluded by the same
+              // dismiss-word filter used in tier 2 (English-only, but here it only
+              // narrows an already-structural candidate set rather than gating it).
+              const implicit = buttons.filter(b =>
+                b.tagName === 'BUTTON' && !b.hasAttribute('type') && !!b.closest('form'));
+              if (implicit.length) {
+                const notDismiss = implicit.filter(safeAction);
+                const im = pickFrom(notDismiss.length ? notDismiss : implicit);
+                if (im) return im;
+              }
+              // 2) KEYWORD (English heuristic, kept as a fallback for the very
+              //    common <button> with no type inside a div-form).
+              const submitWords = /^(submit|save|add\b|create\b|confirm|continue|done|next|publish|send|apply|update|ok\b)\b/i;
+              const candidates = buttons.filter(b => {
+                const txt = ((b.innerText || b.value || b.getAttribute('aria-label') || '').trim());
+                if (!txt) return false;
+                // Skip Cancel/Close/Back/Dismiss — these CLOSE the modal without saving.
+                if (/^(cancel|close|back|dismiss|x|delete|discard)\b/i.test(txt)) return false;
+                return submitWords.test(txt);
+              });
+              const k = pickFrom(candidates);
+              if (k) return k;
+              // 3) SOLE-ACTION fallback (language-independent): a dialog whose
+              //    footer has exactly ONE non-dismiss labeled button — that's the
+              //    primary action regardless of its language.
+              const labeled = buttons.filter(safeAction).filter(b => {
+                const txt = ((b.innerText || b.value || b.getAttribute('aria-label') || '').trim());
+                return txt && txt.length > 1 && !/^[✕×x]$/i.test(txt) &&
+                       !(b.getAttribute('aria-label') || '').match(/^close/i);
+              });
+              if (labeled.length === 1) return pickFrom(labeled);
+              return null;
+            };
+            return inside();
+}
+
+async function fillDropdown(tabId, selector, text) {
+  // DEBUG TRACE: every step of the open -> find -> pick -> verify chain is
+  // recorded and returned as `dbg`. The Python driver persists the full trace
+  // to temp/task_*/fill_form_NN_*.txt on EVERY call (and strips it from the
+  // model-facing string), so flaky dropdown failures are diagnosable after
+  // the fact instead of needing a live repro.
+  const T0 = Date.now();
+  const trace = [];
+  const tr = (m, d) => { try { trace.push((`+${Date.now() - T0}ms ${m}` + (d !== undefined ? ' ' + JSON.stringify(d) : '')).slice(0, 600)); } catch (e) {} };
+  // Normalizer used for all label comparisons: Unicode NFC (composed accents),
+  // whitespace collapse, locale-aware lowercase. Language-independent.
+  const norm = (s) => { try { return (s || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase(); } catch (e) { return (s || '').trim().toLowerCase(); } };
+
+  // 0) capture the trigger's label BEFORE doing anything. Success verification
+  // is "the label CHANGED (or now contains the requested option)" — a purely
+  // structural test that works in any language, unlike the old English
+  // placeholder-word check which reported false success on non-English UIs.
+  // Cross-frame routing: resolve ONCE — in-frame scripts get the local
+  // selector + frameId; clickTrusted re-resolves, so it gets the original.
+  const _rt = resolveFrameSelector(selector);
+  const origSelector = selector;
+  const fid = _rt.frameId;
+  selector = _rt.selector;
+  const beforeLabel = await runInTab(tabId, _triggerLabelPage, [selector], fid) || '';
+  // Trigger's pre-open state — catches the "popover was ALREADY open, our
+  // open-click toggled it closed" failure mode.
+  const _trigState = (label) => runInTab(tabId, (sel) => {
+    const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+    const el = q(sel);
+    if (!el) return null;
+    return {
+      expanded: el.getAttribute('aria-expanded'),
+      state: el.getAttribute('data-state'),
+      controls: el.getAttribute('aria-controls'),
+      focused: document.activeElement === el,
+    };
+  }, [selector], fid).then(s => { tr(label, s); return s; }).catch(() => null);
+  tr('beforeLabel', beforeLabel);
+  await _trigState('trigger-state-before-open');
+
+  // ALREADY-SELECTED SHORT-CIRCUIT: the caller asked for the value the trigger
+  // already shows, and that value does not look like an unfilled placeholder.
+  // Opening + re-picking is pure risk (React re-render races, Escape-vs-dialog
+  // races — both observed live) for zero gain. Language-independent equality;
+  // the placeholder-look check (wordlist + ellipsis) is the existing booster.
+  // Requires POSITIVE, language-independent evidence that the label is a real
+  // selection — not just that it equals the requested text. The old version was
+  // gated only on an English wordlist + ellipsis, so a German trigger reading
+  // "Bitte wählen" that the model echoed back returned ok:true "already selected"
+  // without ever opening the dropdown: never filled, never verified. That also
+  // falsified CLAUDE.md's claim that fill-time verification covers the
+  // non-English placeholder residual.
+  const _ev = text && beforeLabel && norm(text) === norm(beforeLabel)
+    ? await runInTab(tabId, _triggerEvidencePage, [selector], fid).catch(() => null)
+    : null;
+  if (_ev) {
+    tr('selection-evidence', _ev);
+    const looksPlaceholder = _ev.hasPlaceholderAttr ||
+      /^(select|choose|pick)\b/i.test(beforeLabel.trim()) ||
+      /\.\.\.$|…$/.test(beforeLabel.trim());
+    // A backing native control is definitive in BOTH directions and in any
+    // language: non-empty value confirms a real selection; empty value proves the
+    // trigger is showing placeholder text no matter what it reads.
+    // POSITIVE PROOF ONLY. The previous condition (!backedRefutes && !looksPlaceholder)
+    // passed on the ABSENCE of refutation, so with no backing control — the normal case
+    // for Radix/shadcn/HeadlessUI — it short-circuited on ZERO evidence and the German
+    // "Bitte wählen" echo still returned ok:true, exactly the bug the comment claimed to
+    // have fixed. A hidden <input> (weak) is not proof either. Opening is cheap and safe
+    // now that a mismatch fails loudly instead of clicking pool[0], and `registered`
+    // already treats "label unchanged but equals the request" as success, so re-picking
+    // a genuinely selected value still passes.
+    const backedConfirms = _ev.backing && !_ev.backing.weak && _ev.backing.value !== '';
+    const backedRefutes  = _ev.backing && !_ev.backing.weak && _ev.backing.value === '';
+    if (backedConfirms && !looksPlaceholder) {
+      tr('already-selected short-circuit (no open, no pick)', { basis: backedConfirms ? 'backing-control' : 'trigger-label-only' });
+      return {
+        ok: true, actual: beforeLabel,
+        msg: `already selected ${JSON.stringify(beforeLabel)} — no action needed (confirmed by the widget's backing <${_ev.backing.tag}>, value ${JSON.stringify(_ev.backing.value)})`,
+        dbg: trace,
+      };
+    }
+    tr('short-circuit REJECTED — trigger is showing placeholder text, will open and pick', { backedRefutes, looksPlaceholder });
+  }
+
+  // Detect when the caller passed the placeholder label back to us (model
+  // confusion: "Select focus areas..." is the *unfilled* state, not an option).
+  // General signal: requested text === the trigger's current (unfilled) text.
+  // The English wordlist remains as a supplementary hint only.
+  // EQUALITY ONLY — the bare English wordlist is gone from this gate. It used to
+  // fire on any requested text starting with select/choose/pick, so asking for a
+  // real option literally named "Select All" was treated as model confusion and
+  // SKIPPED the registered-verification below, returning ok:true even when the
+  // click never registered. Echo means "you handed me back the text the trigger is
+  // already showing", which is exactly label equality and nothing else.
+  const placeholderEcho = !!text && !!beforeLabel && norm(text) === norm(beforeLabel);
+
+  // Poll helper: condition-based waiting instead of fixed sleeps — slow popover
+  // animations / remote-data options (MUI, Ant showSearch, Select2 AJAX) need
+  // longer than any fixed guess, while fast SPAs shouldn't pay the worst case.
+  const pollCount = async (timeoutMs) => {
+    const t0 = Date.now();
+    for (;;) {
+      const c = await runInTab(tabId, _countVisibleOptionsPage, [selector], fid);
+      if (c) return c;
+      if (Date.now() - t0 >= timeoutMs) return 0;
+      await new Promise(r => setTimeout(r, 100));
+    }
+  };
+
+  // 1) click the combobox to open the listbox popover (untrusted first)
+  let open = await runInTab(tabId, _clickPage, [selector], fid);
+  tr('open-click', open && { ok: open.ok, msg: (open.msg || '').slice(0, 120) });
+  if (!open || !open.ok) return { ok: false, actual: '', msg: `couldn't open dropdown: ${open && open.msg}`, dbg: trace };
+  let count = await pollCount(1200);
+  tr('options-after-open', { count });
+  await _trigState('trigger-state-after-open');
+
+  // 2) if no options rendered, try trusted-input open (some triggers gate on
+  // real pointer events; this matches our click auto-escalate).
+  //
+  // BUT FIRST ask the trigger whether it is ALREADY OPEN. "No options after 1.2s"
+  // has two very different causes: the open click didn't register (escalate), or the
+  // popover IS open and its options are still loading (a 2-3s AJAX round trip on
+  // Select2/Ant/MUI Autocomplete is routine, showing a spinner and zero option
+  // nodes). In the second case the trusted re-click TOGGLES THE POPOVER CLOSED and
+  // the whole chain degrades from there. aria-expanded / data-state was already
+  // being captured here for the trace only — now it drives the decision.
+  if (!count) {
+    const stOpen = await _trigState('trigger-state-before-escalation');
+    const alreadyOpen = !!stOpen && (stOpen.expanded === 'true' || stOpen.state === 'open');
+    if (alreadyOpen) {
+      tr('popover reports OPEN — extending the option poll rather than re-clicking (a re-click would toggle it shut)');
+      count = await pollCount(2500);
+      tr('options-after-extended-poll', { count });
+      if (!count) {
+        // ARIA SAYS OPEN BUT NOTHING RENDERED — a HALF-OPEN state. Base UI (and shadcn's
+        // Base-UI-backed Select) flips aria-expanded on the untrusted pointer sequence
+        // while refusing to MOUNT the popover without a trusted event, so waiting longer
+        // never helps. Deferring the escalation was right; SUPPRESSING it was not — that
+        // is what this branch originally did, and it made every such widget unusable
+        // through form_input/fill_form while a plain `computer` click opened it fine.
+        // Reset the half-state with Escape (a trusted click here would just toggle the
+        // flag off), then open for real with trusted input.
+        tr('half-open state: aria-expanded=true with zero options — resetting and escalating to trusted input');
+        // GATED, like the step-5 Escape. In the half-open premise the popover never
+        // MOUNTED, so the topmost dismissable layer is whatever else is open — and
+        // if this widget sits inside a modal (the common case: a combobox in a
+        // form dialog), a document-level Escape closes THE DIALOG and every field
+        // already filled in it is gone. Radix Dialog and native <dialog> both close
+        // on key without caring about isTrusted. Send it only when no dialog is
+        // open, and target the trigger rather than the document so a listening
+        // ancestor sees it before the page does.
+        try {
+          const escaped = await runInTab(tabId, (sel) => {
+            const q = (x) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(x || ''); const r = window.__mmidReg;
+              if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {}
+              return document.querySelector(x); };
+            const openDialog = Array.from(document.querySelectorAll('[role="dialog"],[role="alertdialog"],[aria-modal="true"],dialog'))
+              .some(d => { const r2 = d.getBoundingClientRect();
+                           return r2.width > 0 && r2.height > 0 && getComputedStyle(d).visibility !== 'hidden'; });
+            if (openDialog) return 'skipped: a dialog is open and Escape would close it';
+            const ev = { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true };
+            const t = q(sel) || document;
+            t.dispatchEvent(new KeyboardEvent('keydown', ev));
+            t.dispatchEvent(new KeyboardEvent('keyup', ev));
+            return 'sent';
+          }, [origSelector], fid);
+          tr('half-open Escape', escaped);
+        } catch (e) {}
+        await new Promise(r => setTimeout(r, 120));
+        try { await clickTrusted(tabId, origSelector); } catch (e) { tr('clickTrusted threw', String(e).slice(0, 120)); }
+        count = await pollCount(1500);
+        tr('options-after-halfopen-recovery', { count });
+      }
+    } else {
+      tr('escalating: trusted open click');
+      try { await clickTrusted(tabId, origSelector); } catch (e) { tr('clickTrusted threw', String(e).slice(0, 120)); }
+      count = await pollCount(1200);
+      tr('options-after-trusted-open', { count });
+      await _trigState('trigger-state-after-trusted-open');
+    }
+  }
+
+  // 3) still nothing? Many multi-select popovers (command-palette style) only
+  // render options after the user types into the embedded search input.
+  if (!count && text) {
+    const typed = await runInTab(tabId, _typeIntoOpenPopoverSearchPage, [text, selector], fid);
+    tr('typed-into-popover-search', typed && { ok: typed.ok, msg: (typed.msg || '').slice(0, 120) });
+    if (typed && typed.ok) {
+      count = await pollCount(1000);
+      tr('options-after-search-typing', { count });
+    }
+  }
+
+  // 4) collect a few sample option labels (for caller visibility/debug) then pick.
+  // Same logic as _pickOptionPage: try standard ARIA first, fall back to
+  // clickable rows inside the topmost popover-container for custom pickers.
+  const sampleOptions = await runInTab(tabId, (trigSel) => {
+    const filterFresh = (o) => {
+      try {
+        const r = o.getBoundingClientRect();
+        if (!(r.width > 0 && r.height > 0)) return false;
+        const cs = getComputedStyle(o);
+        if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+        let w = o;
+        while (w) {
+          if (w.getAttribute) {
+            if (w.getAttribute('data-state') === 'closed') return false;
+            if (w.getAttribute('aria-hidden') === 'true') return false;
+          }
+          w = w.parentElement;
+        }
+        return true;
+      } catch (e) { return false; }
+    };
+    // Scope to the trigger's aria-controls container when available — sampling
+    // the GLOBAL topmost popover can read a STALE portal's rows and report the
+    // wrong dropdown's options to the model. KEEP IN SYNC with _pickOptionPage.
+    let scopeRoot = null;
+    try {
+      const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+      const trig = trigSel ? q(trigSel) : null;
+      const ref = trig && (trig.getAttribute('aria-controls') || trig.getAttribute('aria-owns'));
+      if (ref) {
+        const idRoot = (trig.getRootNode && trig.getRootNode().getElementById) ? trig.getRootNode() : document;
+        scopeRoot = ref.split(/\s+/).map(id => idRoot.getElementById(id)).find(Boolean) || null;
+      }
+    } catch (e) {}
+    const OPTION_SEL = '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="treeitem"], li[data-value], [aria-selected]';
+    const roleOk = (o) => {
+      const ro = o.getAttribute && o.getAttribute('role');
+      if (ro && ['tab', 'row', 'gridcell', 'columnheader', 'rowheader'].includes(ro)) return false;
+      return filterFresh(o);
+    };
+    let els = [];
+    if (scopeRoot) { try { els = Array.from(scopeRoot.querySelectorAll(OPTION_SEL)).filter(roleOk); } catch (e) {} }
+    if (!els.length) els = Array.from(document.querySelectorAll(OPTION_SEL)).filter(roleOk);
+    if (!els.length) {
+      const containers = (scopeRoot ? [scopeRoot] : Array.from(document.querySelectorAll(
+        '[data-radix-popper-content-wrapper], [data-popper-placement], [data-floating-ui-portal], [role="listbox"], [role="menu"], [role="dialog"]'
+      ))).filter(c => c.getBoundingClientRect().width > 0 && c.getBoundingClientRect().height > 0);
+      if (containers.length) {
+        const zOf = (c) => {
+          let z = 0, w = c;
+          while (w && w !== document.body) {
+            try { const v = parseInt(getComputedStyle(w).zIndex, 10); if (!isNaN(v)) z = Math.max(z, v); } catch (e) {}
+            w = w.parentElement;
+          }
+          return z;
+        };
+        containers.sort((a, b) => zOf(a) - zOf(b));
+        const pop = containers[containers.length - 1];
+        const rows = Array.from(pop.querySelectorAll('div, li, span, button, a')).filter(r => {
+          if (r === pop) return false;
+          let cs; try { cs = getComputedStyle(r); } catch (e) { return false; }
+          const clickable = cs.cursor === 'pointer' || r.tagName.toLowerCase() === 'button'
+                         || r.tagName.toLowerCase() === 'a' || r.hasAttribute('onclick')
+                         || r.hasAttribute('data-value') || r.hasAttribute('aria-selected');
+          if (!clickable) return false;
+          const t = (r.innerText || '').trim();
+          if (!t || t.length > 80) return false;
+          const rect = r.getBoundingClientRect();
+          return rect.width >= 8 && rect.height >= 8;
+        });
+        const byParent = new Map();
+        for (const r of rows) {
+          const p = r.parentElement; if (!p) continue;
+          if (!byParent.has(p)) byParent.set(p, []);
+          byParent.get(p).push(r);
+        }
+        let best = []; for (const [, kids] of byParent) if (kids.length > best.length) best = kids;
+        if (best.length >= 2) els = best;
+      }
+    }
+    return els.slice(0, 6).map(o => (o.innerText || '').trim().slice(0, 40)).filter(Boolean);
+  }, [selector], fid) || [];
+  tr('sample-options', sampleOptions);
+  const pick = await runInTab(tabId, _pickOptionPage, [text, selector], fid);
+  tr('pick', pick);
+  // 5) close popover (Escape) — ONLY if it is still open. Multi-select
+  // popovers stay open after a pick and would block the next dropdown's
+  // open click; single-select popovers AUTO-CLOSE on pick. A blind Escape
+  // races the closing popover's unmount: if the popover layer is already
+  // gone, the Escape lands on the NEXT topmost dismissable layer — the
+  // parent DIALOG — and closes the whole modal mid-form (observed live:
+  // every subsequent field "not found"). Synthetic Escape works on
+  // Radix/HeadlessUI/MUI/shadcn (their handlers gate on key, not isTrusted).
+  await new Promise(r => setTimeout(r, 120));   // let a self-closing popover mark itself closed
+  // Authoritative open/closed signal: the trigger's own aria-expanded /
+  // data-state (W3C combobox pattern). The option-count heuristic is only a
+  // fallback — its popover-shape harvest can mistake the parent dialog's
+  // buttons for options and false-positive "still open".
+  let stillOpen = false;
+  const stAfterPick = await _trigState('trigger-state-after-pick');
+  if (stAfterPick && (stAfterPick.expanded === 'true' || stAfterPick.state === 'open')) {
+    stillOpen = true;
+  } else if (stAfterPick && (stAfterPick.expanded === 'false' || stAfterPick.state === 'closed')) {
+    stillOpen = false;
+  } else if (stAfterPick) {
+    try { stillOpen = (await runInTab(tabId, _countVisibleOptionsPage, [selector], fid)) > 0; } catch (e) {}
+  } // trigger gone entirely (re-render / dialog closed) -> never Escape
+  if (stillOpen) {
+    try {
+      await runInTab(tabId, () => {
+        const ev = { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true };
+        document.dispatchEvent(new KeyboardEvent('keydown', ev));
+        document.dispatchEvent(new KeyboardEvent('keyup',   ev));
+        if (document.activeElement) {
+          document.activeElement.dispatchEvent(new KeyboardEvent('keydown', ev));
+        }
+      }, [], fid);
+      tr('escape-dispatched (popover still open)', { optionsVisible: stillOpen });
+    } catch (e) { tr('escape threw', String(e).slice(0, 120)); }
+    await new Promise(r => setTimeout(r, 150));
+    // Insurance in the trace: did the Escape take out a dialog layer?
+    try {
+      const dlgs = await runInTab(tabId, () =>
+        document.querySelectorAll('[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog').length, [], fid);
+      tr('dialogs-after-escape', { dialogs: dlgs });
+    } catch (e) {}
+  } else {
+    tr('escape skipped (popover already closed after pick)');
+  }
+
+  if (!pick || !pick.ok) {
+    const opts = sampleOptions.length ? ` Available options: ${sampleOptions.map(s => JSON.stringify(s)).join(", ")}` : '';
+    return { ok: false, actual: '', msg: ((pick && pick.msg) || 'no visible options to pick') + opts, dbg: trace };
+  }
+  // 6) verify the pick actually REGISTERED, structurally and language-
+  // independently: poll the trigger label until it (a) differs from the
+  // before-snapshot, or (b) contains the picked option / requested text
+  // (covers re-picking an already-selected value, where "unchanged" is fine).
+  // The old check (`does the label start with select/choose/pick?`) reported
+  // false success on every non-English UI.
+  let triggerLabel = '';
+  let registered = false;
+  {
+    const wantN = norm(text), pickedN = norm(pick.actual || '');
+    const t0 = Date.now();
+    const vPolls = [];
+    for (;;) {
+      triggerLabel = await runInTab(tabId, _triggerLabelPage, [selector], fid) || '';
+      vPolls.push(`+${Date.now() - t0}ms "${triggerLabel.slice(0, 60)}"`);
+      const labN = norm(triggerLabel);
+      registered = (labN && labN !== norm(beforeLabel)) ||
+                   (!!pickedN && labN.includes(pickedN)) ||
+                   (!!wantN && labN.includes(wantN));
+      if (registered || Date.now() - t0 >= 800) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    tr('verify', { beforeLabel: beforeLabel.slice(0, 60), polls: vPolls, registered });
+    if (!registered) await _trigState('trigger-state-after-failed-verify');
+  }
+  const optsHint = sampleOptions.length
+    ? ` (other options available: ${sampleOptions.map(s => JSON.stringify(s)).join(", ")})`
+    : '';
+  if (placeholderEcho) {
+    return {
+      ok: true,
+      actual: pick.actual,
+      msg: `picked "${pick.actual}" (NOTE: you passed placeholder text ${JSON.stringify(text)} — harness picked first visible option; pass a real option label next time)${optsHint}`,
+      dbg: trace,
+    };
+  }
+  if (!registered) {
+    return {
+      ok: false,
+      actual: triggerLabel,
+      msg: `pick reported OK but the trigger label did not change (still ${JSON.stringify(triggerLabel)}) — option click did not register${optsHint}`,
+      dbg: trace,
+    };
+  }
+  return { ok: true, actual: pick.actual, msg: `${pick.msg} (trigger now: ${JSON.stringify(triggerLabel)})${optsHint}`, dbg: trace };
+}
+
+async function fillField(tabId, selector, text, trusted) {
+  const rt = resolveFrameSelector(selector);
+  const kind = await runInTab(tabId, _fieldKindPage, [rt.selector], rt.frameId);
+  if (kind && kind.is_native_select) {
+    return await runInTab(tabId, _selectNativePage, [rt.selector, text || ""], rt.frameId);
+  }
+  if (kind && kind.is_combobox) {
+    return await fillDropdown(tabId, selector, text || "");   // resolves internally
+  }
+  if (kind && kind.is_checkbox_button) {
+    return await setCheckboxState(tabId, selector, text || "");   // resolves internally
+  }
+  // plain text input / textarea / contenteditable
+  return trusted
+    ? await enterTextTrusted(tabId, selector, text || "")     // resolves internally
+    : await runInTab(tabId, _enterTextPage, [rt.selector, text || ""], rt.frameId);
+}
+
+async function enterTextTrusted(tabId, selector, text) {
+  const rt = resolveFrameSelector(selector);
+  const focused = await runInTab(tabId, (sel) => {
+    const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+    const el = q(sel);
+    if (!el) return false;
+    try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {}
+    // REFUSE BEFORE DESTROYING ANYTHING. This used to focus, then clear, then let
+    // CDP insertText go to document.activeElement — but focus() on a disabled or
+    // otherwise unfocusable element is a silent no-op, so the target's existing
+    // value was wiped and the new text was typed into whatever had focus BEFORE
+    // (verified: a secret landed in a neighbouring field while the tool reported
+    // failure on the target and said nothing about the field it actually wrote).
+    // A write we cannot aim is a write we must not make.
+    if (el.disabled || el.readOnly) return { err: 'disabled-or-readonly' };
+    try { el.focus({ preventScroll: true }); } catch (e) {}
+    const od = el.ownerDocument || document;
+    let ae = od.activeElement;
+    // A shadow-hosted control reports its HOST as activeElement.
+    while (ae && ae !== el && ae.shadowRoot && ae.shadowRoot.activeElement) ae = ae.shadowRoot.activeElement;
+    if (ae !== el) return { err: 'focus-refused' };
+    if ('value' in el) {
+      const ns = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
+      if (ns) ns.call(el, ''); else el.value = '';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    } else if (el.isContentEditable) {
+      el.textContent = '';
+    }
+    return true;
+  }, [rt.selector], rt.frameId);
+  if (focused && focused.err === 'disabled-or-readonly') {
+    return { ok: false, actual: "", msg:
+      `Element ${selector} is disabled or readonly — nothing was typed and its existing value is intact.` };
+  }
+  if (focused && focused.err === 'focus-refused') {
+    return { ok: false, actual: "", msg:
+      `Element ${selector} would not take focus, so typing would have gone to whatever was focused ` +
+      `instead — refused. Nothing was typed and no field was modified. Click the element first, or ` +
+      `check whether it is really a text input.` };
+  }
+  if (!focused) return { ok: false, actual: "", msg: `Element ${selector} not found.` };
+
+  await attachDebugger(tabId);
+  // CDP Input.insertText goes to the FOCUSED element — focus set in-frame
+  // above works for cross-origin frames too (focus crosses frame boundaries).
+  await cdpSend(tabId, "Input.insertText", { text });
+
+  const actual = await runInTab(tabId, (sel) => {
+    const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+    const el = q(sel);
+    if (!el) return null;
+    return ('value' in el) ? el.value : (el.innerText || el.textContent || '');
+  }, [rt.selector], rt.frameId);
+  return {
+    ok: actual === text || (text && actual && actual.includes(text)),
+    actual: actual || "",
+    msg: `Typed into ${selector} via TRUSTED input.`,
+  };
+}
+
+// --------------------- INJECTED FUNCTIONS (run in page context) -------------
+// Idempotent / deterministic mmid injection — must match the algorithm used by
+// the rest of the codebase so element ids line up across observations.
+function _ensureMmidsPage() {
+  // STABLE mmids across re-renders: assign only to elements that don't already
+  // have one, using a persistent document-level counter. React/Vue/Next.js
+  // re-renders REPLACE old DOM nodes with new ones (no mmid) but the survivors
+  // keep theirs — so a fill_form that referenced mmid=851 still finds the
+  // node it was looking at, instead of "element not found" after a mid-form
+  // re-render. Counter resets only when the document navigates (new page).
+  //
+  // SHADOW DOM: the walk recurses into OPEN shadow roots (el.shadowRoot), so
+  // web-component UIs (Lit/Stencil/Shoelace/ytd-*) get mmids too. Because
+  // document.querySelector("[mmid='N']") cannot see inside shadow roots, every
+  // walk also (re)builds window.__mmidReg — a Map of mmid -> live element that
+  // the action functions use to resolve selectors across shadow boundaries.
+  // NOTE: only true non-content tags here. ('main' and Google's 'c-wiz' were
+  // once excluded — that denied mmids to a standard landmark and overfit to
+  // one vendor; both removed. SVG internals are handled by decorativeTags.)
+  const tags_to_ignore = ['head','style','script','link','meta','noscript','template','g','path'];
+  const ids_to_ignore = ['agentDriveAutoOverlay'];
+  if (typeof window.__mmidCounter !== 'number') window.__mmidCounter = 0;
+  const reg = new Map();
+  const visit = (root) => {
+    root.querySelectorAll('*').forEach(el => {
+      const tag = el.tagName.toLowerCase();
+      if (!tags_to_ignore.includes(tag) && !ids_to_ignore.includes(el.id)) {
+        if (!el.hasAttribute('mmid')) el.setAttribute('mmid', `${++window.__mmidCounter}`);
+        reg.set(el.getAttribute('mmid'), el);
+      }
+      if (el.shadowRoot) visit(el.shadowRoot);   // pierce open shadow roots
+      // SAME-ORIGIN IFRAMES: contentDocument is reachable -> recurse like a
+      // shadow root (cross-origin returns null / throws -> stays opaque).
+      if (tag === 'iframe' || tag === 'frame') {
+        try { if (el.contentDocument) visit(el.contentDocument); } catch (e) {}
+      }
+    });
+  };
+  visit(document);
+  window.__mmidReg = reg;
+  return true;
+}
+
+// Enumerate the page's INACCESSIBLE (cross-origin) iframe shells with their
+// top-document rects — the anchor points for merging per-frame collections.
+function _frameShellsPage() {
+  const out = [];
+  document.querySelectorAll('iframe, frame').forEach(f => {
+    let accessible = false;
+    try { accessible = !!f.contentDocument; } catch (e) {}
+    if (accessible) return;
+    const r = f.getBoundingClientRect();
+    if (!(r.width > 30 && r.height > 30)) return;   // skip tracking pixels
+    let cs; try { cs = getComputedStyle(f); } catch (e) { return; }
+    if (cs.display === 'none' || cs.visibility === 'hidden') return;
+    out.push({
+      src: f.src || '',
+      title: f.getAttribute('title') || f.getAttribute('name') || '',
+      x: Math.round(r.left), y: Math.round(r.top),
+      w: Math.round(r.width), h: Math.round(r.height),
+    });
+  });
+  return out;
+}
+
+// Collect + serialize the contents of cross-origin iframes (depth-1) and
+// return text to APPEND to the main listing. Each frame's entries act through
+// selector [mmid='f<frameId>:<n>'] — resolveFrameSelector routes the ops.
+async function collectCrossFrames(tabId) {
+  let frames = [];
+  try { frames = await chrome.webNavigation.getAllFrames({ tabId }) || []; } catch (e) { return ''; }
+  const children = frames.filter(f => f.frameId !== 0 && f.parentFrameId === 0 &&
+                                       f.url && !f.url.startsWith('about:'));
+  if (!children.length) return '';
+  let shells = [];
+  try { shells = await runInTab(tabId, _frameShellsPage) || []; } catch (e) { return ''; }
+  if (!shells.length) return '';
+  const shellMap = new Map();
+  const used = new Set();
+  for (const fr of children) {
+    // Anchor the frame to its shell: exact src match first, then unique-host.
+    let shell = shells.find((s, i) => !used.has(i) && s.src && s.src === fr.url);
+    if (!shell) {
+      try {
+        const host = new URL(fr.url).hostname;
+        const cands = shells.filter((s, i) => !used.has(i) && s.src && (() => { try { return new URL(s.src).hostname === host; } catch (e) { return false; } })());
+        if (cands.length === 1) shell = cands[0];
+      } catch (e) {}
+    }
+    if (shell) { used.add(shells.indexOf(shell)); shellMap.set(fr.frameId, shell); }
+  }
+  // GEOMETRIC FALLBACK: exact-src then unique-host matching both fail when a page
+  // embeds SEVERAL same-host frames (Stripe Elements ships card/expiry/CVC as three
+  // js.stripe.com iframes) or when the live URL has drifted from the src attribute
+  // (redirects, hash/query rewrites). Previously those frames were dropped silently
+  // — collectCrossFrames returns '' on every failure path, so the agent saw no
+  // breadcrumb at all. When the counts line up, document order is a sound pairing.
+  if (!shellMap.size && children.length === shells.length && shells.length > 0) {
+    // chrome.webNavigation.getAllFrames order is NOT guaranteed to be DOM order, so a
+    // raw index pairing can anchor a frame to the wrong shell. Sort both sides by src
+    // when every frame has one; only then is the pairing meaningful. Otherwise pair by
+    // index but say so, because a silent wrong anchor is worse than an admitted guess.
+    const cs = children.slice(), ss = shells.slice();
+    if (cs.every(f => f.url) && ss.every(sh => sh.src)) {
+      cs.sort((a, b) => String(a.url).localeCompare(String(b.url)));
+      ss.sort((a, b) => String(a.src).localeCompare(String(b.src)));
+    }
+    cs.forEach((fr, i) => shellMap.set(fr.frameId, ss[i]));
+  }
+  if (!shellMap.size) return '';
+  const offsets = new Map();
+  let text = '';
+  for (const [fid, shell] of shellMap) {
+    let raw = null;
+    try { raw = await runInTab(tabId, _collectInteractivePage, [true], fid); } catch (e) { continue; }
+    if (!Array.isArray(raw) || !raw.length) continue;
+    offsets.set(fid, { x: shell.x, y: shell.y, w: shell.w, h: shell.h, src: shell.src || '' });
+    let host = '';
+    try { host = new URL(shell.src).hostname; } catch (e) {}
+    const lines = [];
+    // PRIORITISE before capping, then say what was cut. The old code did a blind
+    // slice(0,40) and printed the kept count as though it were complete — so a TCF
+    // consent frame with dozens of vendor toggles hid its "Save & Exit"/"Accept"
+    // buttons past index 40 with no truncation note. The main listing has been
+    // scrupulous about this for rounds; this path was not.
+    const FRAME_CAP = 40;
+    const _pri = (e) => (e.required || e.unselected || e.tag === 'button' ||
+                         e.tag === 'input' || e.tag === 'select' || e.tag === 'textarea' ||
+                         e.role === 'button' || e.role === 'checkbox' || e.role === 'combobox') ? 0 : 1;
+    const ordered = raw.length > FRAME_CAP
+      ? raw.slice().sort((a, b) => _pri(a) - _pri(b)).slice(0, FRAME_CAP)
+      : raw;
+    const frameHidden = raw.length - ordered.length;
+    for (const e of ordered) {
+      let id = '';
+      if (e.name)        id += ` name=${JSON.stringify(e.name)}`;
+      if (e.value)       id += ` value=${JSON.stringify(e.value)}`;
+      if (e.placeholder) id += ` placeholder=${JSON.stringify(e.placeholder)}`;
+      if (!id && e.text) id = ` "${e.text}"`;
+      if (!id && e.label) id = ` "${e.label}"`;
+      const flags = (e.active ? ` (${e.active})` : '') + (e.required ? ' (required)' : '') +
+                    (e.unselected ? ' (unselected)' : '') + (e.disabled ? ' (disabled)' : '');
+      const rl = (e.role && e.role !== e.tag) ? ` role=${e.role}` : '';
+      lines.push(`mmid=f${fid}:${e.mmid} | ${e.tag}${id}${rl}${flags} | box(${e.x + shell.x},${e.y + shell.y},${e.w},${e.h})`);
+    }
+    if (lines.length) {
+      text += `\n[CROSS-ORIGIN IFRAME f${fid}${shell.title ? ` "${shell.title}"` : ''}${host ? ` (${host})` : ''} — ` +
+              `${lines.length} of ${raw.length} element(s) shown; act with ref f${fid}:N]\n` + lines.join('\n') +
+              (frameHidden > 0
+                ? `\n... +${frameHidden} more element(s) in this frame not shown (capped at ${FRAME_CAP}; ` +
+                  `form fields and buttons were prioritized, but if your target isn't listed it may be ` +
+                  `further down inside the frame — scroll within it or act on a more specific region).`
+                : '');
+    }
+  }
+  _frameShells.set(tabId, offsets);
+  return text;
+}
+
+function _domTextPage(scopeMmid) {
+  // SCOPED TEXT. The structured listing only ever contains INTERACTIVE elements,
+  // so a table's 195 data cells, a <pre> code block and a Wolfram result pod were
+  // all unreachable by ref — three independent live agents hit this from three
+  // directions and every one of them had to fall back to javascript_tool. Reading
+  // ONE region's text closes it without inventing a new element model: scope to
+  // the region you already found, get its text. Whole-document extras (outline,
+  // iframe harvest, alt-text appendix) are deliberately skipped when scoped —
+  // appending page-level facts to a deliberately narrowed read is the bug that
+  // sent a whole Wikipedia main page back with a one-image scoped result.
+  let _scopeEl = null;
+  if (scopeMmid) {
+    try {
+      _scopeEl = (window.__mmidReg && window.__mmidReg.get(String(scopeMmid))) ||
+                 document.querySelector(`[mmid='${String(scopeMmid).replace(/'/g, "")}']`);
+    } catch (e) {}
+    if (!_scopeEl) return "__SCOPE_MISS__" + String(scopeMmid);
+  }
+  const sel = ['#agentDriveAutoOverlay', '#tawebagent-overlay'];
+  // Shadow-piercing query. innerText is layout-based so it already includes
+  // shadow content, but querySelectorAll does not — which left the DOCUMENT
+  // OUTLINE and the alt-text harvest empty on exactly the web-component pages
+  // (Lit/Shoelace/Ionic) where the flat text dump is hardest to navigate.
+  // Same-origin FRAMES are deliberately not pierced here: their text is already
+  // appended below under an explicit [iframe "..."] label, and folding their
+  // headings into the host page's outline would misrepresent the structure.
+  const deepQuery = (q) => {
+    const res = [];
+    const walk = (root) => {
+      let all;
+      try { all = root.querySelectorAll('*'); } catch (e) { return; }
+      for (const el of all) {
+        try { if (el.matches(q)) res.push(el); } catch (e) {}
+        if (el.shadowRoot) walk(el.shadowRoot);
+      }
+    };
+    walk(document);
+    return res;
+  };
+  const saved = [];
+  sel.forEach(s => document.querySelectorAll(s).forEach(el => {
+    saved.push([el, el.style.visibility]); el.style.visibility = 'hidden';
+  }));
+  // HIDE EDITOR GUTTERS STRUCTURALLY, before innerText is read. Pattern-matching
+  // runs of consecutive integers in the FLAT text cannot tell a line-number
+  // gutter from a month calendar — the first version of this deleted all 31 days
+  // — and gating on "does the page contain an editor" does not help on a page
+  // that has both. Only the DOM knows which numbers live inside an editor.
+  // innerText skips visibility:hidden subtrees, so hiding and restoring is exact.
+  try {
+    const hosts = new Set();
+    document.querySelectorAll('.CodeMirror, .cm-editor, .monaco-editor, .ace_editor')
+      .forEach(n => hosts.add(n));
+    // Structurally-detected editors too (a suppressed textarea's nearest sizeable
+    // ancestor), so this is not limited to libraries we can name.
+    document.querySelectorAll('textarea').forEach(ta => {
+      try {
+        const r = ta.getBoundingClientRect(), c = getComputedStyle(ta);
+        const hidden = r.width <= 4 || r.height <= 4 || parseFloat(c.opacity || '1') === 0 ||
+                       c.visibility === 'hidden' || (parseInt(c.zIndex, 10) || 0) < 0;
+        if (!hidden) return;
+        let w = ta.parentElement;
+        for (let d = 0; d < 5 && w; d++, w = w.parentElement) {
+          const wr = w.getBoundingClientRect();
+          if (wr.width >= 100 && wr.height >= 40) { hosts.add(w); break; }
+        }
+      } catch (e) {}
+    });
+    for (const host of hosts) {
+      for (const g of host.querySelectorAll('*')) {
+        const t = (g.innerText || '').trim();
+        if (!t || !/^\d[\d\s]*$/.test(t)) continue;
+        const nums = t.split(/\s+/).map(Number);
+        if (nums.length < 2) continue;
+        let seq = true;
+        for (let i = 1; i < nums.length; i++) if (nums[i] !== nums[0] + i) { seq = false; break; }
+        if (!seq) continue;
+        saved.push([g, g.style.visibility]);
+        g.style.visibility = 'hidden';
+        break;                       // one gutter column per editor
+      }
+    }
+  } catch (e) {}
+  // COLLAPSED PANELS ARE NOT VISIBLE TEXT. innerText skips display:none and
+  // visibility:hidden, but NOT a panel collapsed to ~1px with its content
+  // overflowing hidden — the standard way a closed dropdown/accordion parks its
+  // markup. checkVisibility() calls those elements visible, so nothing upstream
+  // catches them either. Measured on a HuggingFace model card: ~2,300 chars of
+  // install snippets from a CLOSED "Use this model" menu came back as page text,
+  // and a live agent answered the question with code that is not on the card.
+  // Reuse the same hide-read-restore mechanism the gutter strip uses. Walking
+  // top-down and NOT descending into a collapsed subtree keeps this O(visible
+  // nodes); the text-length floor keeps ordinary 1px spacers out of `saved`.
+  try {
+    const hideCollapsed = (root, depth) => {
+      if (depth > 12 || !root.children) return;
+      for (const n of root.children) {
+        let r;
+        try { r = n.getBoundingClientRect(); } catch (e) { continue; }
+        // A GENUINELY COLLAPSED panel has a non-zero but sub-pixel dimension: a
+        // closed dropdown parked at ~1px with its content overflowing hidden.
+        // An element measuring EXACTLY 0x0 is a different thing entirely — it
+        // generates no box of its own (display:contents, or children that are
+        // positioned/floated) while its children paint normally.
+        //
+        // Treating those the same deleted MDN's entire article: <main
+        // class="layout__content"> measures 0x0 and holds 31,302 chars, so
+        // get_page_text returned 4.8k of sidebar navigation and a confident
+        // outline with no prose at all — the silent-omission class this project
+        // exists to prevent, introduced by the fix for the opposite problem.
+        const slim = (r.width > 0 && r.width < 2) || (r.height > 0 && r.height < 2);
+        if (slim && (n.textContent || '').trim().length > 20) {
+          saved.push([n, n.style.visibility]);
+          n.style.visibility = 'hidden';
+          continue;                  // whole subtree is unreadable; do not descend
+        }
+        // Descend through boxless containers too — their children may well paint.
+        hideCollapsed(n, depth + 1);
+      }
+    };
+    if (document.body) hideCollapsed(document.body, 0);
+  } catch (e) {}
+  if (_scopeEl) {
+    let _st = "";
+    try { _st = (_scopeEl.innerText || _scopeEl.textContent || "").trim(); } catch (e) {}
+    try { saved.forEach(([n, v]) => { n.style.visibility = v; }); } catch (e) {}
+    return _st || "(this region contains no text)";
+  }
+  let text = (document.body && document.body.innerText) || document.documentElement.innerText || "";
+  // Same-origin iframes (embedded result panes, editors, legacy widgets) hold
+  // real page content the agent otherwise can't read — append it, labeled.
+  const harvestFrames = (doc, depth) => {
+    if (depth > 3) return;
+    // Shadow-aware: _walkInject recurses shadowRoot -> iframe, so a same-origin
+    // frame inside a web component is collected structurally but its TEXT was
+    // missing here — the two tools disagreeing about the same frame.
+    (doc === document ? deepQuery('iframe,frame') : Array.from(doc.querySelectorAll('iframe,frame'))).forEach(f => {
+      try {
+        const d = f.contentDocument;
+        if (d && d.body) {
+          const t = (d.body.innerText || '').trim();
+          if (t) text += `\n[iframe "${f.title || f.id || f.name || ''}"]: ` + t;
+          harvestFrames(d, depth + 1);
+        }
+      } catch (e) {}
+    });
+  };
+  try { harvestFrames(document, 0); } catch (e) {}
+  const alts = deepQuery('img').map(i => i.alt).filter(Boolean).join(' ');
+  saved.forEach(([el, v]) => el.style.visibility = v);
+  // DOCUMENT OUTLINE — innerText discards ALL hierarchy, so a question like
+  // "how many top-level sections does this article have?" is unanswerable from
+  // the text dump: a nested subsection reads exactly like a top-level one.
+  // Benchmarked twice on a Wikipedia TOC, where the agent had to fall back to
+  // reading pixel indentation off a screenshot to avoid over-counting.
+  // Emitting depth-tagged headings answers it directly and costs a few lines.
+  let outline = '';
+  try {
+    const hs = deepQuery('h1,h2,h3,h4,h5,h6,[role="heading"]')
+      .filter(h => { try { const r = h.getBoundingClientRect(); return r.width > 0 && r.height > 0; } catch (e) { return false; } })
+      // An OUTLINE describes the DOCUMENT, not the page chrome. Headings inside
+      // navigation landmarks are widget titles, not sections — Wikipedia's TOC
+      // sidebar contributes an <h2>Contents</h2> from inside NAV#mw-panel-toc,
+      // which inflated this article's top-level count from 11 to 12 (verified:
+      // "Contents".closest('nav') is truthy, "History".closest('nav') is not).
+      // banner/contentinfo excluded for the same reason; <aside>/complementary
+      // deliberately KEPT, since real content legitimately lives there.
+      // IMPLICIT landmarks too. Excluding only the ROLE forms let three plain
+      // <footer><h3> link-column titles ("Products", "Company", "Resources")
+      // count as document sections — the exact Wikipedia-TOC over-count this
+      // filter exists to prevent.
+      .filter(h => { try { return !h.closest('nav,header,footer,[role="navigation"],[role="banner"],[role="contentinfo"]'); } catch (e) { return true; } })
+      // sr-only headings are 1x1 clip boxes and are not part of the visible outline.
+      .filter(h => { try { const r = h.getBoundingClientRect(); return r.width > 4 && r.height > 4; } catch (e) { return false; } });
+    const lines = [];
+    for (const h of hs.slice(0, 120)) {
+      const lvl = /^H([1-6])$/.test(h.tagName)
+        ? parseInt(h.tagName.slice(1), 10)
+        : Math.min(6, Math.max(1, parseInt(h.getAttribute('aria-level') || '2', 10)));
+      // Strip the permalink glyph doc generators append to every heading
+      // (MkDocs/Sphinx use "¶", many others "#", some a link glyph) — it is
+      // anchor chrome, not part of the section name, and it would leak into any
+      // comparison the agent makes against a TOC entry or a user-supplied name.
+      // ¶ and § are unambiguous permalink glyphs. A trailing '#' is NOT: it is part
+      // of the name in "C#", "F#", "Issue #". Strip it only on structural evidence —
+      // the heading contains an in-page anchor, i.e. a real permalink affordance.
+      // Remove the ANCHOR'S OWN TEXT rather than regex-stripping trailing '#'. The old
+      // rule ate the '#' from "Working with C#" on any Docusaurus page, because such
+      // pages BOTH contain a hash-link and legitimately end a heading in '#' — the exact
+      // ambiguity it was supposed to resolve.
+      let t = (h.innerText || '');
+      try {
+        const a = h.querySelector('a[href^="#"]');
+        const at = a && (a.innerText || '').trim();
+        if (at && at.length <= 2 && t.trimEnd().endsWith(at)) {
+          t = t.trimEnd().slice(0, -at.length);
+        }
+      } catch (e) {}
+      t = t.replace(/\s+/g, ' ').replace(/\s*[¶§]+\s*$/, '');
+      t = t.trim().slice(0, 80);
+      if (t) lines.push(`${'  '.repeat(lvl - 1)}h${lvl}: ${t}`);
+    }
+    if (lines.length) {
+      outline = `\n\n--- DOCUMENT OUTLINE (${lines.length} headings; indent = nesting depth, h1/h2 are top-level sections) ---\n` + lines.join('\n');
+    }
+  } catch (e) {}
+  // Editor line-number gutters land in innerText as a run of bare numeric lines.
+  // read_page strips them from a code editor's value; get_page_text did not, so
+  // the two tools disagreed about the same editor and only the structured one was
+  // clean. Same structural rule: a run of >=3 consecutive integers, each alone on
+  // its line, is a gutter — ordinary prose does not do that.
+  return text + " Other Alt Texts in the page: " + alts + outline;
+}
+
+function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
+  // DROP LEDGER. The collector could not explain its own omissions: ~17 bare
+  // `return`s in the element loop and four destructive post-passes removed
+  // elements with no record of which rule fired. Every investigation therefore
+  // cost an ablation run or a live-agent study — and most recently six DOM-
+  // mutation probes plus two invalid diagnostics to discover that three
+  // out-of-sample misses were all one rule (container suppression).
+  //
+  // Opt-in and near-free when off: `_drop` short-circuits on the flag, so the
+  // normal path pays one boolean test per drop.
+  const LEDGER = !!ledger;
+  const _ledger = [];
+  const _drop = (el, rule) => {
+    if (LEDGER) {
+      try {
+        const r = el.getBoundingClientRect();
+        _ledger.push({
+          mmid: el.getAttribute && el.getAttribute('mmid'), rule,
+          tag: (el.tagName || '').toLowerCase(),
+          role: (el.getAttribute && el.getAttribute('role')) || null,
+          text: (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+          w: Math.round(r.width), h: Math.round(r.height),
+        });
+      } catch (e) {}
+    }
+    return undefined;          // callers use `return _drop(...)` to exit the callback
+  };
+  // Post-passes remove by mmid from the output array rather than by element.
+  const _dropMmids = (mmids, rule) => {
+    if (!LEDGER) return;
+    try {
+      for (const m of mmids) {
+        const el = mmidReg && mmidReg.get ? mmidReg.get(String(m)) : null;
+        if (el) _drop(el, rule);
+        else _ledger.push({ mmid: m, rule, tag: null, role: null, text: '', w: 0, h: 0 });
+      }
+    } catch (e) {}
+  };
+  // DETAIL LEVELS. `compact` (default) is what every observation gets: identity,
+  // state and geometry, with URLs and media deliberately absent. `full` adds the
+  // fields that are structurally missing from a compact listing — href, src, and
+  // the page's visible media — and is meant to be used WITH ref_id, so the cost
+  // is bounded by the region the agent has already narrowed to.
+  //
+  // Why not just always include them: measured on the corpus, URLs alone add
+  // 5.9 KB on Hacker News and 8.7 KB on Amazon — more than tripling Amazon's
+  // listing. An agent observes dozens of times per task and needs a URL in a
+  // small minority of them, so paying for it by default costs far more than the
+  // occasional extra round trip. Reading the attributes is free (getAttribute,
+  // no layout); the entire cost of `full` is model input tokens.
+  const FULL = detail === 'full';
+  // BRIEF: a third point on the rate/retention curve. MEASURED decomposition of
+  // what `full` costs over `compact` across 22 frozen sites: +79% chars, of which
+  // 91% sits INSIDE href=/src= strings — not in the extra media rows. So the
+  // expensive part is URL verbosity, and most of that verbosity carries no
+  // information for the agent: the scheme and host repeat on every same-origin
+  // link, and query strings are dominated by tracking parameters.
+  //
+  // `brief` keeps what identifies the destination (host when it differs, path,
+  // short query/hash) and drops what does not. A path is resolvable against the
+  // page origin, so it is genuinely sufficient to navigate.
+  const BRIEF = detail === 'brief';
+  const WANT_URLS = FULL || BRIEF;
+  const _briefUrl = (u) => {
+    const raw = String(u || '');
+    if (!raw || raw.slice(0, 5) === 'data:') return raw;   // data: already summarised
+    try {
+      const a = new URL(raw, location.href);
+      if (a.protocol !== 'http:' && a.protocol !== 'https:') return raw;
+      let out = a.origin === location.origin ? a.pathname : (a.host + a.pathname);
+      if (a.search) out += a.search.length <= 24 ? a.search : '?…';
+      if (a.hash && a.hash.length <= 16) out += a.hash;
+      return out || '/';
+    } catch (e) { return raw; }
+  };
+  // Stable, additive mmid injection (see _ensureMmidsPage for rationale).
+  // Existing mmids survive across observations and re-renders; only fresh
+  // nodes get new high-numbered mmids. This keeps selectors stable during
+  // mid-form re-renders (combobox picks, expanding sections).
+  //
+  // SHADOW DOM PIERCING: the walk recurses into OPEN shadow roots, so controls
+  // inside web components (Lit/Stencil/Shoelace/ytd-*) are listed like any
+  // other element. Closed roots stay unreachable (would need CDP pierce — rare,
+  // mostly Salesforce LWC). Every walk also rebuilds window.__mmidReg
+  // (mmid -> live element): document.querySelector can't see into shadow roots,
+  // so the action functions resolve [mmid='N'] through this registry first.
+  // NOTE: only true non-content tags here. ('main' and Google's 'c-wiz' were
+  // once excluded — that denied mmids to a standard landmark and overfit to
+  // one vendor; both removed. SVG internals are handled by decorativeTags.)
+  const tags_to_ignore = ['head','style','script','link','meta','noscript','template','g','path'];
+  const ids_to_ignore = ['agentDriveAutoOverlay'];
+  if (typeof window.__mmidCounter !== 'number') window.__mmidCounter = 0;
+  const mmidReg = new Map();   // mmid -> element, in composed-tree walk order
+  const _walkInject = (root) => {
+    root.querySelectorAll('*').forEach(el => {
+      const tag = el.tagName.toLowerCase();
+      if (!tags_to_ignore.includes(tag) && !ids_to_ignore.includes(el.id)) {
+        if (!el.hasAttribute('mmid')) el.setAttribute('mmid', `${++window.__mmidCounter}`);
+        mmidReg.set(el.getAttribute('mmid'), el);
+      }
+      if (el.shadowRoot) _walkInject(el.shadowRoot);
+      // SAME-ORIGIN IFRAMES: contentDocument is reachable -> recurse like a
+      // shadow root, so embedded same-origin apps (editors, legacy widgets,
+      // srcdoc frames) are listed like any other page region. Cross-origin
+      // frames return null / throw -> they stay opaque and are surfaced as a
+      // single box in the listing instead.
+      if (tag === 'iframe' || tag === 'frame') {
+        try { if (el.contentDocument) _walkInject(el.contentDocument); } catch (e) {}
+      }
+    });
+  };
+  _walkInject(document);
+  window.__mmidReg = mmidReg;
+  // COMPOSED-TREE QUERY. document.querySelectorAll cannot see into shadow roots
+  // or same-origin iframes, so every PAGE-LEVEL scan built on it was blind on
+  // web-component apps: a <sl-dialog>/<ion-modal>/Lit dialog would open and the
+  // modal banner never fired, no dialog text was extracted, and a Lit app's <h1>
+  // produced no "Main heading" — even though the per-element walk (which uses
+  // composedParent) correctly tagged those same controls section=dialog. The
+  // registry IS the composed walk, in tree order, so filtering it gives the
+  // shadow-piercing answer with no extra traversal.
+  // Memoised: each call is a full pass over the registry running .matches(), and
+  // the dialog selector alone is needed twice (modal detection, then dialog
+  // text). On a 20k-element page that is a pass worth not repeating.
+  const _acCache = new Map();
+  const _allComposed = (sel) => {
+    let hit = _acCache.get(sel);
+    if (hit) return hit;
+    hit = [];
+    mmidReg.forEach((el) => { try { if (el.matches && el.matches(sel)) hit.push(el); } catch (e) {} });
+    _acCache.set(sel, hit);
+    return hit;
+  };
+  // Record WHICH DOCUMENT the agent has actually observed. Refs are only meaningful
+  // against the document they were read from: __mmidCounter resets on navigation, so a
+  // stale ref_23 silently resolves to whatever is 23rd on the NEW page. Stamped here
+  // (observation) and not in _ensureMmidsPage, because fill_form injects internally and
+  // would otherwise re-stamp the marker and hide exactly the mismatch we want to catch.
+  try { window.__mmidObservedUrl = location.href; } catch (e) {}
+  // Composed-tree parent: crosses shadow boundaries (shadow root -> host) AND
+  // same-origin frame boundaries (frame document -> its <iframe> element) so
+  // ancestor walks (section, modal, dedup, clipping) see through both.
+  const composedParent = (n) => {
+    if (n.parentElement) return n.parentElement;
+    try {
+      if (n.getRootNode && n.getRootNode().host) return n.getRootNode().host;
+      const v = n.ownerDocument && n.ownerDocument.defaultView;
+      if (v && v.frameElement) return v.frameElement;
+    } catch (e) {}
+    return null;
+  };
+  // Top-document viewport offset for elements inside same-origin iframes:
+  // their rects are relative to their own frame's viewport, so accumulate the
+  // frame elements' offsets (incl. border via clientLeft/Top — a bordered
+  // iframe shifts its content). CDP trusted clicks need TOP-document CSS px.
+  // Maps a point from an element's own frame coordinates into TOP-document CSS px,
+  // accounting for any CSS transform on the frames along the way (see the same
+  // fix in _rectForPage). Returns the accumulated scale so widths/heights can be
+  // converted too — a listed box() must describe what the user actually sees.
+  const framePoint = (el, x, y) => {
+    let kx = 1, ky = 1;
+    try {
+      let w = el.ownerDocument ? el.ownerDocument.defaultView : null;
+      while (w && w !== window && w.frameElement) {
+        const fe = w.frameElement;
+        const fr = fe.getBoundingClientRect();
+        const ow = fe.offsetWidth || fr.width, oh = fe.offsetHeight || fr.height;
+        const sx = ow ? fr.width / ow : 1, sy = oh ? fr.height / oh : 1;
+        x = fr.left + (fe.clientLeft || 0) * sx + x * sx;
+        y = fr.top + (fe.clientTop || 0) * sy + y * sy;
+        kx *= sx; ky *= sy;
+        w = w.parent;
+      }
+    } catch (e) {}
+    return { x, y, kx, ky };
+  };
+
+  // CODE-EDITOR HOSTS, resolved ONCE for the whole walk.
+  //
+  // CodeMirror/Monaco/Ace render a styled text view over an input surface they
+  // keep hidden. Neither layer looks like a control on its own, so unless the
+  // HOST is recognised the agent is shown a plain <div> full of gutter digits
+  // and never learns it can type there. The class list is a FAST PATH for the
+  // three libraries we can name; the structural rule beneath it is what makes
+  // this general.
+  //
+  // The shape of a code editor, stated without naming one: a VISUALLY SUPPRESSED
+  // <textarea> (the real input) sitting inside an ancestor that is big enough to
+  // be an editing surface, actually contains the textarea's position, and renders
+  // monospaced or pre-formatted text. That catches renamed forks, in-house
+  // editors and rebuilt Ace/Monaco bundles. Rich-text editors are contenteditable
+  // and go down the ceRoot path instead, so requiring monospace/pre costs nothing
+  // here and keeps ordinary hidden textareas (clipboard helpers, auto-grow shims,
+  // honeypots) out.
+  //
+  // Three details all came from measuring Monaco with its class name ablated,
+  // and each is the difference between a general rule and a rule that happens to
+  // describe CodeMirror:
+  //   - "suppressed" is not "zero-sized". Monaco's .inputarea is 147x48 with
+  //     color:transparent and z-index:-10 — invisible because its text does not
+  //     paint and it sits behind the render layer, which is the other standard
+  //     way to keep an input focusable and form-serialisable while hiding it.
+  //   - the monospace evidence is on DESCENDANTS. Monaco's host computes
+  //     font-family:-apple-system and white-space:normal; only the line elements
+  //     deep inside are monospace/pre, so checking the host and its direct
+  //     children finds nothing.
+  //   - "readonly" alone does not disqualify. Monaco's mirror is readonly with an
+  //     empty value; what identifies the copy-to-clipboard shim a static code
+  //     block ships is that its value is a COPY of the text the host renders.
+  const editorHosts = new Set();
+  {
+    try {
+      _allComposed('.CodeMirror, .cm-editor, .monaco-editor, .ace_editor, [class*="mq-editable-field"]')
+        .forEach(n => editorHosts.add(n));
+    } catch (e) {}
+    const LANDMARK = new Set(['BODY', 'HTML', 'MAIN', 'FORM', 'HEADER', 'FOOTER', 'NAV', 'ASIDE', 'SECTION', 'ARTICLE']);
+    const monoOrPre = (n) => {
+      try {
+        // Never judge by a form control: Chrome's UA stylesheet gives every
+        // <textarea> font-family:monospace, so asking the editor's own hidden
+        // input whether it looks like code makes EVERY hidden textarea on the
+        // web an editor — a comment box's autogrow shim included.
+        if (['TEXTAREA', 'INPUT', 'SELECT', 'BUTTON'].includes(n.tagName)) return false;
+        if (!(n.innerText || '').trim()) return false;   // styling with nothing rendered proves nothing
+        const c = ((n.ownerDocument && n.ownerDocument.defaultView) || window).getComputedStyle(n);
+        if (/^pre/.test(c.whiteSpace || '')) return true;
+        return /mono|consol|courier|menlo|monaco|code/i.test(c.fontFamily || '');
+      } catch (e) { return false; }
+    };
+    // Does this box RENDER code anywhere inside it? Two text-bearing monospace/pre
+    // descendants, not one, so a lone inline <code> in prose is not an editor.
+    // The scan is bounded — this runs once per suppressed textarea, not per element.
+    const rendersCode = (host) => {
+      if (monoOrPre(host)) return true;
+      try {
+        let seen = 0, hits = 0;
+        for (const d of host.querySelectorAll('*')) {
+          if (++seen > 200) break;
+          if (monoOrPre(d) && ++hits >= 2) return true;
+        }
+      } catch (e) {}
+      return false;
+    };
+    // Fully transparent colour, in any notation the engine may report.
+    const _alpha0 = (c) => /^rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0*(\.0+)?\s*\)$/.test(c || '');
+    const alreadyInHost = (n) => { let w = n; while (w) { if (editorHosts.has(w)) return true; w = composedParent(w); } return false; };
+    for (const ta of _allComposed('textarea')) {
+      try {
+        if (alreadyInHost(ta) || ta.disabled) continue;
+        const tr = ta.getBoundingClientRect();
+        const tcs = ((ta.ownerDocument && ta.ownerDocument.defaultView) || window).getComputedStyle(ta);
+        const hiddenInput = tr.width <= 4 || tr.height <= 4 || parseFloat(tcs.opacity || '1') === 0 ||
+                            tcs.visibility === 'hidden' || (tcs.clipPath && tcs.clipPath !== 'none') ||
+                            _alpha0(tcs.color) ||                       // text does not paint
+                            (parseInt(tcs.zIndex, 10) || 0) < 0;        // sits behind the render layer
+        if (!hiddenInput) continue;             // a visible textarea IS the control
+        // The copy-to-clipboard shim a static code block ships holds a COPY of
+        // what the block renders; an editor's mirror holds a scratch buffer.
+        const taVal = (ta.value || '').replace(/\s+/g, ' ').trim();
+        const cx = tr.left + tr.width / 2, cy = tr.top + tr.height / 2;
+        // Collect every qualifying ancestor, then choose. Editors nest their own
+        // boxes (Monaco: .overflow-guard inside .monaco-editor, identical rects),
+        // and taking the innermost listed the inner box while the outer one
+        // survived as a second entry for the same visual editor. Prefer the
+        // ancestor that declares an editor ARIA role — role=code/textbox is the
+        // standard way to say "this region is the editor", and it is what makes
+        // the structural result identical to the class-list one.
+        let firstHost = null, ariaHost = null, shim = false;
+        let w = composedParent(ta);
+        for (let d = 0; d < 5 && w && w.nodeType === 1; d++, w = composedParent(w)) {
+          if (LANDMARK.has(w.tagName)) break;
+          const wr = w.getBoundingClientRect();
+          if (wr.width < 100 || wr.height < 40) continue;
+          // Once we've climbed past a box that no longer contains the input, we
+          // are looking at page layout, not the editor.
+          if (cx < wr.left - 2 || cx > wr.right + 2 || cy < wr.top - 2 || cy > wr.bottom + 2) break;
+          if (!rendersCode(w)) continue;
+          if (ta.readOnly && taVal &&
+              (w.innerText || '').replace(/\s+/g, ' ').trim() === taVal) { shim = true; break; }
+          if (!firstHost) firstHost = w;
+          const _hr = (w.getAttribute('role') || '').toLowerCase();
+          if (!ariaHost && (_hr === 'code' || _hr === 'textbox')) ariaHost = w;
+        }
+        if (!shim && (ariaHost || firstHost)) editorHosts.add(ariaHost || firstHost);
+      } catch (e) {}
+    }
+  }
+  // Line-number gutters. Once innerText is whitespace-collapsed, an editor's
+  // text starts with the run "1 2 3 4 …" — that is how Monaco's value came back
+  // as "1 2 3 4 // Type your code here". Strip it STRUCTURALLY: the run has to
+  // be genuinely consecutive (and start at 1, unless it is long enough that a
+  // scrolled gutter is the only sane reading), so ordinary content that happens
+  // to begin with numbers survives untouched. No gutter class names involved.
+  // Works on RAW innerText (before whitespace collapse), because the two ways a
+  // gutter renders are only distinguishable by line breaks:
+  //   COLUMN  — the numbers are their own element, so innerText emits the whole
+  //             strip first, then the code: "1 / 2 / 3 / const a = 1;" one per
+  //             line  (Monaco, Ace)
+  //   INLINE  — each line carries its own number: "1const a = 1;" then
+  //             "2const b = 2;"  (CodeMirror gutters, Prism line-numbers)
+  // Both are stripped only on genuinely consecutive runs — and the inline form
+  // additionally requires EVERY line to be numbered — so ordinary content that
+  // happens to start with a number survives.
+  const stripGutter = (raw) => {
+    const NL = String.fromCharCode(10);
+    const lines = String(raw || '').split(NL);
+    if (lines.length < 2) return raw;
+    const seq = (nums) => {
+      for (let k = 1; k < nums.length; k++) if (nums[k] !== nums[0] + k) return false;
+      return nums[0] === 1 || nums.length >= 4;
+    };
+    // Blank lines are ignored throughout: an editor styled white-space:pre keeps
+    // the source indentation around its markup, so its innerText routinely opens
+    // with an empty line and a naive "every line is numbered" test never fires.
+    const idx = [];
+    for (let k = 0; k < lines.length; k++) if (lines[k].trim()) idx.push(k);
+    if (idx.length < 2) return raw;
+    let i = 0;
+    while (i < idx.length && /^\s*\d{1,6}\s*$/.test(lines[idx[i]])) i++;
+    if (i >= 2 && i < idx.length && seq(idx.slice(0, i).map(k => parseInt(lines[k], 10)))) {
+      return lines.slice(idx[i]).join(NL);
+    }
+    const m = idx.map(k => /^\s*(\d{1,6})(?=\D|$)/.exec(lines[k]));
+    if (m.every(Boolean) && seq(m.map(x => parseInt(x[1], 10)))) {
+      const kept = lines.slice();
+      idx.forEach((k, q) => { kept[k] = lines[k].slice(m[q][0].length); });
+      return kept.join(NL);
+    }
+    return raw;
+  };
+
+  // Nearest semantic section / container. Lets the model tell apart elements
+  // that share a label but live in different parts of the page: a "Investor"
+  // <button> inside a <thead> (column sort) vs a "Investor" input inside a
+  // <dialog> (form field) are totally different things — without this signal
+  // the agent was confusing them and hallucinating form structures from table
+  // column headers.
+  // True only for SEMANTIC tables — has <thead>, OR explicit role=table/grid,
+  // OR uses <th> column headers. Old-school sites (HackerNews etc.) use <table>
+  // for layout; we should NOT label every link there as "table-body".
+  const _isSemanticTable = (tableEl) => {
+    if (!tableEl) return false;
+    if (tableEl.querySelector && tableEl.querySelector('thead')) return true;
+    if (tableEl.querySelector && tableEl.querySelector('th')) return true;
+    const r = tableEl.getAttribute && tableEl.getAttribute('role');
+    if (r && ['table','grid','treegrid'].includes(r)) return true;
+    return false;
+  };
+  const _bannerCache = new Map();   // ancestor -> is-overlay-banner (memo)
+  const section = (el) => {
+    // In-frame elements are tagged section=iframe REGARDLESS of landmarks
+    // inside the frame's own document — "this lives in an embedded document"
+    // is the signal the agent needs (a GrapesJS-edited page's <header> is the
+    // CONTENT's header, not the host page's).
+    try { if (el.ownerDocument !== document) return 'iframe'; } catch (e) {}
+    let walker = el;
+    while (walker && walker !== document.body && walker.tagName) {
+      const tag = walker.tagName.toLowerCase();
+      const role = walker.getAttribute ? walker.getAttribute('role') : null;
+      // DIALOG WINS over the overlay-banner shape: a role=dialog/alertdialog
+      // consent sheet anchored at the bottom is still a DIALOG — the modal
+      // banner tells the agent to look for section=dialog, so emitting
+      // overlay-banner for the same container was an instruction mismatch.
+      if (tag === 'dialog' || role === 'dialog' || role === 'alertdialog' ||
+          (walker.getAttribute && walker.getAttribute('aria-modal') === 'true')) {
+        return 'dialog';
+      }
+      // Fixed full-width overlays anchored AWAY from the page top are
+      // notification/consent banners — not page chrome, even when their markup
+      // contains <header>/role=banner (IBM Carbon's cookie bar does). Telling
+      // the agent section=header hid that it's a blocking layer to dismiss.
+      {
+        let isBanner = _bannerCache.get(walker);
+        if (isBanner === undefined) {
+          isBanner = false;
+          try {
+            const wcs = getComputedStyle(walker);
+            if (wcs.position === 'fixed') {
+              const wr = walker.getBoundingClientRect();
+              isBanner = wr.width >= vw * 0.6 && wr.top > vh * 0.15 && wr.height < vh * 0.6;
+              // A fixed bar that CONTAINS the page's main landmark, or a landmark of
+              // its own, is page furniture, not an overlay laid on top of content.
+              // Geometry alone matched Spotify's player bar, mobile-style bottom tab
+              // bars, and sticky "Add to cart" rows — and the legend then told the
+              // agent to dismiss the page's primary controls before doing anything.
+              if (isBanner) {
+                try {
+                  if (walker.querySelector('main, [role="main"], nav, [role="navigation"]')) isBanner = false;
+                } catch (e) {}
+              }
+            }
+          } catch (e) {}
+          _bannerCache.set(walker, isBanner);
+        }
+        if (isBanner) return 'overlay-banner';
+      }
+      // Table-* labels only fire when the surrounding table is actually data.
+      if (tag === 'thead') {
+        if (_isSemanticTable(walker.parentElement)) return 'table-header';
+      } else if (tag === 'tbody') {
+        if (_isSemanticTable(walker.parentElement)) return 'table-body';
+      } else if (tag === 'table' || role === 'table' || role === 'grid' || role === 'treegrid') {
+        if (_isSemanticTable(walker)) return 'table';
+      }
+      if (tag === 'dialog' || role === 'dialog' || role === 'alertdialog' ||
+          (walker.getAttribute && walker.getAttribute('aria-modal') === 'true')) {
+        return 'dialog';
+      }
+      if (tag === 'aside' || role === 'complementary') return 'sidebar';
+      if (tag === 'nav'   || role === 'navigation')    return 'nav';
+      if (tag === 'header'|| role === 'banner')        return 'header';
+      if (tag === 'footer'|| role === 'contentinfo')   return 'footer';
+      if (tag === 'main'  || role === 'main')          return 'main';
+      if (role === 'tablist' || role === 'tabpanel')   return role;
+      if (role === 'menu' || role === 'menubar' || role === 'listbox') return role;
+      if (role === 'form' || tag === 'form')           return 'form';
+      // Crossing a frame boundary: the element lives inside an embedded frame —
+      // a strong disambiguator (embedded editor / widget vs the host page).
+      if (tag === 'iframe' || tag === 'frame')         return 'iframe';
+      walker = composedParent(walker);   // crosses shadow host + frame boundaries
+    }
+    return '';
+  };
+
+  // Active-state detector. Looks at *attribute*-level signals only (no class
+  // sniffing — too many false positives like "activeClass" / "active-deal").
+  // Surfaces which tab/nav item the current page actually is so the agent can
+  // tell "Investors Database tab" from "Investor Relations Hub sidebar item"
+  // when both are present in the listing.
+  const activeHint = (el) => {
+    try {
+      const ac = el.getAttribute('aria-current');
+      if (ac && ac !== 'false') return 'current';
+      if (el.getAttribute('aria-selected') === 'true') return 'selected';
+      if (el.getAttribute('aria-pressed') === 'true') return 'pressed';
+      // Radios/checkboxes/switches announce state via aria-checked (custom)
+      // or .checked (native) — was missing entirely, so the agent couldn't
+      // tell the active option of a segmented toggle or a ticked checkbox.
+      if (el.getAttribute('aria-checked') === 'true') return 'checked';
+      if (el.checked === true) return 'checked';
+      if (el.getAttribute('aria-expanded') === 'true') return 'expanded';
+      const ds = el.getAttribute('data-state');
+      if (ds === 'active' || ds === 'open' || ds === 'on' || ds === 'checked') return ds;
+      // CLASS booster, scoped to tabs/options only (general class sniffing has
+      // too many false positives — but a role=tab with an exact "active"/
+      // "selected" class token is the de-facto pattern when sites skip
+      // aria-selected; lichess's lobby tabs carry no ARIA state at all).
+      const _ahRole = el.getAttribute('role');
+      if (_ahRole === 'tab' || _ahRole === 'option') {
+        const cn = typeof el.className === 'string' ? el.className : '';
+        if (/(^|\s)(active|selected|current)($|\s)/.test(cn)) return 'selected';
+      }
+      if (el.getAttribute('data-active') === 'true') return 'active';
+      if (el.getAttribute('data-current') === 'true') return 'current';
+    } catch (e) {}
+    return '';
+  };
+  const vw = window.innerWidth || document.documentElement.clientWidth;
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  // CANONICAL interactive-role set (W3C ARIA widget roles). Previously this
+  // list was hand-copied in 4 places and the copies disagreed — searchbox/
+  // textbox were "interactive" but not "strong" (so unlabeled search fields
+  // were dropped as noise), the SVG exception omitted switch (SVG-drawn
+  // toggles vanished), and slider/spinbutton/treeitem were missing everywhere.
+  // ONE set, used by isInteractive, strong-control rescue, the SVG decorative
+  // exception, and the cursor-only dedup test. (role=row/gridcell deliberately
+  // excluded: data grids set them on EVERY cell — APG roving-tabindex already
+  // catches the real interactive ones via hasAttribute('tabindex').)
+  const INTERACTIVE_ROLES = new Set(['button','link','menuitem','menuitemcheckbox','menuitemradio',
+    'tab','checkbox','radio','switch','option','combobox','searchbox','textbox',
+    'slider','spinbutton','treeitem']);
+  const isInteractive = (el) => {
+    const tag = el.tagName.toLowerCase();
+    // <summary> is the native disclosure-widget click target (details/summary).
+    if (['a','button','input','select','textarea','summary'].includes(tag)) return true;
+    // Media with browser-rendered controls is a real interaction surface.
+    if ((tag === 'audio' || tag === 'video') && el.hasAttribute('controls')) return true;
+    // Canvas-drawn UIs (editors, charts, signature pads): the DOM can't see
+    // inside — surface the canvas as a target so the agent knows it exists and
+    // can escalate to analyze_screen. Small unlabeled canvases (sparklines,
+    // decorations) are filtered later by size; a viewport-dominating canvas is
+    // the APP (Excalidraw/Figma-style) even with zero markup.
+    if (tag === 'canvas') return true;
+    // Canvas-LIKE drawing surfaces: whiteboard apps (tldraw, others) render on
+    // a div/svg whose class advertises it as the canvas (.tl-canvas). Same
+    // treatment as <canvas>: surfaced only when viewport-dominating (filtered
+    // by size later), with the analyze_screen hint.
+    try {
+      if (tag === 'div' || tag === 'svg') {
+        const cn = typeof el.className === 'string' ? el.className : (el.className && el.className.baseVal) || '';
+        if (/(^|[\s-])canvas($|[\s_-])/i.test(cn)) return true;
+      }
+    } catch (e) {}
+    // Code-editor hosts (a styled view over a hidden input — neither looks
+    // interactive on its own, but the host IS the editor the user sees and types
+    // into). Resolved above by library class OR by structure, so an unknown
+    // editor is recognised the same way a named one is. CM6's .cm-content is
+    // contenteditable and is caught by the contenteditable path instead.
+    if (editorHosts.has(el)) return true;
+    // Viewport-dominating bare <svg> = a vector editing surface (draw.io's
+    // mxGraph canvas) — surfaced like <canvas>, size-gated in the loop.
+    if (tag === 'svg') return true;
+    const role = el.getAttribute('role');
+    if (role && INTERACTIVE_ROLES.has(role)) return true;
+    if (el.hasAttribute('onclick') || el.hasAttribute('tabindex') || el.isContentEditable) return true;
+    // Tagged by the document_start listener-wrap (extension/listener_tag.js):
+    // a JS click/pointer handler was bound via addEventListener — the one
+    // signal no static DOM walk can see. (Delegation roots excluded both at
+    // the tagger and here — defense in depth.)
+    if (el.__abClickBound && tag !== 'body' && tag !== 'html' && tag !== 'main') return true;
+    try { if (getComputedStyle(el).cursor === 'pointer') return true; } catch (e) {}
+    // REJECTED CANDIDATE — do not re-add without new evidence. A `collapsed`/
+    // `expanded` class token was proposed as an accordion-header signal (same
+    // cross-library shape as the `placeholder` token rule) to recover three
+    // Mind2Web targets the interactivity gate drops. MEASURED, both sides:
+    //   out-of-sample recall  44/47 -> 44/47   (recovers ZERO)
+    //   dev corpus, 26 sites  +9 entries (+0.17%), and an UNEXPLAINED -3% chars
+    // It does flip the classification — the underarmour header stops being
+    // `not-interactive` — but the element is then dropped by `outside-viewport`
+    // anyway, so nothing reaches the listing. Zero benefit, non-zero footprint,
+    // and a size change we could not account for. Rejected on the numbers.
+    return false;
+  };
+  // Decorative SVG-internal tags that bloat the listing without being plausible
+  // click targets. Skip unless they carry an explicit interactive ARIA role.
+  const decorativeTags = new Set(['svg','rect','path','circle','polyline','polygon','line','ellipse','g','use','defs','symbol']);
+  // Track which mmids we've added so we can collapse parent->child same-label
+  // chains (`<a>Investor Relations Hub` containing `<span>Investor Relations Hub`).
+  const addedMmids = new Set();
+  // DELEGATION ROOTS (React/Vue bind every handler on the app container, so that
+  // container gets tagged __abClickBound and looks like a control). Candidates are
+  // collected during the walk and confirmed/dropped in a post-pass. Must live at
+  // FUNCTION scope — CONTAINER_ROLES sits inside the per-element loop.
+  const _handlerOnlyWrappers = new Set();
+  // Per-ancestor memo for the inner-scroll-container check — siblings share
+  // their scroll ancestors, so this turns O(elements × depth) style reads into
+  // one read per distinct container.
+  const scrollAncCache = new Map();
+  const out = [];
+  // mmid -> entry. The parent-child dedup below runs a composed ancestor walk
+  // for EVERY element and did out.find() at each hop, which is O(elements x
+  // depth x listed) for what is a hash lookup — on a dense page (java_api
+  // collects ~4.7k entries) that dominated the cost of the walk.
+  const outByMmid = new Map();
+  // Count of real interactive controls sitting BELOW the current viewport, so we
+  // can tell the agent to scroll (it has no other signal that they exist — this
+  // is the #1 reason it gives up on long pages / below-fold forms).
+  let belowFoldCount = 0;
+  let aboveFoldCount = 0;   // same idea for controls scrolled ABOVE the viewport
+  let sideCount = 0;        // ...and for controls off the LEFT or RIGHT edge
+  // Whether tag genuinely needs to be listed even with no visible text label
+  // (form inputs are routinely empty but the agent must be able to find them).
+  const formyTags = new Set(['input','textarea','select']);
+  // <input> types whose `value` is a LABEL rather than user-entered content.
+  const BUTTONISH_INPUT = new Set(['submit', 'button', 'reset', 'image']);
+  // Roles/tags that are "strong" interactive — a real control the agent will
+  // need even when it carries no text label (icon buttons: ✕ close, ⋮ kebab,
+  // pencil edit, hamburger, logo-link; unlabeled search fields, sliders).
+  // Merely cursor:pointer / tabindex on a generic <div> does NOT qualify —
+  // those stay dropped to avoid mystery noise. Same canonical set.
+  const strongInteractiveRoles = INTERACTIVE_ROLES;
+  // Last-resort handle for a label-less strong control, derived WITHOUT any
+  // site-specific knowledge: an inline <svg><title>, an icon's aria-label, a
+  // child <img alt>, common automation data-* attributes, or a child title.
+  // (self aria-label/title/alt/name are already tried in the AccName chain.)
+  // Code-point-safe cut, available to synthLabel (which runs before clip is
+  // declared). AUDIT_DOM_GENERALITY.md §4.7 claimed five truncation sites were
+  // fixed; synthLabel alone still had seven raw slices, so an emoji at the
+  // boundary produced a lone surrogate that serialises as garbage.
+  const _cut = (t, n) => {
+    if (!t || t.length <= n) return t;
+    const c = t.charCodeAt(n - 1);
+    return t.slice(0, (c >= 0xD800 && c <= 0xDBFF) ? n - 1 : n);
+  };
+  const synthLabel = (el) => {
+    try {
+      const svgTitle = el.querySelector('svg title, title');
+      if (svgTitle && (svgTitle.textContent || '').trim()) return _cut(svgTitle.textContent.trim(), 40);
+      const svgAL = el.querySelector('svg[aria-label], [aria-label]');
+      if (svgAL) { const a = (svgAL.getAttribute('aria-label') || '').trim(); if (a) return _cut(a, 40); }
+      const img = el.querySelector('img[alt]');
+      if (img) { const a = (img.getAttribute('alt') || '').trim(); if (a) return _cut(a, 40); }
+      for (const attr of ['data-testid','data-test-id','data-test','data-tooltip','data-label','data-icon','data-action','data-key']) {
+        let v = (el.getAttribute(attr) || '').trim();
+        // These are automation/framework attrs, not labels — reject values
+        // that are clearly machine handles, not human words: Stimulus action
+        // descriptors ("click->modal#close"), selector-ish tokens, hex ids.
+        if (!v || /[#>{}()\[\]]|->/.test(v)) continue;
+        v = v.replace(/[-_]+/g, ' ').trim();
+        // "Has letters" must mean letters in ANY script. /[a-z]/i rejected every
+        // Chinese, Japanese, Korean, Arabic, Cyrillic, Greek, Hebrew, Thai and
+        // Devanagari label outright — on those sites the fallback silently
+        // produced nothing and the control was listed as an unlabeled icon.
+        if (!/\p{L}/u.test(v)) continue;                       // no letters -> meaningless
+        if (!v.includes(' ') && /^[0-9a-f]{8,}$/i.test(v)) continue;  // hash-like id
+        return _cut(v, 40);
+      }
+      const childTitled = el.querySelector('[title]');
+      if (childTitled) { const t = (childTitled.getAttribute('title') || '').trim(); if (t) return _cut(t, 40); }
+      // SHADOW-SLOTTED text: a link wrapping a web component whose label lives
+      // in the component's OPEN shadow root (<a><onboarding-tile/></a> on
+      // archive.org) — host.innerText is empty for shadow content, so read the
+      // composed text explicitly.
+      try {
+        const kids = el.querySelectorAll('*');
+        for (const n of kids) {
+          if (n.shadowRoot) {
+            // NOTE: ':scope > *' does NOT match on a ShadowRoot (it's a
+            // DocumentFragment, not an element) — iterate .children directly.
+            let t = '';
+            for (const c of n.shadowRoot.children) {
+              const ct = (c.innerText || '').trim();
+              if (ct) t = t ? t + ' ' + ct : ct;
+            }
+            t = t.replace(/\s+/g, ' ').trim();
+            if (t && t.length <= 80) return _cut(t, 40);
+          }
+        }
+      } catch (e) {}
+      // CARD PATTERN: a text-less image/overlay link whose parent card carries
+      // a heading ("hero cards" — the visible title sits OUTSIDE the anchor).
+      // Only fires for label-less links that dominate their parent's area.
+      try {
+        const er = el.getBoundingClientRect();
+        let p = el.parentElement;
+        for (let d = 0; d < 2 && p; d++, p = p.parentElement) {
+          const pr = p.getBoundingClientRect();
+          // 0.3 not 0.5: tile cards put the caption BELOW the icon-anchor, so
+          // the anchor covers well under half the card (archive.org tiles).
+          const dominates = pr.width * pr.height > 0 &&
+            (er.width * er.height) / (pr.width * pr.height) >= 0.3;
+          if (!dominates) continue;
+          const h = p.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
+          if (h) {
+            const ht = (h.innerText || '').trim().replace(/\s+/g, ' ');
+            if (ht) return _cut(ht, 40);
+          }
+          // No heading, but the card's own short text labels the tile
+          // (archive.org help tiles: image-link + caption outside the <a>).
+          const pt = (p.innerText || '').trim().replace(/\s+/g, ' ');
+          if (pt && pt.length <= 40) return pt;
+        }
+      } catch (e) {}
+      // CSS ::before/::after content — icon-font ligatures and many buttons put
+      // their human label here (e.g. content:"close"). Skip private-use glyphs.
+      for (const pseudo of ['::before','::after']) {
+        try {
+          let c = getComputedStyle(el, pseudo).content;
+          if (c && c !== 'none' && c !== 'normal') {
+            c = c.replace(/^["']|["']$/g, '').trim();
+            if (c && c.length <= 40 && /[\p{L}\p{N}]/u.test(c)) return c;   // any script, not just ASCII
+          }
+        } catch (e) {}
+      }
+    } catch (e) {}
+    return '';
+  };
+  // Code-point-safe truncation. String.slice cuts UTF-16 code UNITS, so a label
+  // whose 60th unit lands inside a surrogate pair — any emoji, and the astral
+  // CJK/Emoji ranges plenty of real buttons use — is cut through the middle of a
+  // character, leaving a lone surrogate that serialises into the listing as
+  // garbage. Back off one unit in that case.
+  const clip = (s, n) => {
+    if (!s || s.length <= n) return s;
+    const c = s.charCodeAt(n - 1);
+    return s.slice(0, (c >= 0xD800 && c <= 0xDBFF) ? n - 1 : n);
+  };
+  // URL / MEDIA extraction, only populated when detail='full'.
+  const _abs = (u, el) => {
+    try { return new URL(u, (el.ownerDocument && el.ownerDocument.baseURI) || location.href).href; }
+    catch (e) { return u || ''; }
+  };
+  const _url = (u, el) => {
+    if (!u) return '';
+    // A truncated data: URI is worse than useless — it looks like a URL the agent
+    // can fetch and is not one. Describe it instead.
+    if (/^data:/i.test(u)) {
+      const mime = (u.slice(5).split(/[;,]/)[0] || 'data');
+      return `data:${mime} (inline, ${u.length} chars — not a fetchable URL)`;
+    }
+    return clip(_abs(u, el), 300);
+  };
+  const _hrefOf = (el) => { try { return _url(el.getAttribute('href'), el); } catch (e) { return ''; } };
+  // ALT TEXT IS CONTENT, NOT A LABEL — and a cut that does not look like a cut is
+  // worse than a short field. The media rows hard-sliced alt at 60 chars with NO
+  // marker, while the accessible-name path does a word-boundary cut and appends
+  // '…'. Measured live on Wolfram Alpha, where the answer to a query IS the alt
+  // text of a rendered image: the listing showed
+  //   name="integral_(-20)^20 sqrt(1 + (-x cos(x) + sin(x))^2/x^4)dx≈40."
+  // and the true value was 40.485121134668 — the cut landed after "≈40." so it
+  // read as a COMPLETE numeric answer. An agent reporting it would be confidently
+  // wrong with no reason to re-check. Bigger budget (alt is the only textual form
+  // of an image) plus the same visible marker every other truncation uses.
+  const _clipAlt = (s) => {
+    const t = String(s || '').trim();
+    if (t.length <= 200) return t;
+    let cut = clip(t, 200);
+    const sp = cut.lastIndexOf(' ');
+    if (sp >= 140) cut = cut.slice(0, sp);
+    return cut + '…';
+  };
+  const _srcOf = (el) => {
+    try {
+      const MED = ['img', 'video', 'audio', 'source', 'embed'];
+      const tl = el.tagName.toLowerCase();
+      let m = MED.includes(tl) ? el : null;
+      // A link or button wrapping an image is how most clickable media is built,
+      // so surface the image it contains rather than reporting nothing. But ONLY
+      // for genuinely media-ish hosts: hoisting a descendant's src onto any
+      // container put the page logo's URL on Baidu's header <div>, and put a
+      // plot's data: URI on a Wolfram <section> so one image read as two. A
+      // <section> has no src, and printing one invents a fact.
+      if (!m && el.querySelector && (tl === 'a' || tl === 'button' || tl === 'picture' || tl === 'figure')) {
+        m = el.querySelector('img[src],video[src],source[src]');
+      }
+      if (!m) return '';
+      // currentSrc BEFORE src. With srcset/sizes — the norm on any news or CDN
+      // site — src is the fallback candidate, NOT what the browser painted.
+      // Measured on BBC: every one of 12 images reported the 480px variant while
+      // the page displayed 1536px. The reported URL resolves and returns a real
+      // photo, just not the one on screen, so nothing about the answer looks
+      // wrong — which is what makes it worse than an omission.
+      return _url(m.currentSrc || m.getAttribute('src') || '', m);
+    } catch (e) { return ''; }
+  };
+  // PLACEHOLDER STATE, structurally — "is this trigger showing its hint rather
+  // than a chosen value?" without reading the words.
+  //
+  // Component libraries all answer this in markup, just not in one agreed place:
+  //   Radix / TipTap             data-placeholder            (boolean, on the value node)
+  //   Ark UI / Chakra v3         data-placeholder-shown      (boolean, on the trigger)
+  //   PrimeVue                   class="p-placeholder" + data-p="placeholder"
+  //   Ant / select2 / Choices    a child node classed …-placeholder / __placeholder
+  // What they share is the TOKEN "placeholder" appearing in a data-* attribute
+  // name, a data-* attribute value, or a class list. Matching that token covers
+  // all four and reads identically in German, Japanese or Arabic — which the
+  // English select|choose|pick wordlist further down cannot. Measured: ablating
+  // that wordlist changed combobox state on chakra (18 controls), primevue (18)
+  // and vuetify (3), which is exactly what a non-English page gets today.
+  //
+  // aria-placeholder is deliberately excluded — it is a static description of
+  // the field, present whether or not the hint is currently rendered.
+  const _phMarked = (n, txt) => {
+    try {
+      if (!n || !n.attributes) return false;
+      for (const a of n.attributes) {
+        if (a.name.indexOf('aria-') === 0) continue;
+        if (a.name.indexOf('placeholder') !== -1) {
+          const v = (a.value || '').trim();
+          // Boolean-style marker: the hint IS showing. A marker carrying the hint
+          // STRING is configuration — it only proves placeholder state when that
+          // string is what's actually on screen (otherwise a real pick that left
+          // data-placeholder="Choose a size" behind would read as unselected).
+          if (!v || v === 'true' || !txt || v === txt) return true;
+          continue;
+        }
+        if (a.name.indexOf('data-') === 0 && /(^|[\s,_-])placeholder([\s,_-]|$)/.test(a.value)) return true;
+      }
+      const cn = typeof n.className === 'string' ? n.className : (n.className && n.className.baseVal) || '';
+      // CSS-property utility classes (Tailwind-style `text-placeholder`,
+      // `bg-placeholder`) are STYLING, not state — they say what colour the thing
+      // is, not that a hint is showing. Matching them marked a combobox reading
+      // "Ontario" as (unselected), a row that contradicts its own label.
+      for (const tok of String(cn).split(/\s+/)) {
+        if (!/(^|[_-])placeholder$|^placeholder([_-]|$)/.test(tok)) continue;
+        if (/^(text|bg|border|fill|stroke|ring|shadow|from|via|to|decoration|outline|caret|accent)-placeholder$/.test(tok)) continue;
+        return true;
+      }
+      return false;
+    } catch (e) { return false; }
+  };
+  // The marker may sit on the trigger or on the node rendering its text; for a
+  // descendant, require that text to be what the trigger actually shows.
+  const _showingPlaceholder = (n, txt) => {
+    if (_phMarked(n, txt)) return true;
+    try {
+      for (const c of n.querySelectorAll('*')) {
+        if (!_phMarked(c, txt)) continue;
+        const ct = (c.innerText || '').trim();
+        if (ct && (!txt || ct === txt)) return true;
+      }
+    } catch (e) {}
+    return false;
+  };
+  // Collapse an exactly-doubled string ("Cooker Cooker", "Shop gaming Shop
+  // gaming") — innerText frequently concatenates a screen-reader copy with the
+  // visible copy. Halve it only when the two word-halves are identical.
+  const collapseDoubled = (s) => {
+    const t = (s || '').split(' ');
+    // SINGLE-WORD HALVES ONLY. The screen-reader-duplicate pattern this exists for
+    // ("Cooker Cooker") is almost always one word repeated. Allowing multi-word
+    // halves corrupted genuine names that legitimately repeat: the "New York New
+    // York" hotel became "New York", "Louie Louie" became "Louie". Losing the
+    // collapse on rarer multi-word duplicates is a cosmetic cost; silently renaming
+    // a real link is a correctness one.
+    if (t.length === 2 && t[0] && t[0] === t[1]) return t[0];
+    return s;
+  };
+  // Iterate the registry (composed-tree walk order) instead of
+  // document.querySelectorAll('[mmid]') — the latter can't see into shadow roots.
+  mmidReg.forEach((el) => {
+    if (!el.isConnected) return _drop(el, 'not-connected');
+    const tagL = el.tagName.toLowerCase();
+    // IFRAMES: same-origin frames were walked like shadow roots, so their inner
+    // elements are listed individually — skip the frame element itself.
+    // Cross-origin frames are opaque to DOM tools: list the FRAME as one box so
+    // the agent at least knows an embedded app exists there (Stripe, OAuth,
+    // embedded docs) and can escalate to analyze_screen + coordinate clicks.
+    let crossFrame = false;
+    if (tagL === 'iframe' || tagL === 'frame') {
+      let accessible = false;
+      try { accessible = !!el.contentDocument; } catch (e) {}
+      if (accessible) return;
+      crossFrame = true;
+    }
+    if (!crossFrame && !isInteractive(el)) return _drop(el, 'not-interactive');
+    if (decorativeTags.has(tagL)) {
+      const rr = el.getAttribute('role');
+      if (!rr || !INTERACTIVE_ROLES.has(rr)) {
+        // Escape hatch: a viewport-dominating bare <svg> is a vector EDITING
+        // surface (draw.io's diagram area), not decoration — fall through to
+        // the canvas-like handling.
+        let bigSvg = false;
+        if (tagL === 'svg') {
+          try { const sr = el.getBoundingClientRect(); bigSvg = sr.width * sr.height >= 0.25 * vw * vh; } catch (e) {}
+        }
+        if (!bigSvg) return _drop(el, 'decorative-svg');
+      }
+    }
+    // Canvas filter: keep when page-labeled (aria-label/role) OR when it
+    // dominates the viewport (>=25% area — it's the app's drawing surface);
+    // drop unlabeled small ones (chart sparklines, confetti layers).
+    let canvasLike = tagL === 'canvas';
+    // Viewport-dominating bare <svg> (no interactive role): vector surface.
+    if (!canvasLike && tagL === 'svg') {
+      const _svgRole = el.getAttribute('role');
+      if (!_svgRole || !INTERACTIVE_ROLES.has(_svgRole)) {
+        try { const sr = el.getBoundingClientRect(); canvasLike = sr.width * sr.height >= 0.25 * vw * vh; } catch (e) {}
+      }
+    }
+    if (!canvasLike && (tagL === 'div' || tagL === 'svg')) {
+      try {
+        const cn = typeof el.className === 'string' ? el.className : (el.className && el.className.baseVal) || '';
+        // "off-canvas"/"offcanvas" (USWDS/Bootstrap drawer classes) are NOT
+        // drawing surfaces — that match told the agent to use vision for an
+        // entire IRS page of plain HTML.
+        canvasLike = /(^|[\s-])canvas($|[\s_-])/i.test(cn) && !/off-?canvas/i.test(cn);
+      } catch (e) {}
+    }
+    if (canvasLike && tagL !== 'canvas') {
+      // A drawing surface is viewport-sized and pixel-opaque: page-spanning
+      // height or real text content means it's an HTML wrapper, not a canvas.
+      try {
+        const cr0 = el.getBoundingClientRect();
+        if (cr0.height > vh * 1.5) canvasLike = false;
+        else if ((el.innerText || '').trim().length > 40) canvasLike = false;
+      } catch (e) {}
+    }
+    if (canvasLike && tagL !== 'canvas') {
+      // A class-marked "canvas" that CONTAINS an accessible same-origin iframe
+      // is NOT pixel-opaque — it's a page-builder surface (GrapesJS) whose
+      // inner DOM is walked and listed. The canvas hint would wrongly send the
+      // agent to vision when the elements are right there.
+      try { const fr = el.querySelector('iframe'); if (fr && fr.contentDocument) canvasLike = false; } catch (e) {}
+    }
+    if (canvasLike) {
+      try {
+        const cr = el.getBoundingClientRect();
+        if (tagL !== 'canvas' && cr.width * cr.height < 0.25 * vw * vh) return;  // class-matched: size-gate ALWAYS
+        if (!(el.getAttribute('aria-label') || el.getAttribute('role')) &&
+            cr.width * cr.height < 0.25 * vw * vh) return;
+      } catch (e) { return; }
+    }
+    // The page itself says this element is not for content consumption.
+    // Per W3C, aria-hidden excludes the WHOLE subtree — checking only the
+    // element itself leaked React Aria's VisuallyHidden native-select mirrors
+    // (the select is plain; its 1×1 clip-rect WRAPPER carries aria-hidden).
+    try { if (el.closest && el.closest('[aria-hidden="true"]')) return _drop(el, 'aria-hidden'); }
+    catch (e) { if (el.getAttribute('aria-hidden') === 'true') return _drop(el, 'aria-hidden'); }
+    // closest() stops at the shadow boundary, so a control inside a web
+    // component whose HOST is aria-hidden stayed listed — the same W3C
+    // whole-subtree rule the line above enforces, just unenforceable with
+    // closest(). Only pay for the composed walk when the element is actually a
+    // shadow resident.
+    try {
+      if (el.getRootNode && el.getRootNode().host) {
+        let w = el;
+        while (w) {
+          if (w.getAttribute && w.getAttribute('aria-hidden') === 'true') return;
+          w = composedParent(w);
+        }
+      }
+    } catch (e) {}
+    // Content INSIDE a rich-text editor (contenteditable region) is the user's
+    // DOCUMENT, not page UI — typed paragraphs, links, embeds. Listing those as
+    // individual targets duplicates the editor entry and invites the agent to
+    // click its own typed text. The editor ROOT (the element that carries the
+    // contenteditable attribute) is listed as a single text-entry target;
+    // contenteditable="false" islands (embedded widgets) keep isContentEditable
+    // false and still get listed normally.
+    const ceRoot = el.isContentEditable && el.hasAttribute('contenteditable');
+    if (el.isContentEditable && !ceRoot) return _drop(el, 'contenteditable-non-root');
+    // VISUALLY-HIDDEN INPUT UNDER A STYLED LABEL — the standard custom radio/
+    // checkbox pattern (<label><input class="sr-only"><span>0</span></label>:
+    // SurveyJS ratings, Bootstrap/Tailwind custom forms). The 1×1 input is the
+    // SEMANTIC control; the label is its visible body. Without this, the
+    // page's primary answer widgets are simply absent. Adopt the label's
+    // geometry for the input's entry (clicks on the label toggle the input).
+    // THE CONTROL'S OWN VISIBLE LABEL. When a page hides a real form control and
+    // paints a label/styled surface over it for the user to click, that label is
+    // the proof the control is OPERABLE rather than a discarded mirror — and it is
+    // what the user (and a click) actually hits.
+    const _visibleLabelFor = (n) => {
+      try {
+        const cands = [];
+        const wrap = n.closest && n.closest('label');
+        if (wrap) cands.push(wrap);
+        if (n.id) {
+          const root = (n.getRootNode && n.getRootNode().querySelector) ? n.getRootNode() : document;
+          const l = root.querySelector(`label[for="${CSS.escape(n.id)}"]`);
+          if (l) cands.push(l);
+        }
+        for (const l of cands) {
+          const lr = l.getBoundingClientRect();
+          const lcs = ((l.ownerDocument && l.ownerDocument.defaultView) || window).getComputedStyle(l);
+          if (lr.width > 7 && lr.height > 7 && lcs.visibility !== 'hidden' &&
+              lcs.display !== 'none' && parseFloat(lcs.opacity || '1') > 0) return l;
+        }
+      } catch (e) {}
+      return null;
+    };
+    const ownLabel = formyTags.has(tagL) ? _visibleLabelFor(el) : null;
+    let labelProxy = null;
+    if (formyTags.has(tagL)) {
+      try {
+        const r0 = el.getBoundingClientRect();
+        if (r0.width <= 4 || r0.height <= 4) {
+          const wrapLab = el.closest && el.closest('label');
+          if (wrapLab && wrapLab.querySelectorAll('input,select,textarea').length === 1) {
+            const lr = wrapLab.getBoundingClientRect();
+            const lcs = getComputedStyle(wrapLab);
+            if (lr.width > 7 && lr.height > 7 && lcs.visibility !== 'hidden' && lcs.display !== 'none') {
+              labelProxy = wrapLab;
+            }
+          }
+        }
+      } catch (e) {}
+    }
+    // Same idea for code-editor hosts: everything INSIDE a CodeMirror/Monaco/
+    // Ace instance (hidden mirror textarea, line divs, gutters, cursors) is the
+    // editor's rendering machinery, not page UI. List the host as ONE editor
+    // target; _enterTextPage routes typing to the editor's real input.
+    let codeEditor = false;
+    try {
+      // composed walk, not closest(): an editor mounted inside a web component
+      // (Ionic/Lit playgrounds) has its host on the other side of a shadow
+      // boundary, where closest() stops and every internal line div leaks in.
+      let ceHost = null;
+      { let w = el; while (w) { if (editorHosts.has(w)) { ceHost = w; break; } w = composedParent(w); } }
+      if (ceHost && ceHost !== el) return _drop(el, 'inside-editor-host');
+      // EDITABILITY GATE: real editors carry an input surface (CM5/Ace mirror
+      // textarea, CM6 .cm-content contenteditable, Monaco .inputarea). Static
+      // syntax-highlighted snippets reuse the same class names — promoting a
+      // read-only npm-install block to "type into it with enter_text_tool"
+      // sent the agent typing into a wall.
+      if (ceHost) {
+        codeEditor = !!ceHost.querySelector('textarea, [contenteditable="true"], [contenteditable=""], .cm-content');
+      }
+    } catch (e) {}
+    // Geometry source: the element itself, or its label proxy (hidden-input-
+    // under-styled-label pattern — the label's box is where the user clicks).
+    const geomEl = labelProxy || el;
+    const r = geomEl.getBoundingClientRect();
+    // Absolute (top-document) coordinates — identical to r for top-doc elements,
+    // shifted by the accumulated frame offsets for same-origin-iframe content.
+    // The listing's box() and CDP clicks both need TOP-document coordinates.
+    const inFrame = el.ownerDocument !== document;
+    const fpt = inFrame ? framePoint(el, r.left, r.top) : { x: r.left, y: r.top, kx: 1, ky: 1 };
+    const ax = fpt.x, ay = fpt.y;
+    const aw = r.width * fpt.kx, ah = r.height * fpt.ky;
+    // getComputedStyle must come from the element's own window for in-frame nodes.
+    const cs = ((el.ownerDocument && el.ownerDocument.defaultView) || window).getComputedStyle(geomEl);
+    // OWN opacity:0 is not automatically "not there". The comment below explains
+    // that opacity-hidden OPERABLE controls must stay listed — but it only ever
+    // protected ANCESTOR opacity, so a control with opacity:0 on ITSELF died here.
+    // That is the single most deployed custom-form pattern on the web: Bootstrap
+    // 4's .custom-control-input (a 16x20 checkbox at opacity:0 behind its styled
+    // label) and the styled file upload (opacity:0 input over a pretty button).
+    // Both vanished completely — no entry, no name, no ref for file_upload to
+    // target. The recall harness could not see it either, because its ground truth
+    // filters to visible elements too.
+    //
+    // The evidence that such a control is OPERABLE rather than a discarded mirror
+    // is that the page gave it a visible label to click. No label -> still dropped.
+    const _selfOpaque = parseFloat(cs.opacity || '1') > 0;
+    let visible = r.width > 1 && r.height > 1 && cs.visibility !== 'hidden' &&
+                    cs.display !== 'none' && (_selfOpaque || !!ownLabel);
+    // Modern Chromium hides closed-<details> content (and hidden=until-found)
+    // via content-visibility, NOT display:none — rects stay non-zero, computed
+    // display stays visible, and the old checks leaked those invisible controls
+    // into the listing as label-less ghosts. checkVisibility() accounts for
+    // content-visibility:hidden ancestors. Deliberately NOT passed:
+    //  - contentVisibilityAuto (c-v:auto content is real, just paint-skipped);
+    //  - checkOpacity — ancestor opacity:0 is a standard OPERABLE-control
+    //    pattern (opacity-0 input[file] under a styled upload button; MUI
+    //    DateField's section list is opacity-0 until focused). Those must stay
+    //    listed: clicking/typing focuses and reveals them.
+    try {
+      if (visible && el.checkVisibility &&
+          !el.checkVisibility({ checkVisibilityCSS: true })) visible = false;
+    } catch (e) {}
+    const inViewport = (ay + r.height) > 0 && (ax + r.width) > 0 && ay < vh && ax < vw;
+    // Modal/dialog content is the user's focus. Many dialogs are taller than the
+    // viewport (long forms) with their submit button at the bottom. Skipping
+    // those because of inViewport made the agent unable to find the submit
+    // button. So: if the element is inside a dialog, include it regardless of
+    // viewport position (it's reachable via in-modal scroll).
+    let inModal = false;
+    {
+      let w = el;
+      while (w && w !== document.body && w.tagName) {
+        const t = w.tagName.toLowerCase();
+        const ro = w.getAttribute ? w.getAttribute('role') : null;
+        if (t === 'dialog' || ro === 'dialog' || ro === 'alertdialog' ||
+            (w.getAttribute && w.getAttribute('aria-modal') === 'true')) { inModal = true; break; }
+        w = composedParent(w);
+      }
+    }
+    // pointer-events:none (computed value already accounts for inheritance) means
+    // clicks pass straight through — but for REAL form controls it's how
+    // Tailwind/shadcn renders DISABLED state (`disabled:pointer-events-none`).
+    // Dropping those hid Boxsy's disabled "Add Investor" submit button and the
+    // agent picked Cancel as its submit target. Keep real controls, flagged
+    // (disabled); drop only decorative pass-through nodes.
+    let peDisabled = false;
+    if (visible && cs.pointerEvents === 'none') {
+      const _peRole = el.getAttribute('role');
+      const _peReal = ['a', 'button', 'input', 'select', 'textarea', 'summary'].includes(tagL) ||
+                      (_peRole && INTERACTIVE_ROLES.has(_peRole));
+      if (!_peReal) return _drop(el, 'pointer-events-none');
+      peDisabled = true;
+    }
+    // Tally real controls below the fold before dropping them, so we can surface
+    // a "scroll down" hint instead of leaving the agent blind to them.
+    if (visible && !inViewport && !inModal) {
+      const _bfRole = el.getAttribute('role');
+      const _real = ['a','button'].includes(tagL) || formyTags.has(tagL) ||
+                    (_bfRole && strongInteractiveRoles.has(_bfRole));
+      if (_real && ay >= vh) belowFoldCount++;
+      else if (_real && (ay + r.height) <= 0) aboveFoldCount++;
+      // The viewport has TWO axes. Controls parked off to the side — carousel
+      // slides, kanban columns, an RTL page scrolled horizontally — were counted
+      // by neither branch and hinted by nothing, so read_page said the page was
+      // complete when it was not.
+      else if (_real && (ax >= vw || (ax + r.width) <= 0)) sideCount++;
+    }
+    // FIND REACH: the STRING listing stays viewport-scoped (token discipline),
+    // but the STRUCTURED array — which backs the `find` tool — keeps real
+    // controls that are merely scrolled out of view, flagged offscreen.
+    // Without this, find() is viewport-bound: a semantically perfect query
+    // ("Launch demo modal button") returns 13 wrong answers because the target
+    // is 200px below the fold, and the SAME query works after scrolling. Clicks
+    // auto-scroll (scrollIntoView in _clickPage/_rectForPage), so these refs are
+    // immediately actionable — the agent never needs to engineer a scroll first.
+    const keepForFind = structured && visible && !inViewport && (() => {
+      const rr = el.getAttribute('role');
+      return ['a', 'button'].includes(tagL) || formyTags.has(tagL) ||
+             (rr && strongInteractiveRoles.has(rr));
+    })();
+    if (!visible || (!inViewport && !inModal && !keepForFind)) return _drop(el, !visible ? 'not-visible' : 'outside-viewport');
+    // Sub-8×8 elements are almost always decoration: SVG path fragments, hover
+    // hot-spots, screen-reader spacers. Semantics beat pixels though — a 6×6
+    // styled role=checkbox/radio/switch is a real control (dense dashboards,
+    // compact toggles); explicit widget roles are exempt along with form tags.
+    if (r.width < 8 || r.height < 8) {
+      const _szRole = el.getAttribute('role');
+      // A NAMED NATIVE CONTROL is semantics at its strongest and outranks its
+      // pixel size just as an explicit widget role does. Amazon's header ships
+      // its language switcher and account menu as 8x4 <button>s carrying real
+      // aria-labels ("Expand to Change Language or Country"); the bare size test
+      // dropped both from the listing on .com and .de, so the agent could not
+      // reach the site's own language control. Still requires ~3px in the
+      // smaller dimension, which keeps genuinely zero-area sr-only anchors and
+      // tracking pixels out.
+      const _szNamed = ['a', 'button', 'summary'].includes(tagL) &&
+        Math.min(r.width, r.height) >= 3 &&
+        !!((el.getAttribute('aria-label') || el.getAttribute('title') ||
+            (el.innerText || '')).trim());
+      if (!formyTags.has(tagL) && !(_szRole && INTERACTIVE_ROLES.has(_szRole)) && !_szNamed) return _drop(el, 'too-small-unnamed');
+    }
+    // INNER-SCROLL-CONTAINER CLIPPING: an element scrolled out of view inside an
+    // overflow:auto/scroll panel (chat sidebar, results list, dropdown body) is
+    // NOT "occluded by an overlay" — but the old code let it reach the
+    // elementFromPoint test, which flagged it (occluded/blocked) and steered the
+    // agent away from a perfectly reachable list row. Detect the real cause:
+    // center outside the visible box of a scrollable composed ancestor. Clicks
+    // auto-scroll (scrollIntoView in _clickPage), so these stay fully actionable.
+    // Is the element ITSELF a scroll container (sidebar nav, chat panel, long
+    // dropdown body)? Then (a) it's a region, not a click target — never tag it
+    // "scrolled out", and (b) the agent benefits from knowing its content
+    // scrolls independently of the page.
+    let scrollRegion = false;
+    try {
+      scrollRegion = (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 4) ||
+                     (/(auto|scroll)/.test(cs.overflowX) && el.scrollWidth  > el.clientWidth  + 4);
+    } catch (e) {}
+    let clippedInContainer = false;
+    let clipContainerMmid = null;   // which scroll panel clips it (for listing compaction)
+    // Guards: container-sized elements (taller/wider than the viewport) have a
+    // meaningless center point — they're wrappers, not targets.
+    if (inViewport && !inModal && !scrollRegion && r.height < vh && r.width < vw) {
+      try {
+        // Center coords stay in the CURRENT document's space; when the walk
+        // crosses a frame boundary they are re-expressed in the parent
+        // document's space, so every comparison is same-space.
+        let ccx = r.left + r.width / 2, ccy = r.top + r.height / 2;
+        let anc = composedParent(el);
+        while (anc && anc !== document.body && anc.nodeType === 1) {
+          if (anc.tagName === 'IFRAME' || anc.tagName === 'FRAME') {
+            // The frame's viewport clips its content exactly like a scroll
+            // container (iframes scroll internally).
+            const fch = anc.clientHeight || 0, fcw = anc.clientWidth || 0;
+            if (ccx < 0 || ccy < 0 || (fch && ccy > fch) || (fcw && ccx > fcw)) {
+              clippedInContainer = true; break;
+            }
+            const frR = anc.getBoundingClientRect();
+            ccx += frR.left + (anc.clientLeft || 0);
+            ccy += frR.top + (anc.clientTop || 0);
+            anc = composedParent(anc);
+            continue;
+          }
+          let isScroller = scrollAncCache.get(anc);
+          if (isScroller === undefined) {
+            let acs; try { acs = ((anc.ownerDocument && anc.ownerDocument.defaultView) || window).getComputedStyle(anc); } catch (e) { acs = null; }
+            // overflow:hidden deliberately NOT counted: those containers can't
+            // be scrolled by the user — they're crops by design, and the 1×1
+            // overflow-hidden wrapper is the standard visually-hidden (sr-only)
+            // pattern. Telling the agent to "scroll" one is a false trail.
+            isScroller = !!acs &&
+              ((/(auto|scroll)/.test(acs.overflowY) && anc.scrollHeight > anc.clientHeight + 4) ||
+               (/(auto|scroll)/.test(acs.overflowX) && anc.scrollWidth  > anc.clientWidth  + 4));
+            scrollAncCache.set(anc, isScroller);
+          }
+          if (isScroller) {
+            // Flag ONLY when scrolling this container could actually reveal the
+            // element. CSS-offset a11y patterns (skip-links parked outside their
+            // wrapper, clip-rect tricks) put the center outside the box too, but
+            // no amount of scrolling brings them "back" — saying "scroll the
+            // panel" for those is a false trail.
+            const ar = anc.getBoundingClientRect();
+            const canReveal =
+              (ccy > ar.bottom && anc.scrollTop + anc.clientHeight < anc.scrollHeight - 2) ||
+              (ccy < ar.top    && anc.scrollTop > 2) ||
+              (ccx > ar.right  && anc.scrollLeft + anc.clientWidth < anc.scrollWidth - 2) ||
+              (ccx < ar.left   && anc.scrollLeft > 2);
+            if (canReveal) {
+              clippedInContainer = true;
+              clipContainerMmid = (anc.getAttribute && anc.getAttribute('mmid')) || null;
+              break;
+            }
+          }
+          anc = composedParent(anc);
+        }
+      } catch (e) {}
+    }
+    // Occlusion test (elementFromPoint) is only meaningful for elements
+    // actually inside the current viewport. For below-fold/above-fold items
+    // (which we still keep when they're in a modal), elementFromPoint at
+    // their coordinates returns null because the point isn't visible -> the
+    // element gets falsely labeled "occluded/blocked", and the agent then
+    // avoids clicking the perfectly-good submit button at the bottom of the
+    // modal. clickable=true for offscreen-but-keepable items.
+    let clickable = true;
+    let physBlocked = false;   // something (visible or not) is first at every sampled point
+    // (pointer-events:none controls are invisible to hit-tests by definition —
+    // they'd always read "occluded"; the (disabled) flag is the true story.)
+    if (inViewport && !clippedInContainer && !peDisabled) {
+      // Hit-test in the element's OWN document (frame-relative coords for
+      // in-frame elements — the top document's elementFromPoint would just
+      // return the <iframe> shell at those coordinates). Sample the center of
+      // the VISIBLE portion (rect ∩ viewport), not the raw rect center —
+      // viewport-spanning wrappers have their raw center offscreen, where
+      // elementFromPoint returns null and falsely flags them occluded.
+      try {
+        const ow = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+        const ix0 = Math.max(r.left, 0), iy0 = Math.max(r.top, 0);
+        const ix1 = Math.min(r.right, ow.innerWidth || vw), iy1 = Math.min(r.bottom, ow.innerHeight || vh);
+        const cx = (ix0 + ix1) / 2, cy = (iy0 + iy1) / 2;
+        const odoc = el.ownerDocument || document;
+        let topEl = odoc.elementFromPoint(cx, cy);
+        // Composed-tree containment: for an element INSIDE a shadow root,
+        // elementFromPoint returns its outermost HOST, and host.contains(el)
+        // is false across the shadow boundary — el.contains/topEl.contains
+        // alone would falsely flag every shadow control as occluded. Walk
+        // composed parents instead.
+        const composedHas = (a, b) => {   // is `a` an ancestor-or-self of `b` in the composed tree
+          let n = b;
+          while (n) { if (n === a) return true; n = composedParent(n); }
+          return false;
+        };
+        const hits = (t) => !!(t && (t === el || composedHas(el, t) || composedHas(t, el)));
+        // Does an occluder actually PAINT anything? Transparent passthrough
+        // layers (Habr's full-page misprint-selection overlay) sit on top in
+        // hit-testing but render no pixels — clicks behaviorally reach the
+        // controls beneath, so they must not flag (occluded/blocked). A real
+        // modal backdrop paints (rgba bg) and still blocks.
+        const paintsPixels = (n, depth) => {
+          try {
+            const c = ((n.ownerDocument && n.ownerDocument.defaultView) || window).getComputedStyle(n);
+            if (parseFloat(c.opacity || '1') === 0) return false;
+            // ANCESTOR-AWARE invisibility: computed opacity is NOT inherited —
+            // a content clone inside an opacity-0 overlay (Habr's misprint
+            // layer duplicates the page text invisibly) reports opacity 1 on
+            // every child. checkVisibility accounts for the ancestor chain.
+            if (n.checkVisibility && !n.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
+            const bg = c.backgroundColor || '';
+            if (bg && bg !== 'transparent' && !/rgba\(\s*\d+,\s*\d+,\s*\d+,\s*0\s*\)/.test(bg)) return true;
+            if (c.backgroundImage && c.backgroundImage !== 'none') return true;
+            const tn = n.tagName;
+            if (tn === 'IMG' || tn === 'CANVAS' || tn === 'VIDEO' || tn === 'svg' || tn === 'SVG') return true;
+            // Text only paints when its color has alpha (color:transparent
+            // clones don't).
+            const colTransparent = c.color === 'transparent' || /rgba\(\s*\d+,\s*\d+,\s*\d+,\s*0\s*\)/.test(c.color || '');
+            if (!colTransparent) {
+              for (const ch of n.childNodes) if (ch.nodeType === 3 && ch.textContent.trim()) return true;
+            }
+            if (parseFloat(c.borderTopWidth || '0') > 0 && c.borderTopStyle !== 'none') return true;
+            // Shadow hosts paint via their SHADOW children (sl-dialog's host is
+            // bare; its rgba backdrop lives inside the shadow root).
+            if (n.shadowRoot && (depth || 0) < 2) {
+              for (const sc of n.shadowRoot.children) if (paintsPixels(sc, (depth || 0) + 1)) return true;
+            }
+            return false;
+          } catch (e) { return true; }
+        };
+        // TWO-TIER occlusion:
+        //  - physBlocked: is something — visible or not — physically first at
+        //    every sampled point? Drives the MODAL/OVERLAY heuristics (an
+        //    invisible click-blocker like OpenUI5's TrustArc layer IS modality
+        //    evidence).
+        //  - clickable: paint-aware stack walk that passes through paint-less
+        //    layers (Habr's transparent misprint overlay sits over everything
+        //    but clicks behaviorally reach the controls). Drives the
+        //    per-element (occluded/blocked) flag.
+        const rawHit = (px, py) => { try { return hits(odoc.elementFromPoint(px, py)); } catch (e) { return false; } };
+        const passHit = (px, py) => {
+          let stack = [];
+          try { stack = odoc.elementsFromPoint(px, py) || []; } catch (e) { return false; }
+          for (const t of stack) {
+            if (hits(t)) return true;
+            if (paintsPixels(t)) return false;
+          }
+          return false;
+        };
+        const pts = [[cx, cy],
+                     [ix0 + (ix1 - ix0) * 0.25, cy], [ix0 + (ix1 - ix0) * 0.75, cy],
+                     [cx, iy0 + (iy1 - iy0) * 0.25], [cx, iy0 + (iy1 - iy0) * 0.75]];
+        clickable = pts.some(p => passHit(p[0], p[1]));
+        physBlocked = !pts.some(p => rawHit(p[0], p[1]));
+      } catch (e) {}
+    }
+    // PHANTOM MIRRORS: opacity-hidden ancestors are allowed (operable hidden-
+    // until-focus controls like MUI DateField sections pass their hit-test).
+    // But opacity-hidden AND failing EVERY hit-test = a visually-hidden mirror
+    // of a custom widget (React Aria renders hidden native <select>s behind its
+    // styled buttons) — a duplicate the agent could waste a turn on. Drop.
+    if (clickable === false) {
+      try {
+        // ...unless the thing covering it is its OWN label. That is the whole
+        // point of the styled-control pattern: the label is on top and clicking
+        // the label operates the control. Dropping those here undid the fix above.
+        if (ownLabel) clickable = true;
+        else if (el.checkVisibility && !el.checkVisibility({ checkOpacity: true })) return _drop(el, 'checkVisibility-false');
+      } catch (e) {}
+    }
+    // SEMANTICALLY DISTINCT FIELD METADATA so the model never has to guess
+    // whether a string is the field's NAME, its PLACEHOLDER hint, or its
+    // current VALUE. The old single-label flattening (label = aria-label ||
+    // value || placeholder || innerText) caused the model to misread Boxsy's
+    // placeholder "Enter investor or fund name" as either an instruction or
+    // a pre-filled value.
+    //
+    // accessibleName resolution follows the standard AccName algorithm,
+    // simplified: aria-labelledby (IDs joined) -> aria-label ->
+    // <label for=id> -> wrapping <label> -> name attr / title / alt.
+    let accessibleName = '';
+    try {
+      // IDs are scoped to the element's own tree (document OR its shadow root) —
+      // resolve aria-labelledby / label[for] against el.getRootNode(), otherwise
+      // every labelled control inside a shadow root loses its name.
+      const idRoot = (el.getRootNode && el.getRootNode().getElementById) ? el.getRootNode() : document;
+      const ariaLabelledBy = el.getAttribute('aria-labelledby');
+      if (ariaLabelledBy) {
+        accessibleName = ariaLabelledBy.split(/\s+/)
+          .map(id => { const n = idRoot.getElementById(id); return n ? (n.innerText || '').trim() : ''; })
+          .filter(Boolean).join(' ');
+      }
+      if (!accessibleName) accessibleName = (el.getAttribute('aria-label') || '').trim();
+      if (!accessibleName && el.id) {
+        const lab = idRoot.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        if (lab) accessibleName = (lab.innerText || '').trim();
+      }
+      if (!accessibleName) {
+        const wrap = el.closest && el.closest('label');
+        if (wrap) {
+          // Per the AccName spec, a wrapping <label>'s name EXCLUDES the
+          // control's own subtree — <label>Country <select>…</select></label>
+          // must yield "Country", not "Country France". Clone-and-remove,
+          // falling back to raw innerText if anything goes sideways.
+          try {
+            const clone = wrap.cloneNode(true);
+            const ownMmid = el.getAttribute('mmid');
+            const own = ownMmid && clone.querySelector(`[mmid="${ownMmid}"]`);
+            if (own) own.remove();
+            else { const sameTag = clone.querySelector(el.tagName.toLowerCase()); if (sameTag) sameTag.remove(); }
+            accessibleName = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+          } catch (e) {
+            accessibleName = (wrap.innerText || '').trim();
+          }
+        }
+      }
+      // BUTTON-LIKE <input>: per HTML-AAM its accessible name comes from the
+      // VALUE attribute — that is the text painted on the button. Without this
+      // it fell through to the generic form-field branch below, got named after
+      // its HTML `name` ("login-button"), and its visible label "Login" landed
+      // in value= — the slot that means CURRENT CONTENTS. That inverts the one
+      // distinction the name/value/placeholder split exists to make, on every
+      // submit button on the web. Found by an agent reading a live listing, not
+      // by any fixture.
+      if (!accessibleName && tagL === 'input' && BUTTONISH_INPUT.has((el.getAttribute('type') || '').toLowerCase())) {
+        // NO generic "Submit"/"Reset" default here — that is HTML-AAM's LAST
+        // resort and applying it at name-resolution time makes an empty-value
+        // submit look named, which stops the same-box collapse below from
+        // adopting the visible label overlaid on it (G17: a bare
+        // input[submit] under a span reading "Apply filters" lost that label
+        // entirely). The default is applied after the collapse passes instead.
+        accessibleName = (el.value || el.getAttribute('alt') || '').trim();
+      }
+      if (!accessibleName) {
+        // Per AccName, for content elements VISIBLE TEXT outranks the title
+        // attribute. Falling back to title while text exists turned Discourse's
+        // "Support" link into name="Ask the community for help with…" (its
+        // tooltip) — unmatchable for an agent told to "go to Support". Only
+        // consult title/alt when the element has no visible text of its own.
+        // The HTML `name` attribute is a form-submission key: meaningful
+        // identity for form fields (saucedemo's "user-name"), junk on buttons
+        // (OSM's name="button") — honor it for form tags only.
+        const hasText = !!(el.innerText || '').trim();
+        accessibleName = ((formyTags.has(tagL) ? el.getAttribute('name') : '') ||
+                          (!hasText ? (el.getAttribute('title') || el.getAttribute('alt')) : '') ||
+                          '').trim();
+        // Framework templating bugs leak literal "undefined"/"null" into name
+        // attributes (seen in the wild: name="undefined" on a Ryanair email
+        // field) — actively misleading as an identity. Treat as unnamed so the
+        // near=/placeholder fallbacks take over.
+        if (accessibleName === 'undefined' || accessibleName === 'null') accessibleName = '';
+      }
+      // Strip any markup that leaked through (title attributes containing raw
+      // HTML were observed verbatim in names on Discourse).
+      if (accessibleName.indexOf('<') !== -1) accessibleName = accessibleName.replace(/<[^>]*>/g, ' ');
+      // Templating-garbage names from ANY source (weather.com ships a button
+      // with aria-label="[object Object]") — worse than no name at all.
+      if (/^\[object [A-Za-z]*\]$/.test(accessibleName) ||
+          accessibleName === 'undefined' || accessibleName === 'null') accessibleName = '';
+    } catch (e) {}
+    accessibleName = accessibleName.replace(/\s+/g, ' ').replace(/\s*\*\s*$/, '');
+    // Ultra-short resolved names ("1", "X") are usually a shortcut digit or a
+    // glyph from a wrapping label; the title attribute often carries the real
+    // identity (Excalidraw tools: label text "2" but title "Rectangle — R or 2").
+    // ...but only when it carries NO LETTERS. "1-2 chars means a shortcut glyph"
+    // is a Latin assumption: 删除 / 确定 / 取消 / 예 are ordinary button labels, and
+    // so are "OK" / "Go" / "EN". This rescue was replacing an author's explicit
+    // aria-label with the first descendant [title] it could find, so an agent told
+    // to click 删除 could not match the listing at all.
+    // EMPTY NAME + BARE GLYPH TEXT: take a descendant's aria-label, per AccName's
+    // name-from-content rule (a descendant contributes ITS accessible name, not its
+    // text). The canonical shape is a date grid:
+    //   <div role="gridcell"><div aria-label="Saturday, 29 August 2026">29</div></div>
+    // Name resolved EMPTY, so the listing printed the bare text "29" — and the
+    // rescue below could not help because it requires a non-empty name. Measured
+    // live on Google Flights: eight indistinguishable "29" cells, and find() ranked
+    // 29 OCTOBER first for a query that said 29 August 2026, while both data-iso and
+    // the child aria-label sat one attribute away. Deliberately narrow — empty name
+    // AND short letterless text AND a descendant label that actually says more —
+    // so it cannot start renaming ordinary unnamed controls.
+    if (!accessibleName) {
+      try {
+        const _bare = (el.innerText || '').trim();
+        if (_bare && _bare.length <= 2 && !/\p{L}/u.test(_bare)) {
+          const dl = el.querySelector && el.querySelector('[aria-label], [title]');
+          const dt = dl ? (dl.getAttribute('aria-label') || dl.getAttribute('title') || '').trim() : '';
+          if (dt.length > _bare.length) accessibleName = dt;
+        }
+      } catch (e) {}
+    }
+    if (accessibleName.length > 0 && accessibleName.length <= 2 && !/\p{L}/u.test(accessibleName)) {
+      try {
+        let tAttr = (el.getAttribute('title') || '').trim();
+        if (!tAttr || tAttr.length <= 2) {
+          const tc = el.querySelector && el.querySelector('[title], [aria-label]');
+          if (tc) tAttr = (tc.getAttribute('title') || tc.getAttribute('aria-label') || '').trim();
+        }
+        if (tAttr.length > 2) {
+          accessibleName = tAttr;
+        } else {
+          // Icon-sprite class as identity. Every icon library names its glyph
+          // `<lib>-<what-it-is>`, which is the only handle such a control has —
+          // without it an icon+badge collapses to just the badge count (`a "3"`
+          // for a messages menu).
+          //
+          // Two fixes over the original FontAwesome/Bootstrap-only version:
+          //  - read the class with getAttribute. On an <svg> — Lucide, Feather,
+          //    Heroicons, Tabler, i.e. most of the modern set — .className is an
+          //    SVGAnimatedString that stringifies to "[object SVGAnimatedString]",
+          //    so the old read could never match an SVG icon at all.
+          //  - the prefix list covers icon LIBRARIES rather than two of them.
+          // The selector is only a cheap prefilter; the regex is the real gate,
+          // so a class like "graph-container" matching [class*="ph-"] is rejected.
+          const ICON_SEL = '[class*="fa-"],[class*="bi-"],[class*="icon-"],[class*="lucide-"],' +
+            '[class*="ph-"],[class*="ri-"],[class*="ti-"],[class*="mdi-"],[class*="bx-"],' +
+            '[class*="octicon-"],[class*="tabler-"],[class*="la-"],[class*="gg-"]';
+          const ICON_RE = /(?:^|\s)(?:fa|far|fas|fab|fal|bi|icon|lucide|ph|ri|ti|mdi|bx|bxs|gg|la|las|octicon|tabler)-([a-z][a-z0-9-]{2,})/;
+          const ICON_SKIP = /^(sm|lg|xs|xl|[0-9]x|fw|solid|regular|light|bold|thin|fill|duotone|brands|outline|filled|line|spin|pulse)$/;
+          try {
+            for (const ic of (el.querySelectorAll ? el.querySelectorAll(ICON_SEL) : [])) {
+              const m = ICON_RE.exec((ic.getAttribute && ic.getAttribute('class')) || '');
+              if (m && !ICON_SKIP.test(m[1])) {
+                accessibleName = m[1].replace(/-/g, ' ') + ' (' + accessibleName + ')';
+                break;
+              }
+            }
+          } catch (e) {}
+        }
+      } catch (e) {}
+    }
+    // Truncate at a WORD boundary with a visible marker — a hard slice cut
+    // names mid-word ("…Amazon Deutschland. D") and hid that anything was cut.
+    if (accessibleName.length > 60) {
+      let cut = clip(accessibleName, 60);
+      const sp = cut.lastIndexOf(' ');
+      if (sp >= 40) cut = cut.slice(0, sp);
+      accessibleName = cut + '…';
+    }
+
+    const placeholderAttr = (el.getAttribute('placeholder') || '').trim().slice(0, 50);
+    // BACKING NATIVE CONTROL for a custom combobox: the hidden <select>/<input> the
+    // library replaced. Its value is DEFINITIVE and language-independent, so it beats
+    // every text heuristic — non-empty means something IS selected whatever the
+    // trigger renders; empty proves placeholder state even in a language we can't
+    // read. Hoisted here so the (unselected) flag can consult it and the listing can
+    // NAME it: a benchmark agent that received a correct (DEAD-DUPLICATE) verdict
+    // still burned three calls verifying it, because a verdict isn't checkable but a
+    // ref is.
+    let _backing = null;
+    {
+      const _bRole = el.getAttribute('role');
+      const _isCustomCombo = (_bRole === 'combobox' || _bRole === 'listbox' ||
+                              (el.getAttribute('aria-haspopup') || '').toLowerCase() === 'listbox') &&
+                             !['select', 'textarea'].includes(tagL);
+      if (_isCustomCombo) {
+        try {
+          const isNative = (n) => {
+            // A backing control is a native control the library HID to render its own widget.
+            // Accepting any <input> was wrong: a hidden CSRF token, a neighbouring quantity
+            // field, or a same-row checkbox got adopted as "the backing control" and then drove
+            // four separate decisions (unselected, the ok:true short-circuit, backed-by=ref_N,
+            // DEAD-DUPLICATE). Require a <select> (always a replaced control in this pattern) or
+            // an <input> the page has VISUALLY HIDDEN — libraries always hide the original. A
+            // VISIBLE input beside a widget is a different field, never its backing.
+            if (!n || n === el) return false;
+            if (n.tagName === 'SELECT') return true;
+            if (n.tagName !== 'INPUT') return false;
+            if (['checkbox','radio','button','submit','file','range'].includes((n.type || '').toLowerCase())) return false;
+            try {
+              const r = n.getBoundingClientRect();
+              // type=hidden is NOT a library-hidden original. A widget library replaces a
+              // real control and hides it with CSS (display:none / 1px / sr-only) because it
+              // still needs to be focusable and form-serialisable; type=hidden can be neither.
+              // Meanwhile type=hidden is exactly what CSRF tokens, ids and nonces use — the
+              // zoo's W1 caught this adopting a Rails _token as a select's "backing control".
+              if ((n.type || '').toLowerCase() === 'hidden') return false;
+              if (r.width <= 4 || r.height <= 4) return true;
+              const cs = getComputedStyle(n);
+              return cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity || '1') === 0;
+            } catch (e) { return false; }
+          };
+          let w = el;
+          for (let d = 0; d < 3 && w && w !== document.body; d++) {
+            let cand = null;
+            if (isNative(w.previousElementSibling)) cand = w.previousElementSibling;
+            else if (isNative(w.nextElementSibling)) cand = w.nextElementSibling;
+            else { for (const ch of w.children) { if (isNative(ch)) { cand = ch; break; } } }
+            if (cand) {
+              const o = (cand.tagName === 'SELECT' && cand.options) ? cand.options[cand.selectedIndex] : null;
+              _backing = {
+                mmid: cand.getAttribute('mmid') || null,
+                tag: cand.tagName.toLowerCase(),
+                value: String(cand.value || '').trim(),
+                text: o ? (o.text || '').trim().slice(0, 60) : '',
+              };
+              break;
+            }
+            // composed, not parentElement: a combobox rendered inside a web
+            // component (Shoelace/Ionic/Vaadin selects) has its hidden native
+            // <select> on the far side of the shadow boundary, where the walk
+            // stopped dead and backed-by= / (unselected) both lost their only
+            // language-independent evidence.
+            w = composedParent(w);
+          }
+        } catch (e) {}
+      }
+    }
+    let cePlaceholder = '';   // editor placeholder text rendered as a child node
+    const currentValue = (() => {
+      try {
+        if (tagL === 'input' || tagL === 'textarea') {
+          // A button-like input has no contents; its value is the label, and is
+          // reported as the accessible name above.
+          if (tagL === 'input' && BUTTONISH_INPUT.has((el.getAttribute('type') || '').toLowerCase())) return '';
+          const v = clip((el.value || '').trim(), 60);
+          if (v) return v;
+          // INPUT-style comboboxes (Ant/Select2/Chosen pattern): the focusable
+          // input stays EMPTY and the displayed selection ("Lucy") is rendered
+          // on a sibling node inside the field wrapper — without this hoist the
+          // combobox row shows no value and the agent can't tell what's chosen.
+          // Walk up to 2 wrappers; take the wrapper's short visible text.
+          // If the text-bearing node is class-marked as a placeholder (the
+          // cross-library convention: ant-select-selection-placeholder,
+          // select2-selection__placeholder, choices__placeholder…) it is a
+          // HINT, not a value — return '' and let the unselected flag fire.
+          if (tagL === 'input' && el.getAttribute('role') === 'combobox') {
+            let w = el.parentElement;
+            for (let d = 0; w && d < 2; d++, w = w.parentElement) {
+              // Exclude BUTTON/icon text from the hoist — Naver's empty search
+              // box reported value="ê²€ìƒ‰ ê²€ìƒ‰" (its adjacent search buttons'
+              // labels). Only the selection-display text counts.
+              let t = '';
+              try {
+                const clone = w.cloneNode(true);
+                // Strip LABELS and helper/error prose too, not just controls. The
+                // hoist is looking for the widget's SELECTION DISPLAY; a wrapper
+                // that also contains <label>Film</label> and a helper <p> handed
+                // back value="Film Wählen Sie Ihren Lieblingsfilm" for an EMPTY
+                // field — an MUI Autocomplete with helperText is exactly this
+                // shape, and the agent then believes a required field is filled.
+                clone.querySelectorAll('button, [role="button"], input, select, textarea, svg,' +
+                                       ' label, p, small, legend, [class*="helper"], [class*="error"]')
+                     .forEach(n => n.remove());
+                t = (clone.textContent || '').trim().replace(/\s+/g, ' ');
+              } catch (e) { t = (w.innerText || '').trim().replace(/\s+/g, ' '); }
+              if (t && t.length <= 60) {
+                try { if (w.querySelector('[class*="placeholder"]') || /placeholder/i.test(w.className || '')) return ''; } catch (e) {}
+                // Wrapper text IDENTICAL to the field's accessible name is its
+                // label/visual placeholder, not a value (Google Maps' empty
+                // search reported value="Search Google Maps" — its own name).
+                // CONTAINS, not equals: any leftover that still carries the field's
+                // own name is label bleed, not a chosen value.
+                if (accessibleName && t.toLowerCase().indexOf(accessibleName.toLowerCase()) !== -1) return '';
+                return t.slice(0, 60);
+              }
+            }
+          }
+          return '';
+        }
+        if (tagL === 'select') {
+          const o = el.options && el.options[el.selectedIndex];
+          return o ? clip((o.text || '').trim(), 60) : '';
+        }
+        // Rich-text / code editor root: its typed text IS the current value.
+        // For code editors, read the CONTENT node — the host's innerText
+        // includes the line-number gutter, so an EMPTY editor reported
+        // value="1" (the gutter) and tricked the agent into "clearing" it.
+        if (ceRoot || codeEditor) {
+          let src = el;
+          if (codeEditor) {
+            // Prefer the CONTENT layer over the host — the host's innerText also
+            // contains the gutter. Library content classes first (precise), then
+            // the general shapes an editor's text layer takes: the
+            // contenteditable surface, or an explicit role=code/textbox layer.
+            try {
+              src = el.querySelector('.cm-content, .CodeMirror-code, .view-lines, .ace_text-layer, [class*="mq-root-block"]') ||
+                    el.querySelector('[contenteditable="true"], [contenteditable=""], [role="code"], [role="textbox"]') ||
+                    el;
+            } catch (e) {}
+          }
+          // stripGutter is the belt to that braces: whichever layer we ended up
+          // with, a run of consecutive line numbers is never the value. It runs
+          // BEFORE the whitespace collapse — the line breaks are what tell a
+          // gutter column apart from an inline one.
+          // Editors hold documents, not field values. Clipping to 60 chars left an
+          // agent asking "what code is in this editor?" with no way to get the answer
+          // out of read_page at all — it had to dump the whole page via get_page_text,
+          // which is exactly what scoping exists to avoid. `full` is opt-in and
+          // usually scoped, so it can afford the real text.
+          const t = clip(stripGutter(src.innerText || '').trim().replace(/\s+/g, ' '), FULL ? 2000 : 60);
+          // An EMPTY editor renders its placeholder as a styled CHILD — that
+          // text is a HINT, not contents (regex101's CodeMirror reported
+          // value="insert your regular expression here"). Route to placeholder.
+          try {
+            const ph = src.querySelector('.cm-placeholder, [class*="placeholder"]');
+            if (ph && (ph.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 60) === t) {
+              cePlaceholder = t;
+              return '';
+            }
+          } catch (e) {}
+          return t;
+        }
+        if (el.getAttribute('role') === 'combobox') {
+          // The trigger's visible text — but only if it's NOT placeholder-y.
+          // Structural signal first: a [data-placeholder] attr on the trigger
+          // or its value node marks placeholder state language-independently
+          // (Radix/TipTap convention). The English wordlist is a supplement.
+          try { if (_showingPlaceholder(el, (el.innerText || '').trim())) return ''; } catch (e) {}
+          let t = (el.innerText || '').trim();
+          // Display text held in a descendant readonly <input> (Syncfusion).
+          if (!t) {
+            try { const di = el.querySelector('input'); if (di && di.value) t = di.value.trim(); } catch (e) {}
+          }
+          if (/^(select|choose|pick)\b/i.test(t) || /\.\.\.$|…$/.test(t)) return '';
+          return t.slice(0, 60);
+        }
+        return '';
+      } catch (e) { return ''; }
+    })();
+    // De-double BEFORE truncating: slicing first would split the second copy and
+    // hide the doubling (e.g. "Explore all products in Kitchen Explore all prod…").
+    let buttonText = (!formyTags.has(tagL) && !ceRoot && !codeEditor) ? collapseDoubled((el.innerText || '').trim().replace(/\s+/g, ' ')) : '';
+    // Word-boundary truncation with a visible marker — a raw slice cut Habr's
+    // article title at "…ÐºÐ°Ðº ÑƒÑÑ‚Ñ€Ð¾ÐµÐ½ Frisbe" (lost "eTube") with no signal.
+    if (buttonText.length > 60) {
+      let cut = clip(buttonText, 60);
+      const sp = cut.lastIndexOf(' ');
+      if (sp >= 40) cut = cut.slice(0, sp);
+      buttonText = cut + '…';
+    }
+
+    // Single-label fallback for non-form elements and dedup logic that still
+    // wants one string to compare on.
+    let label = accessibleName || currentValue || placeholderAttr || buttonText;
+    label = collapseDoubled(clip(label.replace(/\s+/g, ' '), 60));
+    // Label-less element handling. Previously ALL no-label non-form elements were
+    // silently dropped — which made real icon controls (✕ close, ⋮ menu, pencil
+    // edit, hamburger, logo link, upvote arrow) vanish from the listing with no
+    // breadcrumb, so the agent couldn't even know to escalate to analyze_screen.
+    // New rule (general, no site code):
+    //   - form field (input/textarea/select) -> keep (existing behavior).
+    //   - STRONG interactive (real <a>/<button> or explicit interactive role) ->
+    //     try to synthesize a handle (svg <title>, icon aria-label, img alt,
+    //     data-*). If still nothing, keep it flagged as an unlabeled icon control
+    //     so the agent can target its mmid (and knows analyze_screen may help).
+    //   - everything else (generic element interactive only via cursor:pointer /
+    //     tabindex / onclick, no label) -> still dropped as mystery noise.
+    const _elRole = el.getAttribute('role');
+    const isStrongInteractive = (tagL === 'a' || tagL === 'button') ||
+                                (_elRole && strongInteractiveRoles.has(_elRole));
+    // Opaque cross-origin frame with no title/aria-label: its src hostname is
+    // the most useful handle the DOM can offer ("js.stripe.com", "youtube.com").
+    if (!label && crossFrame) {
+      try { label = new URL(el.getAttribute('src') || '', location.href).hostname || ''; } catch (e) {}
+    }
+    let iconOnly = false;
+    if (!label && !formyTags.has(tagL) && !ceRoot && !codeEditor && !crossFrame && !canvasLike) {
+      if (isStrongInteractive) {
+        label = synthLabel(el);
+        iconOnly = !label;            // no synthesizable handle -> unlabeled icon control
+      } else if (inModal) {
+        // INSIDE an open dialog, even a generic unlabeled clickable matters —
+        // modals are small, and the unnamed ✕-glyph close control is sometimes
+        // the ONLY dismiss affordance (Godbolt's privacy modal).
+        label = synthLabel(el);
+        iconOnly = !label;
+      } else {
+        return _drop(el, 'generic-no-label');   // generic no-label element -> drop (noise)
+      }
+    }
+    // Unlabeled splitters/rails are never meaningful click targets, and a
+    // fuzzy-matching agent can fire them by accident. Two signals, semantic
+    // first: (a) role=separator or a resize cursor (the W3C/CSS way splitters
+    // announce themselves) — definite; (b) extreme-sliver geometry (10×845
+    // strips) — heuristic for markup-less ones.
+    if (iconOnly) {
+      const _sepRole = el.getAttribute('role') === 'separator';
+      const _resizeCur = /^(col-resize|row-resize|ew-resize|ns-resize)$/.test(cs.cursor || '');
+      if (_sepRole || _resizeCur) return _drop(el, 'separator-or-resize-handle');
+      if (Math.min(r.width, r.height) <= 14 &&
+          Math.max(r.width, r.height) >= 15 * Math.max(1, Math.min(r.width, r.height))) return;
+    }
+    // Parent-child dedup: if an ancestor with the SAME trimmed label is already
+    // in the listing, this child is just a redundant inner node (e.g. a <span>
+    // inside the <a> we already listed). The click target is the outer one.
+    //
+    // EXCEPTION: structural container roles (menu, listbox, dialog, tablist,
+    // tabpanel, grid, tree, radiogroup, menubar, group) own legitimately distinct
+    // children. A role=menu container often inherits the trigger's accessibleName
+    // (Radix sets aria-labelledby pointing to the trigger), so its first
+    // menuitem may share the same label — we MUST keep both. Without this
+    // exception, the first item of every dropdown menu silently disappears
+    // from the listing and the agent can't pick it.
+    const CONTAINER_ROLES = new Set(['menu','menubar','listbox','dialog','alertdialog','tablist','tabpanel','grid','treegrid','tree','radiogroup','group','toolbar','region']);
+    // Is this element interactive ONLY because of cursor:pointer (not a real
+    // control by tag/role/onclick/tabindex/contenteditable)? Such elements are
+    // almost always styled INNER nodes of a real link/button — the carousel-tile
+    // <span>, the doc-card <div>, the inner label <span>. When a real interactive
+    // ancestor is already listed, they're redundant noise. This generalizes the
+    // same-label dedup to the common case where the child's TEXT differs from the
+    // parent's accessible NAME (e.g. <a name="Cooker"><span>Cooker Cooker</span>).
+    const _rCur = el.getAttribute('role');
+    const cursorOnly = !(['a','button','input','select','textarea'].includes(tagL)
+      || (_rCur && INTERACTIVE_ROLES.has(_rCur))
+      || el.hasAttribute('onclick') || el.hasAttribute('tabindex') || el.isContentEditable
+      || el.__abClickBound);   // a bound JS handler = a real control, not styled noise
+    if (label || cursorOnly) {
+      // composedParent from the start: el.parentElement is null for a shadow
+      // root's direct child, which silently skipped the whole dedup walk.
+      let walker = composedParent(el), skip = false;
+      while (walker && walker !== document.body) {
+        const pMmid = walker.getAttribute && walker.getAttribute('mmid');
+        if (pMmid && addedMmids.has(pMmid)) {
+          const parentEntry = outByMmid.get(pMmid);
+          if (parentEntry) {
+            const parentRole = parentEntry.role || '';
+            const parentTag  = parentEntry.tag  || '';
+            const isContainer = CONTAINER_ROLES.has(parentRole) ||
+                                ['dialog','ul','ol','table','form','fieldset','section'].includes(parentTag);
+            const parentStrong = ['a','button','input','select','textarea'].includes(parentTag) ||
+                                 strongInteractiveRoles.has(parentRole);
+            // (A) cursor-only inner node of a real control above it -> redundant.
+            // AREA GUARD: a widget-scale wrapper link (daterangepicker's
+            // "Click for a Live Demo" anchor laid over its whole widget, ~23%
+            // of the viewport) must not swallow the distinct controls beneath
+            // it. Ordinary card/tile links sit well under 15%.
+            if (cursorOnly && parentStrong && !isContainer &&
+                parentEntry.w * parentEntry.h <= 0.15 * vw * vh) { skip = true; break; }
+            // (A2) cursor-only cell/fragment inside a listed DATA ROW: the
+            // <tr>'s own text already carries every cell value; re-listing each
+            // td/span/div tripled CoinMarketCap rows to ~9 entries and burned
+            // the cap after 6 rows. Real controls inside the row (links,
+            // buttons, inputs) are NOT cursor-only and stay listed.
+            if (cursorOnly && (parentTag === 'tr' || parentRole === 'row')) { skip = true; break; }
+            // (B) same-label child of a non-container ancestor -> redundant inner node.
+            // GUARD: never sacrifice a REAL control (form field / strong role /
+            // editor) to a generic styled wrapper — value-hoisting gives an
+            // Ant-style combobox input the same label as its wrapper div, and
+            // without this guard the dedup kept the div and dropped the input.
+            const childIsControl = formyTags.has(tagL) || isStrongInteractive || ceRoot || codeEditor;
+            const parentIsControl = parentStrong || formyTags.has(parentTag);
+            if (label && parentEntry.label === label && !isContainer &&
+                !(childIsControl && !parentIsControl)) { skip = true; break; }
+          }
+        }
+        walker = composedParent(walker);
+      }
+      if (skip) return _drop(el, 'parent-child-dedup');
+    }
+    const _mmid = el.getAttribute('mmid');
+    // Interactive ONLY via a bound JS handler, with no semantic role/tag of its own:
+    // candidate delegation root (React/Vue bind on the app container). Confirmed in
+    // the post-pass if it turns out to contain other listed controls.
+    try {
+      if (el.__abClickBound && !['a','button','input','select','textarea','summary'].includes(tagL) &&
+          !el.getAttribute('role') && !el.hasAttribute('onclick') && !el.hasAttribute('tabindex') &&
+          !el.isContentEditable) {
+        _handlerOnlyWrappers.add(_mmid);
+      }
+    } catch (e) {}
+    addedMmids.add(_mmid);
+    // Required-field detection. Checks, in order of reliability:
+    //   1. aria-required="true" or `required` attribute on the element
+    //   2. aria-required="true" on the closest container
+    //   3. The element's resolved <label>'s text ends with "*" (shadcn/MUI pattern:
+    //      <Label>Name <span className="text-red-500">*</span></Label> — accessibleName
+    //      is "Name *" and we trim the trailing star but remember it). This is
+    //      scoped to the ACTUAL label, not a generic 4-level walk-up, so it
+    //      can't leak from a neighbouring field's row.
+    let required = false;
+    try {
+      if (el.getAttribute('aria-required') === 'true' || el.hasAttribute('required')) {
+        required = true;
+      } else {
+        // aria-required on a CONTAINER only counts when the container wraps a
+        // single control — a group-level aria-required (non-standard but seen)
+        // was leaking (required) onto every field inside it.
+        const reqAnc = el.closest && el.closest('[aria-required="true"]');
+        if (reqAnc && reqAnc.querySelectorAll('input, select, textarea, [role="combobox"]').length <= 1) {
+          required = true;
+        } else {
+          // Inspect the resolved label text (NOT the accessibleName, which we
+          // already stripped the trailing "*" from). Both trailing AND leading
+          // "*" count — RTL locales (Arabic/Hebrew) place the marker first.
+          let labelText = '';
+          if (el.id) {
+            // IDs are scoped to the element's own tree. The accessible-name path
+            // above already resolves against getRootNode(); this one still used
+            // `document`, so a required field inside a web component silently
+            // lost its (required) flag while its NAME resolved fine.
+            const _lRoot = (el.getRootNode && el.getRootNode().querySelector) ? el.getRootNode() : document;
+            const lab = _lRoot.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+            if (lab) labelText = (lab.innerText || '').trim();
+          }
+          if (!labelText) {
+            const wrap = el.closest && el.closest('label');
+            if (wrap) labelText = (wrap.innerText || '').trim();
+          }
+          if (labelText && (/\*\s*$/.test(labelText) || /^\s*\*/.test(labelText))) required = true;
+        }
+      }
+    } catch (e) {}
+    // Unselected-combobox detection. A Radix/shadcn/MUI Select trigger that
+    // hasn't been picked yet shows placeholder text ("Select X...", "Choose…",
+    // "Pick a Y") instead of a real value. Check the TRIGGER'S VISIBLE TEXT
+    // (innerText) — NOT accessibleName, which is the field's identity label
+    // (e.g. "Focus Areas") and would never match this heuristic.
+    let unselected = false;
+    try {
+      const isCombo = el.getAttribute('role') === 'combobox'
+        || tagL === 'select'
+        || (el.getAttribute('aria-haspopup') === 'listbox');
+      if (isCombo) {
+        if (tagL === 'select') {
+          // native select: unselected if no option selected OR the selected option's value is empty
+          unselected = el.selectedIndex < 0 ||
+                       !el.options[el.selectedIndex] ||
+                       !(el.options[el.selectedIndex].value || '').trim();
+        } else if (tagL !== 'input' && tagL !== 'textarea') {
+          // BUTTON/DIV trigger (Radix/shadcn/MUI Select). (unselected) means
+          // "click then pick an option." Do NOT flag a text <input role=combobox>
+          // (autocomplete/search): those are filled by TYPING, and an empty one is
+          // simply blank — marking it (unselected) wrongly steers the agent to
+          // open-and-pick instead of typing.
+          let triggerText = (el.innerText || '').trim();
+          // Span-based comboboxes (Syncfusion e-ddl) keep their display text in
+          // a descendant readonly <input> — input.value is NOT innerText, so
+          // the trigger looked empty and got a false (unselected).
+          if (!triggerText) {
+            try { const di = el.querySelector('input'); if (di && di.value) triggerText = di.value.trim(); } catch (e) {}
+          }
+          // Structural placeholder signal first ([data-placeholder] — language-
+          // independent); then empty text; then the English wordlist/ellipsis
+          // supplement. NOTE: a non-English text-only placeholder with no
+          // ellipsis and no data-placeholder attr is structurally
+          // indistinguishable from a chosen value — known residual limitation.
+          let hasPlaceholderAttr = false;
+          try { hasPlaceholderAttr = _showingPlaceholder(el, triggerText); } catch (e) {}
+          if (hasPlaceholderAttr || !triggerText ||
+              /^(select|choose|pick)\b/i.test(triggerText) ||
+              /\.\.\.$|…$/.test(triggerText)) unselected = true;
+          // STRUCTURE BEATS WORDS, in both directions. A genuinely chosen option that
+          // happens to start with select/choose/pick ("Select All Regions") was
+          // reported as value="" + (unselected), sending the agent to re-pick what it
+          // had already set. An empty backing control proves the inverse.
+          // An EMPTY backing is weaker evidence than it looks: the sibling walk can
+          // adopt an unrelated control. Compiler Explorer's toolbar holds three
+          // <select>s, one of them empty, and adopting it flagged (unselected) on a
+          // combobox plainly reading "C++" — a self-contradictory row that would send
+          // an agent to re-pick a value it already had. Emptiness only counts when the
+          // trigger is ALSO not displaying anything.
+          if (_backing) {
+            // ...but not over an explicit placeholder marker on the trigger. The
+            // sibling walk can adopt an unrelated control (flatpickr's altInput
+            // leaves a CSS-hidden original WITH a value next to the widget), and
+            // trusting its value erased the language-independent data-placeholder
+            // evidence this whole path is built on.
+            if (_backing.value !== '' && !hasPlaceholderAttr) unselected = false;
+            else if (!triggerText || hasPlaceholderAttr) unselected = true;
+          }
+        } else if (tagL === 'input') {
+          // INPUT-style combobox (Ant/Select2/Chosen): flag (unselected) only
+          // on STRUCTURAL evidence — empty input value plus a wrapper node
+          // class-marked "placeholder" that is actually showing hint text.
+          // (A typed-into autocomplete has a value; a chosen one renders the
+          // selection without the placeholder node.) Language-independent.
+          if (!(el.value || '').trim()) {
+            let w = el.parentElement;
+            for (let d = 0; w && d < 2; d++, w = w.parentElement) {
+              try {
+                const ph = w.querySelector('[class*="placeholder"]');
+                if (ph && (ph.innerText || '').trim()) { unselected = true; break; }
+              } catch (e) {}
+            }
+          }
+        }
+      }
+    } catch (e) {}
+    // NEARBY-CONTEXT identity for label-less form fields. flatpickr-style demo
+    // pages have multiple bare inputs with identical placeholders and ZERO
+    // accname markup — indistinguishable in the listing. AccName ends here, so
+    // harvest a best-effort hint (rendered as near="...", clearly marked as
+    // adjacent text, never claimed as the real name): the preceding inline
+    // text ("Date:" before the input) or the nearest preceding heading.
+    let nearLabel = '';
+    if (!accessibleName && (formyTags.has(tagL) || ceRoot || codeEditor)) {
+      try {
+        // (trailing "#" = the permalink anchor doc generators append to headings)
+        const short = (s) => { s = (s || '').replace(/\s+/g, ' ').replace(/\s*#\s*$/, '').trim(); return (s && s.length <= 60) ? s : ''; };
+        // 1) preceding inline text/element within the field's own line.
+        // Code-ish text ({};<>) is a snippet, not a label — skip it so the
+        // heading walk below provides the hint instead.
+        const labelish = (t) => t && !/[{};<>]/.test(t);
+        let cur = el;
+        for (let d = 0; d < 2 && !nearLabel && cur; d++) {
+          let p = cur.previousSibling, hops = 0;
+          while (p && hops < 3) {
+            const t = short(p.textContent);
+            if (labelish(t)) { nearLabel = t; break; }
+            if (t) break;   // there WAS preceding text but it's code — try headings
+            p = p.previousSibling; hops++;
+          }
+          cur = cur.parentElement;
+        }
+        // 2) nearest preceding heading (walking up a few containers).
+        if (!nearLabel) {
+          let anc = el;
+          for (let d = 0; d < 4 && anc && anc !== document.body && !nearLabel; d++, anc = anc.parentElement) {
+            let sib = anc.previousElementSibling, k = 0;
+            while (sib && k < 4 && !nearLabel) {
+              if (/^H[1-6]$/.test(sib.tagName) || sib.getAttribute('role') === 'heading') {
+                nearLabel = short(sib.innerText);
+              } else if (sib.querySelector) {
+                const h = sib.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
+                if (h) nearLabel = short(h.innerText);
+              }
+              sib = sib.previousElementSibling; k++;
+            }
+          }
+        }
+      } catch (e) {}
+    }
+    // Bare-number labels ("338" — a TCF vendor-count button) are meaningless
+    // alone; attach the surrounding text as context.
+    // (\p{Nd}, not \d — Arabic-Indic and Devanagari digits are digits too.)
+    if (!nearLabel && /^\p{Nd}{1,6}$/u.test((accessibleName || buttonText || '').trim())) {
+      try {
+        const p = el.parentElement;
+        const t = p ? (p.innerText || '').replace(/\s+/g, ' ').trim() : '';
+        if (t && t !== (accessibleName || buttonText) && t.length <= 60) nearLabel = _cut(t, 40);
+      } catch (e) {}
+    }
+    // Membership in a large homogeneous ARIA widget (calendar grid, long
+    // listbox, radiogroup): recorded so the formatter can compact 30+ near-
+    // identical cell lines into one mmid:label mapping block — pure token
+    // savings, every cell keeps its clickable mmid.
+    let groupKey = null, groupName = '', groupRole = '';
+    {
+      // In-page TOC runs: docs sites emit 15-40 `#hash` anchor links in one nav
+      // rail ("On this page") that swamp the single real control on the page.
+      // Group them so the compactor can fold the run into one mapping line.
+      // Anchor jump-links (#hash) AND button-based jump lists (PrimeVue's right
+      // rail scrolls via buttons, no href) — both are in-page TOCs. Buttons
+      // qualify only when popup/disclosure-free (plain scroll triggers).
+      const _tocCandidate = (tagL === 'a' &&
+          (el.getAttribute('href') || '').length > 1 && (el.getAttribute('href') || '').startsWith('#')) ||
+        // A button only counts as a TOC entry if it lives in a nav-ish rail. Without
+        // that, EVERY popup-free button qualified, so any 10 sibling buttons — a
+        // keypad, a toolbar, per-row actions — were folded under the banner
+        // "in-page TOC", which is simply false and costs them their breadcrumbs.
+        (tagL === 'button' && !el.getAttribute('aria-haspopup') && !el.hasAttribute('aria-expanded') &&
+         !!(el.closest && el.closest('nav, aside, [role="navigation"], [role="doc-toc"]')));
+      if (_tocCandidate) {
+        {
+          // Group by the OUTERMOST list/nav container: div-based TOC rails
+          // (Docusaurus/Ionic) have no <nav> ancestor, and nested <ul>s would
+          // otherwise fragment one TOC into many sub-10 groups.
+          let anc = el.closest && el.closest('ul, ol, nav, aside, [role="navigation"], [role="doc-toc"]');
+          let outermost = anc;
+          while (anc && anc.parentElement) {
+            anc = anc.parentElement.closest && anc.parentElement.closest('ul, ol, nav, aside, [role="navigation"], [role="doc-toc"]');
+            if (anc) outermost = anc;
+          }
+          if (outermost && outermost.getAttribute('mmid')) {
+            groupKey = 'toc:' + outermost.getAttribute('mmid');
+            groupRole = 'in-page TOC';
+            groupName = (outermost.getAttribute('aria-label') || '').trim().slice(0, 40);
+          } else if (!outermost && el.parentElement && el.parentElement.getAttribute('mmid')) {
+            // div-based TOC rails with no list/nav markup at all (shadcn's
+            // "On This Page"): group hash-anchors by their direct parent.
+            groupKey = 'toc:' + el.parentElement.getAttribute('mmid');
+            groupRole = 'in-page TOC';
+          }
+        }
+      }
+      const _gRole = el.getAttribute('role');
+      if (!groupKey && _gRole && ['gridcell','option','treeitem','menuitem','radio','row'].includes(_gRole)) {
+        let ganc = composedParent(el);
+        while (ganc && ganc !== document.body && ganc.nodeType === 1) {
+          const gr = ganc.getAttribute ? ganc.getAttribute('role') : null;
+          if (gr && ['grid','treegrid','listbox','tree','menu','menubar','radiogroup'].includes(gr)) {
+            groupKey = ganc.getAttribute('mmid') || null;
+            groupRole = gr;
+            groupName = (ganc.getAttribute('aria-label') || '').trim().slice(0, 40);
+            // COLUMN IDENTITY for data-grid cells: a compacted row ends with
+            // values whose column can be off-screen — positional counting then
+            // misassigns them. aria-colindex → matching columnheader text.
+            if (_gRole === 'gridcell') {
+              try {
+                const ci = el.getAttribute('aria-colindex') ||
+                           (el.parentElement && el.parentElement.children ? String([].indexOf.call(el.parentElement.children, el) + 1) : '');
+                if (ci) {
+                  const hd = ganc.querySelector(`[role="columnheader"][aria-colindex="${ci}"]`) ||
+                             ganc.querySelectorAll('[role="columnheader"]')[parseInt(ci, 10) - 1];
+                  const ht = hd ? (hd.innerText || '').replace(/\s+/g, ' ').trim() : '';
+                  if (ht) nearLabel = nearLabel || ht.slice(0, 24);
+                }
+              } catch (e) {}
+            }
+            break;
+          }
+          ganc = composedParent(ganc);
+        }
+      }
+    }
+    // CUSTOM-WIDGET BACKING (drives dead-duplicate detection in the post-pass).
+    // A JS combobox library (select2/chosen/selectize/Ant/…) replaces a native
+    // <select> with a span/div widget and hides the original. If the page
+    // double-initializes — or a re-render orphans a container — the DOM ends up
+    // with TWO structurally identical widgets, only ONE of which is wired to a
+    // real form control. Observed live on select2.org: the wired widget had
+    // collapsed to 2px (invisible) while the 826px widget the user actually sees
+    // was inert. Geometry and pixels both point at the WRONG one, so the only
+    // honest signal is "does a native form control belong to this widget?".
+    // widgetSig groups structurally-identical widgets; comboBacked records the
+    // answer. Neither is acted on here — see the post-pass.
+    let comboBacked = null, widgetSig = null;
+    {
+      const _cbRole = el.getAttribute('role');
+      const _isCustomCombo = (_cbRole === 'combobox' || _cbRole === 'listbox' ||
+                              (el.getAttribute('aria-haspopup') || '').toLowerCase() === 'listbox') &&
+                             !['select', 'input', 'textarea'].includes(tagL);
+      if (_isCustomCombo) {
+        try {
+          // SIGNATURE comes from the TRIGGER'S OWN shape, never from a
+          // geometry-based wrapper walk. First attempt derived it by climbing
+          // while the parent stayed near the trigger's box — which diverged
+          // EXACTLY in the case this detects: the live widget had collapsed to
+          // 2px so it stopped at the trigger (sig "span.select2-selection")
+          // while the 826px orphan climbed to its container (sig "span.select2").
+          // Different sigs -> different groups -> the comparison never ran and
+          // the flag silently never fired on the real page.
+          const cls0 = (n) => (typeof n.className === 'string' ? n.className.trim().split(/\s+/)[0] : '');
+          widgetSig = `${tagL}.${cls0(el)}`;
+          // SINGLE SOURCE OF TRUTH. This block used to run its OWN looser walk and
+          // reset comboBacked=false first, silently overwriting the strict _backing
+          // result computed above — so the DEAD-DUPLICATE comparison ran on the loose
+          // answer while the listing's backed-by= used the strict one.
+          comboBacked = !!_backing;
+        } catch (e) { comboBacked = null; }
+      }
+    }
+    // Inert controls: present but currently non-functional. Keep them listed
+    // (the agent should know the control exists) but flagged, so it doesn't
+    // burn turns clicking them or misread silence as a bug.
+    const disabled = el.disabled === true || el.getAttribute('aria-disabled') === 'true' || peDisabled;
+    const _entry = {
+      mmid: _mmid,
+      tag: tagL,
+      type: el.getAttribute('type'),
+      // A contenteditable/code-editor root with no explicit role IS a textbox.
+      role: el.getAttribute('role') || ((ceRoot || codeEditor) ? 'textbox' : null),
+      section: section(el),
+      label,
+      name: accessibleName,
+      near: nearLabel,                  // adjacent-text hint for identity-less fields
+      // NEAREST PRECEDING HEADING. Five buttons all labelled "Launch demo modal" and all
+      // section=main are indistinguishable by name or section; a benchmark agent picked
+      // the right one using outside knowledge of the page, not anything we told it. The
+      // enclosing section's heading is the breadcrumb a human would use.
+      underHeading: (() => {
+        try {
+          // VISIBLE headings only. A closed modal's own <h5>Modal title</h5> sits earlier
+          // in the DOM than the button that opens it, so a naive nearest-preceding walk
+          // returned "Modal title" for four different triggers instead of the section
+          // they live under ("Live demo", "Grids in modals", ...). An invisible heading
+          // is not a breadcrumb — it describes a panel the user cannot currently see.
+          const vis = (h) => {
+            try {
+              if (!h.offsetParent && getComputedStyle(h).position !== 'fixed') return false;
+              const r = h.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            } catch (e) { return false; }
+          };
+          const txt = (h) => (h.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+          let n = el, hops = 0;
+          while (n && hops < 6) {
+            let sib = n.previousElementSibling, k = 0;
+            while (sib && k < 8) {
+              if (/^H[1-6]$/.test(sib.tagName) && vis(sib)) { const t2 = txt(sib); if (t2) return t2; }
+              if (sib.querySelectorAll) {
+                const hs = Array.from(sib.querySelectorAll('h1,h2,h3,h4,h5,h6')).filter(vis);
+                if (hs.length) { const t2 = txt(hs[hs.length - 1]); if (t2) return t2; }
+              }
+              sib = sib.previousElementSibling; k++;
+            }
+            n = composedParent(n); hops++;
+          }
+        } catch (e) {}
+        return '';
+      })(),
+      placeholder: placeholderAttr || cePlaceholder,
+      value: currentValue,
+      text: buttonText,
+      x: Math.round(ax), y: Math.round(ay),
+      w: Math.round(aw), h: Math.round(ah),
+      clickable,
+      active: activeHint(el),
+      required,
+      unselected,
+      disabled,
+      newTab: tagL === 'a' && el.getAttribute('target') === '_blank',
+      crossFrame,                       // opaque cross-origin iframe shell
+      canvasLike,                       // pixel/vector drawing surface (canvas or class-marked div/svg)
+      physBlocked,                      // physically covered (drives modal/overlay heuristics)
+      editable: ceRoot,                 // rich-text editor root — type via enter_text_tool
+      codeEditor,                       // CodeMirror/Monaco/Ace host — type via enter_text_tool
+      scrollRegion,                     // element's own content scrolls independently
+      clippedInContainer,               // scrolled out inside an inner scrollable panel (click auto-scrolls)
+      clipContainerMmid,                // the panel that clips it (drives listing compaction)
+      // Click-then-pick affordance: a trigger that opens a menu/popup, and
+      // disclosure state when the widget reports one (aria-expanded=false).
+      // <summary> always toggles a disclosure — same affordance as aria-haspopup
+      // (GitHub's filter dropdowns are details/summary with no ARIA at all).
+      // aria-expanded + aria-controls without aria-haspopup (Stripe/WordPress
+      // mega-menus) is the SAME affordance — click expands in-page content.
+      hasPopup: (() => {
+        if (tagL === 'summary') return true;
+        const hp = el.getAttribute('aria-haspopup');
+        if (hp && hp !== 'false') return true;
+        return el.hasAttribute('aria-expanded') && el.hasAttribute('aria-controls');
+      })(),
+      collapsed: el.getAttribute('aria-expanded') === 'false',
+      groupKey, groupName, groupRole,   // large-widget membership for listing compaction
+      comboBacked, widgetSig,           // custom-combobox wiring (dead-duplicate post-pass)
+      backedBy: _backing && _backing.mmid ? _backing.mmid : null,   // checkable evidence, not a verdict
+      orphanWidget: false,              // set by that post-pass
+      iconOnly,  // strong control with no resolvable text label (render with a hint)
+      offscreen: !inViewport,  // included but currently outside viewport (typically modal scroll content)
+      href: WANT_URLS ? (BRIEF ? _briefUrl(_hrefOf(el)) : _hrefOf(el)) : '',
+      src: WANT_URLS ? (BRIEF ? _briefUrl(_srcOf(el)) : _srcOf(el)) : '',
+    };
+    out.push(_entry);
+    outByMmid.set(_mmid, _entry);
+  });
+  // WEB-COMPONENT HOST/INTERNAL COLLAPSE: with shadow piercing, a clickable
+  // custom-element host (sl-button, ytd-…) AND the real control inside its
+  // shadow root often BOTH survive as near-identical boxes — the same visual
+  // control listed twice. Keep the INNER real control (it's the better action
+  // target: a true <a href>/<button>/<input>), transfer the host's label to it
+  // when the inner one is unlabeled (its visible text is usually <slot>ted into
+  // the host's light DOM), and drop the host entry.
+  {
+    const byMmid = new Map(out.map(e => [e.mmid, e]));
+    const removedHosts = new Set();
+    for (const e of out) {
+      const n = mmidReg.get(e.mmid);
+      if (!n || !(n.getRootNode && n.getRootNode().host)) continue;  // only shadow residents
+      let w = composedParent(n);
+      while (w && w !== document.body) {
+        const wm = w.getAttribute && w.getAttribute('mmid');
+        if (wm && byMmid.has(wm)) {
+          const h = byMmid.get(wm);
+          if ((h.tag || '').includes('-') &&
+              Math.abs(h.x - e.x) <= 4 && Math.abs(h.y - e.y) <= 4 &&
+              Math.abs(h.w - e.w) <= 8 && Math.abs(h.h - e.h) <= 8) {
+            if (!e.label && h.label) { e.label = h.label; e.iconOnly = false; }
+            if (!e.name && h.name) e.name = h.name;
+            removedHosts.add(h.mmid);
+          }
+          break;  // only the nearest LISTED composed ancestor matters
+        }
+        w = composedParent(w);
+      }
+    }
+    if (removedHosts.size) {
+      _dropMmids(removedHosts, 'shadow-host-collapse');
+      for (let i = out.length - 1; i >= 0; i--) if (removedHosts.has(out[i].mmid)) out.splice(i, 1);
+    }
+  }
+  // SAME-BOX WRAPPER COLLAPSE (light DOM): one visual control often survives as
+  // 2-3 stacked entries — generic styled wrapper divs plus the real control
+  // (MUI demo editors: two wrapper divs + the "Edit code" textarea, all at the
+  // same box), or a label-overlay span sitting on an unnamed input[submit]
+  // (Amazon dialogs: span "Dismiss" + input[submit]). Keep the REAL control,
+  // transfer the generic twin's label if the control is unnamed, drop the twin.
+  {
+    const isRealControl = (e) => formyTags.has(e.tag) || e.tag === 'a' || e.tag === 'button' ||
+      e.editable || e.codeEditor || (e.role && strongInteractiveRoles.has(e.role));
+    const isGenericTwin = (e) => !isRealControl(e) && !e.role && !e.crossFrame && !e.groupKey &&
+      !e.scrollRegion && ['div','span','p','li','td','label','img','ol','ul'].includes(e.tag);
+    const sameBox = (a, b) => Math.abs(a.x - b.x) <= 4 && Math.abs(a.y - b.y) <= 4 &&
+                              Math.abs(a.w - b.w) <= 8 && Math.abs(a.h - b.h) <= 8;
+    // FIELD-WRAPPER variant: Ant/Select2-style comboboxes render the display
+    // text on a slightly-LARGER wrapper around the focusable input — not the
+    // same box, but the same visual control. Merge when the generic shell
+    // tightly wraps a combobox/form control (area within 4×).
+    const wrapsControl = (g, c) =>
+      (c.role === 'combobox' || c.tag === 'button' || c.tag === 'a' || formyTags.has(c.tag)) &&
+      g.x <= c.x + 4 && g.y <= c.y + 4 &&
+      g.x + g.w >= c.x + c.w - 8 && g.y + g.h >= c.y + c.h - 8 &&
+      g.w * g.h <= 4 * Math.max(1, c.w * c.h);
+    const drop = new Set();
+    for (const ctl of out) {
+      if (!isRealControl(ctl)) continue;
+      for (const g of out) {
+        if (g === ctl || drop.has(g.mmid) || !isGenericTwin(g)) continue;
+        if (!sameBox(ctl, g) && !wrapsControl(g, ctl)) continue;
+        if (!ctl.name && !ctl.label && !ctl.text && (g.label || g.name || g.text)) {
+          ctl.name = g.name || g.label || g.text;
+          ctl.label = ctl.name;
+          ctl.iconOnly = false;
+        }
+        // If the "occluder" at the control's center was this very twin (a label
+        // overlay), the control is NOT actually blocked — clicks land fine.
+        if (ctl.clickable === false && g.clickable !== false) ctl.clickable = true;
+        drop.add(g.mmid);
+      }
+    }
+    // GENERIC-GENERIC same-box pairs (eBay's li "More Expand: More" + inner
+    // div "More" — neither is a "real control" tag, both are listed): keep the
+    // INNER one (deeper = closer to the actual click handler), drop the shell.
+    for (const a of out) {
+      if (drop.has(a.mmid) || !isGenericTwin(a)) continue;
+      for (const b of out) {
+        if (a === b || drop.has(b.mmid) || !isGenericTwin(b)) continue;
+        if (!sameBox(a, b)) continue;
+        // a is the composed ancestor of b -> merge, KEEPING the richer-named
+        // twin. (Naively keeping the inner one regressed Excalidraw: the inner
+        // div's text is the shortcut digit "1" while the outer label carried
+        // the rescued tool name "Rectangle — R or 2".)
+        let n = mmidReg.get(b.mmid);
+        n = n && composedParent(n);
+        let isAnc = false;
+        while (n) { if (n === mmidReg.get(a.mmid)) { isAnc = true; break; } n = composedParent(n); }
+        if (isAnc) {
+          const richness = (e) => ((e.name || '').length * 2 + (e.label || e.text || '').length);
+          if (richness(a) > richness(b)) {
+            if (!a.label && b.label) a.label = b.label;
+            drop.add(b.mmid);
+          } else {
+            if (!b.name && a.name) { b.name = a.name; if (!b.label) b.label = a.name; }
+            drop.add(a.mmid);
+          }
+          break;
+        }
+      }
+    }
+    if (drop.size) {
+      _dropMmids(drop, 'same-box-wrapper-collapse');
+      for (let i = out.length - 1; i >= 0; i--) if (drop.has(out[i].mmid)) out.splice(i, 1);
+    }
+  }
+  // BUTTON-LIKE INPUT FALLBACK NAME, applied only now that every label-adoption
+  // pass has had its chance. HTML-AAM's "Submit"/"Reset" default is better than
+  // nothing, but worse than the label the page actually paints on the control.
+  for (const e of out) {
+    if (e.tag !== 'input' || e.name || e.label || e.text) continue;
+    const t = (e.type || '').toLowerCase();
+    if (t !== 'submit' && t !== 'reset') continue;
+    e.name = t === 'submit' ? 'Submit' : 'Reset';
+    e.label = e.name;
+    e.iconOnly = false;
+  }
+  // DEAD-DUPLICATE CUSTOM WIDGETS: a JS combobox container left orphaned by
+  // double-initialization looks IDENTICAL to the live one in the listing — and
+  // on select2.org it is the bigger, fully-visible one while the wired widget
+  // has collapsed to a 2px sliver, so both geometry and a screenshot point at
+  // the dead control. Two agents independently picked wrong / burned calls on
+  // this, so flag it.
+  //
+  // COMPARATIVE, never absolute: an unbacked widget is only called out when
+  // another widget with the SAME wrapper signature on this page IS backed by a
+  // native form control. That proves the library normally wires them here, so
+  // the unbacked twin is leftover. Radix/shadcn/HeadlessUI/Base UI triggers are
+  // never backed by a native control, so no group ever has a backed member and
+  // NOTHING is flagged on those pages — the common case stays untouched.
+  {
+    const bySig = new Map();
+    for (const e of out) {
+      if (!e.widgetSig || e.comboBacked === null) continue;
+      if (!bySig.has(e.widgetSig)) bySig.set(e.widgetSig, []);
+      bySig.get(e.widgetSig).push(e);
+    }
+    for (const [, members] of bySig) {
+      if (members.length < 2) continue;
+      if (!members.some(m => m.comboBacked)) continue;   // library isn't wiring any -> not a duplicate situation
+      for (const m of members) if (!m.comboBacked) m.orphanWidget = true;
+    }
+  }
+  // DELEGATION-ROOT DROP: a handler-only wrapper that CONTAINS other listed controls
+  // is the framework's event-delegation container, not something to click.
+  if (_handlerOnlyWrappers.size) {
+    const drop = new Set();
+    for (const e of out) {
+      if (!_handlerOnlyWrappers.has(e.mmid)) continue;
+      const host = mmidReg.get(e.mmid);
+      if (!host) continue;
+      let contained = 0;
+      for (const o of out) {
+        if (o.mmid === e.mmid) continue;
+        let n = mmidReg.get(o.mmid);
+        while (n) { if (n === host) { contained++; break; } n = composedParent(n); }
+        if (contained >= 8) break;
+      }
+      // >=8, not >=2. App/delegation roots contain HUNDREDS of controls; a threshold of
+      // 2 also matched an ordinary handler-only clickable card wrapping two icon buttons
+      // (kanban row, list item with edit+delete), removing a legitimate target from both
+      // the listing AND find. Also require it to be big: a real delegation root spans a
+      // large region, a card does not.
+      // The comment above promises "also require it to be big"; that check was
+      // never written. A 600x40 clickable table row containing 8 per-cell
+      // controls (admin grids, mail/chat rows with checkbox + star + actions) was
+      // deleted, and the row's own "open" action is usually the primary target.
+      // A real delegation root spans a page region, not a line of text.
+      const _big = (e.h >= vh * 0.5) || (e.w * e.h >= 0.25 * vw * vh);
+      if (contained >= 8 && _big) drop.add(e.mmid);
+    }
+    _dropMmids(drop, 'delegation-root');
+    if (drop.size) for (let i = out.length - 1; i >= 0; i--) if (drop.has(out[i].mmid)) out.splice(i, 1);
+  }
+  // DUPLICATE-LABEL DISAMBIGUATION: >=3 controls sharing one short label
+  // ("More info" ×4 on dashboard stat cards) are indistinguishable by name —
+  // give each a near= hint from its card's heading/short text.
+  {
+    const byLab = new Map();
+    for (const e of out) {
+      const l = e.name || e.text || '';
+      if (l && l.length <= 20) byLab.set(l, (byLab.get(l) || 0) + 1);
+    }
+    for (const e of out) {
+      const l = e.name || e.text || '';
+      if (!l || l.length > 20 || (byLab.get(l) || 0) < 3 || e.near || e.groupKey) continue;
+      const n = mmidReg.get(e.mmid);
+      if (!n) continue;
+      let anc = n.parentElement;
+      for (let d = 0; d < 3 && anc && anc !== document.body; d++, anc = anc.parentElement) {
+        let t = '';
+        try {
+          const h = anc.querySelector && anc.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
+          if (h) t = (h.innerText || '').replace(/\s+/g, ' ').trim();
+          if (!t) {
+            const at = (anc.innerText || '').replace(/\s+/g, ' ').trim();
+            if (at && at.length <= 50 && at !== l) t = at;
+          }
+        } catch (e2) {}
+        if (t && t !== l) { e.near = t.slice(0, 40); break; }
+      }
+    }
+  }
+  // CONTAINER-ENTRY SUPPRESSION: an "interactive" element taller than the
+  // viewport whose OWN descendants are already listed is a wrapper (nav-list
+  // content, scroller body — they pick up cursor styles or labels), not a
+  // click target. Listing it as box(0,-1380,299,4327) just confuses the agent.
+  {
+    const bigEls = new Map();   // element -> entry, for wrapper candidates
+    for (const e of out) {
+      if (e.crossFrame || e.editable || e.codeEditor || e.scrollRegion || e.canvasLike || formyTags.has(e.tag)) continue;
+      // Wrapper-sized: taller than the viewport, OR covering nearly ALL of it
+      // in both dimensions (full-screen app shells listed via a stray label)...
+      const viewportSized = e.h >= vh * 1.2 || (e.h >= vh * 0.85 && e.w >= vw * 0.85);
+      // ...OR a generic container whose "label" is just its children's text
+      // concatenated (WordPress: div "Showcase Plugins Themes Hosting…" above
+      // 7 individually-listed nav links). Explicitly NON-WIDGET roles
+      // (document/region/presentation — Monaco's focusable workbench shells)
+      // count as generic too.
+      const genericWrapper = (!e.role || ['document', 'region', 'presentation', 'none', 'group'].includes(e.role)) &&
+        ['div', 'ul', 'ol', 'li', 'span', 'nav', 'section', 'article'].includes(e.tag) &&
+        ((e.text || e.label || '').length >= 20);
+      if (!viewportSized && !genericWrapper) continue;
+      const n = mmidReg.get(e.mmid);
+      if (n) bigEls.set(n, e);
+    }
+    if (bigEls.size) {
+      const childCount = new Map();
+      for (const e of out) {
+        let n = mmidReg.get(e.mmid);
+        if (!n || bigEls.has(n)) continue;
+        n = composedParent(n);
+        while (n) {
+          if (bigEls.has(n)) {
+            const be = bigEls.get(n);
+            childCount.set(be, (childCount.get(be) || 0) + 1);
+          }
+          n = composedParent(n);
+        }
+      }
+      // A wrapper only qualifies if its text really IS its children's text
+      // concatenated — which is what the comment above describes but the code
+      // never checked. Without this, any clickable CARD (news tile, dashboard
+      // tile, list row: handler on the card, a heading plus 3 inner links) was
+      // deleted silently, and the card's own click action became unreachable by
+      // the listing AND by find(). The delegation pass 50 lines up already
+      // learned this lesson and raised its threshold to 8 for the same reason;
+      // this pass was re-killing the same shape at 3.
+      const drop = new Set();
+      for (const [be, n] of childCount) {
+        if (n < 3) continue;
+        if (be.h >= vh * 1.2 || (be.h >= vh * 0.85 && be.w >= vw * 0.85)) { drop.add(be.mmid); continue; }
+        let residual = (be.text || be.label || '');
+        for (const o of out) {
+          if (o === be) continue;
+          let nn = mmidReg.get(o.mmid), inside = false;
+          while (nn) { if (nn === mmidReg.get(be.mmid)) { inside = true; break; } nn = composedParent(nn); }
+          if (!inside) continue;
+          for (const lab of [o.name, o.text, o.label]) {
+            if (lab && lab.length > 2) residual = residual.split(lab).join('');
+          }
+        }
+        // Own prose left over -> it is a card with its own content, not a shell.
+        if (residual.replace(/[\s|·•,;:.\-—]/g, '').length < 12) drop.add(be.mmid);
+      }
+      if (drop.size) {
+        _dropMmids(drop, 'container-suppression');
+        for (let i = out.length - 1; i >= 0; i--) if (drop.has(out[i].mmid)) out.splice(i, 1);
+      }
+    }
+  }
+  // Detect whether a TRUE blocking modal is open — if yes, the agent should
+  // focus on it and ignore the rest of the page. CRITICAL: do NOT fire this for
+  // every role="dialog". Cookie/consent toasts and notification popovers use
+  // role="dialog" but are non-blocking corner widgets; treating them as modals
+  // makes the agent abandon its real task to "deal with the modal." A real modal
+  // is one that is aria-modal="true", a native <dialog> opened via showModal()
+  // (matches :modal), OR a dialog large enough to dominate the viewport.
+  const dialogOpen = (() => {
+    let nodes = [];
+    try { nodes = _allComposed('[role="dialog"],[role="alertdialog"],[aria-modal="true"],dialog'); } catch (e) {}
+    let anyDialogVisible = false;
+    let ariaModalClaim = false;
+    for (const d of nodes) {
+      const rr = d.getBoundingClientRect();
+      if (!(rr.width > 0 && rr.height > 0)) continue;
+      let dcs; try { dcs = getComputedStyle(d); } catch (e) { continue; }
+      if (dcs.visibility === 'hidden' || dcs.display === 'none') continue;
+      anyDialogVisible = true;
+      // aria-modal="true" is a CLAIM, verified below — Yahoo Finance marks a
+      // passive right-rail widget aria-modal, which hijacked the whole listing.
+      if (d.getAttribute('aria-modal') === 'true') ariaModalClaim = true;
+      // :modal (native showModal) is browser-enforced inertness — trustworthy.
+      try { if (d.matches(':modal')) return true; } catch (e) {}
+      // "Dominates viewport" fallback — tightened: must ALSO sit over the
+      // viewport CENTER and be overlay-positioned. A tall right-rail widget
+      // marked role=dialog (Yahoo Finance's trending panel) passed the bare
+      // area test and falsely told the agent the whole page was modal.
+      if ((rr.width * rr.height) / (vw * vh) >= 0.5 &&
+          rr.left <= vw / 2 && rr.right >= vw / 2 &&
+          rr.top <= vh / 2 && rr.bottom >= vh / 2 &&
+          /^(fixed|absolute|sticky)$/.test(dcs.position)) return true;
+    }
+    // Verify the aria-modal claim against reality: a REAL modal has a backdrop
+    // that blocks the page (our hit-tests measure exactly that). If the page's
+    // own controls are essentially all still clickable, the "modal" is a
+    // mislabeled passive widget — ignore the claim.
+    if (ariaModalClaim) {
+      let page = 0, blocked = 0;
+      for (const e of out) {
+        if (e.section === 'dialog' || e.offscreen) continue;
+        page++;
+        if (e.physBlocked || e.clickable === false) blocked++;
+      }
+      if (page < 5 || blocked / page >= 0.2) return true;
+    }
+    // Zero-height dialog shells (TrustArc's #consent_blackbar is h=0 with the
+    // buttons overflowing it) defeat the rect check above — but if controls
+    // resolved to section=dialog during collection, a dialog IS visibly open.
+    if (!anyDialogVisible) anyDialogVisible = out.some(e => e.section === 'dialog');
+    // BEHAVIORAL modality: some frameworks (OpenUI5's block layer, custom
+    // overlay shims) make a SMALL dialog modal by covering the page with an
+    // invisible click-blocker instead of aria-modal. The hit-tests already
+    // know: when a dialog is visible AND a supermajority of the page's own
+    // controls are occluded, the page is effectively modal.
+    if (anyDialogVisible) {
+      let page = 0, blocked = 0;
+      for (const e of out) {
+        if (e.section === 'dialog' || e.offscreen) continue;
+        page++;
+        if (e.physBlocked || e.clickable === false) blocked++;
+      }
+      if (page >= 5 && blocked / page >= 0.6) return true;
+    }
+    return false;
+  })();
+  // VIRTUALIZED GRIDS/LISTS: a windowed grid (AG Grid, react-window, TanStack)
+  // only mounts the visible rows — without this note the agent concludes "row
+  // 500 doesn't exist". aria-rowcount/aria-setsize are the W3C way such widgets
+  // declare their TRUE size; compare against what's actually rendered.
+  let virtualNote = '';
+  try {
+    _allComposed('[aria-rowcount]').forEach(g => {
+      const total = parseInt(g.getAttribute('aria-rowcount'), 10);
+      if (!total || total <= 0) return;                       // -1 = unknown
+      const gr = g.getBoundingClientRect();
+      if (!(gr.width > 0 && gr.height > 0)) return;
+      // tr carries an implicit role=row, so a native <table aria-rowcount="5000">
+      // reported 0 rendered rows and the note was suppressed entirely — the agent
+      // concludes row 500 does not exist.
+      const rendered = g.querySelectorAll('[role="row"], tr').length;
+      if (rendered && total > rendered + 1) {
+        const nm = (g.getAttribute('aria-label') || '').trim().slice(0, 30);
+        virtualNote += `\n[VIRTUALIZED ${g.getAttribute('role') || 'grid'}${nm ? ` "${nm}"` : ''}: ` +
+          `declares ${total} total rows but only ${rendered} are rendered in the DOM — ` +
+          `rows load as you scroll INSIDE the grid body (not the page).]`;
+      }
+    });
+  } catch (e) {}
+  // MAIN HEADING: the page's prominent visible heading is the cheapest
+  // "what am I looking at" state signal — after clicking "Next month" the
+  // agent can confirm the calendar now says "July 2026" without vision.
+  let mainHeading = '';
+  try {
+    const hs = _allComposed('h1, h2, [role="heading"]');
+    for (const h of hs) {
+      const hr = h.getBoundingClientRect();
+      // >4px, not >0: the standard .visually-hidden/.sr-only pattern is a 1x1 clip
+      // box, and an sr-only "Utility navigation" h2 was beating the visible <h1>.
+      if (hr.width > 4 && hr.height > 4 && hr.top < vh && hr.bottom > 0) {
+        const t = (h.innerText || '').replace(/\s+/g, ' ').trim();
+        if (t) { mainHeading = _cut(t, 80); break; }
+      }
+    }
+  } catch (e) {}
+  // STANDALONE MEDIA (detail='full' only). A plain <img> is not interactive, so
+  // it never appears in a listing at any filter level — which means "download
+  // that GIF" or "what is the hero image" is unanswerable from read_page no
+  // matter how little we filter. This is a MISSING FIELD, not an over-filtering
+  // problem, and it is why `full` exists.
+  //
+  // Added here, after modal detection has already run on the controls alone, so
+  // media can never perturb the "is a dialog open" arithmetic; and before the
+  // scopeMmid filter, so ref_id scoping applies to it like everything else.
+  if (WANT_URLS) {
+    const already = new Set(out.map(e => e.mmid));
+    // CSS BACKGROUND IMAGES. Hero photos, card art and banners are routinely
+    // painted with background-image on a <div>, which has no src, is not an <img>,
+    // and is therefore invisible to `find`, to get_page_text, and to every filter
+    // level — including the one that promises "non-clickable images". An agent
+    // asked for the photos on a docs page, was told there were none, and only
+    // found the three 379x300 banners by reaching for getComputedStyle itself.
+    // Failing silently on the most common way to put a picture on a page is
+    // exactly the omission `full` exists to end.
+    //
+    // Bounded on purpose: getComputedStyle is not free, so only boxes big enough
+    // to be content are consulted, and the scan stops after a fixed budget.
+    const bgSeen = new Set();
+    let bgBudget = 600;
+    mmidReg.forEach((n) => {
+      if (bgBudget <= 0) return;
+      try {
+        const mm = n.getAttribute('mmid');
+        if (!mm || already.has(mm) || bgSeen.has(mm)) return;
+        const r = n.getBoundingClientRect();
+        if (r.width < 80 || r.height < 60) return;                       // not a picture
+        if ((r.top + r.height) <= 0 || r.top >= vh || (r.left + r.width) <= 0 || r.left >= vw) return;
+        bgBudget--;
+        const cs2 = getComputedStyle(n);
+        const bg = cs2.backgroundImage || '';
+        if (!bg || bg === 'none' || bg.indexOf('url(') === -1) return;
+        // Gradients and tiny textures are decoration, not content.
+        if (/gradient\(/i.test(bg)) return;
+        const u = (/url\(\s*["']?([^"')]+)["']?\s*\)/.exec(bg) || [])[1];
+        if (!u) return;
+        const srcv2 = _url(u, n);
+        if (!srcv2) return;
+        bgSeen.add(mm);
+        out.push({
+          mmid: mm, tag: n.tagName.toLowerCase(), type: null, role: 'media',
+          section: section(n), label: '',
+          name: _clipAlt(n.getAttribute('aria-label') || n.getAttribute('title') || ''),
+          near: '', underHeading: '', placeholder: '', value: '', text: '',
+          x: Math.round(r.left), y: Math.round(r.top),
+          w: Math.round(r.width), h: Math.round(r.height),
+          clickable: true, active: '', required: false, unselected: false, disabled: false,
+          newTab: false, crossFrame: false, canvasLike: false, physBlocked: false,
+          editable: false, codeEditor: false, scrollRegion: false,
+          clippedInContainer: false, clipContainerMmid: null,
+          hasPopup: false, collapsed: false,
+          groupKey: null, groupName: '', groupRole: '',
+          comboBacked: null, widgetSig: null, backedBy: null, orphanWidget: false,
+          iconOnly: false, offscreen: false, mediaOnly: true, cssBackground: true,
+          href: '', src: BRIEF ? _briefUrl(srcv2) : srcv2,
+        });
+      } catch (e) {}
+    });
+    for (const m of _allComposed('img, video, audio')) {
+      try {
+        const mm = m.getAttribute('mmid');
+        if (!mm || already.has(mm)) continue;
+        const mr = m.getBoundingClientRect();
+        // Skip tracking pixels and sprite-sized decoration; keep anything a
+        // human would call an image on the page.
+        if (mr.width < 24 || mr.height < 24) continue;
+        if ((mr.top + mr.height) <= 0 || (mr.left + mr.width) <= 0 || mr.top >= vh || mr.left >= vw) continue;
+        const mcs = getComputedStyle(m);
+        if (mcs.visibility === 'hidden' || mcs.display === 'none' || parseFloat(mcs.opacity || '1') === 0) continue;
+        const srcv = _srcOf(m);
+        if (!srcv) continue;
+        out.push({
+          mmid: mm, tag: m.tagName.toLowerCase(), type: null, role: 'media',
+          section: section(m), label: '', name: _clipAlt(m.getAttribute('alt') || ''),
+          near: '', underHeading: '', placeholder: '', value: '', text: '',
+          x: Math.round(mr.left), y: Math.round(mr.top),
+          w: Math.round(mr.width), h: Math.round(mr.height),
+          clickable: true, active: '', required: false, unselected: false, disabled: false,
+          newTab: false, crossFrame: false, canvasLike: false, physBlocked: false,
+          editable: false, codeEditor: false, scrollRegion: false,
+          clippedInContainer: false, clipContainerMmid: null,
+          hasPopup: false, collapsed: false,
+          groupKey: null, groupName: '', groupRole: '',
+          comboBacked: null, widgetSig: null, backedBy: null, orphanWidget: false,
+          iconOnly: false, offscreen: false, mediaOnly: true,
+          href: '', src: BRIEF ? _briefUrl(srcv) : srcv,
+        });
+      } catch (e) {}
+    }
+  }
+  // Pathname + search is the cheap "where am I right now" signal the agent
+  // needs to disambiguate sidebar links from in-page tabs that share a name.
+  const url = location.pathname + (location.search || '');
+  // SUBTREE SCOPING. `read_page(ref_id=...)` accepted this parameter and then ignored it,
+  // printing the whole flat listing with an apologetic note — documented as limitation #1
+  // for many rounds. Filtering here (rather than during the walk) keeps every dedup,
+  // compaction and modal pass operating on full-page context, so a scoped listing says the
+  // same things about its elements that an unscoped one would; it just shows fewer of them.
+  if (scopeMmid) {
+    const host = mmidReg.get(String(scopeMmid));
+    if (host) {
+      const inHost = (m) => {
+        let n = mmidReg.get(m);
+        while (n) { if (n === host) return true; n = composedParent(n); }
+        return false;
+      };
+      // WHETHER THE HOST ITSELF IS INCLUDED depends on what scoping MEANS at each
+      // detail level, and they are opposites:
+      //   compact — "show me what is INSIDE this container". The host is the
+      //             thing being looked into, not a result. (Pinned by W9.)
+      //   full    — "tell me everything about THIS". The agent has already
+      //             located its target and is asking for that element's URL, so
+      //             excluding it answers a question nobody asked: scoping to a
+      //             plain link returned ZERO rows, and scoping to an
+      //             image-wrapping link returned the image and swallowed the
+      //             href. Both were found by building the benchmark for this
+      //             feature, before it had ever been used in anger.
+      // The host is EXCLUDED only when the subtree has something else to show.
+      // Original rule: compact scoping means "look inside this container", so the
+      // container is not a result (W9). True for a card; false for a leaf. An
+      // agent scoped to an <input> it had just found via find(), got an EMPTY
+      // listing, and fell back to javascript_tool — the only raw-DOM escape in
+      // the whole escalation study, and this rule forced it. Returning nothing
+      // for a valid ref is never the useful answer.
+      const inner = out.filter(e => e.mmid !== String(scopeMmid) && inHost(e.mmid));
+      const kept = (FULL || inner.length === 0) ? out.filter(e => inHost(e.mmid)) : inner;
+      out.length = 0;
+      Array.prototype.push.apply(out, kept);
+    } else if (!structured) {
+      // THE REF DOES NOT EXIST IN THIS DOCUMENT. Previously this `if (host)` had no
+      // else: the filter was skipped and the FULL page was returned, while the
+      // server unconditionally prepended "[scoped to the subtree of ref_N]" — a
+      // listing that states it is a subtree and is actually the whole document.
+      // Measured live: after fill_form navigated to /inventory.html, a read scoped
+      // to ref_17 (a ref from the PREVIOUS page; the new page's lowest mmid is 39)
+      // returned all 25 elements under the scoped header. mmids do not survive a
+      // navigation, so this is the normal way an agent hits it — carry a ref across
+      // a page change and the lie is silent. Fail loudly instead.
+      return "__SCOPE_MISS__" + String(scopeMmid);
+    }
+  }
+  // LEDGER MODE returns both halves: what survived and what was removed, with the
+  // rule that removed it. Placed before the structured return so it works at any
+  // detail level and is unaffected by serialization.
+  if (LEDGER) {
+    const kept = new Set(out.map((e) => String(e.mmid)));
+    return {
+      kept: out.length,
+      elements: out,
+      // A post-pass can drop an mmid that a later pass re-adds; report only
+      // entries that really are absent from the final listing, or the ledger
+      // accuses rules of removals that did not stick.
+      dropped: _ledger.filter((d) => !kept.has(String(d.mmid))),
+      byRule: _ledger.filter((d) => !kept.has(String(d.mmid)))
+        .reduce((acc, d) => { acc[d.rule] = (acc[d.rule] || 0) + 1; return acc; }, {}),
+    };
+  }
+  if (structured) return out;   // raw array for analyze_screen / SoM renderer
+  // Spatial reading order — direction-aware: RTL pages (Arabic/Hebrew/Persian)
+  // read right-to-left within a row, so "first" must be the rightmost there.
+  const _rtl = (() => {
+    try {
+      return document.documentElement.dir === 'rtl' ||
+             getComputedStyle(document.documentElement).direction === 'rtl';
+    } catch (e) { return false; }
+  })();
+  const readingOrder = (a, b) => (a.y - b.y) || (_rtl ? (b.x - a.x) : (a.x - b.x));
+  out.sort(readingOrder);
+  // Cap the listing for token efficiency, but NEVER silently. The old code did
+  // a blind out.slice(0,150) while the banner still reported out.length "on
+  // screen" — so on dense pages the bottom of the listing (lower stories, and
+  // worse, the bottom-of-form submit + required fields) just disappeared with
+  // no breadcrumb. Now: (1) the elements that matter most for completing a task
+  // — dialog content, required fields, unselected dropdowns, and form inputs —
+  // are NEVER cut; (2) the remaining budget is filled with the rest in spatial
+  // order; (3) if anything is left over, we say so explicitly.
+  const LISTING_CAP = 150;
+  let shown = out, hiddenCount = 0;
+  if (out.length > LISTING_CAP) {
+    // mediaOnly rows exist only in `full`, which is only ever requested BECAUSE the
+    // agent wants a URL or an image. Letting the cap spend its budget on nav links
+    // and truncate before them defeats the request: on a docs page an agent asked
+    // for `full`, got 107 header nav entries, and the listing ran out before the
+    // article body it cared about.
+    const isPriority = (e) => e.section === 'dialog' || e.required || e.unselected || e.editable ||
+                              e.mediaOnly || formyTags.has(e.tag);
+    const pri = out.filter(isPriority);
+    const rest = out.filter(e => !isPriority(e));
+    const budget = Math.max(0, LISTING_CAP - pri.length);
+    shown = pri.concat(rest.slice(0, budget));
+    shown.sort(readingOrder);   // re-impose reading order on the kept subset
+    hiddenCount = out.length - shown.length;
+  }
+  // Unscoped `full` on a dense page is the failure mode this level invites; name
+  // it rather than just emitting the payload.
+  const fullScopeNote = (FULL && !scopeMmid && out.length > LISTING_CAP)
+    ? `
+[detail="full" was requested for the WHOLE page (${out.length} entries, capped at ${LISTING_CAP}). ` +
+      `Pass ref_id to scope it to the region you care about — you will get every entry in that region instead of a truncated page.]`
+    : "";
+  const truncNote = hiddenCount > 0
+    ? `\n... +${hiddenCount} more interactive element(s) not shown (listing capped at ${LISTING_CAP}; ` +
+      `dialog/required/dropdown/input fields are prioritized, but some hidden items may be ordinary ` +
+      `visible content further down the page). If your target isn't listed, scroll it into view or ` +
+      `act on a more specific region, then re-observe.`
+    : "";
+  // The listing is viewport-only. If real controls (form fields, links, buttons)
+  // sit below the fold, the agent otherwise has NO signal they exist and gives up
+  // on long pages / below-fold forms. Tell it to scroll.
+  // Under an open modal, below/above-fold page content is ALSO behind the
+  // blocker — advertising it as scroll-reachable contradicts the modal note.
+  // Scoped listings must not carry PAGE-WIDE counts. "167 more interactive
+  // elements are BELOW the current viewport" is true of the document and
+  // meaningless about the one subtree the agent asked for — an agent reading a
+  // single-element scoped result flagged it as momentarily confusing.
+  const sideNote = (dialogOpen || scopeMmid || !sideCount) ? "" :
+    `
+[${sideCount} interactive element(s) are outside the viewport HORIZONTALLY (a carousel, ` +
+    `a wide table, or side-scrolling columns) — scroll sideways and re-observe, or reach them by ref via find.]`;
+  const belowFoldNote = (dialogOpen || scopeMmid) ? "" : (belowFoldCount > 0 || aboveFoldCount > 0)
+    ? `\n[${belowFoldCount > 0 ? `${belowFoldCount} more interactive element(s) are BELOW the current viewport` : ''}` +
+      `${belowFoldCount > 0 && aboveFoldCount > 0 ? '; ' : ''}` +
+      `${aboveFoldCount > 0 ? `${aboveFoldCount} interactive element(s) are ABOVE it (you have scrolled past them)` : ''}` +
+      ` — if you don't see your target, scroll ${belowFoldCount > 0 ? 'down' : 'up'} and re-observe.]`
+    : "";
+  // MODAL FOCUS: when a TRUE modal is open, the underlying page is flagged
+  // (occluded/blocked) line by line — accurate, but 40 such lines bury the
+  // 5 actionable dialog controls (observed on consent modals). Omit them and
+  // say so in one line; the agent's next move is inside the dialog anyway.
+  let modalHiddenCount = 0;
+  if (dialogOpen) {
+    const keep = [];
+    for (const e of shown) {
+      // Outside the dialog, omit anything not plainly clickable: occluded by
+      // the backdrop OR clipped/offscreen (a clipped entry once leaked through
+      // with a "clicking auto-scrolls it into view" hint — a trap while a
+      // modal is blocking the page).
+      if (e.section === 'dialog' ||
+          (!e.physBlocked && e.clickable !== false && !e.clippedInContainer && !e.offscreen)) keep.push(e);
+      else modalHiddenCount++;
+    }
+    if (modalHiddenCount > 0) shown = keep;
+  }
+  // SCROLL-PANEL COMPACTION: >=10 entries clipped inside the SAME inner scroll
+  // panel (long doc sidebars, chat lists) collapse into one mapping block via
+  // the same machinery as grids — every mmid stays clickable (clicks
+  // auto-scroll the panel).
+  for (const e of shown) {
+    if (!e.groupKey && e.clippedInContainer && e.clipContainerMmid) {
+      e.groupKey = 'clip:' + e.clipContainerMmid;
+      e.groupRole = 'scroll-panel';
+      e.groupName = '';
+    }
+  }
+  // LARGE-WIDGET COMPACTION: a 6×7 ARIA calendar emits 30-42 near-identical
+  // role=gridcell lines (~2.5k chars); long listboxes/radiogroups do the same.
+  // Collapse any group of >=10 same-container cells into ONE mapping block:
+  // strip the labels' common prefix/suffix and emit "41:1 42:2 … 74:30".
+  // Nothing is lost — every cell keeps its mmid and stays clickable.
+  const compactBlocks = new Map();   // groupKey -> rendered block
+  const inCompact = new Set();       // mmids folded into a block
+  {
+    const groups = new Map();
+    for (const e of shown) {
+      if (!e.groupKey) continue;
+      if (!groups.has(e.groupKey)) groups.set(e.groupKey, []);
+      groups.get(e.groupKey).push(e);
+    }
+    for (const [gk, members] of groups) {
+      if (members.length < 10) continue;
+      const labs = members.map(m => {
+        const base = (m.name || m.text || m.label || '').trim();
+        // Data-grid cells carry their COLUMN header in near= — prefix it so a
+        // compacted row reads "Status:Active Trustworthiness:Perfect" instead
+        // of positionally-ambiguous bare values.
+        return (m.role === 'gridcell' && m.near) ? `${m.near}=${base}` : base;
+      });
+      if (labs.some(l => !l || l.length > 56)) continue;   // need clean, short labels
+      // Common prefix/suffix across ALL labels ("June 1, 2026".."June 30, 2026"
+      // -> prefix "June " + suffix ", 2026" stripped -> "1".."30").
+      let pre = labs[0], suf = labs[0];
+      for (const l of labs) {
+        while (pre && !l.startsWith(pre)) pre = pre.slice(0, -1);
+        while (suf && !l.endsWith(suf)) suf = suf.slice(1);
+      }
+      if (pre === labs[0]) pre = '';   // identical labels — don't strip to nothing
+      if (suf === labs[0]) suf = '';
+      if (pre.length + suf.length >= Math.min(...labs.map(l => l.length))) { if (pre.length >= suf.length) suf = ''; else pre = ''; }
+      const items = members.map((m, i) => {
+        let s = labs[i].slice(pre.length, suf ? labs[i].length - suf.length : undefined) || labs[i];
+        if (/[\s|:]/.test(s)) s = JSON.stringify(s);
+        const flags = (m.active ? `(${m.active})` : '') + (m.disabled ? '(disabled)' : '') + (m.required ? '(required)' : '');
+        return `${m.mmid}:${s}${flags}`;
+      }).join(' ');
+      const m0 = members[0];
+      const nm = m0.groupName ? ` "${m0.groupName}"` : '';
+      const strip = (pre || suf)
+        ? `label ${pre ? `prefix "${pre}"` : ''}${pre && suf ? ' + ' : ''}${suf ? `suffix "${suf}"` : ''} stripped; `
+        : '';
+      const kind = m0.role || m0.tag;
+      const clipHint = String(gk).startsWith('clip:')
+        ? ' — these are scrolled out inside an inner scrollable panel; clicking any auto-scrolls it into view'
+        : '';
+      compactBlocks.set(gk,
+        `${m0.groupRole}${nm} — ${members.length} ${kind} cells as mmid:label (${strip}act on any via its ref)${clipHint}: ${items}`);
+      members.forEach(m => inCompact.add(m.mmid));
+    }
+  }
+  // REPEATED-IDENTICAL CONTROLS: dense lists emit one identically-named
+  // control PER ROW (40× button "Follow" on Yahoo's tickers, 8× "Actions" on
+  // GitLab's project rows). Individually they add nothing beyond an mmid —
+  // identical name, identical role. Fold each set into one line; order is
+  // top-to-bottom so the Nth mmid belongs to the Nth row.
+  {
+    const sig = new Map();
+    for (const e of shown) {
+      if (inCompact.has(e.mmid) || e.section === 'dialog') continue;
+      const lab = e.name || e.text || e.label || '';
+      if (!lab || lab.length > 40) continue;
+      const k = `${e.tag}|${e.role || ''}|${lab}`;
+      if (!sig.has(k)) sig.set(k, []);
+      sig.get(k).push(e);
+    }
+    for (const [k, members] of sig) {
+      if (members.length < 8) continue;
+      const m0 = members[0];
+      const lab = m0.name || m0.text || m0.label;
+      const kind = (m0.role && m0.role !== m0.tag) ? m0.role : m0.tag;
+      compactBlocks.set('rep:' + k,
+        `${members.length}× ${kind} ${JSON.stringify(lab)} — one per list row, ordered top-to-bottom; mmids: ${members.map(m => m.mmid).join(',')}`);
+      members.forEach(m => { m.groupKey = 'rep:' + k; inCompact.add(m.mmid); });
+    }
+    // ICON-GLYPH GRIDS: >=8 unlabeled icon entries of the same tag+section
+    // (draw.io's shape palette emitted ~35 identical "icon button — no text
+    // label" lines). Indistinguishable individually — fold into one line; the
+    // agent uses analyze_screen once to identify them anyway.
+    const iconSig = new Map();
+    for (const e of shown) {
+      if (!e.iconOnly || inCompact.has(e.mmid) || e.section === 'dialog') continue;
+      const k = `${e.tag}|${e.section || ''}`;
+      if (!iconSig.has(k)) iconSig.set(k, []);
+      iconSig.get(k).push(e);
+    }
+    for (const [k, members] of iconSig) {
+      if (members.length < 8) continue;
+      compactBlocks.set('ico:' + k,
+        `${members.length}× unlabeled ${members[0].tag} icon buttons (a glyph grid/palette — take ONE computer screenshot to identify them, then click by ref; reading order): ${members.map(m => `${m.mmid}@(${m.x},${m.y})`).join(' ')}`);
+      members.forEach(m => { m.groupKey = 'ico:' + k; inCompact.add(m.mmid); });
+    }
+    // REPEATED RECORDS (MDR/DEPTA-style, generalised from the grid and
+    // identical-label folds above). Measured on 35 frozen sites: 46% of pages
+    // exceed the 150-entry cap, the median capped page loses 124 elements, and
+    // **96% of a median listing sits in a structurally repeated group** — 20
+    // product cards, 50 search results, a nav column. We were paying full price
+    // per row for near-identical rows and then dropping the tail.
+    //
+    // Folded rows KEEP their own mmid and their href, so nothing becomes
+    // unactionable or unanswerable — this is a serialization change only. The
+    // structured array is returned untouched above, which is what `find` and
+    // every audit consume.
+    const recSig = new Map();
+    for (const e of shown) {
+      if (inCompact.has(e.mmid) || e.section === 'dialog' || e.mediaOnly) continue;
+      const label = (e.name || e.label || e.text || '').trim();
+      if (!label) continue;                       // unlabeled rows fold badly
+      // Signature = "the same KIND of thing": tag, role, region, and whether it
+      // carries a link. Box size is bucketed, not exact, so a grid whose cards
+      // differ by a pixel still folds.
+      const k = [e.tag, e.role || '', e.section || '', e.href ? 'L' : '',
+                 Math.round((e.w || 0) / 40), Math.round((e.h || 0) / 20)].join('|');
+      if (!recSig.has(k)) recSig.set(k, []);
+      recSig.get(k).push(e);
+    }
+    for (const [k, members] of recSig) {
+      if (members.length < 6 || window.__abNoFold) continue;   // below this, folding costs more than it saves
+      const m0 = members[0];
+      const items = members.map((m) => {
+        const lab = (m.name || m.label || m.text || '').trim().slice(0, 60);
+        const flags = (m.disabled ? '(disabled)' : '') + (m.required ? '(required)' : '')
+                    + (m.active ? `(${m.active})` : '');
+        return `${m.mmid}:${JSON.stringify(lab)}${m.href ? '→' + m.href : ''}${flags}`;
+      }).join(' ');
+      const kind = m0.role || m0.tag;
+      const where = m0.section ? ` in section=${m0.section}` : '';
+      compactBlocks.set('rec:' + k,
+        `${members.length}× ${kind}${where}, same shape (~${m0.w}x${m0.h}px)` +
+        `${m0.href ? ' — each is a link, shown as ref:"label"→href' : ' — shown as ref:"label"'}` +
+        ` (act on any via its ref): ${items}`);
+      members.forEach((m) => { m.groupKey = 'rec:' + k; inCompact.add(m.mmid); });
+    }
+  }
+  const lines = [];
+  const emittedBlocks = new Set();
+  for (const e of shown) {
+    if (inCompact.has(e.mmid)) {
+      if (!emittedBlocks.has(e.groupKey)) {
+        lines.push(compactBlocks.get(e.groupKey));
+        emittedBlocks.add(e.groupKey);
+      }
+      continue;
+    }
+    lines.push(_fmtLine(e));
+  }
+  function _fmtLine(e) {
+    // `button[button]` -> just `button` (the type='button' default is noise).
+    // Custom-element tags (web components like `ytd-guide-entry-renderer`) are
+    // noise to the model — show the ARIA role instead when present.
+    const baseTag = (e.tag.includes('-') && e.role) ? e.role : e.tag;
+    const tagtype = (e.type && !(baseTag === 'button' && e.type === 'button')) ? `${baseTag}[${e.type}]` : baseTag;
+    // Render NAME / VALUE / PLACEHOLDER as separate fields so the model never
+    // has to guess whether a quoted string is the field's identity, its
+    // current contents, or a hint. Falls back to button/link text for
+    // non-form elements.
+    let identity = '';
+    if (e.name)        identity += ` name=${JSON.stringify(e.name)}`;
+    if (e.value)       identity += ` value=${JSON.stringify(e.value)}`;
+    if (e.placeholder) identity += ` placeholder=${JSON.stringify(e.placeholder)}`;
+    // For pure buttons/links (no name/value/placeholder), show their text, then
+    // fall back to any synthesized label, then to an explicit icon-control hint
+    // so a label-less control is still targetable (and the agent knows why it
+    // has no text — a candidate for analyze_screen if the icon's purpose is
+    // unclear).
+    if (!identity && e.text) identity = ` "${e.text}"`;
+    if (!identity && e.iconOnly) identity = " (unlabeled-icon)";
+    else if (!identity && e.label) identity = ` "${e.label}"`;
+    // near= is ALWAYS a supplement, never a replacement — an earlier ordering
+    // bug let it suppress the element's own visible text (lobste.rs tag "web"
+    // rendered as just near="<story title>", unfindable by its label).
+    if (e.near && e.near !== e.name && e.near !== e.text) identity += ` near=${JSON.stringify(e.near)}`;
+    // detail='full' fields. href/src are what a compact listing structurally
+    // cannot express, so they are the whole point of the level.
+    if (e.href) identity += ` href=${JSON.stringify(e.href)}`;
+    if (e.src)  identity += ` src=${JSON.stringify(e.src)}`;
+    const act = e.active ? ` (${e.active})` : "";
+    const rl  = (e.role && e.role !== e.tag) ? ` role=${e.role}` : "";
+    const sec = e.section ? ` section=${e.section}` : "";
+    const req = e.required ? " (required)" : "";
+    const uns = e.unselected ? " (unselected)" : "";
+    const dis = e.disabled ? " (disabled)" : "";
+    const nt  = e.newTab ? " (opens NEW tab)" : "";
+    // SHORT TAGS, explained once in the legend. These parentheticals used to
+    // carry a full sentence of instructions EACH, re-emitted on every matching
+    // row — on an element-dense page that is the single largest block of
+    // repeated tokens in the listing.
+    const ed  = e.editable ? " (rich-text-editor)" : e.codeEditor ? " (code-editor)" : "";
+    // (opens menu/popup): click-then-pick affordance. Suppressed on comboboxes
+    // and native selects — their role/tag already says it.
+    const pop = (e.hasPopup && e.role !== 'combobox' && e.tag !== 'select') ? " (opens menu/popup)" : "";
+    const col = (e.collapsed && !e.active) ? " (collapsed)" : "";
+    const sr  = e.scrollRegion ? " (scrollable-region)" : "";
+    const cnv = (e.canvasLike || e.tag === 'canvas') ? " (canvas)" : "";
+    const xf  = e.crossFrame ? " (cross-origin-iframe)" : "";
+    const orph = e.orphanWidget ? " (DEAD-DUPLICATE)" : "";
+    // Name the hidden control this widget is wired to, so the agent can CONFIRM which
+    // twin is live instead of taking (DEAD-DUPLICATE) on faith.
+    const bak = (e.backedBy && !e.orphanWidget) ? ` backed-by=ref_${e.backedBy}` : "";
+    const occ = e.clickable === false ? " (occluded/blocked)" : "";
+    const clip = e.clippedInContainer ? " (clipped-in-scroll-panel)" : "";
+    const off = e.offscreen ? " (below-fold)" : "";
+    const med = e.mediaOnly ? (e.cssBackground ? " (media — CSS background, not an <img>)" : " (media — not a control)") : "";
+    return `mmid=${e.mmid} | ${tagtype}${identity}${act}${rl}${sec}${req}${uns}${dis}${orph}${bak}${nt}${ed}${pop}${col}${cnv}${xf}${sr}${med} | box(${e.x},${e.y},${e.w},${e.h})${occ}${clip}${off}`;
+  }
+  // ROLELESS OVERLAYS: some consent layers (Ryanair's CMP) are plain divs —
+  // no role=dialog anywhere, so the modal banner can't anchor. The occlusion
+  // pass still knows the truth: nearly everything is blocked except a small
+  // cluster (the overlay's own buttons). Say so.
+  let overlayLikely = false;
+  if (!dialogOpen) {
+    let page = 0, blocked = 0;
+    for (const e of out) {
+      if (e.offscreen) continue;
+      page++;
+      if (e.physBlocked || e.clickable === false) blocked++;
+    }
+    const clear = page - blocked;
+    if (page >= 8 && blocked / page >= 0.6 && clear >= 1 && clear <= 12) overlayLikely = true;
+  }
+  // MODAL TEXT. The interactive listing scopes beautifully to an open dialog but shows only
+  // its CONTROLS, so "what does this modal say?" required a screenshot or a whole-page text
+  // dump — flagged in two separate benchmark rounds. A modal's message is usually the reason
+  // it opened, and it is a few dozen characters.
+  let dialogText = '';
+  if (dialogOpen) {
+    try {
+      const d = _allComposed('[role="dialog"],[role="alertdialog"],[aria-modal="true"],dialog')
+        // Same visibility test dialogOpen uses. Filtering on rect alone let a
+        // Bootstrap offcanvas drawer (role=dialog, translateX(-110%),
+        // visibility:hidden, full-height rect) outrank the real modal by AREA, so
+        // "what does this modal say?" was answered from an invisible element.
+        .filter(x => {
+          const r = x.getBoundingClientRect();
+          if (!(r.width > 0 && r.height > 0)) return false;
+          if (r.right <= 0 || r.bottom <= 0 || r.left >= vw || r.top >= vh) return false;
+          try {
+            const c = getComputedStyle(x);
+            if (c.visibility === 'hidden' || c.display === 'none' || parseFloat(c.opacity || '1') === 0) return false;
+          } catch (e) {}
+          return true;
+        })
+        .sort((a, b) => (b.getBoundingClientRect().width * b.getBoundingClientRect().height) -
+                        (a.getBoundingClientRect().width * a.getBoundingClientRect().height))[0];
+      if (d) {
+        // Read from the LIVE element, not a detached clone. innerText depends on LAYOUT:
+        // on a cloneNode() that is not in the document it silently degrades to textContent,
+        // so there are no block newlines to split on and the heading ends up welded to the
+        // body ("Modal titleWoo-hoo, you're reading this text in a modal!"). Instead take
+        // the live innerText (which does have block breaks) and drop the lines that merely
+        // repeat a control's own label, since those are listed individually above.
+        const NL = String.fromCharCode(10);
+        const ctrlLabels = new Set();
+        try {
+          // Composed-scoped: a web-component dialog keeps its buttons in its own
+          // shadow root, where d.querySelectorAll cannot reach them — their text
+          // would then survive as "prose" and the dialog message would read
+          // "Are you sure? Cancel Delete".
+          const inD = (n) => { let w = n; while (w) { if (w === d) return true; w = composedParent(w); } return false; };
+          _allComposed('button, [role="button"], input, select, textarea, a').forEach(function (c) {
+            if (!inD(c)) return;
+            const lab = (c.innerText || c.value || c.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+            if (lab) ctrlLabels.add(lab);
+          });
+        } catch (e) {}
+        const t = (d.innerText || '').split(NL)
+          .map(function (x) { return x.replace(/[ 	]+/g, ' ').trim(); })
+          .filter(function (x) {
+            if (!x || ctrlLabels.has(x)) return false;
+            // Inline controls share a line: two adjacent buttons render as one text run
+            // ("CancelDelete"), which matches neither label on its own. Strip every known
+            // control label out of the line; if nothing meaningful is left, the line was
+            // just buttons.
+            let rest = x;
+            ctrlLabels.forEach(function (lab) { rest = rest.split(lab).join(''); });
+            // Any script. The ASCII form emitted an EMPTY dialog text for every
+            // Japanese/Chinese/Korean/Russian/Arabic modal — the one place the
+            // agent most needs prose, on the pages where it can least guess it.
+            return /[\p{L}\p{N}]/u.test(rest);
+          })
+          .join(' — ');
+        if (t) dialogText = 'Dialog text: ' + JSON.stringify(_cut(t, 300)) + (t.length > 300 ? ' …(truncated)' : '') + NL;
+      }
+    } catch (e) {}
+  }
+  const banner = dialogOpen
+    ? "*** A MODAL/DIALOG IS CURRENTLY OPEN — focus on elements with section=dialog (or overlay-banner/menu items nested inside it); ignore underlying-page elements unless you need to dismiss the modal. ***\n"
+    : overlayLikely
+    ? "*** MOST PAGE ELEMENTS ARE BLOCKED BY AN OVERLAY (likely a consent/notification layer). The few elements WITHOUT (occluded/blocked) are the overlay's own controls — handle those first. ***\n"
+    : "";
+  // BLANK PAGE: zero interactive elements + (nearly) no text means the page
+  // hasn't rendered (bot-gated or still hydrating) — without this note, an
+  // empty listing is indistinguishable from "a page with no controls".
+  let blankNote = '';
+  if (out.length === 0) {
+    let txtLen = 0;
+    try { txtLen = ((document.body && document.body.innerText) || '').trim().length; } catch (e) {}
+    blankNote = txtLen < 80
+      ? "\n[PAGE APPEARS BLANK: no interactive elements and almost no text. It may be bot-gated, errored, or still loading — wait and re-observe, or take a computer screenshot to inspect pixels.]"
+      // Text exists but ZERO controls — almost always a heavy app still booting
+      // (JupyterLite's WASM takes seconds) or content behind an inaccessible
+      // frame. Either way the agent must not conclude "nothing to do here".
+      : "\n[NO interactive elements found (page has text but zero controls). The app may still be loading or its UI may live in an inaccessible frame — wait and re-observe, or take a computer screenshot.]";
+  }
+  // LEGEND — flag-driven, not fixed. The old block emitted ~1.5 KB of legend on
+  // EVERY observation (even on pages with zero elements), and an agent calls this
+  // tool dozens of times per task — pure repeated token cost. Now only the lines
+  // whose flags ACTUALLY APPEAR in this listing are included, and the tool names
+  // are the real MCP surface (form_input / fill_form / computer), not the retired
+  // internal names (enter_text_tool / fill_form_tool / click_tool / analyze_screen)
+  // which named tools the agent cannot call.
+  const legend = (() => {
+    if (!out.length) return '';
+    const has = (fn) => { try { return shown.some(fn); } catch (e) { return false; } };
+    // A scoped read of one or two elements does not need the notation lecture.
+    // The section= line alone is ~700 chars, so on a single-anchor result the
+    // legend was roughly 80% of the payload — measured by an agent that scoped
+    // to one nav link and got a wall of explanation with it. The agent that
+    // scoped already knows what it asked for; keep only how to act on it.
+    if (scopeMmid && out.length <= 2) {
+      return `Scoped listing (${out.length} element${out.length === 1 ? '' : 's'}). ` +
+             `Act on one by its ref — pass ref_<N> for the mmid=<N> below.
+`;
+    }
+    const L = [`Visible interactive elements (${out.length} on screen).`];
+    if (has(e => e.name))        L.push(`  - name="..." — the field's IDENTITY (its label / accessible name).`);
+    if (has(e => e.near))        L.push(`  - near="..." — nearest visible text/heading: a best-effort HINT for fields with no accessible name, never the real name.`);
+    if (has(e => e.value))       L.push(`  - value="..." — the field's CURRENT CONTENTS. Empty/absent means blank.`);
+    if (has(e => e.placeholder)) L.push(`  - placeholder="..." — a format HINT; NOT a value, NOT instructions.`);
+    if (has(e => e.active))      L.push(`  - (current)/(selected)/(checked)/(expanded) — the currently-active item; don't re-click unless deselecting.`);
+    if (has(e => e.required))    L.push(`  - (required) — must be filled for submission.`);
+    if (has(e => e.unselected))  L.push(`  - (unselected) — combobox still showing placeholder text; pick a real option with fill_form.`);
+    if (has(e => e.disabled))    L.push(`  - (disabled) — present but inert; clicking does nothing right now.`);
+    if (has(e => e.newTab))      L.push(`  - (opens NEW tab) — link leaves this tab.`);
+    // Short per-row tags, explained here ONCE instead of re-stating a full
+    // sentence of instructions on every matching element.
+    if (has(e => e.orphanWidget))
+      L.push(`  - (DEAD-DUPLICATE) — this widget has NO backing form control while an identical one on this page does. Act on the backed twin even if this one looks bigger or more visible; this one is usually inert.`);
+    if (has(e => e.clippedInContainer))
+      L.push(`  - (clipped-in-scroll-panel) — scrolled out of view inside an inner scrollable panel; clicking or scroll_to auto-scrolls it into view.`);
+    if (has(e => e.offscreen))
+      L.push(`  - (below-fold) — outside the current viewport; clicking or scroll_to auto-scrolls to it.`);
+    if (has(e => e.canvasLike || e.tag === 'canvas'))
+      L.push(`  - (canvas) — pixel-drawn UI; its contents are NOT in this listing. Take a computer screenshot and click by coordinate to act inside it.`);
+    if (has(e => e.crossFrame))
+      L.push(`  - (cross-origin-iframe) — contents not in this listing; screenshot + coordinate clicks if your target is inside.`);
+    if (has(e => e.editable || e.codeEditor))
+      L.push(`  - (rich-text-editor) / (code-editor) — type into these with form_input, not computer.`);
+    if (has(e => e.scrollRegion))
+      L.push(`  - (scrollable-region) — this element's content scrolls independently of the page.`);
+    if (has(e => e.iconOnly))
+      L.push(`  - (unlabeled-icon) — a real control with no resolvable text label; take a computer screenshot if its purpose is unclear.`);
+    if (has(e => e.clickable === false))
+      L.push(`  - (occluded/blocked) — something is painted over it; it may not receive clicks.`);
+    if (has(e => e.role === 'combobox' || e.tag === 'select'))
+      L.push(`  - role=combobox / <select> — a DROPDOWN. Do NOT type into BUTTON/DIV comboboxes (it silently fails): pass the option TEXT to fill_form or form_input and they click-then-pick for you. Input comboboxes (autocomplete) work the same way and commit a real option.`);
+    // NAME ONLY THE SECTIONS ACTUALLY PRESENT. Every other legend line is gated on
+    // the notation appearing; this one alone enumerated all twelve possible values
+    // and appended a paragraph about overlay-banners regardless. Measured on the
+    // saucedemo login page — three elements, all section=form — it was ~610 of the
+    // ~900 chars that a default read returns, which is how a max_chars=900 read cut
+    // EVERY element row and returned pure legend. Explaining notation the listing
+    // does not use is what pushed out the listing itself.
+    if (has(e => e.section)) {
+      const secs = [];
+      try {
+        shown.forEach((e) => { if (e.section && secs.indexOf(e.section) < 0) secs.push(e.section); });
+      } catch (e) {}
+      secs.sort();
+      let line = `  - section=... — the containing region (${secs.join(' / ')}).`;
+      if (secs.indexOf('table-header') >= 0)
+        line += ` Use it to disambiguate same-named items: a "Name" button in section=table-header is a column sort, NOT a form field.`;
+      else if (secs.length > 1)
+        line += ` Use it to disambiguate same-named items.`;
+      if (secs.indexOf('overlay-banner') >= 0)
+        line += ` overlay-banner = a FIXED bar sitting over the page: often a consent/notification strip worth dismissing first, but it can also be the page's own sticky controls (a media player bar, a sticky "add to cart" row) — read its contents before deciding to dismiss it.`;
+      L.push(line);
+    }
+    // WHAT IS NOT HERE, and how to get it. Filtering is fine; SILENT filtering is
+    // not — a compact listing has no href, no image src and no plain <img> at
+    // all, and without this line the agent cannot know that, so it either
+    // guesses or reports the page doesn't have what it does have. One sentence,
+    // stated once, is the entire cost of making the omission recoverable.
+    if (WANT_URLS) {
+      L.push(`  - href="..." / src="..." — ${BRIEF ? 'destination paths (detail="brief"); host is shown only when it differs from this page, and long query strings are cut to "?…". Re-read with detail="full" if you need a URL verbatim' : 'real URLs (detail="full")'}. (media — not a control) rows are images/video, listed for their src only.`);
+    } else {
+      // Only advertise the escape hatch when this page actually HAS something it
+      // would reveal. The line costs ~250 chars on every observation, and the
+      // median listing is under 4 KB — that is a ~6% tax to pay on a form-only
+      // page with no links and no images, where the advice is inapplicable.
+      // (document.images is a live collection; reading .length costs nothing.)
+      let _hasMedia = false;
+      try {
+        // document.images is light-DOM only and sees no CSS backgrounds — so on a
+        // component-heavy or background-image page (precisely why `full` gained a
+        // background scan) the line advertising `full` was suppressed, restoring
+        // the silent omission it exists to end. Use the composed registry.
+        _hasMedia = _allComposed('img, video, audio').length > 0;
+        if (!_hasMedia) {
+          let budget = 150;
+          for (const n of mmidReg.values()) {
+            if (budget-- <= 0) break;
+            const r2 = n.getBoundingClientRect();
+            if (r2.width < 80 || r2.height < 60) continue;
+            const bg = getComputedStyle(n).backgroundImage || '';
+            if (bg.indexOf('url(') !== -1 && !/gradient\(/i.test(bg)) { _hasMedia = true; break; }
+          }
+        }
+      } catch (e) {}
+      const _hasLinks = has(e => e.tag === 'a');
+      if (_hasLinks || _hasMedia) {
+        // Terse on purpose: this is paid on EVERY observation. The long version
+        // measured 200 chars, 4.5% of a median listing; this says the same thing
+        // in half that, and the parameter's own schema carries the detail.
+        const _what = _hasLinks && _hasMedia ? 'Link URLs and image sources'
+                    : _hasLinks ? 'Link URLs' : 'Image/video sources';
+        L.push(`  - ${_what} are NOT listed. Need one? re-read with detail="brief" (destination paths — usually enough, and cheaper) or detail="full" (URLs verbatim), ideally with ref_id to scope it.`);
+      }
+    }
+    L.push(`Act on an element by its ref — pass ref_<N> for the mmid=<N> below: form_input (one field), fill_form (a whole form incl. dropdowns/checkboxes, with optional submit), computer (left_click / hover / scroll_to by ref, or screenshot to look at pixels).`);
+    return L.join('\n') + '\n';
+  })();
+  return (
+    `Current URL: ${url}\n` +
+    // Page-level facts are suppressed in a scoped read. An agent that scoped to a
+    // single <input> was told the page's Main heading and that "167 more elements
+    // are BELOW the current viewport", and reported reading the latter as if those
+    // 167 were inside its element.
+    ((mainHeading && !scopeMmid) ? `Main heading: ${JSON.stringify(mainHeading)}\n` : '') +
+    banner +
+    dialogText +
+    legend +
+    lines.join('\n') +
+    truncNote +
+    (modalHiddenCount > 0
+      ? `\n[${modalHiddenCount} underlying-page element(s) behind the open modal are omitted from this listing — dismiss/close the modal to interact with the page.]`
+      : '') +
+    virtualNote +
+    belowFoldNote +
+    sideNote +
+    fullScopeNote
+  );
+}
+
+// Was THIS document ever observed, and was it the same URL the refs came from?
+function _refDocCheckPage() {
+  try {
+    return { observed: window.__mmidObservedUrl || null, now: location.href };
+  } catch (e) { return { observed: null, now: '' }; }
+}
+
+function _clickPage(selector) {
+  // Registry-first resolve so [mmid='N'] targets inside open shadow roots work
+  // (document.querySelector can't cross shadow boundaries).
+  const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+  const el = q(selector);
+  if (!el) return { ok: false, msg: `Element ${selector} not found.` };
+  // instant: see _rectForPage. The synthetic pointer sequence below computes
+  // clientX/clientY from getBoundingClientRect, so a still-animating (or
+  // background-tab-throttled) smooth scroll would aim the events at stale
+  // coordinates — and libraries that hit-test the event point would miss.
+  try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {
+    try { el.scrollIntoView({ block: "center", inline: "center" }); } catch (e2) {}
+  }
+  try { el.focus({ preventScroll: true }); } catch (e) {}
+  const cs = getComputedStyle(el);
+  if (cs.visibility === 'hidden' || cs.display === 'none') {
+    return { ok: false, msg: `Element ${selector} is not visible.` };
+  }
+  // Full pointer event sequence. Radix DropdownMenu, HeadlessUI Menu, MUI Menu
+  // and most modern component libraries register handlers on `pointerdown`
+  // (not `click`), so a plain el.click() silently no-ops on the trigger. The
+  // sequence pointerdown -> mousedown -> pointerup -> mouseup -> click is what
+  // a real mouse produces and is what these libraries gate on. isTrusted will
+  // still be false; the (untrusted) auto-escalation path remains the fallback
+  // for handlers that ALSO check isTrusted.
+  try {
+    const r = el.getBoundingClientRect();
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    const base = { bubbles: true, cancelable: true, composed: true, view: window,
+                   clientX: x, clientY: y, screenX: x, screenY: y, button: 0 };
+    const ptr  = { ...base, pointerType: 'mouse', pointerId: 1, isPrimary: true };
+    el.dispatchEvent(new PointerEvent('pointerover',  ptr));
+    el.dispatchEvent(new PointerEvent('pointerenter', ptr));
+    el.dispatchEvent(new MouseEvent  ('mouseover',    base));
+    el.dispatchEvent(new MouseEvent  ('mouseenter',   base));
+    el.dispatchEvent(new PointerEvent('pointerdown',  { ...ptr, buttons: 1 }));
+    el.dispatchEvent(new MouseEvent  ('mousedown',    { ...base, buttons: 1 }));
+    el.dispatchEvent(new PointerEvent('pointerup',    { ...ptr,  buttons: 0 }));
+    el.dispatchEvent(new MouseEvent  ('mouseup',      { ...base, buttons: 0 }));
+  } catch (e) {}
+  el.click();
+  return { ok: true, msg: `Clicked ${selector}.` };
+}
+
+function _enterTextPage(selector, text) {
+  const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+  let el = q(selector);
+  if (!el) return { ok: false, msg: `Element ${selector} not found.` };
+  // Code-editor hosts are listed as ONE editor target, but the actual typing
+  // surface is internal: CM5/Ace keep a hidden mirror <textarea>; CM6 uses a
+  // contenteditable .cm-content; Monaco a .inputarea textarea. Re-target.
+  try {
+    if (el.matches && el.matches('.CodeMirror, .monaco-editor, .ace_editor, .cm-editor, [class*="mq-editable-field"]')) {
+      const inner = el.querySelector('.cm-content[contenteditable], textarea.inputarea, textarea');
+      if (inner) el = inner;
+    }
+  } catch (e) {}
+  try { el.focus({ preventScroll: true }); } catch (e) {}
+  // Rich-text editors (Lexical/ProseMirror/Quill/Slate/TipTap) keep their own
+  // document model: writing textContent directly puts text on screen that the
+  // editor's state doesn't know about (lost on next keystroke / not submitted).
+  // execCommand('insertText') runs through the real beforeinput->input pipeline
+  // those editors listen to, so their model updates like a genuine keystroke.
+  if (el.isContentEditable) {
+    let ceOk = false;
+    try {
+      const doc = el.ownerDocument || document;
+      const sel = (doc.defaultView || window).getSelection();
+      const range = doc.createRange();
+      range.selectNodeContents(el);          // select-all -> insert replaces content
+      sel.removeAllRanges(); sel.addRange(range);
+      ceOk = doc.execCommand('insertText', false, text);
+    } catch (e) {}
+    if (!ceOk) {                             // editors without execCommand support
+      el.textContent = text;
+    }
+  } else {
+    // Clear existing value
+    if ('value' in el) {
+      const nativeSetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
+      if (nativeSetter) nativeSetter.call(el, '');
+      else el.value = '';
+    }
+    // Type by setting value + dispatching synthetic events (React/Vue friendly)
+    if ('value' in el) {
+      const nativeSetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
+      if (nativeSetter) nativeSetter.call(el, text);
+      else el.value = text;
+    }
+  }
+  el.dispatchEvent(new Event('input',  { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  const actual = ('value' in el) ? el.value : (el.innerText || el.textContent || '');
+  return { ok: actual === text || (text && actual.includes(text)),
+           actual,
+           msg: `Typed into ${selector}.` };
+}
+
+function _pressKeysPage(combo) {
+  // Combo like "Control+A", "Enter", "Shift+Tab"
+  const parts = combo.split('+').map(s => s.trim());
+  const key = parts[parts.length - 1];
+  const mods = new Set(parts.slice(0, -1).map(s => s.toLowerCase()));
+  const opts = {
+    key,
+    code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
+    bubbles: true, cancelable: true,
+    ctrlKey:  mods.has('control') || mods.has('ctrl'),
+    shiftKey: mods.has('shift'),
+    altKey:   mods.has('alt'),
+    metaKey:  mods.has('meta') || mods.has('cmd'),
+  };
+  const target = document.activeElement || document.body;
+  target.dispatchEvent(new KeyboardEvent('keydown', opts));
+  target.dispatchEvent(new KeyboardEvent('keypress', opts));
+  target.dispatchEvent(new KeyboardEvent('keyup', opts));
+  return { ok: true, msg: `Dispatched ${combo}.` };
+}
+
+function _pageFingerprintPage() {
+  return {
+    url: location.href,
+    textLen: (document.body ? document.body.innerText.length : 0),
+    elements: document.querySelectorAll('*').length,
+  };
+}
+
+// Deep diagnostic: find candidates by label / dump all potentially-interactive
+// elements with their viewport rect + each filter's verdict. Lets us see *why*
+// the regular interactive listing missed something.
+function _deepInspectPage(labels) {
+  const vw = window.innerWidth || document.documentElement.clientWidth;
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+
+  const filterVerdict = (el) => {
+    const tag = el.tagName.toLowerCase();
+    const cs = (() => { try { return getComputedStyle(el); } catch (e) { return null; } })();
+    const r = el.getBoundingClientRect();
+    const isInter =
+      ['a','button','input','select','textarea'].includes(tag)
+      // KEEP IN SYNC with INTERACTIVE_ROLES in _collectInteractivePage (page-
+      // injected functions are serialized independently, so no shared const).
+      || (el.getAttribute('role') && ['button','link','menuitem','menuitemcheckbox','menuitemradio','tab','checkbox','radio','switch','option','combobox','searchbox','textbox','slider','spinbutton','treeitem'].includes(el.getAttribute('role')))
+      || el.hasAttribute('onclick') || el.hasAttribute('tabindex') || el.isContentEditable
+      || (cs && cs.cursor === 'pointer');
+    const visible = cs ? (r.width > 1 && r.height > 1 && cs.visibility !== 'hidden' && cs.display !== 'none' && parseFloat(cs.opacity || '1') > 0) : false;
+    const inViewport = r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw;
+    let clickable = null;
+    if (visible && inViewport) {
+      try {
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        const topEl = document.elementFromPoint(cx, cy);
+        clickable = !!(topEl && (topEl === el || el.contains(topEl) || topEl.contains(el)));
+      } catch (e) { clickable = null; }
+    }
+    return {
+      tag, role: el.getAttribute('role'),
+      href: el.getAttribute('href'),
+      onclick_attr: el.hasAttribute('onclick'),
+      tabindex: el.getAttribute('tabindex'),
+      cursor: cs ? cs.cursor : null,
+      visibility: cs ? cs.visibility : null,
+      display: cs ? cs.display : null,
+      opacity: cs ? cs.opacity : null,
+      text: ((el.innerText || el.textContent || '').trim()).slice(0, 100),
+      class: (el.className || '').toString().slice(0, 120),
+      mmid: el.getAttribute('mmid'),
+      rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
+      verdict: { isInteractive: !!isInter, visible: !!visible, inViewport: !!inViewport, clickable },
+    };
+  };
+
+  // 1) find all elements whose direct text matches any keyword exactly OR contains it short-ish.
+  const labelLow = (labels || []).map(l => l.toLowerCase());
+  const labelMatches = [];
+  document.querySelectorAll('*').forEach(el => {
+    if (labelMatches.length > 80) return;
+    let txt = '';
+    try { txt = (el.innerText || '').trim(); } catch (e) { return; }
+    if (!txt || txt.length > 120) return;
+    const low = txt.toLowerCase();
+    if (labelLow.some(kw => low === kw || low.includes(kw))) {
+      const v = filterVerdict(el);
+      // also walk up to find a clickable ancestor
+      let walker = el.parentElement, depth = 0, ancestor = null;
+      while (walker && depth < 8) {
+        const cs = (() => { try { return getComputedStyle(walker); } catch (e) { return null; } })();
+        const tag = walker.tagName.toLowerCase();
+        const interactive =
+          ['a','button'].includes(tag)
+          || (walker.getAttribute && walker.getAttribute('role'))
+          || (walker.hasAttribute && walker.hasAttribute('onclick'))
+          || (walker.hasAttribute && walker.hasAttribute('tabindex'))
+          || (cs && cs.cursor === 'pointer');
+        if (interactive) { ancestor = walker; break; }
+        walker = walker.parentElement; depth++;
+      }
+      v.clickAncestor = ancestor ? { ...filterVerdict(ancestor), depth } : null;
+      labelMatches.push(v);
+    }
+  });
+
+  // 2) dump *every* element that COULD be interactive, with verdicts.
+  const candSel = "a, button, [role], [onclick], [tabindex], input, select, textarea";
+  const cands = Array.from(document.querySelectorAll(candSel)).slice(0, 200);
+  const allCandidates = cands.map(filterVerdict);
+
+  // 3) stats
+  return {
+    viewport: { w: vw, h: vh },
+    scroll: { x: window.scrollX, y: window.scrollY },
+    counts: {
+      total: document.querySelectorAll('*').length,
+      mmid: document.querySelectorAll('[mmid]').length,
+      a: document.querySelectorAll('a').length,
+      button: document.querySelectorAll('button').length,
+      role_anything: document.querySelectorAll('[role]').length,
+      onclick: document.querySelectorAll('[onclick]').length,
+      tabindex: document.querySelectorAll('[tabindex]').length,
+    },
+    labelMatches,
+    allCandidates,
+  };
+}
+
+// --------------------- file upload (page side) ------------------------------
+// Builds File objects from base64, then either sets them on an <input type=file>
+// (firing input+change) or dispatches a dragenter/dragover/drop sequence at a
+// coordinate / non-input element for drag&drop uploaders.
+function _fileUploadPage(selector, coordinate, files) {
+  try {
+    const mk = (f) => {
+      const bin = atob(f.b64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      return new File([arr], f.name, { type: f.mime });
+    };
+    const dt = new DataTransfer();
+    for (const f of files) dt.items.add(mk(f));
+    const names = files.map(f => f.name).join(", ");
+    let dropAt = Array.isArray(coordinate) && coordinate.length === 2 ? coordinate : null;
+    if (selector) {
+      const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+      let el = q(selector);
+      if (!el) return { ok: false, msg: `element ${selector} not found` };
+      if (!(el.tagName === 'INPUT' && el.type === 'file')) {
+        const inner = el.querySelector && el.querySelector('input[type="file"]');
+        if (inner) el = inner;
+      }
+      if (el.tagName === 'INPUT' && el.type === 'file') {
+        el.files = dt.files;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return { ok: true, msg: `set ${files.length} file(s) on ${selector}: ${names}` };
+      }
+      const r = el.getBoundingClientRect();
+      dropAt = [r.left + r.width / 2, r.top + r.height / 2];
+    }
+    if (dropAt) {
+      const [x, y] = dropAt;
+      const target = document.elementFromPoint(x, y) || document.body;
+      for (const type of ['dragenter', 'dragover', 'drop']) {
+        const ev = new DragEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+        try { Object.defineProperty(ev, 'dataTransfer', { value: dt }); } catch (e) {}
+        target.dispatchEvent(ev);
+      }
+      return { ok: true, msg: `dropped ${files.length} file(s) (${names}) at (${Math.round(x)},${Math.round(y)}) on <${target.tagName.toLowerCase()}>` };
+    }
+    return { ok: false, msg: "file_upload needs a selector or a coordinate" };
+  } catch (e) {
+    return { ok: false, msg: String(e && e.message || e) };
+  }
+}
+
+// Warn when refs are being used against a document that was never observed, or a
+// DIFFERENT url than the one they were read from. Advisory rather than a hard refusal:
+// plenty of legitimate flows re-use refs after an in-page mutation, and a false refusal
+// would be worse than a caveat. fill_form's submit path additionally refuses outright
+// when no field resolved, which is the case with real side-effect risk.
+// HARD GUARD for mutating ref-based ops: refuse to act on a document the agent has never
+// observed. `_ensureMmidsPage` (which fill_form runs internally) makes [mmid='N'] RESOLVE
+// on a fresh page, so a stale ref_23 from the previous page silently resolves to whatever
+// is 23rd on the new one — and then gets clicked. The advisory note below is right for
+// soft cases; acting on a stranger deserves a refusal.
+//
+// Deliberately tolerant of an inconclusive probe: only refuses when it POSITIVELY
+// establishes the document is unstamped. Every observation path (read_page, find — both
+// run _collectInteractivePage) stamps, so a legitimate observe-then-act flow never trips
+// this; only "act with refs from a page that is no longer loaded" does.
+async function assertObservedDocument(tabId, frameId, what) {
+  let c = null;
+  try { c = await runInTab(tabId, _refDocCheckPage, [], frameId === undefined ? null : frameId); }
+  catch (e) { return; }
+  if (c && c.observed === null) {
+    throw new Error(
+      `${what} refused: this document has never been observed, so the ref you passed cannot ` +
+      `be trusted. mmids are assigned per document and reset on navigation — a ref from a ` +
+      `previous page will resolve to an unrelated element of the same number here, and acting ` +
+      `on it can have real side effects (submitting the wrong form, clicking the wrong control). ` +
+      `Call read_page or find on this page first, then use the refs it returns.`
+    );
+  }
+}
+
+async function refStalenessNote(tabId, frameId) {
+  try {
+    const c = await runInTab(tabId, _refDocCheckPage, [], frameId === undefined ? null : frameId);
+    if (!c) return "";
+    if (!c.observed) {
+      return "\nNOTE: this document has not been observed yet (no read_page/find on this page), so any ref you passed came from a different page state. mmids are re-numbered per document, which means a stale ref can resolve to an unrelated element of the same number. Call read_page or find first if anything above looks wrong.";
+    }
+    if (c.observed !== c.now) {
+      return "\nNOTE: the page navigated since it was observed (refs came from " + c.observed + ", now at " + c.now + "). mmids are re-numbered per document, so those refs may point at unrelated elements. Re-observe with read_page before acting further.";
+    }
+  } catch (e) {}
+  return "";
+}
+
+// --------------------- op router -------------------------------------------
+async function handleOp({ id, op, params }) {
+  try {
+    let result;
+    // Broadcast "what the agent is about to touch" to the side panel, except
+    // for the silent keepalive ping which would flood the UI.
+    if (op !== "ping") {
+      try {
+        const _t = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        await broadcastAction(op, _t && _t[0]);
+      } catch (e) {}
+    }
+    switch (op) {
+      case "ping":
+        result = { pong: Date.now() }; break;
+      case "get_active_tab": {
+        const t = await resolveTab(params);
+        result = { id: t.id, url: t.url, title: t.title, windowId: t.windowId };
+        break;
+      }
+      case "get_url": {
+        const t = await resolveTab(params);
+        result = { url: t.url, title: t.title }; break;
+      }
+      case "get_dom_text": {
+        const t = await resolveTab(params);
+        const text = await runInTab(t.id, _domTextPage, [params && params.scopeMmid ? String(params.scopeMmid) : null]);
+        // The generic trailer says this read CAN miss loading content; when we can
+        // actually SEE that it is happening, say so concretely and up front. This
+        // is the case that produced a wrong answer on Baidu, where results were
+        // still rendering behind a spinner and the trailer read as reassurance.
+        let _rn = "";
+        if (typeof text === 'string' && !text.startsWith('__SCOPE_MISS__')) {
+          try { _rn = await readinessNote(t.id); } catch (e) {}
+        }
+        // NOT "complete", and NOT an instruction to stop looking. Two independent
+        // live agents were misled by the old trailer: one received code from a
+        // CLOSED dropdown (1px-wide <pre> blocks that still pass checkVisibility)
+        // presented as "Complete visible text of the current page", the other got a
+        // page that was still loading behind a spinner. "if it answers the step,
+        // reply now" turns a snapshot into a directive to answer, which is exactly
+        // wrong whenever content is still arriving, collapsed, or pixel-only.
+        result = _rn + `${text}\n\n[Text snapshot at this moment. It can MISS content that is still loading, inside a closed menu/accordion, rendered as an image, or drawn on canvas. If you expected something that is not here, re-read or take a screenshot before concluding the page does not have it.]`;
+        break;
+      }
+      case "get_interactive_elements": {
+        const t = await resolveTab(params);
+        // scopeMmid narrows the listing to one element's subtree (read_page ref_id).
+        const _scopeMmid = params?.scopeMmid != null ? String(params.scopeMmid) : null;
+        result = await runInTab(t.id, _collectInteractivePage,
+          [!!params?.structured, _scopeMmid, (params?.detail === 'full' || params?.detail === 'brief') ? params.detail : 'compact',
+           !!params?.ledger]);
+        // Ledger mode returns an object, not a listing: skip the cross-frame
+        // append and the readiness banner, both of which assume a string.
+        if (params?.ledger) break;
+        // CROSS-ORIGIN IFRAMES (consent CMPs, embedded checkouts): inject the
+        // collector per-frame and append their elements with f<frameId>:
+        // prefixed mmids — resolveFrameSelector routes the agent's actions.
+        if (!params?.structured && typeof result === 'string') {
+          try {
+            const extra = await collectCrossFrames(t.id);
+            if (extra) result += extra;
+          } catch (e) {}
+          // Readiness goes FIRST — ahead of the modal banner and the legend —
+          // because it qualifies everything after it. Skipped for a __SCOPE_MISS__
+          // sentinel, which is an error the server translates, not a listing.
+          if (!result.startsWith('__SCOPE_MISS__')) {
+            try { result = (await readinessNote(t.id)) + result; } catch (e) {}
+          }
+        }
+        break;
+      }
+      case "click": {
+        const t = await resolveTab(params);
+        const urlBefore = t.url || "";
+        if (!params || !params.selector) {
+          result = `WARNING: click called with no selector (params=${JSON.stringify(params)}).`;
+          break;
+        }
+        await assertObservedDocument(t.id, resolveFrameSelector(params.selector).frameId, "click");
+        await highlightInTab(t.id, params.selector, "click");
+        // Snapshot a quick page fingerprint (element count + text length) so
+        // we can tell whether the click had any DOM effect at all — not just
+        // URL navigation. Modals add elements; we want to detect that too.
+        const fpBefore = await runInTab(t.id, () => ({
+          n: document.querySelectorAll('*').length,
+          txt: (document.body && document.body.innerText) ? document.body.innerText.length : 0,
+        }));
+
+        const doClick = async (trusted) => {
+          try {
+            const rtc = resolveFrameSelector(params.selector);
+            const r = trusted
+              ? await clickTrusted(t.id, params.selector)
+              : await runInTab(t.id, _clickPage, [rtc.selector], rtc.frameId);
+            if (!r || typeof r !== "object" || !("ok" in r)) {
+              return { ok: false, msg: `Click returned no result for selector "${params.selector}" (invalid selector or scripting unavailable).` };
+            }
+            return r;
+          } catch (e) {
+            return { ok: false, msg: `Click threw: ${e && e.message ? e.message : e}` };
+          }
+        };
+
+        let r = await doClick(!!params.trusted);
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        // Did anything actually change?
+        let urlAfter = urlBefore;
+        try { urlAfter = (await chrome.tabs.get(t.id)).url || urlBefore; } catch (e) {}
+        // Tolerate a navigating page: if the document is being replaced right now
+        // this read throws, and it used to take the whole op down with it — a
+        // successful link click reported as "Click threw...". A failed read just
+        // means "couldn't measure", so fall back to the before-snapshot; the URL
+        // comparison below still detects the navigation.
+        const fpRead = async () => {
+          try {
+            return await runInTab(t.id, () => ({
+              n: document.querySelectorAll('*').length,
+              txt: (document.body && document.body.innerText) ? document.body.innerText.length : 0,
+            }));
+          } catch (e) { return null; }
+        };
+        let fpAfter = (await fpRead()) || fpBefore;
+
+        const urlChanged = urlAfter !== urlBefore;
+        const elCountChanged = Math.abs((fpAfter.n||0) - (fpBefore.n||0)) >= 2;
+        const txtChanged = Math.abs((fpAfter.txt||0) - (fpBefore.txt||0)) > Math.max(20, 0.01 * (fpBefore.txt||0));
+        const hadEffect = urlChanged || elCountChanged || txtChanged;
+
+        // Auto-escalate: if an untrusted click had ZERO effect, retry with
+        // trusted input. Radix UI / shadcn / Headless UI dialog triggers
+        // respond to pointer events, not synthetic click events — el.click()
+        // is silently swallowed. Input.dispatchMouseEvent over CDP works.
+        let escalated = false;
+        let escalateBlocked = "";
+        if (r.ok && !hadEffect && !params.trusted) {
+          escalated = true;
+          try {
+            r = await doClick(true);
+          } catch (e) {
+            // The escalation can be REFUSED outright rather than merely fail to
+            // land — Chrome blocks debugger attach on a tab holding another
+            // extension's iframe. Reporting only "trusted=true, no effect" sent a
+            // reader hunting coordinates for a click that was never dispatched.
+            escalated = false;
+            const em = String((e && e.message) || e);
+            const firstLine = em.split(String.fromCharCode(10))[0];
+            escalateBlocked = /Trusted input is unavailable/.test(em)
+              ? `\nTrusted retry was REFUSED, not merely ineffective: ${firstLine}`
+              : `\nTrusted retry failed to start: ${em.slice(0, 160)}`;
+          }
+          await new Promise(resolve => setTimeout(resolve, 300));
+          try { urlAfter = (await chrome.tabs.get(t.id)).url || urlAfter; } catch (e) {}
+          fpAfter = (await fpRead()) || fpAfter;
+        }
+
+        const urlChanged2 = urlAfter !== urlBefore;
+        const elCountChanged2 = Math.abs((fpAfter.n||0) - (fpBefore.n||0)) >= 2;
+        const txtChanged2 = Math.abs((fpAfter.txt||0) - (fpBefore.txt||0)) > Math.max(20, 0.01 * (fpBefore.txt||0));
+        const hadEffect2 = urlChanged2 || elCountChanged2 || txtChanged2;
+
+        let nav;
+        if (r.ok && urlChanged2) {
+          nav = `Navigated: ${urlBefore} -> ${urlAfter}`;
+        } else if (r.ok && (elCountChanged2 || txtChanged2)) {
+          nav = `URL unchanged but page DOM changed (modal/dropdown likely opened — re-observe with get_dom_fields). elements:${fpBefore.n}->${fpAfter.n}`;
+        } else if (r.ok) {
+          nav = `WARNING: click had NO detectable effect (URL, DOM, and text are all unchanged). The element may be disabled, hidden behind an overlay, or wired to handlers that don't fire on synthetic events. Already retried with trusted=${escalated ? 'true' : 'false'}.${escalateBlocked}`;
+        } else {
+          nav = `URL: ${urlAfter}`;
+        }
+        const esc = escalated ? " [auto-escalated to trusted input]" : "";
+        // Put the *outcome line first* — that's the signal the agent needs to
+        // decide what to do next. The "Success: clicked X" line is informational.
+        result = `${nav}\n` + (r.ok ? `Success: ${r.msg}${esc}` : `WARNING: ${r.msg}${esc}`)
+          + ((!r.ok || !hadEffect2) ? await refStalenessNote(t.id, resolveFrameSelector(params.selector).frameId) : "");
+        break;
+      }
+      case "enter_text": {
+        const t = await resolveTab(params);
+        await assertObservedDocument(t.id, resolveFrameSelector(params.selector).frameId, "enter_text");
+        await highlightInTab(t.id, params.selector, "type");
+        const rte = resolveFrameSelector(params.selector);
+        const r = params?.trusted
+          ? await enterTextTrusted(t.id, params.selector, params.text)
+          : await runInTab(t.id, _enterTextPage, [rte.selector, params.text], rte.frameId);
+        const verify = r.ok
+          ? `Verification: field now contains the entered text. [OK]`
+          : `WARNING: field value is "${r.actual}" but "${params.text}" was expected.`;
+        result = `${r.msg}\n${verify}`;
+        break;
+      }
+      case "debug_targets": {
+        // READ-ONLY. chrome.debugger.getTargets() is the only way to see what Chrome
+        // thinks a tabId maps to, and who already holds it. NOTE a previous attempt
+        // put a getTargets sweep at STARTUP that also DETACHED — being async, it
+        // finished after an in-flight op had attached and tore that op's session
+        // down. Reading is safe; detaching from here is not. Do not add one.
+        const tg = await chrome.debugger.getTargets();
+        const want = Number(params && params.tabId);
+        const targets = tg
+          .filter((t) => !want || t.tabId === want)
+          .map((t) => ({ type: t.type, tabId: t.tabId, attached: t.attached,
+                         extensionId: t.extensionId, url: String(t.url || "").slice(0, 90) }));
+        // Report BOTH views. getTargets() sees other extensions' injected iframes
+        // (as type:"other" with no tabId, so they cannot be attributed to a tab);
+        // webNavigation.getAllFrames() attributes frames to a tab but does NOT
+        // report other extensions' frames at all. Neither alone answers "which
+        // extension is blocking THIS tab" — printing both is what makes the gap
+        // visible instead of letting an empty list read as "nothing is there".
+        let frames = null;
+        if (want) {
+          try {
+            frames = (await chrome.webNavigation.getAllFrames({ tabId: want }) || [])
+              .map((f) => ({ frameId: f.frameId, parent: f.parentFrameId,
+                             url: String(f.url || "").slice(0, 90) }));
+          } catch (e) { frames = `getAllFrames failed: ${e && e.message}`; }
+        }
+        result = JSON.stringify({ targets, framesForTab: frames });
+        break;
+      }
+      case "sw_info": {
+        result = JSON.stringify({ sw: _SW_ID, ageSec: Math.round((Date.now() - _SW_BORN) / 1000),
+                                  attached: Array.from(_attachedTabs.keys()),
+                                  inputReady: Array.from(_inputReady),
+                                  lastDetach: _lastDetach });
+        break;
+      }
+      case "detach_debugger": {
+        await detachAllDebuggers();
+        result = "Detached debugger from all tabs."; break;
+      }
+      case "press_keys": {
+        const t = await resolveTab(params);
+        const r = await runInTab(t.id, _pressKeysPage, [params.combo]);
+        result = r.msg; break;
+      }
+      case "navigate": {
+        const t = await resolveTab(params);
+        const dest = String(params.url || "");
+        if (dest === "back") {
+          await chrome.tabs.goBack(t.id);
+        } else if (dest === "forward") {
+          await chrome.tabs.goForward(t.id);
+        } else {
+          // Tolerate protocol-less URLs ("example.com") like Claude-in-Chrome.
+          const url = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(dest) ? dest : `https://${dest}`;
+          await chrome.tabs.update(t.id, { url });
+        }
+        // Wait for the target tab to finish loading.
+        await new Promise(resolve => {
+          // Clear the fallback when the load wins the race. Leaving it armed kept a 15s
+          // timer alive after every single navigate — invisible in a service worker that
+          // is about to be evicted anyway, but it held a test process open for 15s and it
+          // is a leak either way.
+          let timer = null;
+          const done = () => {
+            if (timer !== null) { clearTimeout(timer); timer = null; }
+            chrome.tabs.onUpdated.removeListener(lid);
+            resolve();
+          };
+          const lid = (tabId, info) => {
+            if (tabId === t.id && info.status === "complete") done();
+          };
+          chrome.tabs.onUpdated.addListener(lid);
+          timer = setTimeout(done, 15000);
+        });
+        const t2 = await chrome.tabs.get(t.id);
+        result = `Navigated to ${t2.url}, title: ${t2.title}`;
+        break;
+      }
+      case "screenshot": {
+        const t = await resolveTab(params);
+        let dataUrl = null;
+        // CDP FIRST. chrome.tabs.captureVisibleTab only ever captures the window's ACTIVE
+        // tab and is activeTab-gated — so once agent tabs stopped being created active (so
+        // they never steal the user's view), it failed outright with an activeTab error
+        // whose suggested remedy ("open a fresh tab") could not possibly help. CDP
+        // Page.captureScreenshot targets THIS tab specifically and works while it is in the
+        // background, which is the normal condition for this agent.
+        try {
+          await attachDebugger(t.id);
+          await ensureInputReady(t.id);   // lifecycle-active: a frozen tab renders stale pixels
+          const r = await cdpSend(t.id, "Page.captureScreenshot",
+            { format: "png", captureBeyondViewport: false });
+          if (r && r.data) dataUrl = "data:image/png;base64," + r.data;
+        } catch (e) { /* fall through to the tabs API */ }
+        if (!dataUrl) {
+          try {
+            dataUrl = await chrome.tabs.captureVisibleTab(t.windowId, { format: "png" });
+          } catch (e) {
+            const msg = String((e && e.message) || e);
+            throw new Error(
+              "Screenshot failed on both paths. CDP Page.captureScreenshot did not return data " +
+              "and chrome.tabs.captureVisibleTab reported: " + msg + ". captureVisibleTab can only " +
+              "capture the window's ACTIVE tab, so it cannot serve a background agent tab; the CDP " +
+              "path is the one that should work here. If this persists the debugger may be blocked " +
+              "(DevTools open on this tab?). Reads (read_page, find, get_page_text) are unaffected."
+            );
+          }
+        }
+        let vp = null;
+        try { vp = await runInTab(t.id, () => ({ w: innerWidth, h: innerHeight, dpr: devicePixelRatio })); } catch (e) {}
+        result = vp && vp.w ? { dataUrl, cssWidth: vp.w, cssHeight: vp.h, dpr: vp.dpr } : dataUrl;
+        break;
+      }
+      case "page_fingerprint": {
+        const t = await resolveTab(params);
+        result = await runInTab(t.id, _pageFingerprintPage);
+        break;
+      }
+      case "deep_inspect": {
+        const t = await resolveTab(params);
+        result = await runInTab(t.id, _deepInspectPage, [params?.labels || []]);
+        break;
+      }
+      case "fill_form": {
+        // Atomic multi-field fill: one bridge call instead of N. Per-field
+        // read-back verification keeps the same accuracy guarantees we have
+        // for single-field enter_text.
+        const t = await resolveTab(params);
+        // SANITIZE: undefined/null in executeScript args throws "Value is
+        // unserializable" deep in chrome.scripting. Coerce every field to
+        // plain strings and drop entries with no usable selector — the Python
+        // tool layer already normalizes/rejects, this is the belt-and-braces.
+        const fields = (Array.isArray(params?.fields) ? params.fields : [])
+          .map(f => ({
+            selector: String((f && (f.selector || (f.mmid != null ? `[mmid='${f.mmid}']` : ''))) || ''),
+            text: (f && f.text != null) ? String(f.text) : ((f && f.value != null) ? String(f.value) : ''),
+            trusted: !!(f && f.trusted),
+          }))
+          .filter(f => f.selector);
+        let submit_mmid = params?.submit_mmid != null ? String(params.submit_mmid) : null;
+        if (submit_mmid && /^\d+$/.test(submit_mmid.trim())) submit_mmid = `[mmid='${submit_mmid.trim()}']`;
+        const submit_trusted = !!params?.submit_trusted;
+        const out = { fields: [], navigated: false, urlBefore: t.url, urlAfter: t.url };
+        const dbg = (m) => { try { console.log("[fill_form]", m); } catch (e) {} };
+        dbg(`called with ${fields.length} field(s), submit_mmid=${submit_mmid}, submit_trusted=${submit_trusted}`);
+        fields.forEach((f, i) => dbg(`  field[${i}] selector=${f.selector} text=${JSON.stringify(String(f.text||"").slice(0,40))}`));
+
+        // CROSS-FRAME ROUTING: if every field (and the submit) lives in ONE
+        // cross-origin frame (a consent form inside a CMP iframe), run the
+        // whole flow inside that frame. Mixed-frame calls are rejected with a
+        // clear retry hint. ritFF routes every page-script of this op.
+        let ffFrame = null;
+        {
+          const ids = new Set();
+          for (const f of fields) {
+            const r0 = resolveFrameSelector(f.selector);
+            ids.add(r0.frameId);
+            f.selector = r0.selector;
+          }
+          if (submit_mmid) {
+            const r0 = resolveFrameSelector(submit_mmid);
+            ids.add(r0.frameId);
+            submit_mmid = r0.selector;
+          }
+          const list = [...ids];
+          if (list.length === 1) ffFrame = list[0];
+          else if (list.some(x => x !== null)) {
+            result = "fill_form fields span multiple frames - split into one fill_form call per frame (selectors with the same f<N>: prefix belong together).";
+            break;
+          }
+        }
+        const ritFF = (fn, args) => runInTab(t.id, fn, args, ffFrame);
+
+        // ENSURE MMIDS EXIST FIRST. Refs come from a previous observation, but the
+        // page may have navigated since (or never been observed at all), in which
+        // case NOTHING in this op can resolve [mmid='N']. Two things then failed
+        // silently and were only caught by live testing:
+        //   1. submit auto-detect returned null (it resolves the field to find its
+        //      form/dialog, and reads the chosen button's mmid),
+        //   2. the fieldKinds probe reported every field 'missing', so the whole
+        //      form fell out of the BATCHED React-safe text write into the
+        //      one-field-at-a-time path — which is the exact re-render hazard
+        //      fill_form exists to avoid. It still worked here, so nothing looked
+        //      wrong; on a React controlled form it would orphan later fields.
+        // Injection is additive and idempotent, so this is cheap insurance.
+        try { await ritFF(_ensureMmidsPage, []); } catch (e) {}
+
+        // If the caller passed fields but no submit_mmid, try to auto-detect
+        // the submit button inside the current modal/form. Models routinely
+        // skip submit_mmid for below-fold buttons; we shouldn't need their
+        // confidence to find an obvious "Save"/"Submit"/"Add X"/"Create"/etc.
+        // SPLIT fields into TEXT and NON-TEXT (combobox, native select, checkbox).
+        // Text inputs MUST be batched into a single page-context call because
+        // React controlled-input components re-render the whole form on every
+        // keystroke — between two separate executeScript calls, React would
+        // process its state update and replace all the form DOM nodes, blowing
+        // away the mmids the caller passed for subsequent fields. Inside one
+        // synchronous script, React batches updates into a single re-render at
+        // the end, so all mmids stay valid for the duration of writes.
+        const fieldKinds = await ritFF((selectors) => {
+          const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+          return selectors.map(sel => {
+            const el = q(sel);
+            if (!el) return { kind: 'missing' };
+            const tag = el.tagName.toLowerCase();
+            const role = el.getAttribute('role');
+            if (tag === 'select') return { kind: 'native_select' };
+            // KEEP IN SYNC with _fieldKindPage's classifier. (input-comboboxes
+            // stay 'combobox': fillDropdown's click → type-in-search → pick
+            // flow is what commits a selection on autocomplete widgets.)
+            const hp = (el.getAttribute('aria-haspopup') || '').toLowerCase();
+            const popupTrigger = ['listbox', 'menu', 'true'].includes(hp) && tag !== 'input' && tag !== 'textarea';
+            if (role === 'combobox' || role === 'listbox' || role === 'menubutton' || popupTrigger) return { kind: 'combobox' };
+            if (role === 'checkbox' || role === 'switch' ||
+                (tag === 'input' && (el.type === 'checkbox' || el.type === 'radio'))) return { kind: 'checkbox' };
+            return { kind: 'text' };
+          });
+        }, [fields.map(f => f.selector)]) || fields.map(() => ({ kind: 'text' }));
+
+        // STALE-REF GUARD. __mmidCounter resets on navigation, so hoisting the mmid
+        // injection (which fixed the batched-write downgrade) has a sharp edge: a stale
+        // ref_23 from the PREVIOUS page now resolves to whatever happens to be 23rd on
+        // the new one. Text writes are mostly caught by read-back, but the submit path is
+        // not — _detectSubmitPage(randomElement) finds that stranger's real enclosing
+        // <form> (site search, newsletter) and the trusted click SUBMITS IT, reported as
+        // "submit OK; navigated". Only auto-detect a submit target when the caller's refs
+        // demonstrably point at the fields they think they do.
+        const _refsResolve = (fieldKinds || []).some(k => k && k.kind && k.kind !== 'missing');
+        if (!submit_mmid && fields.length > 0 && !params?.no_submit && _refsResolve) {
+          const detected = await ritFF(_detectSubmitPage, [fields.length ? fields[0].selector : null]);
+          if (detected && detected.mmid) {
+            submit_mmid = `[mmid='${detected.mmid}']`;
+            out.submit_auto_detected = { mmid: detected.mmid, label: detected.label };
+          }
+        }
+
+        // 1) Batched text-input pass — one script, one re-render at the end.
+        const textIdx = [];
+        fields.forEach((f, i) => { if ((fieldKinds[i] || {}).kind === 'text') textIdx.push(i); });
+        let batchResults = {};
+        if (textIdx.length) {
+          const textJobs = textIdx.map(i => ({ idx: i, selector: fields[i].selector, text: fields[i].text || '' }));
+          batchResults = await ritFF((jobs) => {
+            const setNative = (el, val) => {
+              const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
+              if (desc && desc.set) desc.set.call(el, val); else el.value = val;
+            };
+            const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+            const out = {};
+            for (const j of jobs) {
+              const el = q(j.selector);
+              if (!el) { out[j.idx] = { ok: false, actual: '', msg: `element ${j.selector} not found` }; continue; }
+              try {
+                el.focus({ preventScroll: true });
+                if ('value' in el) {
+                  setNative(el, '');
+                  el.dispatchEvent(new Event('input', { bubbles: true }));
+                  setNative(el, j.text);
+                } else if (el.isContentEditable) {
+                  // SAME strategy as _enterTextPage (keep in sync): rich-text
+                  // editors (Lexical/ProseMirror/Quill) keep their own model —
+                  // bare textContent writes are discarded on the next
+                  // keystroke. execCommand('insertText') runs the real
+                  // beforeinput→input pipeline they listen to.
+                  let ceOk = false;
+                  try {
+                    const doc = el.ownerDocument || document;
+                    const sel = (doc.defaultView || window).getSelection();
+                    const range = doc.createRange();
+                    range.selectNodeContents(el);
+                    sel.removeAllRanges(); sel.addRange(range);
+                    ceOk = doc.execCommand('insertText', false, j.text);
+                  } catch (e) {}
+                  if (!ceOk) el.textContent = j.text;
+                }
+                el.dispatchEvent(new Event('input',  { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                const actual = ('value' in el) ? el.value : (el.innerText || el.textContent || '');
+                const ok = String(actual).trim() === String(j.text).trim();
+                out[j.idx] = { ok, actual, msg: ok ? `typed ${JSON.stringify(j.text)}` : `read-back mismatch (got ${JSON.stringify(actual)})` };
+              } catch (e) {
+                out[j.idx] = { ok: false, actual: '', msg: `threw: ${e && e.message || e}` };
+              }
+            }
+            return out;
+          }, [textJobs]) || {};
+        }
+
+        // 2) Non-text fields one-by-one (comboboxes/native selects/checkboxes
+        // have their own async open/pick cycles that can't be batched). Between
+        // each, re-inject mmids in case the previous pick triggered a re-render
+        // that orphaned subsequent fields.
+        for (let i = 0; i < fields.length; i++) {
+          const f = fields[i];
+          const kind = (fieldKinds[i] || {}).kind;
+          if (kind === 'text') {
+            const r = batchResults[i] || { ok: false, actual: '', msg: 'no batch result' };
+            out.fields.push({ selector: f.selector, text: f.text, ok: r.ok, actual: r.actual, msg: r.msg });
+            continue;
+          }
+          try { await ritFF(_ensureMmidsPage, []); } catch (e) {}
+          // Re-prefix for the helpers — they resolve frames internally, and
+          // the routing block stripped f.selector to its frame-local form.
+          const fSel = ffFrame !== null ? `[mmid='f${ffFrame}:${(/\d+/.exec(f.selector) || [''])[0]}']` : f.selector;
+          await highlightInTab(t.id, fSel, "type");
+          const r = await fillField(t.id, fSel, f.text || "", !!f.trusted);
+          const safeR = (r && typeof r === "object" && "ok" in r)
+            ? r : { ok: false, actual: "", msg: `no result for ${f.selector}` };
+          // `dbg` = fillDropdown's step trace — persisted by the Python driver,
+          // stripped from the model-facing string before the LLM sees it.
+          out.fields.push({ selector: f.selector, text: f.text, ok: safeR.ok, actual: safeR.actual, msg: safeR.msg, dbg: safeR.dbg });
+        }
+
+        // Same guard for an EXPLICIT submit_mmid: if not a single field landed, the refs
+        // are from another page state and clicking anything is a side effect on a page
+        // the caller has not actually observed.
+        // A PARTIAL FILL MUST NOT SUBMIT. The gate was "any one field landed",
+        // so a form that remounts a section when the first field fills (common
+        // under synchronously-rendering frameworks) orphaned fields 2..N and the
+        // form was submitted with 1 of 3 values — irreversibly, under a success
+        // sentence whose only warning was the "1/3" the model had to notice.
+        const _allLanded = out.fields.length > 0 && out.fields.every(f => f.ok);
+        if (submit_mmid && !_allLanded && out.fields.some(f => f.ok)) {
+          const bad = out.fields.filter(f => !f.ok).map(f => f.ref || f.selector).join(', ');
+          out.submit = {
+            ok: false,
+            msg: `submit SKIPPED: only ${out.fields.filter(f => f.ok).length}/${out.fields.length} ` +
+                 `field(s) were filled (failed: ${bad}). Submitting a partly-filled form is not ` +
+                 `recoverable, so nothing was clicked. Re-observe — the form probably re-rendered ` +
+                 `mid-fill — then fill the remaining fields and submit.`,
+          };
+          submit_mmid = null;
+        }
+        if (submit_mmid && !out.fields.some(f => f.ok)) {
+          out.submit = {
+            ok: false,
+            msg: "submit SKIPPED: none of the supplied field refs resolved on this page, " +
+                 "so the refs are stale (the page probably navigated since you observed it). " +
+                 "Nothing was clicked. Re-observe with read_page and retry with fresh refs.",
+          };
+          submit_mmid = null;
+        }
+        if (submit_mmid) {
+          // RE-RESOLVE the submit target. Its mmid was captured at OBSERVATION
+          // time; filling N fields re-renders React forms, and a submit that
+          // flips disabled->enabled when the form becomes valid is typically a
+          // NEW DOM node WITHOUT the old mmid (observed live: snap() saw
+          // btnTxt=null and the "click" hit nothing). If the selector no
+          // longer resolves, re-inject mmids and re-detect structurally.
+          const _smResolves = await ritFF((sel) => {
+            const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+            return !!q(sel);
+          }, [submit_mmid]);
+          if (!_smResolves) {
+            try { await ritFF(_ensureMmidsPage, []); } catch (e) {}
+            const re = await ritFF(_detectSubmitPage, [fields.length ? fields[0].selector : null]);
+            if (re && re.mmid) {
+              dbg(`submit selector ${submit_mmid} orphaned by re-render -> re-resolved to [mmid='${re.mmid}'] ${JSON.stringify(re.label)}`);
+              submit_mmid = `[mmid='${re.mmid}']`;
+              out.submit_auto_detected = { mmid: re.mmid, label: re.label, reresolved: true };
+            }
+          }
+          await highlightInTab(t.id, submit_mmid, "submit");
+          // Submit "success" inside a modal = URL changed OR the modal closed.
+          // Loose "DOM count changed" lets validation-error markers count as
+          // success, suppressing the trusted-input escalation we need on
+          // Radix-style submit buttons.
+          const dialogSelector = '[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog';
+          const snap = async () => await ritFF((sel, sm) => {
+            let btn = null;
+            try {
+              const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
+              btn = q(sm);
+            } catch (e) {}
+            return {
+              url: location.href,
+              dialogs: document.querySelectorAll(sel).length,
+              n: document.querySelectorAll('*').length,
+              txt: (document.body && document.body.innerText) ? document.body.innerText.length : 0,
+              // The submit button's OWN state — label + disabled/busy. An async
+              // submit's universal signature is the button mutating in place
+              // ("Add Investor" -> "Saving..." + disabled): zero new nodes,
+              // modal still open, URL unchanged — invisible to the checks above.
+              btnTxt: btn ? (btn.innerText || btn.value || '').trim().slice(0, 80) : null,
+              btnBusy: btn ? (btn.disabled === true
+                              || btn.getAttribute('aria-disabled') === 'true'
+                              || btn.getAttribute('aria-busy') === 'true') : null,
+            };
+          }, [dialogSelector, submit_mmid]) || { url: "", dialogs: 0, n: 0, txt: 0, btnTxt: null, btnBusy: null };
+
+          const before = await snap();
+          const urlBefore = before.url;
+
+          // DEGRADE, don't die. Trusted input can be REFUSED for the whole tab —
+          // another extension's injected iframe makes Chrome reject every
+          // debugger.attach (see crossExtensionAttachError). Password managers do
+          // this on login pages, so the refusal lands on exactly the forms this
+          // tool exists to fill. Measured: a fill_form(submit=true) on a real login
+          // page threw out of clickTrusted and filled NOTHING, while the untrusted
+          // pointer-event path was available and works on most sites. Fall back to
+          // it and say so, rather than failing the whole form.
+          let submitDegraded = "";
+          const doSubmit = async (trusted) => {
+            if (!trusted) return await ritFF(_clickPage, [submit_mmid]);
+            try {
+              return await clickTrusted(t.id, submit_mmid, ffFrame);
+            } catch (e) {
+              const em = String((e && e.message) || e);
+              if (!/Trusted input is unavailable|different extension/i.test(em)) throw e;
+              submitDegraded = " (trusted input is blocked on this tab by another " +
+                               "extension's injected iframe; used the untrusted " +
+                               "pointer-event path instead)";
+              return await ritFF(_clickPage, [submit_mmid]);
+            }
+          };
+
+          const realEffect = (after) =>
+            after.url !== before.url                   // navigated
+            || (before.dialogs > 0 && after.dialogs < before.dialogs);  // modal closed
+
+          // Async-submit-in-flight: the click DID register and the page is
+          // processing (server round-trip, optimistic-UI step, etc.). The
+          // button mutating in place is the signal — label changed ("Saving...",
+          // "Segmenting...", a spinner swap that unmounts it) or it flipped to
+          // disabled/aria-busy. Without this, the old detector reported
+          // "NO real effect" and the path re-clicked = double-submit risk.
+          const busyEffect = (after) =>
+            before.btnTxt !== null && (
+              after.btnTxt === null                                  // button unmounted/replaced
+              || after.btnTxt !== before.btnTxt                      // label changed in place
+              || (after.btnBusy === true && before.btnBusy !== true) // became disabled/busy
+            );
+
+          // Modal forms (Radix/HeadlessUI/MUI) frequently ignore synthetic
+          // clicks on their submit buttons — handlers gate on isTrusted or
+          // pointerdown sequences chrome.scripting.executeScript can't fake.
+          // When we know we're inside a dialog, skip the untrusted attempt
+          // and go straight to chrome.debugger input. Cheaper than the
+          // round-trip + recovery.
+          const startTrusted = !!submit_trusted || (before.dialogs > 0);
+          dbg(`submit: dialogs=${before.dialogs} startTrusted=${startTrusted}`);
+          // Poll for the submit's effect instead of one fixed 400ms snapshot:
+          // fast SPAs resolve in ~100ms (don't make them wait), slow server
+          // round-trips need 1s+ (a fixed 400ms misread them as "no effect"
+          // and triggered a spurious escalation = potential double-submit).
+          const settle = async () => {
+            const t0 = Date.now();
+            let s = await snap();
+            let deadline = 1500;
+            let sawBusy = false;
+            while (!realEffect(s) && Date.now() - t0 < deadline) {
+              if (busyEffect(s)) {
+                // Async submit detected mid-poll (button went busy) — extend the
+                // window so a quick server round-trip resolves to a definitive
+                // "modal closed" in THIS call. Bounded at 4s: ops that run longer
+                // (Boxsy's segmentation takes 10s+) get the in-flight report
+                // anyway, so waiting past this is pure wasted wall-clock.
+                if (!sawBusy) { sawBusy = true; deadline = 4000; }
+              } else if (sawBusy) {
+                // Busy ENDED without navigation/modal-close — the server already
+                // responded (validation error or silent failure). Report NOW;
+                // the error sweep below will pick up whatever appeared.
+                break;
+              }
+              await new Promise(rsv => setTimeout(rsv, 150));
+              s = await snap();
+            }
+            return s;
+          };
+          let r = await doSubmit(startTrusted);
+          let after = await settle();
+          dbg(`submit attempt#1: ok=${r && r.ok} url=${before.url===after.url?'same':'changed'} dialogs=${before.dialogs}->${after.dialogs}`);
+
+          let escalated = false;
+          if (r && r.ok && !realEffect(after) && !busyEffect(after) && !startTrusted) {
+            // Modal stayed open and URL unchanged — submit didn't actually fire
+            // (or was suppressed). Retry with trusted CDP input.
+            escalated = true;
+            r = await doSubmit(true);
+            after = await settle();
+            dbg(`submit attempt#2 (escalated): dialogs=${after.dialogs}`);
+          }
+
+          const ok = realEffect(after);
+          const urlAfter = after.url;
+          let msg;
+          if (ok && urlAfter !== urlBefore) {
+            msg = `submit OK${escalated ? " (auto-escalated to trusted)" : ""}${submitDegraded}; navigated ${urlBefore} -> ${urlAfter}`;
+          } else if (ok) {
+            msg = `submit OK${escalated ? " (auto-escalated to trusted)" : ""}${submitDegraded}; modal closed (${before.dialogs} -> ${after.dialogs})`;
+          } else {
+            // Validation likely. Sweep the open dialog (or whole page) for
+            // visible error indicators so the agent gets a real diagnosis
+            // instead of a generic "modal still open" hint.
+            const delta = (after.n || 0) - (before.n || 0);
+            const errors = await ritFF((sel) => {
+              const scope = document.querySelector(sel) || document;
+              const out = [];
+              const seen = new Set();
+              // ARIA-FIRST (framework-independent): every [aria-invalid="true"]
+              // control points at its message via aria-errormessage /
+              // aria-describedby — resolve and read those directly. Also read
+              // native constraint-validation messages (el.validationMessage).
+              try {
+                scope.querySelectorAll('[aria-invalid="true"]').forEach(el => {
+                  const ref = el.getAttribute('aria-errormessage') || el.getAttribute('aria-describedby');
+                  if (ref) ref.split(/\s+/).forEach(id => {
+                    const n = (el.getRootNode && el.getRootNode().getElementById)
+                      ? el.getRootNode().getElementById(id) : document.getElementById(id);
+                    const t = n && (n.innerText || '').trim();
+                    if (t && t.length <= 200 && !seen.has(t)) { seen.add(t); out.push(t); }
+                  });
+                  try {
+                    const vm = (el.validationMessage || '').trim();
+                    if (vm && !seen.has(vm)) { seen.add(vm); out.push(vm); }
+                  } catch (e) {}
+                });
+              } catch (e) {}
+              // CLASS/ROLE sweep: role=alert + live regions are standard; the
+              // class list covers the major frameworks' error markup (shadcn/
+              // Tailwind, Bootstrap, MUI, Ant, Angular Material, Vuetify) —
+              // last-resort hints, not the primary signal.
+              const candidates = scope.querySelectorAll(
+                '[role="alert"], [aria-live="assertive"], [aria-live="polite"], ' +
+                '[aria-invalid="true"], [data-invalid="true"], ' +
+                '.error, .invalid, .field-error, .form-error, .text-destructive, ' +
+                '.text-red-500, .text-red-600, .text-red-700, [data-state="error"], ' +
+                '.invalid-feedback, .is-invalid, .Mui-error, .ant-form-item-explain-error, ' +
+                '.mat-error, .error--text, .v-messages__message'
+              );
+              candidates.forEach(c => {
+                const r = c.getBoundingClientRect();
+                if (r.width === 0 && r.height === 0) return;
+                const cs = getComputedStyle(c);
+                if (cs.display === 'none' || cs.visibility === 'hidden') return;
+                const t = (c.innerText || c.textContent || '').trim();
+                if (!t || t.length > 200) return;
+                // Filter false positives: single asterisks, lone digits, and
+                // empty-after-strip strings are just required-field markers or
+                // counters styled in the "danger" color, not real errors.
+                if (/^[\*•\-]+$/.test(t)) return;       // "*", "•", "-"
+                if (/^\d{1,4}$/.test(t)) return;             // bare numbers (counters)
+                if (seen.has(t)) return;
+                seen.add(t);
+                out.push(t);
+              });
+              return out.slice(0, 8);
+            }, [dialogSelector]) || [];
+            // Visible validation errors are authoritative — report them even if
+            // the button also went busy. With NO errors and a busy button, the
+            // submit was ACCEPTED and an async operation is still in flight
+            // (Boxsy's "Segmenting...", any "Saving..." pattern) — tell the
+            // model to wait + re-observe instead of implying it should re-click.
+            if (!errors.length && busyEffect(after)) {
+              const btnNow = after.btnTxt === null ? "(button unmounted)"
+                : `"${after.btnTxt}"${after.btnBusy ? " (disabled)" : ""}`;
+              msg = `submit ACCEPTED — async operation in progress: the submit button changed from "${before.btnTxt}" to ${btnNow} after the click. The page is processing (server round-trip); the modal may close on its own. WAIT a few seconds, then re-observe with get_dom_fields. Do NOT click submit again.`;
+              out.submit_in_flight = true;
+              dbg(`submit in-flight: btn "${before.btnTxt}" -> ${btnNow}`);
+            } else {
+            const errLine = errors.length
+              ? ` Validation errors visible: ${errors.map(e => JSON.stringify(e)).join(" | ")}`
+              : ` Could not locate validation messages (they may exist but use markup this scan doesn't recognize) — submit may also be silently disabled or awaiting an async check.`;
+            // Also enumerate fields in the dialog that LOOK unfilled (placeholder
+            // combobox triggers, empty inputs that are aria-required/required).
+            // These are concrete retry targets — the model can fill them and
+            // resubmit instead of just bailing.
+            // Exclude only fields that actually SUCCEEDED — a field that was
+            // attempted but failed (Boxsy's decision-time combobox) must be
+            // re-flagged so the retry hint names it.
+            const filledSelectors = (out.fields || []).filter(f => f.ok).map(f => f.selector);
+            const unfilled = await ritFF((sel, already) => {
+              const scope = document.querySelector(sel) || document;
+              const rows = [];
+              scope.querySelectorAll('input, textarea, select, [role="combobox"], [contenteditable]').forEach(el => {
+                const m = el.getAttribute('mmid');
+                if (!m) return;
+                const selStr = `[mmid='${m}']`;
+                if (already.includes(selStr)) return;
+                const tag = el.tagName.toLowerCase();
+                const role = el.getAttribute('role');
+                const isCombo = role === 'combobox' || tag === 'select';
+                const r = el.getBoundingClientRect();
+                if (r.width === 0 && r.height === 0) return;
+                let unsel = false, empty = false;
+                const isReq = el.hasAttribute('required') || el.getAttribute('aria-required') === 'true';
+                if (tag === 'select') {
+                  // Native select: STRUCTURAL emptiness — placeholder option has
+                  // empty value. Works in any language.
+                  const o = el.options && el.options[el.selectedIndex];
+                  if (el.selectedIndex < 0 || !o || !(o.value || '').trim()) unsel = true;
+                } else if (isCombo) {
+                  // ARIA combobox trigger: structural signals first
+                  // ([data-placeholder], empty text), wordlist as supplement.
+                  const lab = (el.innerText || el.value || '').trim();
+                  let ph = false;
+                  try { ph = el.hasAttribute('data-placeholder') || !!el.querySelector('[data-placeholder]'); } catch (e) {}
+                  if (ph || !lab || /^(select|choose|pick)\b/i.test(lab) || /\.\.\.$|…$/.test(lab)) unsel = true;
+                }
+                if (tag === 'input' || tag === 'textarea') {
+                  if (!el.value && isReq) empty = true;
+                } else if (el.isContentEditable && isReq) {
+                  if (!(el.textContent || '').trim()) empty = true;
+                }
+                if (unsel || empty) {
+                  const lbl = (el.innerText || el.placeholder || el.getAttribute('aria-label') || '').trim().slice(0, 60);
+                  rows.push(`${selStr} ${unsel ? '(unselected)' : '(required-empty)'} "${lbl}"`);
+                }
+              });
+              return rows.slice(0, 12);
+            }, [dialogSelector, filledSelectors]) || [];
+            const unfilledLine = unfilled.length
+              ? ` UNFILLED fields in dialog (retry fill_form including these): ${unfilled.join("; ")}`
+              : '';
+            msg = `submit had NO real effect${escalated ? " even after trusted retry" : ""}: modal still open, URL unchanged. DOM nodes added=${delta}.${errLine}${unfilledLine}`;
+            out.submit_errors = errors;
+            out.unfilled = unfilled;
+            dbg(`submit failed: ${errors.length} error(s); ${unfilled.length} unfilled field(s) found`);
+            }
+          }
+          out.submit = { ok: ok || !!out.submit_in_flight, msg, urlBefore, urlAfter, escalated, in_flight: !!out.submit_in_flight,
+                         dbg: { before, after, startTrusted } };
+          out.navigated = urlAfter !== urlBefore;
+          out.urlAfter = urlAfter;
+          out.modal_closed = before.dialogs > 0 && after.dialogs < before.dialogs;
+        }
+
+        // Build a compact human-readable summary first (model-attended).
+        const okCount = out.fields.filter(f => f.ok).length;
+        const failed = out.fields.filter(f => !f.ok);
+        // `out.submit.msg` is already specific and model-attended (built above).
+        const submitLine = out.submit ? ` Submit: ${out.submit.msg}` : " (no submit_mmid given and no submit button auto-detected — form filled but not submitted)";
+        const autoLine = out.submit_auto_detected
+          ? ` [submit auto-detected: ${out.submit_auto_detected.label!=='' ? JSON.stringify(out.submit_auto_detected.label) : 'mmid='+out.submit_auto_detected.mmid}]`
+          : "";
+        const header = `Filled ${okCount}/${out.fields.length} field(s).${submitLine}${autoLine}`;
+        const failLines = failed.map(f =>
+          `  FAILED ${f.selector}: expected ${JSON.stringify(f.text||"")} got ${JSON.stringify(f.actual||"")} (${f.msg})`
+        );
+        const _staleNote = (failed.length || (out.submit && !out.submit.ok))
+          ? await refStalenessNote(t.id, ffFrame) : "";
+        result = [header, ...failLines, "details=" + JSON.stringify(out)].join("\n") + _staleNote;
+        break;
+      }
+      case "batch_actions": {
+        // Generic action pipeline. Steps: {op:'click', selector, trusted?},
+        // {op:'type', selector, text, trusted?}, {op:'press', combo},
+        // {op:'wait', ms}. Sequential, stops on first hard failure.
+        const t = await resolveTab(params);
+        const steps = Array.isArray(params?.steps) ? params.steps : [];
+        const stop_on_fail = params?.stop_on_fail !== false; // default true
+        const trace = [];
+        const urlBefore = t.url;
+        let lastOk = true;
+        for (const s of steps) {
+          let r, kind = s.op;
+          try {
+            if (s.op === "click") {
+              if (!s.selector) { r = { ok: false, msg: "click missing selector" }; }
+              else {
+                await highlightInTab(t.id, s.selector, "click");
+                r = s.trusted
+                  ? await clickTrusted(t.id, s.selector)
+                  : await runInTab(t.id, _clickPage, [s.selector]);
+              }
+            } else if (s.op === "type") {
+              if (!s.selector) { r = { ok: false, msg: "type missing selector" }; }
+              else {
+                await highlightInTab(t.id, s.selector, "type");
+                r = s.trusted
+                  ? await enterTextTrusted(t.id, s.selector, s.text || "")
+                  : await runInTab(t.id, _enterTextPage, [s.selector, s.text || ""]);
+              }
+            } else if (s.op === "press") {
+              r = await runInTab(t.id, _pressKeysPage, [s.combo || ""]);
+            } else if (s.op === "wait") {
+              await new Promise(rsv => setTimeout(rsv, Math.min(5000, +s.ms || 200)));
+              r = { ok: true, msg: `waited ${s.ms || 200}ms` };
+            } else {
+              r = { ok: false, msg: `unknown op ${s.op}` };
+            }
+          } catch (e) {
+            r = { ok: false, msg: `threw: ${e && e.message ? e.message : e}` };
+          }
+          if (!r || typeof r !== "object" || !("ok" in r)) {
+            r = { ok: false, msg: `no result for ${s.op}` };
+          }
+          trace.push({ step: s, ok: r.ok, msg: r.msg, actual: r.actual });
+          lastOk = r.ok;
+          if (!r.ok && stop_on_fail) break;
+        }
+        await new Promise(rsv => setTimeout(rsv, 300)); // settle for last action
+        let urlAfter = urlBefore;
+        try { urlAfter = (await chrome.tabs.get(t.id)).url || urlBefore; } catch (e) {}
+        const okCount = trace.filter(s => s.ok).length;
+        const summary = `Batch: ${okCount}/${steps.length} steps OK${lastOk ? "" : " (stopped on failure)"}` +
+                        (urlAfter !== urlBefore ? `. Navigated: ${urlBefore} -> ${urlAfter}.` : "");
+        result = summary + "\ntrace=" + JSON.stringify(trace);
+        break;
+      }
+      case "computer": {
+        const t = await resolveTab(params);
+        result = await computerOp(t, params || {});
+        break;
+      }
+      case "javascript_exec": {
+        const t = await resolveTab(params);
+        const r = await evalInTab(t.id, params?.code ?? params?.text ?? "");
+        if (!r.ok) throw new Error(r.error);
+        result = r;
+        break;
+      }
+      case "read_console_messages": {
+        const t = await resolveTab(params);
+        const r = await runInTab(t.id, (pattern, onlyErrors, limit, clear) => {
+          const store = window.__abConsole;
+          if (!store) return { available: false, total: 0, messages: [] };
+          let out = store.buf.slice();
+          if (onlyErrors) out = out.filter(m => m.level === "error");
+          if (pattern) {
+            try { const re = new RegExp(pattern, "i"); out = out.filter(m => re.test(m.text)); }
+            catch (e) { return { available: true, badPattern: String(e.message || e), total: 0, messages: [] }; }
+          }
+          const total = out.length;
+          out = out.slice(-Math.min(Math.max(+limit || 100, 1), 1000));
+          if (clear) store.buf.length = 0;
+          return { available: true, total, messages: out };
+        }, [params?.pattern || "", !!params?.onlyErrors, params?.limit || 100, !!params?.clear]);
+        if (!r || !r.available) {
+          result = "Console capture not active on this page (it starts at document_start — reload the page once after installing/updating the extension).";
+        } else if (r.badPattern) {
+          result = `Invalid regex pattern: ${r.badPattern}`;
+        } else if (!r.messages.length) {
+          result = "No console messages matched.";
+        } else {
+          const lines = r.messages.map(m => `[${new Date(m.ts).toISOString().slice(11, 23)}] ${m.level.toUpperCase()}: ${m.text}`);
+          result = `${r.total} message(s) matched, showing last ${r.messages.length}:\n` + lines.join("\n");
+        }
+        break;
+      }
+      case "read_network_requests": {
+        const t = await resolveTab(params);
+        let arr = (_netBuf.get(t.id) || []).slice();
+        const pat = params?.urlPattern ? String(params.urlPattern) : "";
+        if (pat) arr = arr.filter(e => e.url && e.url.includes(pat));
+        const total = arr.length;
+        arr = arr.slice(-Math.min(Math.max(+params?.limit || 100, 1), 1000));
+        if (params?.clear) _netBuf.delete(t.id);
+        if (!arr.length) {
+          result = "No network requests recorded for this tab" + (pat ? ` matching "${pat}"` : "") + ".";
+        } else {
+          const lines = arr.map(e => e.error
+            ? `[${new Date(e.ts).toISOString().slice(11, 23)}] ${e.method} ${e.url} -> ERROR ${e.error} (${e.type})`
+            : `[${new Date(e.ts).toISOString().slice(11, 23)}] ${e.method} ${e.url} -> ${e.statusCode}${e.fromCache ? " (cache)" : ""} (${e.type})`);
+          result = `${total} request(s), showing last ${arr.length}:\n` + lines.join("\n");
+        }
+        break;
+      }
+      case "file_upload": {
+        const t = await resolveTab(params);
+        const files = (Array.isArray(params?.files) ? params.files : [])
+          .map(f => ({
+            name: String(f?.name || "file"),
+            b64: String(f?.b64 || ""),
+            mime: String(f?.mime || "application/octet-stream"),
+          }))
+          .filter(f => f.b64);
+        if (!files.length) throw new Error("file_upload: files (name+b64) required");
+        const sel = params?.selector || null;
+        const coord = Array.isArray(params?.coordinate) ? params.coordinate.map(Number) : null;
+        const rt = sel ? resolveFrameSelector(sel) : { frameId: null, selector: null };
+        const r = await runInTab(t.id, _fileUploadPage, [rt.selector, coord, files], rt.frameId);
+        if (!r || !r.ok) throw new Error((r && r.msg) || "file upload failed");
+        result = `Success: ${r.msg}`;
+        break;
+      }
+      case "fill_field": {
+        // Single-field set with full kind routing (text/combobox/native select/
+        // checkbox) but NO submit and NO auto-detect — the MCP form_input tool.
+        const t = await resolveTab(params);
+        if (!params?.selector) throw new Error("fill_field: selector required");
+        await assertObservedDocument(t.id, resolveFrameSelector(params.selector).frameId, "form_input");
+        await highlightInTab(t.id, params.selector, "type");
+        const r = await fillField(t.id, params.selector, params.text != null ? String(params.text) : "", !!params.trusted);
+        if (!r || typeof r !== "object") {
+          result = `WARNING: fill_field returned no result for ${params.selector}`;
+        } else {
+          // RE-READ THE FIELD. `r.actual` is what the fill path CHOSE, not what the
+          // control ended up holding, and on a combobox those differ: Google Flights
+          // reported (value now: "Tokyo, JapanCapital of Japan.Showing 3 nearby
+          // locations.") — the option's aria-label — while the field held "Tokyo".
+          // A verification field that reports the tool's own intent verifies nothing.
+          let _now = null;
+          if (r.ok) {
+            try {
+              const _rt = resolveFrameSelector(params.selector);
+              _now = await runInTab(t.id, (sel) => {
+                let el = null;
+                try { el = document.querySelector(sel); } catch (e) {}
+                if (!el) {
+                  const m = /\[mmid='([^']+)'\]/.exec(sel);
+                  if (m && window.__mmidReg) el = window.__mmidReg.get(m[1]);
+                }
+                if (!el) return null;
+                const tg = (el.tagName || '').toLowerCase();
+                if (tg === 'input' || tg === 'textarea' || tg === 'select') {
+                  return String(el.value == null ? '' : el.value).slice(0, 120);
+                }
+                return (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+              }, [_rt.selector], _rt.frameId);
+            } catch (e) {}
+          }
+          const _shown = _now != null ? _now : (r.actual != null ? String(r.actual).slice(0, 80) : null);
+          result = (r.ok
+            ? `Success: ${r.msg || `set ${params.selector}`}${_shown != null ? ` (value now: ${JSON.stringify(_shown)})` : ""}`
+            : `WARNING: ${r.msg || `could not set ${params.selector}`}`)
+            + (r.ok ? "" : await refStalenessNote(t.id, resolveFrameSelector(params.selector).frameId));
+        }
+        break;
+      }
+      case "tabs_context": {
+        // Find (or, with createIfEmpty, create) the MCP tab group and list its tabs.
+        const gid = await _getMcpGroup(!!params?.createIfEmpty);
+        if (gid == null) {
+          result = { groupId: null, tabIds: [], tabs: [] };
+        } else {
+          const tabs = await _mcpGroupTabs(gid);
+          result = { groupId: gid, tabIds: tabs.map(t => t.id), tabs };
+        }
+        break;
+      }
+      case "tabs_create": {
+        const gid = await _getMcpGroup(true);
+        // _getMcpGroup(true) may have just created a tab along with the group;
+        // only add a fresh tab when the group pre-existed.
+        const existing = await chrome.tabs.query({ groupId: gid });
+        let tab;
+        if (existing.length === 1 && existing[0].url === "about:blank" && params?.reuseEmpty !== false) {
+          tab = existing[0]; // brand-new group: its seed tab IS the new empty tab
+        } else {
+          tab = await chrome.tabs.create({ url: "about:blank", active: false });   // never steal the user's view
+          await chrome.tabs.group({ tabIds: [tab.id], groupId: gid });
+        }
+        result = { tabId: tab.id, groupId: gid };
+        break;
+      }
+      case "tabs_close": {
+        const id = parseInt(params?.tabId, 10);
+        if (!Number.isFinite(id)) throw new Error(`tabs_close: invalid tabId ${params?.tabId}`);
+        const gid = await _getMcpGroup(false);
+        const tab = await chrome.tabs.get(id).catch(() => null);
+        if (!tab) throw new Error(`tab ${id} not found (already closed?)`);
+        if (gid == null || tab.groupId !== gid) {
+          throw new Error(`tab ${id} is not in the MCP tab group — only group tabs are closable`);
+        }
+        await chrome.tabs.remove(id);
+        result = { closed: id };
+        break;
+      }
+      case "resize_window": {
+        const t = await resolveTab(params);
+        const width = parseInt(params?.width, 10), height = parseInt(params?.height, 10);
+        if (!Number.isFinite(width) || !Number.isFinite(height)) {
+          throw new Error("resize_window: width and height (px) are required");
+        }
+        // Do NOT force state:"normal" — that un-minimizes the user's window. Only resize;
+        // if the window is minimized the resize still applies for when they restore it.
+        await chrome.windows.update(t.windowId, { width, height });
+        const w = await chrome.windows.get(t.windowId);
+        result = `Window resized to ${w.width}x${w.height}`;
+        break;
+      }
+      default:
+        throw new Error(`unknown op: ${op}`);
+    }
+    await reply(id, true, result);
+  } catch (e) {
+    // INCLUDE WHERE IT CAME FROM. A bare chrome.* message like "Cannot access a
+    // chrome-extension:// URL of different extension" names no op, no tab and no
+    // call site, so neither the agent nor a developer can act on it — I burned
+    // three rounds guessing at exactly that. The op name and the first extension
+    // stack frames cost a few characters and turn it into something diagnosable.
+    let _detail = e && e.message ? e.message : String(e);
+    try {
+      const frames = String((e && e.stack) || '').split(String.fromCharCode(10))
+        .filter(l => l.indexOf('background.js') !== -1)
+        .slice(0, 3)
+        .map(l => l.trim().replace(/^at\s+/, '').replace(/chrome-extension:\/\/[a-z]+\//, ''))
+        .join(' <- ');
+      if (frames) _detail += `  [op=${op} ${swAge()} at ${frames}]`;
+      else _detail += `  [op=${op} ${swAge()}]`;
+    } catch (e2) {}
+    await reply(id, false, _detail);
+  }
+}
+
+// Allow the side panel to ask for current status without round-tripping the WS.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.kind === "get_status") {
+    sendResponse({ status: lastStatus });
+  } else if (msg && msg.kind === "reconnect") {
+    try { ws && ws.close(); } catch (e) {}
+    connect();
+    sendResponse({ ok: true });
+  } else if (msg && msg.kind === "clear_log") {
+    _actionLog = [];
+    _actionLogLoaded = true;   // don't let a later load resurrect what we cleared
+    _lastAction = null;
+    chrome.storage.local
+      .set({ bridge_action_log: [], bridge_last_action: null })
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false }));
+  }
+  return true;
+});

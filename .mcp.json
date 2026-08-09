@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "chromebridge": {
+      "command": "C:\\Users\\Aryan Gurav\\Desktop\\ChromeBridge\\.venv\\Scripts\\python.exe",
+      "args": ["C:\\Users\\Aryan Gurav\\Desktop\\ChromeBridge\\mcp_server.py"]
+    }
+  }
+}

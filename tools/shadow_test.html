@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Shadow DOM piercing test</title></head>
+<body>
+  <h1>Shadow piercing fixture</h1>
+
+  <!-- light-DOM baseline controls -->
+  <button id="light-btn" onclick="window.__lightClicks=(window.__lightClicks||0)+1">Light button</button>
+  <label for="light-input">Light field</label>
+  <input id="light-input" type="text" />
+
+  <!-- web component with an OPEN shadow root -->
+  <x-widget id="w1"></x-widget>
+
+  <!-- nested: a component whose shadow contains ANOTHER component -->
+  <x-outer id="w2"></x-outer>
+
+  <!-- a dialog INSIDE a shadow root (section detection across boundary) -->
+  <x-modal id="w3"></x-modal>
+
+  <script>
+    window.__shadowClicks = 0;
+
+    class XWidget extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode: 'open' });
+        root.innerHTML = `
+          <button id="sb">Shadow button</button>
+          <label for="si">Shadow field</label>
+          <input id="si" type="text" />
+          <select id="ss">
+            <option value="">Select one...</option>
+            <option value="a">Alpha</option>
+            <option value="b">Beta</option>
+          </select>`;
+        root.getElementById('sb').addEventListener('click', () => { window.__shadowClicks++; });
+      }
+    }
+    class XInner extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode: 'open' });
+        root.innerHTML = `<a href="#deep" id="deep-link">Deep nested link</a>`;
+      }
+    }
+    class XOuter extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode: 'open' });
+        root.innerHTML = `<div><x-inner></x-inner></div>`;
+      }
+    }
+    class XModal extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode: 'open' });
+        root.innerHTML = `
+          <div role="dialog" aria-modal="false" style="border:1px solid #999;padding:8px">
+            <button id="dlg-ok">Dialog OK</button>
+          </div>`;
+      }
+    }
+    customElements.define('x-widget', XWidget);
+    customElements.define('x-inner', XInner);
+    customElements.define('x-outer', XOuter);
+    customElements.define('x-modal', XModal);
+  </script>
+</body>
+</html>

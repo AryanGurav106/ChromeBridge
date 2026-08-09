@@ -1,0 +1,152 @@
+"""Unit suite for _truncate — the output bound shared by read_page/get_page_text.
+
+Why this exists: a blind head-slice cuts the TAIL, and in a read_page listing the
+tail is the element rows while the head is the notation legend. Measured live on
+the saucedemo login page (three elements, all section=form), the legend was ~610
+of ~900 chars, so `read_page(max_chars=900)` returned legend and ZERO rows — and
+a ref was clicked twice in that state without ever being identified. The bug is
+not that the output was truncated; it is that truncation removed the payload and
+kept the decoder ring.
+
+Two fixes are pinned here together because either alone leaves the hole open:
+  - the legend now names only the section values actually present (background.js),
+  - and truncation drops the legend before it drops rows (this file).
+
+Run:  python tools/test_truncate.py
+"""
+
+import importlib.util
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+_spec = importlib.util.spec_from_file_location("ms", ROOT / "mcp_server.py")
+ms = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(ms)
+_truncate = ms._truncate
+
+results = []
+
+
+def check(name, ok, detail=""):
+    results.append(ok)
+    print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"  - {detail}" if detail else ""))
+
+
+LEGEND = ("Current URL: /\nVisible interactive elements (3 on screen).\n"
+          + ("  - " + "x" * 300 + "\n") * 3)
+ROWS = ('mmid=13 | input[text] name="user-name"\n'
+        'mmid=15 | input[password] name="password"\n'
+        'mmid=17 | input[submit] name="Login"')
+PAGE = LEGEND + ROWS
+
+
+def main():
+    out = _truncate(PAGE, 900, "scope with ref_id")
+    check("T1 a budget too small for the legend still returns element rows",
+          "mmid=13" in out, out.splitlines()[-2][:70] if len(out.splitlines()) > 1 else out[:70])
+    check("T2 ...and keeps the URL line for context",
+          out.startswith("Current URL: /"))
+    check("T3 ...and says the legend was dropped, rather than silently reshaping",
+          "legend was dropped" in out)
+    check("T4 ...and respects the budget", len(out) <= 900 + 220, f"{len(out)} chars")
+
+    # As many rows as fit, and an honest count of what did not.
+    tiny = _truncate(PAGE, 120, "")
+    check("T5 a very small budget reports how many elements it could not show",
+          "not shown" in tiny or "mmid=" in tiny, tiny.splitlines()[-1][:80])
+
+    # NEGATIVE CONTROLS. The new path must engage ONLY when a head-slice would
+    # have returned no rows at all — otherwise it silently changes output shape
+    # for every caller, which is a worse bug than the one being fixed.
+    reached = _truncate(PAGE, len(LEGEND) + 40, "h")
+    check("T6 normal truncation is unchanged when the slice already reaches rows",
+          reached.startswith("Current URL") and "legend was dropped" not in reached)
+    plain = _truncate("x" * 5000, 100, "h")
+    check("T7 non-listing text (get_page_text) is untouched by the row logic",
+          plain.startswith("x") and "legend was dropped" not in plain)
+    short = _truncate(PAGE, 10_000, "h")
+    check("T8 text under budget is returned verbatim", short == PAGE)
+
+    # T9-T12: the readiness banner must survive truncation WHOLE. Found live: a
+    # get_page_text read cut it mid-sentence at "(1 progress indicator(s) visible;"
+    # — losing the remaining counts AND every word of guidance, while still reading
+    # as a finished clause. A banner that says how to interpret the rest of the
+    # output is the last thing that should be sacrificed to make room for the rest.
+    BANNER = ("*** PAGE IS STILL SETTLING (1 progress indicator(s) visible; 1 region(s) "
+              "marked aria-busy). Content may still be arriving, and box() coordinates "
+              "may shift as it does — re-observe before trusting a coordinate. ***\n")
+    withb = _truncate(BANNER + PAGE, 300, "scope with ref_id")
+    check("T9 the readiness banner survives truncation whole", withb.startswith(BANNER),
+          repr(withb[:90]))
+    check("T10 ...including its closing marker and all counts",
+          "aria-busy" in withb and withb.count("***") == 2,
+          f"{withb.count('***')} markers")
+    check("T11 ...and element rows still get room after it", "mmid=" in withb,
+          f"{withb.count('mmid=')} rows kept")
+    check("T12 text with no banner is unaffected by the banner path",
+          not _truncate(PAGE, 300, "h").startswith("***"))
+
+    passed = sum(1 for r in results if r)
+    print(f"\n{passed}/{len(results)} truncation checks passed.")
+    return 0 if passed == len(results) else 1
+
+
+async def main_async():
+    """T13-T15 exercise get_page_text ITSELF, not just the _truncate helper.
+
+    This split is the whole point: T9-T12 passed while the real tool was broken,
+    because get_page_text has its OWN outline-preserving truncation path that
+    never calls _truncate. Peeling the banner off there and forgetting to restore
+    it deleted it outright — a regression on the fix that was meant to stop it
+    being cut in half, invisible to every existing check.
+    """
+    BANNER = ("*** PAGE IS STILL SETTLING (2 network request(s) in flight). Content may "
+              "still be arriving. ***\n")
+    OUTLINE = "\n--- DOCUMENT OUTLINE (3 headings) ---\n" + "\n".join(
+        f"  h2: Heading number {i} with a reasonably long title" for i in range(40))
+    BODY = "Article body. " * 200
+
+    class FB:
+        connected = True
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        async def call(self, op, **kw):
+            return self.payload
+
+    gpt = ms.get_page_text.fn if hasattr(ms.get_page_text, "fn") else ms.get_page_text
+
+    # Outline bigger than the cap -> the "kept whole, body dropped" branch.
+    ms.STATE["bridge"] = FB(BANNER + BODY + OUTLINE)
+    out = await gpt(tabId=1, max_chars=300)
+    check("T13 get_page_text keeps the banner when the outline exceeds the cap",
+          out.startswith(BANNER), repr(out[:80]))
+
+    # Outline small enough -> the "body truncated" branch, a DIFFERENT return.
+    ms.STATE["bridge"] = FB(BANNER + BODY + "\n--- DOCUMENT OUTLINE (1 headings) ---\n  h2: One")
+    out = await gpt(tabId=1, max_chars=600)
+    check("T14 ...and on the body-truncated branch too", out.startswith(BANNER),
+          repr(out[:80]))
+
+    ms.STATE["bridge"] = FB(BODY + OUTLINE)
+    out = await gpt(tabId=1, max_chars=300)
+    check("T15 text with no banner is unchanged by the banner path",
+          not out.startswith("***"), repr(out[:60]))
+
+    passed = sum(1 for r in results if r)
+    print(f"\n{passed}/{len(results)} truncation checks passed.")
+    return 0 if passed == len(results) else 1
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    main()
+    sys.exit(asyncio.run(main_async()))
