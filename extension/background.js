@@ -3662,6 +3662,14 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
   // confidence, as a true count of 2. Reproduced in a fixture: 7 dropped, 2
   // reported, no signal. The collector already knew; it just never said.
   const _stateDrops = { 'aria-hidden': 0, inert: 0 };
+  // Record what a heuristic WOULD have removed, without removing it. Keeps the
+  // drop-ledger's explanatory power while making membership spec-decided only.
+  // A heuristic's verdict becomes a PROMINENCE mark, not a delete. The element
+  // keeps its ref and stays actionable; the serializer sends it last, compacted.
+  const _note = (el, rule) => {
+    try { el.__abDemoted = rule; } catch (e) {}
+    if (LEDGER) { try { _drop(el, rule); } catch (e) {} }
+  };
   const _drop = (el, rule) => {
     if (rule in _stateDrops) _stateDrops[rule]++;
     if (LEDGER) {
@@ -4537,7 +4545,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
                      || el.hasAttribute('tabindex')
                      || !!(el.getAttribute && el.getAttribute('role'));
         } catch (e) {}
-        if (!bigSvg && !wiredSvg) return _drop(el, 'decorative-svg');
+        if (!bigSvg && !wiredSvg) _note(el, 'was:decorative-svg');
       }
     }
     // Canvas filter: keep when page-labeled (aria-label/role) OR when it
@@ -4583,7 +4591,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
         // A CLASS-MATCHED "canvas" (a styled div/svg we only SUSPECT is a drawing
         // surface) keeps the viewport-fraction gate: the guess is only safe when the
         // thing dominates the view.
-        if (tagL !== 'canvas' && _cArea < 0.25 * vw * vh) return _drop(el, 'canvaslike-below-viewport-fraction');
+        if (tagL !== 'canvas' && _cArea < 0.25 * vw * vh) _note(el, 'was:canvaslike-below-viewport-fraction');
         if (!(el.getAttribute('aria-label') || el.getAttribute('role'))) {
           // A REAL <canvas> gets an ABSOLUTE floor. A viewport FRACTION says a chart
           // stops existing when the window gets wider, which is exactly what happened:
@@ -4593,7 +4601,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
           // unexplained 400px gap between two rows. Nothing about the element changed.
           // 200x200 is the floor below which a canvas is a sparkline or an avatar.
           const _floor = (tagL === 'canvas') ? 40000 : 0.25 * vw * vh;
-          if (_cArea < _floor) return _drop(el, 'canvas-below-minimum-size');
+          if (_cArea < _floor) _note(el, 'was:canvas-below-minimum-size');
         }
       } catch (e) { return _drop(el, 'canvas-measure-failed'); }
     }
@@ -4776,7 +4784,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
                       // inside it). Decorative pass-through nodes have neither.
                       el.getAttribute('aria-disabled') === 'true' ||
                       !!(el.querySelector && el.querySelector('input,select,textarea'));
-      if (!_peReal) return _drop(el, 'pointer-events-none');
+      if (!_peReal) _note(el, 'was:pointer-events-none');
       peDisabled = true;
     }
     // Tally real controls below the fold before dropping them, so we can surface
@@ -4846,7 +4854,16 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
         Math.min(r.width, r.height) >= 3 &&
         !!((el.getAttribute('aria-label') || el.getAttribute('title') ||
             (el.innerText || '')).trim());
-      if (!formyTags.has(tagL) && !(_szRole && INTERACTIVE_ROLES.has(_szRole)) && !_szNamed) return _drop(el, 'too-small-unnamed');
+      // HEURISTIC DEMOTED TO A NON-DECISION. A heuristic may decide PROMINENCE;
+      // only a specification may decide EXISTENCE. This predicate is decided by
+      // how a page HAPPENS to be built (pixels/ratios/tags), so its accuracy on a
+      // site nobody has seen is unknowable — and when it is wrong it is SILENT.
+      // Measured: removing the whole family of threshold rules costs +6.8%
+      // listing chars (median page +1.8%) against a 3.3% drift floor, while the
+      // constant legend block costs 24.4% and buys nothing. The filters were not
+      // buying tokens; they were buying unbounded silent failure.
+      // Kept as a LEDGER RECORD so `ledger:true` still explains the page.
+      if (!formyTags.has(tagL) && !(_szRole && INTERACTIVE_ROLES.has(_szRole)) && !_szNamed) _note(el, 'was:too-small-unnamed');
     }
     // INNER-SCROLL-CONTAINER CLIPPING: an element scrolled out of view inside an
     // overflow:auto/scroll panel (chat sidebar, results list, dropdown body) is
@@ -5497,7 +5514,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
         label = synthLabel(el) || (el.innerText || '').replace(/\s+/g, ' ').trim();
         iconOnly = !label;
       } else {
-        return _drop(el, 'generic-no-label');   // generic no-label element -> drop (noise)
+        _note(el, 'was:generic-no-label');   // recorded, no longer removed
       }
     }
     // Unlabeled splitters/rails are never meaningful click targets, and a
@@ -5508,7 +5525,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
     if (iconOnly) {
       const _sepRole = el.getAttribute('role') === 'separator';
       const _resizeCur = /^(col-resize|row-resize|ew-resize|ns-resize)$/.test(cs.cursor || '');
-      if (_sepRole || _resizeCur) return _drop(el, 'separator-or-resize-handle');
+      if (_sepRole || _resizeCur) _note(el, 'was:separator-or-resize-handle');
       if (Math.min(r.width, r.height) <= 14 &&
           Math.max(r.width, r.height) >= 15 * Math.max(1, Math.min(r.width, r.height))) {
         // ...but a REAL control is not decoration however thin it is: an unlabelled
@@ -5522,7 +5539,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
         // its own semantics, however thin it is rendered.
         const _realThin = ['button', 'input', 'select', 'textarea'].includes(tagL)
                           || (_sr && INTERACTIVE_ROLES.has(_sr));
-        if (!_realThin) return _drop(el, 'sliver-decoration');
+        if (!_realThin) _note(el, 'was:sliver-decoration');
       }
     }
     // Parent-child dedup: if an ancestor with the SAME trimmed label is already
@@ -5970,6 +5987,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
       unselected,
       disabled,
       synth: (function () { try { return el.__abSynthAttr || ''; } catch (e) { return ''; } })(),
+      demoted: (function () { try { return el.__abDemoted || ''; } catch (e) { return ''; } })(),
       newTab: tagL === 'a' && el.getAttribute('target') === '_blank',
       // Only meaningful for an element INSIDE a frame: in the top document a
       // target=_top link is an ordinary same-tab navigation and needs no flag.
@@ -6481,7 +6499,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
           x: Math.round(r.left), y: Math.round(r.top),
           w: Math.round(r.width), h: Math.round(r.height),
           clickable: true, active: '', required: false, unselected: false, disabled: false,
-          newTab: false, topNav: false, synth: '', crossFrame: false, canvasLike: false, physBlocked: false,
+          newTab: false, topNav: false, synth: '', demoted: '', crossFrame: false, canvasLike: false, physBlocked: false,
           editable: false, codeEditor: false, scrollRegion: false,
           clippedInContainer: false, clipContainerMmid: null,
           hasPopup: false, collapsed: false,
@@ -6512,7 +6530,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
           x: Math.round(mr.left), y: Math.round(mr.top),
           w: Math.round(mr.width), h: Math.round(mr.height),
           clickable: true, active: '', required: false, unselected: false, disabled: false,
-          newTab: false, topNav: false, synth: '', crossFrame: false, canvasLike: false, physBlocked: false,
+          newTab: false, topNav: false, synth: '', demoted: '', crossFrame: false, canvasLike: false, physBlocked: false,
           editable: false, codeEditor: false, scrollRegion: false,
           clippedInContainer: false, clipContainerMmid: null,
           hasPopup: false, collapsed: false,
@@ -6886,6 +6904,15 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
   }
   const lines = [];
   const emittedBlocks = new Set();
+  // PROMINENCE, NOT MEMBERSHIP. Everything a heuristic judged to be decoration is
+  // still here and still actionable by ref — it just goes last, compacted to one
+  // line. That is the whole architectural bet: a heuristic's accuracy on a site
+  // nobody has seen is unknowable, so it must never decide whether an element
+  // EXISTS for the agent; it may only decide how loudly the element is announced.
+  // Measured cost of moving these eight rules out of membership: +6.8% listing
+  // chars (median page +1.8%) against a 3.3% drift floor — while the constant
+  // legend block, which buys nothing on any accuracy metric, costs 24.4%.
+  const _demoted = [];
   for (const e of shown) {
     if (inCompact.has(e.mmid)) {
       if (!emittedBlocks.has(e.groupKey)) {
@@ -6894,7 +6921,25 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
       }
       continue;
     }
+    if (e.demoted) { _demoted.push(e); continue; }
     lines.push(_fmtLine(e));
+  }
+  if (_demoted.length) {
+    // One line, refs intact. An agent that finds nothing above can still act on
+    // any of these; nothing is hidden, and the reason is named.
+    const _by = new Map();
+    for (const e of _demoted) {
+      const why = String(e.demoted).replace(/^was:/, '');
+      if (!_by.has(why)) _by.set(why, []);
+      _by.get(why).push(e);
+    }
+    const _parts = [];
+    for (const [why, es] of _by) {
+      _parts.push(`${es.length} ${why} (${es.map((e) => 'ref_' + e.mmid).join(' ')})`);
+    }
+    lines.push(`PROBABLY DECORATION — ${_demoted.length} element(s) kept but not detailed, `
+      + `because a size/shape/label heuristic (never a spec rule) judged them non-content. `
+      + `They are still actionable by ref if nothing above matches: ${_parts.join('; ')}`);
   }
   function _fmtLine(e) {
     // `button[button]` -> just `button` (the type='button' default is noise).

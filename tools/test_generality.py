@@ -123,9 +123,11 @@ async def main():
         check("T1 named 8x4 native <button> survives the sub-8px decoration filter",
               bool(e) and "Expand language menu" in (e.get("name") or ""),
               f"listed={bool(e)} name={(e or {}).get('name')!r}")
-        check("T2 same-geometry UNNAMED anchor is still dropped as decoration",
-              ent.get("gh-tiny-unnamed") is None,
-              f"entry={ent.get('gh-tiny-unnamed')}")
+        _t2 = ent.get("gh-tiny-unnamed")
+        check("T2 an unnamed 8x4 anchor is DEMOTED, not deleted — a heuristic may"
+              " decide prominence, never existence",
+              bool(_t2) and _t2.get("demoted") == "was:too-small-unnamed",
+              f"demoted={(_t2 or {}).get('demoted')!r} entry={'present' if _t2 else 'ABSENT'}")
 
         # ---- C: combobox state without English ----------------------------------
         e = ent.get("gk-empty")
@@ -400,8 +402,16 @@ async def main():
             cvs = [f"{e.get('w')}x{e.get('h')}" for e in craw if e.get("tag") == "canvas"]
             check(f"CV1 an unlabelled 800x400 canvas is listed at {_vw}x{_vh}",
                   "800x400" in cvs, f"canvases={cvs}")
-            check(f"CV2 ...and a 60x20 sparkline still is not, at {_vw}x{_vh}",
-                  "60x20" not in cvs, f"canvases={cvs}")
+            # A sparkline is still JUDGED decoration — but that judgement is a
+            # pixel threshold, so it now sets prominence rather than existence.
+            # It stays addressable by ref, compacted into the PROBABLY DECORATION
+            # line, because "too small to matter" is exactly the kind of guess that
+            # has no defensible accuracy on a page nobody has seen.
+            _spark = next((e for e in craw if e.get("tag") == "canvas"
+                           and (e.get("w") or 0) < 100), None)
+            check(f"CV2 ...and a 60x20 sparkline is DEMOTED, not deleted, at {_vw}x{_vh}",
+                  bool(_spark) and str(_spark.get("demoted") or "").startswith("was:"),
+                  f"demoted={(_spark or {}).get('demoted')!r}")
             cstr = await cp.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()")
             check(f"CV3 ...and it carries the (canvas) marker telling the agent to screenshot ({_vw})",
                   "(canvas)" in cstr, cstr.splitlines()[0][:70])

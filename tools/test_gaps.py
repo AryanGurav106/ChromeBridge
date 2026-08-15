@@ -233,8 +233,10 @@ async def main():
         # --- G15 splitter suppression ---
         spl_mmid = await page.evaluate("(document.getElementById('splitter') || {getAttribute(){return null}}).getAttribute('mmid')")
         spl = [e for e in raw if e.get("mmid") == spl_mmid]
-        report("G15 unlabeled sliver splitter suppressed", "CAPTURED" if not spl else "MISSED",
-               "" if not spl else f"splitter listed as {spl[0]}")
+        _spl_dem = bool(spl) and str(spl[0].get("demoted") or "").startswith("was:")
+        report("G15 unlabeled sliver splitter DEMOTED (kept, not detailed)",
+               "CAPTURED" if (_spl_dem or not spl) else "MISSED",
+               "" if _spl_dem else (f"splitter listed undemoted: {spl[0].get('line')}" if spl else "absent"))
 
         # --- G16 menu/disclosure affordances ---
         report("G16 aria-haspopup trigger flagged (opens menu/popup)",
@@ -264,8 +266,10 @@ async def main():
 
         # --- G20 role=separator splitter suppressed semantically ---
         sep_mmid = await page.evaluate("(document.getElementById('sep-splitter') || {getAttribute(){return null}}).getAttribute('mmid')")
-        report("G20 role=separator splitter suppressed",
-               "CAPTURED" if not [e for e in raw if e.get("mmid") == sep_mmid] else "MISSED")
+        _sep = [e for e in raw if e.get("mmid") == sep_mmid]
+        report("G20 role=separator splitter DEMOTED (kept, not detailed)",
+               "CAPTURED" if (not _sep or str(_sep[0].get("demoted") or "").startswith("was:")) else "MISSED",
+               "" if not _sep else f"demoted={_sep[0].get('demoted')!r}")
 
         # --- G21 tiny role=checkbox survives the 8px size floor ---
         report("G21 6x6 role=checkbox kept (semantics beat size floor)",

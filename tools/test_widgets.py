@@ -24,6 +24,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _extract import extract as _shared_extract  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+try:
+    # W13 prints a Japanese label. Without this the SUITE dies on cp1252 partway
+    # through, which the runner reports as a failed suite — indistinguishable from
+    # a real check failure, and it cost a diagnosis. Every other suite has this.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 BG = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
 
 
@@ -306,8 +313,16 @@ async def main():
               ("div", "slider") in _kept, f"kept={_kept}")
         check("W14b ...and a thin real <button> expander is too",
               sum(1 for t, _ in _kept if t == "button") == 2, f"kept={_kept}")
-        check("W14c ...while a labelless 10x200 <a> is still dropped AND recorded",
-              _rules.get("sliver-decoration") == 1, f"byRule={_rules}")
+        # W14c ASSERTED THE OLD POLICY. A labelless 10x200 anchor is still judged
+        # decoration — but that judgement is an aspect ratio, so it now sets
+        # PROMINENCE, not existence: the row is kept, addressable, and folded into
+        # the PROBABLY DECORATION line. A heuristic whose accuracy on an unseen site
+        # is unknowable must never decide whether an element exists for the agent.
+        _spl = next((e for e in (gl.get("elements") or [])
+                     if e.get("tag") == "a" and (e.get("w") or 0) <= 12), None)
+        check("W14c a labelless 10x200 <a> is DEMOTED, not deleted",
+              bool(_spl) and str(_spl.get("demoted") or "").startswith("was:"),
+              f"demoted={(_spl or {}).get('demoted')!r} byRule={_rules}")
         check("W14d an [inert] region's controls are dropped and COUNTED",
               _rules.get("inert") == 1, f"byRule={_rules}")
         await gp.close()
