@@ -6,26 +6,52 @@ Open-source Claude-in-Chrome: an MCP stdio server + Chrome MV3 extension that le
 
 > **What's different from Playwright/Puppeteer agents:** those launch a fresh Chromium without your auth state. ChromeBridge attaches to your everyday browser so it can act *as you* on apps you're already logged into — same trusted-input mechanism (`chrome.debugger`) as Claude-in-Chrome.
 
+> **Default deny, per origin.** Acting *as the user* is exactly why consent is not optional: every op is refused unless that origin has been granted in the side panel, and a Pause switch freezes everything. See "Permission model". Connected ≠ allowed — the first op on a new site is *supposed* to fail.
+
 ---
 
 ## TL;DR — running it
 
 ```powershell
-# One-time, in Chrome:
-#   1. chrome://extensions  → enable Developer mode → "Load unpacked" → point at extension/
-#   2. Open the extension's side panel → paste the BRIDGE_TOKEN from .env → Save & Connect
+# 0. Deps. EDITABLE install: a plain `pip install .` copies mcp_server.py into
+#    site-packages, and the server resolves .env / .venv relative to its OWN
+#    file — so the installed copy looks for .env beside the module and never
+#    finds it. `-r requirements.txt` alone is also fine.
+.venv\Scripts\python.exe -m pip install -e .
 #
-# One-time, registration (already done via the project-level .mcp.json):
-#   claude mcp add chromebridge -- "<repo>\.venv\Scripts\python.exe" "<repo>\mcp_server.py"
+# 1. One-time, in Chrome:
+#      chrome://extensions → Developer mode → "Load unpacked" → point at extension/
+#      Open the side panel → paste the BRIDGE_TOKEN from .env → Save & Connect
+#      (mcp_server.py GENERATES that token into .env on first run if it is empty)
 #
-# Then just open Claude Code in this folder and ask it to browse:
-#   "open my dashboard and add an investor called carrot bunny"
+# 2. Registration: the project-scope .mcp.json is picked up by opening Claude
+#    Code in this folder. Global equivalent:
+#      claude mcp add chromebridge -- "<repo>\.venv\Scripts\python.exe" "<repo>\mcp_server.py"
+#
+# 3. Ask Claude to browse. The FIRST op on a new origin is REFUSED — the side
+#    panel raises "Permission requested → Allow this site". That is by design;
+#    see "Permission model" below.
 # Claude calls tabs_context_mcp → navigate → read_page → fill_form → ...
 ```
+
+POSIX equivalents (`.venv/bin/python`, forward slashes) are in `README.md`.
+**macOS/Linux is untested end to end** — CI runs the suites on Linux, but nobody
+has driven a real Chrome from anything but Windows. Do not claim otherwise in
+user-facing docs.
 
 Manual smoke test (stdout must stay silent — it belongs to JSON-RPC):
 ```powershell
 .venv\Scripts\python.exe mcp_server.py    # logs go to stderr only
+```
+
+Tool-count smoke test over the wire — the only way to catch a tool that fails to
+register, since the count is otherwise asserted from `grep`:
+```bash
+printf '%s\n' \
+ '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+ '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+ '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+ | .venv/Scripts/python.exe mcp_server.py 2>/dev/null    # -> 22 tools
 ```
 
 ---
@@ -35,15 +61,17 @@ Manual smoke test (stdout must stay silent — it belongs to JSON-RPC):
 ```
 ┌──────────────────────┐    stdio MCP   ┌──────────────────────┐   WebSocket    ┌──────────────────────┐
 │  Claude Code         │ ◄────────────► │  mcp_server.py       │ ◄────────────► │  Chrome extension    │
-│  (the agent — runs   │   JSON-RPC     │  (FastMCP)           │  ws://:8765    │  (extension/)        │
-│  on YOUR Claude      │                │   - 22 MCP tools     │                │   - service worker   │
-│  subscription)       │                │   - ExtensionBridge  │                │   - side panel UI    │
-└──────────────────────┘                │   - imageId registry │                │   - mmid injector    │
-                                        │   - GIF recorder     │                │   - chrome.debugger  │
-                                        └──────────────────────┘                └──────────────────────┘
+│  (the agent — runs   │   JSON-RPC     │  (FastMCP)           │ ws://:8765-74  │  (extension/)        │
+│  on YOUR Claude      │                │   - 22 MCP tools     │  token + v1    │   - service worker   │
+│  subscription)       │                │   - ExtensionBridge  │                │   - PERMISSION GATE  │
+└──────────────────────┘                │   - imageId registry │                │   - side panel UI    │
+                                        │   - GIF recorder     │                │   - mmid injector    │
+                                        └──────────────────────┘                │   - chrome.debugger  │
+                                                                                └──────────────────────┘
    tools: tabs_context_mcp / navigate / read_page / find / form_input /          acts on the user's
    fill_form / computer / get_page_text / javascript_tool /                       REAL tabs (any URL,
-   read_console_messages / read_network_requests / file_upload / ...              any auth)
+   read_console_messages / read_network_requests / file_upload / ...              any auth) — on
+                                                                                  GRANTED origins only
 ```
 
 `ref_N` in the MCP tool surface == `mmid N` in the extension (including the
@@ -54,50 +82,69 @@ between them.
 
 ```
 ChromeBridge/
-├── mcp_server.py               # THE entry point — FastMCP stdio server, all 19 tools
-├── .mcp.json                   # project-scope registration for Claude Code
+├── mcp_server.py               # THE entry point — FastMCP stdio server, all 22 tools
+├── .mcp.json                   # project-scope registration; PORTABLE (see "Registration")
 ├── config.py                   # paths
-├── requirements.txt            # mcp, pydantic, websockets, pillow, dotenv
-├── .env / .env.example         # BRIDGE_TOKEN (no LLM keys needed)
+├── pyproject.toml              # packaging; console script `chromebridge`; deps read
+│                               #   DYNAMICALLY from requirements.txt (don't restate pins)
+├── requirements.txt            # mcp, pydantic, websockets>=14,<17, pillow, dotenv
+├── LICENSE                     # Apache-2.0
+├── .gitattributes              # LF in-repo, native on checkout; *.png etc. binary
+├── .github/workflows/ci.yml    # extension syntax + all suites + a 3.10/3.13 unit floor
+├── .env / .env.example         # BRIDGE_TOKEN only (no LLM keys anywhere)
 │
 ├── extension/                  # the Chrome MV3 extension (load unpacked)
 │   ├── manifest.json           # + tabGroups, webRequest permissions
-│   ├── background.js           # service worker — op router + ALL page-side logic
+│   ├── background.js           # service worker — PERMISSION GATE, op router,
+│   │                           #   ALL page-side logic (~450 KB)
 │   ├── listener_tag.js         # MAIN-world doc_start: handler tagging + console capture
-│   ├── panel.html / panel.js   # side panel UI — connection state, live activity feed,
-│   │                           #   token/host/port settings (see "Side panel" below)
+│   ├── panel.html / panel.js   # side panel UI — connection state, PERMISSION GRANTS,
+│   │                           #   pause switch, activity feed, settings (see below)
 │   └── icons/                  # generated by tools/make_icons.py — do not hand-edit
 │
 ├── core/
 │   ├── bridge/
-│   │   ├── server.py           # local WebSocket server (single-client, newer-wins)
+│   │   ├── server.py           # local WS server (single-client, newer-wins, port span,
+│   │   │                       #   token required, PROTOCOL_VERSION handshake)
 │   │   └── driver.py           # ExtensionDriver — typed wrapper (used by tools/diag_*)
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
-├── tools/                      # diagnostics + offline harnesses
+├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
+│   ├── run_tests.py            #   the runner — 17 suites, 388 checks; --list is truth
+│   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
-│   ├── audit_dom_quality.py    #   recall / ambiguity / payload across the 105-site corpus
-│   ├── audit_ablation.py       #   neuter one library signature, diff 105 sites
-│   ├── audit_collect_time.py   #   observation latency, A/B against an older source
+│   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
+│   ├── freeze_corpus.py        #   record/replay that corpus as HAR into temp/frozen/
+│   ├── audit_dom_quality.py    #   recall / ambiguity / payload across the 106-site corpus
+│   ├── audit_ablation.py       #   neuter one library signature, diff 106 sites
 │   ├── audit_detail_cost.py    #   what detail="full" costs vs the compact default
-│   ├── bench_detail.py         #   two-step escalation vs always-full, priced on live tasks
-│   ├── test_find.py            #   19 checks on find's scorer/formatter (no browser needed)
-│   ├── test_generality.py      #   65 checks: non-Latin, shadow DOM, editors, detail, media, deletions
-│   └── diag_*.py               #   one-off live probes via ExtensionDriver
-├── legacy/                     # retired pydantic-ai loop (run_extension.py REPL,
-│                               #   agents/, skills/, model profiles, vision, recipes)
-├── README.md / CHROME_ATTACH_PLAN.md / RESEARCH.md
+│   ├── measure_retention.py    #   presence / answerability / findability vs tokens
+│   ├── bench_mind2web.py       #   the only out-of-sample number in the project
+│   ├── test_*.py / test_*.js   #   the 17 suites (see tools/README.md — do not duplicate it)
+│   └── diag_*.py               #   one-off LIVE probes via ExtensionDriver (needs the bridge)
+├── temp/                       # ~1.2 GB, GITIGNORED. Frozen corpus + mind2web live here,
+│                               #   so a fresh clone cannot run the probes until it rebuilds
+│                               #   them. See "Measurement data is not in the repo".
+├── legacy/                     # retired pydantic-ai loop — DOES NOT IMPORT (see Provenance)
+├── README.md / EXTENSION_SETUP.md / CHROME_ATTACH_PLAN.md / RESEARCH.md
+├── BENCHMARK.md / AUDIT_DOM_GENERALITY.md / AUDIT_GENERALITY.md
 ```
+
+The repo is under git (one baseline commit, **no remote**). Do not add a CI
+badge or a clone URL until one exists.
 
 ---
 
 ## MCP tool surface (what Claude Code sees)
 
-Clones Claude-in-Chrome's tool names/schemas, plus two ChromeBridge power-tools:
+**22 tools** (verified over the wire with the `tools/list` smoke test above, not
+just `grep -c '^@mcp.tool()' mcp_server.py`). Clones Claude-in-Chrome's tool
+names/schemas, plus two ChromeBridge power-tools and three diagnostics:
 
 | Tool | Backing op(s) | Notes |
 |------|---------------|-------|
 | `tabs_context_mcp(createIfEmpty)` | `tabs_context` | Dedicated "Claude" tab group; returns tab IDs |
+| `get_url(tabId)` | `get_url` | Ungated (the user can read it off their own tab strip) |
 | `tabs_create_mcp()` / `tabs_close_mcp(tabId)` | `tabs_create` / `tabs_close` | Only group tabs are closable |
 | `navigate(url, tabId)` | `navigate` | `url="back"`/`"forward"` for history |
 | `read_page(tabId, filter, max_chars, ref_id, detail)` | `get_interactive_elements` (+`get_dom_text` for `all`) | refs == mmids; `ref_id` scopes to a subtree; `detail="full"` adds `href=`/`src=` and lists non-clickable images |
@@ -115,9 +162,98 @@ Clones Claude-in-Chrome's tool names/schemas, plus two ChromeBridge power-tools:
 | `upload_image(imageId, ref\|coordinate, tabId)` | `file_upload` | from the screenshot registry |
 | `gif_creator(action, tabId)` | server-side | Pillow export to `temp/`, frames auto-captured per action |
 | `browser_batch(actions)` | server-side loop | sequential, stops on first error |
+| `sw_info(tabId)` | `sw_info` | Diagnostic: worker id/age, attached tabs, last detach + reason. Ungated |
+| `debug_targets(tabId)` | `debug_targets` | Diagnostic: Chrome's own target table, read-only. Ungated — this is how limitation #12 is identified |
 
 Out of scope (claude.ai-cloud features with no local analog): `shortcuts_list/execute`,
 `list_connected_browsers`/`select_browser`/`switch_browser`.
+
+**Every tool except the ungated set goes through the permission gate first** —
+see the next section. A tool added here without a thought about gating is gated
+by default, which is the intended failure direction.
+
+---
+
+## Permission model (per-origin consent + pause)
+
+`assertOpAllowed(op, params)` in `background.js` runs **before every op**. Default
+deny, fail closed. This is the first thing to check when an op that used to work
+starts refusing, and the first thing to preserve when adding an op.
+
+**Storage keys** (`chrome.storage.local`) — the panel owns all of them except
+the pending record, which the gate writes when it refuses:
+
+| Key | Written by | Shape |
+|-----|-----------|-------|
+| `bridge_permissions` | side panel ONLY | `{ origins: { "https://example.com": { granted: <ms epoch> } } }` |
+| `bridge_paused` | side panel | boolean — global kill switch |
+| `bridge_pending_origin` | the gate | `{ origin, op, ts }` — the most recent denial, so the panel can offer one-click Allow for exactly that site |
+| `bridge_debugger_block` | `recordDebuggerBlock` | `{ tabId, url, extensions, ts }` — limitation #12, surfaced in the panel |
+
+**The two exempt sets, and why each member is there:**
+
+- `UNGATED_OPS` = `ping`, `sw_info`, `debug_targets`, `tabs_context`,
+  `tabs_create`, `tabs_close`, `get_active_tab`, `get_url`, `resize_window`,
+  `detach_debugger`. None expose page content or deliver input. The tab ops stay
+  open deliberately: listing the agent's own group is how Claude discovers what
+  is open in order to **name the origin the user is being asked about** —
+  refusing it would leave the agent unable to ask for the right permission.
+- `PAUSE_EXEMPT_OPS` = `ping`, `sw_info`, `debug_targets`, `get_url`,
+  `get_active_tab`, `tabs_context`, `detach_debugger`. Read nothing, change
+  nothing, so they keep reporting state while everything is frozen —
+  and `detach_debugger` stays available so pausing can clean up the yellow
+  infobar instead of stranding it.
+
+**Order is load-bearing, twice:**
+
+1. Pause is checked **before** the `UNGATED_OPS` short-circuit, because
+   `tabs_create`/`tabs_close`/`resize_window` need no site grant but still
+   CHANGE the browser. A user hits Pause precisely when something is going
+   wrong; tabs that keep opening after that make the switch a lie.
+2. Pause is checked **before** origins, so a paused bridge says "paused" rather
+   than sending the user hunting for a site to allow.
+
+**Rules that are easy to break:**
+
+- **Storage is read on EVERY gated op — do not cache it.** A revoke or a pause
+  has to take effect on the very next op; a stale in-memory permission table is
+  exactly how a cache becomes a hole. A `storage.local` read is sub-millisecond
+  next to the `executeScript`/CDP round-trips that follow. A read that *throws*
+  yields no origins and therefore denies.
+- **`navigate` is gated on its DESTINATION**, not the tab's current URL — the
+  whole point of the op is to leave the current origin, so gating on the old one
+  would turn any granted site into a doorway to every ungranted one.
+  `normalizeNavUrl` keeps the gate and the op reading the same string
+  (`example.com` → `https://example.com`); gating the raw string while the op
+  visits the rewritten one is a permission check on a URL nobody opens.
+  `back`/`forward` have no knowable destination, so they gate on the current
+  origin — and whatever they land on still needs its own grant before a byte is
+  read.
+- **`CLOSED_SCHEMES` produce a DIFFERENT message from a missing grant.**
+  `chrome:`, `chrome-extension:`, `devtools:`, `about:`, `view-source:` and
+  friends can never be granted, so telling the user to go allow them sends them
+  to the panel to grant something that does not exist. The `about:blank` case
+  adds the hint that a `tabs_create_mcp` tab needs navigating first.
+- **`file://` has origin `"null"` per the URL spec** and is keyed by scheme
+  instead, so it stays grantable — and so that allowing one local file does not
+  silently allow every other one.
+- **`_isInstalledExtension()` is not a bypass.** It returns false only when
+  `background.js` is running outside Chrome entirely, which is `tools/test_ops.js`
+  loading it into a `node:vm`. Off-browser there is no user and no real tab;
+  refusing there would make the router untestable while protecting nobody.
+  Nothing a page, a site or the MCP client can do removes the extension's
+  runtime id.
+- **Grants are written only by the panel.** `background.js` never writes
+  `bridge_permissions`. Keep it that way — a service worker that can grant
+  itself a site is not a consent model.
+
+Pinned by `node tools/test_permissions.js` (22 checks).
+
+**Consequence for the first-run UX, which the docs must keep saying:** connected
+is not allowed. The first op on a new origin is *supposed* to fail, and the
+panel's "Permission requested → Allow this site" card is the intended
+interaction. There is no pre-grant input — the card only appears after a
+refusal has recorded the origin.
 
 ---
 
@@ -162,7 +298,7 @@ These are bugs we hit and fixed during a long Boxsy form-fill debugging session.
 | 6 | Field identity ambiguity — `mmid=859 input "example.com"` could be label / placeholder / current value | Split into `name=` / `value=` / `placeholder=` in the listing | `_collectInteractivePage` |
 | 7 | Required detection leaked between adjacent fields via 4-level innerText walk-up for `*` | Check the resolved `<label>` text specifically (W3C `label[for=id]` or wrapping `<label>`) | `_collectInteractivePage` |
 | 8 | OpenAI rejected next turn with "tool message without preceding tool_calls" | Trim leading orphaned tool-returns from carried-over message history | `legacy/extension_harness.py` (historical — MCP path has no local loop) |
-| 9 | `websockets.ServerConnection.closed` doesn't exist in newer websockets | Check `.state == "OPEN"` instead, with legacy fallback | `core/bridge/server.py` |
+| 9 | `websockets.ServerConnection.closed` doesn't exist in newer websockets | Check `.state == "OPEN"` instead, with legacy fallback. **Since superseded:** the whole module moved to the modern `websockets.asyncio.server` API (`serve` / `ServerConnection`), because the legacy `WebSocketServerProtocol` path has been deprecated since 14.0 and `requirements.txt` had no upper bound — a routine `pip install` on a fresh machine was the thing that would have broken the build. Now pinned `>=14.0,<17.0`: floor where the asyncio API became supported, ceiling because the legacy API was already deleted in one major bump before | `core/bridge/server.py` |
 | 10 | **`clickTrusted` clicks landed ~32px above small targets** | Attach debugger FIRST (yellow infobar appears, pushes content down), wait 50ms, THEN measure coordinates | `clickTrusted` in `background.js` |
 | 11 | **Below-fold trusted clicks landed outside the viewport entirely** | `scrollIntoView` is an ANIMATION on sites with CSS `scroll-behavior: smooth`, so the rect measured on the next line is pre-scroll — and Chrome THROTTLES those animations in non-focused tabs, which is always the agent's tab, so the scroll never happened at all. Pass `behavior:"instant"` (with a plain-call fallback) | `_rectForPage`, `_clickPage`, `_pickOptionPage`, `enterTextTrusted`, `computerOp` type path |
 | 12 | **Trusted clicks silently did nothing whenever the agent's tab was in the background** | Chrome DROPS CDP `Input.dispatchMouseEvent` for a hidden RenderWidget, while `dispatchKeyEvent`, `Runtime.evaluate` and `chrome.scripting` all keep working — so coordinates verify correct, the element is topmost, the tool reports success, and the page receives nothing (proven with a capturing listener: zero events). This is the NORMAL condition: the tab is hidden the moment the user looks elsewhere. FIXED with `ensureInputReady()` = `Emulation.setFocusEmulationEnabled` + `Page.setWebLifecycleState('active')`, which make a BACKGROUND tab accept input with no activation. **Do NOT 'fix' this by activating the tab or focusing the window** — that was tried, it works, and it drags the user out of their work on every click, defeating the whole point of the project. | `clickTrusted`, `computerOp` in `background.js` |
@@ -181,14 +317,24 @@ checking whether the tool returned ok.
 
 ## Side panel (extension UI)
 
-`extension/panel.html` + `panel.js`. It renders three things the service worker
-publishes to `chrome.storage.local`, and owns the token/host/port settings:
+`extension/panel.html` + `panel.js`. It renders what the service worker
+publishes to `chrome.storage.local`, owns the token/host/port settings, **and is
+the only place a site can be granted or the bridge paused**:
 
 | Key | Written by | Shape |
 |-----|-----------|-------|
 | `bridge_status` | `setStatus` | `{ connected, last_error, since }` — `since` is when the CURRENT socket came up (0 when down), rendered as a live uptime |
 | `bridge_last_action` | `broadcastAction` | `{ op, tab_title, tab_url, tab_favicon, tab_id, ts }` |
 | `bridge_action_log` | `broadcastAction` | last 40 actions, ring-buffered |
+| `bridge_permissions` | **the panel** | the grant table — see "Permission model" |
+| `bridge_paused` | **the panel** | the kill switch |
+| `bridge_pending_origin` | the gate | drives the "Permission requested → Allow this site" card |
+| `bridge_debugger_block` | `recordDebuggerBlock` | drives the "another extension is blocking trusted input" notice (limitation #12) |
+
+UI sections: Connection · Permission requested · Sites ChromeBridge can act on
+(with Revoke) · Recent operations · blocked-input notice · Settings. There is
+**no pre-grant input** — the Allow card only appears after the gate has refused
+something and recorded the origin, which is the deliberate first-run flow.
 
 The log lives in storage rather than in either process because **both ends are
 disposable**: the panel document is destroyed whenever the panel closes, and the
@@ -200,9 +346,11 @@ Panel-side rules worth keeping:
   attacker-controlled and this document has extension privileges.
 - **Close codes are translated, not echoed.** `humanError()` maps the codes
   `core/bridge/server.py` actually closes with (1008 bad token, 1002 handshake,
-  1000 newer-connection, 1011 welcome-failed) plus 1006, which is the common
-  case and means nothing is listening at all. Verified live: a deliberately bad
-  token produced 1008 and the intended sentence.
+  1000 newer-connection, 1011 welcome-failed, 4001 protocol mismatch) plus 1006,
+  which is the common case and means nothing is listening at all. Verified live:
+  a deliberately bad token produced 1008 and the intended sentence. 4001 also
+  echoes the close REASON, because a version-mismatch message that does not say
+  which halves disagree leaves the user guessing which one to update.
 - **"Save & Connect" sends `{kind:"reconnect"}` after writing storage.** Writing
   alone never connected on first use — the `storage.onChanged` handler only
   closes an existing socket, and with no token there was no socket and no
@@ -231,29 +379,151 @@ icon path.
 ### `.env` — only the bridge token matters now
 
 ```
-# Bridge handshake — paste this same value into the extension's side panel ONCE
-BRIDGE_TOKEN=paste-your-own-random-string-here
+# Bridge handshake — paste this same value into the extension's side panel ONCE.
+# NEVER paste a REAL token into a doc: this file used to carry the live one.
+BRIDGE_TOKEN=<generated on first run>
 
 # Optional overrides
 BRIDGE_HOST=127.0.0.1
-BRIDGE_PORT=8765
+BRIDGE_PORT=8765          # FIRST port tried, not the only one — see below
 LOG_LEVEL=INFO
 ```
 
-**No LLM keys.** The model is whatever Claude Code is running, billed to the user's
-Claude subscription. (The `AGENTIC_BROWSER_TEXT_*` / `OPENAI_*` vars in the existing
-.env are leftovers used only by `legacy/` — harmless to keep, safe to delete.)
+**No LLM keys.** The model is whatever Claude Code is running, billed to the
+user's Claude subscription. The old `AGENTIC_BROWSER_*` / `OPENAI_*` variables
+were **deleted** from `.env` on 2026-08-09 along with the live OpenAI key that
+had been sitting in them; only `legacy/` ever read them.
+
+**Token lifecycle — this used to be the worst first-run bug in the project.**
+`.env.example` ships `BRIDGE_TOKEN` empty. `_resolve_token()` in `mcp_server.py`
+generates one and **persists it into `.env`** (temp file + `os.replace`, then
+read back so two simultaneous starts converge on ONE value), and
+`ExtensionBridge.__init__` now **refuses an empty token outright**. Before that,
+an unset token fell through to a fresh `secrets.token_urlsafe(16)` per launch:
+the extension got close code 1008 forever while the only copy of the working
+token scrolled past in a stderr line nobody reads — indistinguishable from the
+product being broken. If `.env` is unwritable the server refuses to start rather
+than recreating that bug in memory.
+
+**Port span.** `BRIDGE_PORT` is the first port tried. `ExtensionBridge.start()`
+binds the first free port in `[BRIDGE_PORT, BRIDGE_PORT+PORT_RANGE_SPAN)` —
+10 ports, 8765-8774 by default — so a second Claude Code session no longer dies
+with `OSError: address in use` before serving a single tool. The extension
+**sweeps the same span**, one pass counting as a single connection attempt (the
+1s→15s backoff advances per sweep, not per port), so a bridge on 8766 is still
+found. `PORT_RANGE_SPAN` is duplicated in three places and they must agree:
+`core/bridge/server.py`, `extension/background.js`, `extension/panel.js`.
+What this does NOT give you is two agents on one browser: one Chrome holds one
+extension holding one socket, and the sweep stops at the first server that
+answers, so a second session gets a healthy bridge nobody talks to.
+
+**Protocol version.** The handshake carries `PROTOCOL_VERSION` (currently 1)
+both ways; a mismatch closes with **4001** and the log names both halves. 1008
+is still a bad token, 1002 a malformed handshake. The extension is installed by
+hand, so a stale extension against a newer server is the NORMAL condition rather
+than an edge case — before versioning it showed up as mysterious per-op failures
+long after the connection looked healthy. **Bump both halves together whenever
+an op's request/response shape changes incompatibly.**
 
 ### Registration
 
-`.mcp.json` at the repo root registers the server project-scope. Equivalent manual command:
+`.mcp.json` at the repo root registers the server project-scope, and is
+deliberately portable — it can no longer hard-code one machine's absolute venv
+path:
+
+```json
+{ "command": "${CHROMEBRIDGE_PYTHON:-python}",
+  "args": ["${CHROMEBRIDGE_ROOT:-.}/mcp_server.py"] }
+```
+
+Measured facts about that expansion, each one an afternoon if assumed wrong:
+
+- `${VAR:-default}` **does** expand.
+- A bare unset `${VAR}` does **not** — the server just fails to start.
+- `${CLAUDE_PROJECT_DIR}` does **not** expand in `.mcp.json`.
+- The `.` default resolves against **the directory Claude Code was launched
+  from**, not the directory `.mcp.json` lives in.
+
+The cost of `python` instead of an absolute venv path is that the interpreter on
+PATH usually cannot import our deps, and the resulting `ImportError` reaches the
+user only as "MCP server failed" (stdout is JSON-RPC, so nothing explains it).
+So `_reexec_under_venv_if_needed()` hands over to `./.venv` once, guarded by a
+`CHROMEBRIDGE_NO_REEXEC` sentinel so looping is impossible. **It uses
+`subprocess`, not `os.execv`** — MEASURED: on Windows `execv` hands argv to the
+C runtime unquoted, so a path containing a space (and the default location is
+under `C:\Users\First Last\`) is re-split; the child then gets no script
+argument, starts a REPL, and exits 0 the instant stdin EOFs. A silent
+success-looking failure. Manual quoting does not fix it.
+
+`CHROMEBRIDGE_PYTHON` / `CHROMEBRIDGE_ROOT` remain the escape hatches. Global
+registration equivalent:
 
 ```powershell
 claude mcp add chromebridge -- "C:\...\ChromeBridge\.venv\Scripts\python.exe" "C:\...\ChromeBridge\mcp_server.py"
 ```
 
-Interpreter: the project `.venv` (Python 3.12). Install deps with
-`.venv\Scripts\python.exe -m pip install -r requirements.txt`.
+### Packaging
+
+`pyproject.toml` (setuptools, Apache-2.0, `requires-python = ">=3.10"`) declares
+a console script `chromebridge = "mcp_server:mcp.run"` and reads its dependency
+list **dynamically from `requirements.txt`** — one source of truth, do not
+restate pins in `pyproject.toml`. Flat layout: `py-modules = ["mcp_server",
+"config"]` plus the `core` package; `extension/`, `tools/`, `legacy/`, `temp/`
+are deliberately NOT packaged (the extension is loaded unpacked, not pip
+installed).
+
+**Install editable.** `pip install -e .` — a non-editable `pip install .` copies
+`mcp_server.py` into `site-packages`, where `_ROOT = dirname(__file__)` becomes
+site-packages and `load_dotenv(_ROOT/".env")` looks for the token file beside
+the installed module. Same for the `.venv` re-exec probe. Interpreter for
+development: the project `.venv` (Python 3.12).
+
+---
+
+## Tests and CI
+
+```powershell
+.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 388 checks, ~40s
+.venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
+.venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
+```
+
+`tools/README.md` documents every suite, the two groups, the flags and the
+`test_gaps.py` "no exit code" caveat. **Read it; do not duplicate it here** —
+duplicated inventories drift, which is exactly why `--list` is generated from
+the filesystem.
+
+Numbers worth holding: 7 unit suites (no browser/network/extension), 10 browser
+suites (headless Chromium via Playwright, each extracting the real page-side
+functions verbatim from `background.js` via `_extract.py`, all fixtures served
+locally so it runs offline). Playwright is a TEST-only dependency and is
+deliberately absent from `requirements.txt`; without it the browser group is
+**skipped with a reason**, not failed. CI passes `--strict` so a skip there is a
+failure. `.github/workflows/ci.yml` also runs `node --check` on all three
+extension scripts — nothing else parses `background.js` as JS — and runs the
+unit group on 3.10 and 3.13 to check the range `pyproject.toml` advertises.
+
+Suite-count drift is real: this file previously claimed `test_find.py` (19),
+`test_generality.py` (65) and `test_truncate.py` (8) while the actual counts had
+moved to 20 / 67 / 15. **Quote counts from `--list` and a real run, not from
+memory.**
+
+### Measurement data is not in the repo
+
+`temp/` is **gitignored and ~1.2 GB**, so a fresh clone can run every test suite
+but **cannot run the measurement probes** until it rebuilds the data:
+
+| Probe | Needs | Rebuild |
+|---|---|---|
+| `measure_retention.py`, `audit_thresholds.py` | `temp/frozen/` — 106 HAR recordings, ~1.1 GB | `python tools/freeze_corpus.py` (network, tens of minutes; `--verify` reports per-site replay stability) |
+| `bench_mind2web.py` | `temp/mind2web/` — ~110 MB | `python tools/fetch_mind2web.py` |
+| `test_gaps.py` | `temp/dom_audit/` | created for you by `run_tests.py`'s `OVERRIDES` table |
+
+The corpus **definition** is in git: the 106 URLs live in
+`tools/capture_listings.py` as `SITES`, and `freeze_corpus.py` parses them from
+there as the single source of truth. Only the recordings are missing. 18 of the
+106 replay non-deterministically and are named — do not assert an exact-match
+invariant on those.
 
 ---
 
@@ -281,7 +551,17 @@ async def main():
 asyncio.run(main())
 ```
 
-The MCP server must be stopped first — port 8765 is single-bind (close the Claude Code session using it, or `claude mcp remove` temporarily). The script gets a fresh server on the same port; the extension's "newer-wins" handshake means it auto-reconnects.
+**Stop the MCP server first.** Not because the port is single-bind any more — it
+is not, `start()` walks a 10-port span — but because the extension holds ONE
+socket and its sweep stops at the first server that answers. With the MCP server
+still up on 8765 your diag script lands on 8766 and the extension never knocks
+on it: `wait_until_connected` just times out. Close the Claude Code session
+using it (or `claude mcp remove` temporarily), then the script gets 8765, the
+extension's sweep finds it, and the "newer-wins" handshake reconnects
+automatically.
+
+Note the gate applies to diag scripts too: an op on an origin the user has not
+granted in the side panel is refused with the same message the agent gets.
 
 ---
 
@@ -294,9 +574,9 @@ The MCP server must be stopped first — port 8765 is single-bind (close the Cla
 5. **Console capture misses browser-generated messages** — CSP violations and network errors don't route through `console.*`; the `listener_tag.js` wrap can't see them. Network failures DO show in `read_network_requests` (onErrorOccurred). Buffers are best-effort (lost on SW eviction / page reload for console).
 6. **Scroll-then-find: SOLVED for `find`, still viewport-scoped for `read_page`** — the STRUCTURED collection (which backs `find`) now retains real controls that are merely scrolled out of view, flagged `offscreen`, so `find` reaches the whole page and its refs are immediately actionable (clicks auto-scroll via `behavior:"instant"` — see fix #11). The STRING listing stays viewport-scoped on purpose for token discipline, with below-fold counts and inner-scroll clip tags telling the agent WHERE to scroll. Before this, a semantically perfect `find` query returned 13 wrong answers for a button 200px below the fold and only worked after a manual scroll.
 7. **Listing extras the agent can rely on** — `(disabled)`, `(opens NEW tab)`, `(opens menu/popup)`, `(collapsed)`, `(scrollable region)`, `(scrolled out of view inside an inner scrollable panel …)`, contenteditable/code editors as `role=textbox` + value excerpt (typed via `execCommand('insertText')` so Lexical/ProseMirror/Quill state stays consistent), `<summary>`/`<audio controls>`/labeled `<canvas>` surfaced, ARIA grids/listboxes ≥10 cells compacted to one `mmid:label` mapping line, closed-`<details>` ghosts excluded via `checkVisibility()`.
-8. **Generality (Round-5 audit)** — no site-specific code. The dropdown chain verifies picks by BEFORE/AFTER trigger-label comparison (language-independent); submit auto-detect prefers `type="submit"` → keywords → sole-labeled-button, RTL-aware; option search resolves the trigger's `aria-controls` first, picks popover containers by effective z-index, matches text NFC-normalized and ranked exact>prefix>contains; one canonical `INTERACTIVE_ROLES` set (incl. slider/spinbutton/treeitem/searchbox); fixed sleeps replaced by condition-polling.
+8. **Generality (Round-5 audit)** — no site-specific code. The dropdown chain verifies picks by BEFORE/AFTER trigger-label comparison (language-independent); submit auto-detect is STRUCTURE-ONLY (`type="submit"` or HTML's implicit submit; refuses and names the candidates otherwise — see #24); option search resolves the trigger's `aria-controls` first, picks popover containers by effective z-index, matches text NFC-normalized and ranked exact>prefix>contains; one canonical `INTERACTIVE_ROLES` set (incl. slider/spinbutton/treeitem/searchbox); fixed sleeps replaced by condition-polling.
 
-9. **Generality of the DOM COLLECTOR (measured, not asserted)** — see `AUDIT_DOM_GENERALITY.md`. Round-5 claimed "library signatures are boosters, never sole gates"; `tools/audit_ablation.py` **disproved that in nine places** by neutering each signature and diffing 106 live sites. The big ones, all now fixed: three `/[a-z0-9]/i` gates discarded **every** CJK/Cyrillic/Arabic label and blanked non-Latin dialog text entirely; the four page-level scans (`dialogOpen`, `dialogText`, `mainHeading`, `virtualNote`, plus `_domTextPage`'s outline) used `document.querySelectorAll` and so were blind to shadow DOM, meaning a `<sl-dialog>` opened with no MODAL banner while its own controls were correctly tagged `section=dialog`; the CodeMirror/Monaco/Ace class list was load-bearing on 9 pages (without it Monacos value read `"1 2 3 4 // Type your code here"` — the gutter; now 4, and on those it only changes (code-editor) to (rich-text-editor)); the English `select|choose|pick` wordlist was the *only* placeholder signal on Chakra/PrimeVue/Vuetify. Replacements are structural: `_allComposed` (registry-filtered composed query), `editorHosts` (hidden textarea inside a monospace/pre host) + `stripGutter` (consecutive-line-number runs), and `_phMarked`/`_showingPlaceholder` (the token `placeholder` in a `data-*` name, `data-*` value or class list — covers Radix, Ark/Chakra, PrimeVue, Ant, select2 at once). **Two rules learned the hard way while measuring:** the corpus is live, so always run a drift control (`--compare` two runs of the SAME source) before attributing a totals change to a code change; and never diff a mutating page's collector output on mmid alone — additive mmids turn one re-render into hundreds of phantom add/remove pairs. Residual, unchanged: a hand-rolled non-English combobox that marks placeholder state only by rendering grey text is still structurally indistinguishable from a chosen value; the English wordlist is now the last-resort path for that case rather than the primary path for all of them. Tests: `python tools/test_generality.py` (65).
+9. **Generality of the DOM COLLECTOR (measured, not asserted)** — see `AUDIT_DOM_GENERALITY.md`. Round-5 claimed "library signatures are boosters, never sole gates"; `tools/audit_ablation.py` **disproved that in nine places** by neutering each signature and diffing 106 live sites. The big ones, all now fixed: three `/[a-z0-9]/i` gates discarded **every** CJK/Cyrillic/Arabic label and blanked non-Latin dialog text entirely; the four page-level scans (`dialogOpen`, `dialogText`, `mainHeading`, `virtualNote`, plus `_domTextPage`'s outline) used `document.querySelectorAll` and so were blind to shadow DOM, meaning a `<sl-dialog>` opened with no MODAL banner while its own controls were correctly tagged `section=dialog`; the CodeMirror/Monaco/Ace class list was load-bearing on 9 pages (without it Monacos value read `"1 2 3 4 // Type your code here"` — the gutter; now 4, and on those it only changes (code-editor) to (rich-text-editor)); the English `select|choose|pick` wordlist was the *only* placeholder signal on Chakra/PrimeVue/Vuetify. Replacements are structural: `_allComposed` (registry-filtered composed query), `editorHosts` (hidden textarea inside a monospace/pre host) + `stripGutter` (consecutive-line-number runs), and `_phMarked`/`_showingPlaceholder` (the token `placeholder` in a `data-*` name, `data-*` value or class list — covers Radix, Ark/Chakra, PrimeVue, Ant, select2 at once). **Two rules learned the hard way while measuring:** the corpus is live, so always run a drift control (`--compare` two runs of the SAME source) before attributing a totals change to a code change; and never diff a mutating page's collector output on mmid alone — additive mmids turn one re-render into hundreds of phantom add/remove pairs. Residual, unchanged: a hand-rolled non-English combobox that marks placeholder state only by rendering grey text is still structurally indistinguishable from a chosen value; the English wordlist is now the last-resort path for that case rather than the primary path for all of them. Tests: `python tools/test_generality.py` (75).
 
 ---
 
@@ -308,7 +588,7 @@ The MCP server must be stopped first — port 8765 is single-bind (close the Cla
     - **Scoping to a LEAF returned an empty listing**, forcing the study's only `javascript_tool` fallback. The host is now kept when `detail="full"` or when nothing else is inside; compact scoping of a real container still excludes it (W9). The two rules are opposites and are pinned side by side.
     - **`(unselected)` on a combobox plainly reading "C++"** — Compiler Explorer has three `<select>`s in one toolbar and the backing walk adopted the empty one. An empty backing now only counts when the trigger displays nothing either.
     - Page-level facts (`Main heading`, below-fold counts) leaked into scoped reads; the legend was ~80% of a one-line scoped result; `ref_id` + `filter="all"` appended the whole page text; editor values were capped at 60 chars with no way to read code; `get_page_text` leaked gutters that `read_page` stripped; the truncation hint suggested `filter='interactive'` to callers who had already passed it.
-    - **`find` — FIXED, was the weakest tool in the system.** — flagged unprompted by 6 of 9 agents. Five defects, all fixed: (a) **images were outside its search space** with no signal — it now queries `detail="full"` so media is searchable, ranks it for image/photo/picture/video words, and tags it `(image/media — not a control)`; (b) it emitted **ONE unlabelled quoted string** that could be the name, value, placeholder or text — on Baidu an agent read a placeholder as the field's CONTENTS, so it now uses read_page's `name=`/`value=`/`placeholder=`/`src=` vocabulary; (c) **weak keyword overlap was reported under a confident "Found N matching"** — strong (>=1.0) and weak matches are now separated, weak capped at 5 and headed "NO STRONG MATCH"; (d) **`json.dumps` escaped every non-ASCII label to backslash-u**, silently undoing the collector's non-Latin work in the one tool that formats in Python (read_page formats in-page with JSON.stringify and was never affected); (e) a raw `q_full in label` bonus ranked **"Duffield Memorial" above a real input for the query "field"** — the exact failure `_hit` was written to prevent, reintroduced two lines below it. Also widened the role-word hints: "search box" — find's own docstring example — scored ZERO against a search box whose only label was Chinese. Tests: `python tools/test_find.py` (19). NOTE `find` lives in mcp_server.py, so changes need an MCP RECONNECT, not an extension reload.
+    - **`find` — FIXED, was the weakest tool in the system.** — flagged unprompted by 6 of 9 agents. Five defects, all fixed: (a) **images were outside its search space** with no signal — it now queries `detail="full"` so media is searchable, ranks it for image/photo/picture/video words, and tags it `(image/media — not a control)`; (b) it emitted **ONE unlabelled quoted string** that could be the name, value, placeholder or text — on Baidu an agent read a placeholder as the field's CONTENTS, so it now uses read_page's `name=`/`value=`/`placeholder=`/`src=` vocabulary; (c) **weak keyword overlap was reported under a confident "Found N matching"** — strong (>=1.0) and weak matches are now separated, weak capped at 5 and headed "NO STRONG MATCH"; (d) **`json.dumps` escaped every non-ASCII label to backslash-u**, silently undoing the collector's non-Latin work in the one tool that formats in Python (read_page formats in-page with JSON.stringify and was never affected); (e) a raw `q_full in label` bonus ranked **"Duffield Memorial" above a real input for the query "field"** — the exact failure `_hit` was written to prevent, reintroduced two lines below it. Also widened the role-word hints: "search box" — find's own docstring example — scored ZERO against a search box whose only label was Chinese. Tests: `python tools/test_find.py` (20). NOTE `find` lives in mcp_server.py, so changes need an MCP RECONNECT, not an extension reload.
     Harness: `tools/bench_detail.py`. Fixtures: D1–D13, L1–L8, E6–E7 in `tools/test_generality.py`.
 
 12. **Another extension's injected iframe disables trusted input for the WHOLE tab (Chrome policy, not our bug)** —
@@ -342,7 +622,7 @@ The MCP server must be stopped first — port 8765 is single-bind (close the Cla
     returned no rows at all, so it does not reshape output for any other caller (pinned by T6/T7).
     Verified live: at `max_chars=300` the same page returns all three rows; at 500 the inventory
     page returns 7 rows + "18 more element(s) not shown" (7+18=25, the true total).
-    Tests: `python tools/test_truncate.py` (8).
+    Tests: `python tools/test_truncate.py` (15).
 
 14. **What six live agents on real sites found that 254 fixtures did not** — WebVoyager-style tasks
     (HuggingFace, BBC, Baidu, Google Flights, Wolfram Alpha, ESPN), ~140 tool calls, **zero bridge
@@ -474,6 +754,443 @@ The MCP server must be stopped first — port 8765 is single-bind (close the Cla
     and keep it only if Pareto-positive. That investigation needed six probes because the collector
     cannot say WHY it dropped an element; it is the concrete argument for the drop-ledger.
 
+17. **What the consent model does NOT cover, and other release-readiness residue** — the gate
+    (see "Permission model") is airtight for *ops*, and these are the edges it does not reach.
+    They are documented in `README.md` under "Known issues and limitations" because a user who
+    meets one without warning concludes the product is broken:
+    - **`listener_tag.js` injects into every page BEFORE any grant.** It is a manifest
+      `content_scripts` entry (`<all_urls>`, `document_start`, MAIN world, `all_frames`), and a
+      manifest content script **cannot** be conditioned on a runtime grant — that is the whole
+      reason it can beat page scripts to `addEventListener`. What runs on an ungranted page is
+      bounded: the `addEventListener` wrap (a non-enumerable expando, invisible to any selector,
+      MutationObserver or serializer) and a 500-entry `console.*` ring buffer. **Nothing leaves
+      the page** — reading the buffer is `read_console_messages`, which IS gated. Making this
+      grant-conditional means moving to `chrome.scripting.registerContentScripts` per granted
+      origin, which trades the pre-grant injection for losing tagging on the first load of a
+      newly granted site. Not obviously the better trade; decide it deliberately, do not drift
+      into it.
+    - **macOS/Linux is untested end to end.** CI runs all 17 suites on Linux and nothing in the
+      Python is obviously platform-locked, but nobody has driven a real Chrome from anything but
+      Windows 11. Docs say "untested", not "supported" — keep it that way until someone runs it.
+    - **One Chrome, one extension, one socket.** The port span stops a second session from
+      crashing, not from being useless: the extension's sweep stops at the first server that
+      answers, so session two gets a live bridge nobody talks to. It self-heals when session one
+      exits (`_probeOffset` resets and the sweep re-runs).
+    - **`requirements.txt` hard-pins `pydantic==2.10.4` / `pydantic-core==2.27.2`,** which drags
+      `mcp` back to 1.12.4 on a fresh resolve (`pip install -e . --dry-run` shows it). The
+      development venv has drifted to pydantic 2.13.4 / mcp 1.27.2 and works. So the pins are
+      not what is actually being tested by hand — CI installs them, which is the only reason the
+      combination is exercised at all. Loosen or re-pin deliberately.
+
+16b. **THE REPRESENTATION WORK — three changes, each measured on BOTH axes before shipping:**
+    - **`detail="brief"`** — a third point on the rate/retention curve. Decomposed `full`'s cost over
+      `compact` across 22 frozen sites: +79% chars, **91% of it inside href=/src= strings**, not in the
+      extra media rows. Most of that verbosity carries no information — scheme+host repeat on every
+      same-origin link and query strings are mostly tracking. `brief` keeps host-when-different, path,
+      short query/hash. Result: **0.792 answerability @ 2,265 tok vs full's 0.793 @ 2,741** — the same
+      information for **17% fewer tokens**. `full` is kept only for URLs needed verbatim.
+    - **Repeated-record folding** (MDR/DEPTA-style, generalising the existing grid fold). Measured
+      first: **46% of pages exceed the 150-entry cap**, the median capped page silently loses 124
+      elements, and **96% of a median listing sits in a structurally repeated group**. Matched A/B on
+      the same 30 sites: **-17.8% tokens for -0.002 answerability**, out-of-sample recall unchanged.
+      SERIALIZATION ONLY — the structured array is returned before this pass, so `find`'s search space
+      is untouched, and every folded row keeps its own ref, label and href (pinned by D3/D4/D5).
+    - **`read_page(delta=true)`** — send what CHANGED. **~6,300 chars -> 220 (-96%)** on a real page.
+      Line-based deliberately: diffing structured entries would need a THIRD formatter. Identity
+      strips the mmid AND the `box()` (a scroll rewrote every row and made `GONE` list refs that
+      plainly still existed), and normalises refs inside folded group lines. Refuses — and SAYS WHY —
+      on no prior read, tiny page, wholesale change, scoped read, or navigation.
+    - **Drop-ledger** (`ledger: true`). The collector could not explain its own omissions: ~17 bare
+      `return`s plus four destructive post-passes removed elements with no record. It answered in ONE
+      call what had taken six DOM-mutation probes, and CORRECTED the hypothesis (`not-interactive`,
+      not container suppression). It also immediately exposed a gap in its own coverage — the early
+      guards were uninstrumented — which is the behaviour you want from a diagnostic.
+
+16c. **THE MEASUREMENT SPINE** — `freeze_corpus.py` (HAR replay, deterministic corpus),
+    `measure_retention.py` (presence/answerability/findability vs tokens, ground truth derived from
+    the DOM INDEPENDENTLY of the collector), `fetch_mind2web.py` + `bench_mind2web.py` (human-labelled
+    click targets on 16 sites never used in development), `bench_headtohead.py` (#17),
+    `audit_thresholds.py` (#19). Baselines in `temp/*/baseline.json`. **`--holdout` on the dev corpus
+    measures site-to-site variance, NOT generalization — all 106 sites informed development. Only the
+    Mind2Web number is genuinely out-of-sample.**
+
+17. **HEAD-TO-HEAD: what the representation is actually worth** — every accuracy claim before this
+    compared numbers computed by different people on different samples. `tools/bench_headtohead.py`
+    runs three representations over the SAME labelled Mind2Web actions with ONE metric definition
+    (173 actions, 16 sites nobody tuned on):
+
+    | representation | recall | median tokens | size | recall/1k tok |
+    |---|---|---|---|---|
+    | **chromebridge** (`brief`) | **96.0%** | **1,242** | **1.00x** | **0.773** |
+    | Chrome accessibility tree (`Accessibility.getFullAXTree`) | 100.0% | 8,886 | 7.15x | 0.113 |
+    | MindAct `cleaned_html` (THEIR output, not a reimplementation) | 100.0% | 41,716 | 33.59x | 0.024 |
+
+    **4pp behind on recall, 7-34x ahead on size; 6.8x the recall-per-token of the AX tree.** This
+    settles the architecture review's strongest criticism ("you reimplemented the accessibility tree,
+    worse"): on identical pages the AX tree costs 7x the tokens for 4pp more recall, and it needs a
+    debugger attach that limitation #12 proves gets refused on password-manager pages. Building our
+    own was right — but the review was right that we could not PROVE it until now.
+
+18. **THE ACCURACY GAP WAS OURS, NOT THE BENCHMARK'S** — the standing explanation for missing targets
+    was "static HTML means `listener_tag.js` never fires, so our number is only a floor". Stated three
+    times, and **wrong**. Measured, by attaching a real handler to each missed target and re-collecting:
+    handler tagging alone recovered **2 of 10**. The real cause was an asymmetry inside our own code:
+    `isInteractive` accepted a handler-bound `<div>/<span>/<label>`, but the OFFSCREEN RETENTION
+    predicate (`keepForFind`) accepted only `<a>/<button>`/form tags/strong ARIA roles. So an element
+    could pass the interactivity test and then be dropped by `outside-viewport`, while a `<button>` in
+    the identical position was kept — **6 of 10 misses, 60% of the whole gap, from two rules
+    disagreeing about what a control is.** `keepForFind` now gates on a real activation signal
+    (`__abClickBound` / `onclick` / `tabindex` / `cursor:pointer`) instead of a tag list. Under live
+    conditions recovery went **20% -> 90%**. Cost on the dev corpus: entries +16%, listing tokens +2%
+    (the STRING listing stays viewport-scoped, so the extra reach is nearly free).
+    A further **2.4pp** was a bug in the MEASUREMENT: recall credited only the FIRST descendant
+    carrying an mmid, so a `<label>` wrapping its `<select>` scored as a miss while the select was
+    listed and acting on it does exactly what clicking the label would. Any descendant now counts,
+    capped by area so a page-sized container cannot claim credit for its contents. 93.6% -> 96.0%.
+
+19. **MEASUREMENT LESSONS — four ways a green number lied** (each cost real time; all now guarded):
+    - **Block-structured A/B measures drift, not behaviour.** `audit_thresholds.py` ran all sites for
+      variant A then all for variant B, so run-order drift aligned exactly with variant order, and a
+      control taken back-to-back reported a 0.2% noise floor while variants minutes apart moved ~8%.
+      Three of four "CLIFF" verdicts were artefacts and were not even monotonic. Now INTERLEAVED (every
+      variant measured on a site before moving on, order rotated per site) with THREE identical
+      replicates; the floor is the worst spread among them. `fold-min-members` went from
+      "CLIFF 11%" to "gentle slope 4.3%".
+    - **A saturated metric cannot detect regression.** Threshold recall read 100% on n=20 because that
+      subset excluded the known misses. Re-run at n=48 (93.6%, real headroom) — still flat, which is
+      the result that actually means something.
+    - **Test stubs that share your assumptions test nothing.** The delta unit test passed while the
+      live path was broken, because the fake bridge returned `get_url` as a dict and the real bridge
+      returns a JSON string. Same shape as the op-router bug below.
+    - **The op router is STILL the untested link.** `detail="brief"` shipped with the collector and
+      mcp_server updated but not the router, which mapped anything != 'full' to 'compact'. CLAUDE.md
+      #10 warned about exactly this and I walked into it anyway. Two router checks added.
+
+20. **REJECTED / DEAD ENDS — do not re-attempt without new evidence:**
+    - **MHTML for corpus freezing.** Chromium will not render it from `file://` under Playwright and
+      refuses it as `multipart/related` over HTTP; even when it renders it does not execute JS.
+      Measured 0% element retention. **HAR record/replay** is the mechanism: 231 live -> 231 replayed
+      -> 231 again, hermetic, JS intact. 106/106 recorded, 97 usable, 88 byte-stable — the 18 unstable
+      ones are named so nobody asserts exact-match invariants on them.
+    - **A `collapsed`/`expanded` class token as an accordion-header signal.** Tested both sides:
+      recovers ZERO out-of-sample targets (it flips the classification, but the element is then dropped
+      by `outside-viewport` anyway), +9 entries on 26 sites, and an unexplained -3% chars. Rejected on
+      the numbers; the verdict is recorded at the exact spot in `isInteractive` where the idea occurs.
+    - **`find` for goal->element ranking.** Measured: given a DESCRIPTOR it puts the target top-3 75%
+      of the time; given the human's TASK ("book a mid-range hotel in Paris") it finds the target 0% of
+      the time, scoring exactly zero — there is no lexical overlap between a goal and the control that
+      achieves it. That is semantic inference (MindAct's learned ranker), not retrieval, and the AGENT
+      already does it by reading the listing. Not a scorer bug.
+
+21. **BRITTLE PATTERN MATCHING — audited mechanically, because reading never catches it.** Three
+    incidents now share one shape: a matcher that READS as general and MEASURES as narrow, failing
+    with no error and no missing-result signal. The ablation study found the first (`/[a-z0-9]/i`
+    gates discarding every CJK/Cyrillic/Arabic label). This audit found the other two:
+    - **A trailing `\b` silently disabled every non-Latin word in the destructive list.** JS `\w` is
+      `[A-Za-z0-9_]`, so `\b` after a CJK/Hangul/Cyrillic alternative demands a boundary that can
+      never exist: `/^(cancel|…|削除|삭제|удалить)\b/i.test('削除') === false`. The list named
+      削除 / キャンセル / 삭제 / удалить / отмена and its comment claimed multilingual coverage; all of
+      them were dead code, and the German entries passed only because they end in ASCII letters. This
+      gates **`fill_form(submit=True)`** — the one place the tool takes an irreversible action — so a
+      Japanese dialog whose only button was 削除 was a candidate for auto-submit.
+    - **One concept, spelled two ways.** The destructive test existed twice in one function, 35 lines
+      apart, multilingual in tier 1 and English-only in tier 2 — so "Abbrechen" was rejected by one
+      tier and accepted by the other. The placeholder question (`select|choose|pick`) had **four**
+      copies. These functions are injected into the page with `chrome.scripting` and lose their
+      closure, so the duplication is FORCED; what was missing was enforcement.
+    Fixes are structural, not more words. Spaced scripts (Latin/Cyrillic/Greek) get a Unicode
+    end-of-word test `(?![\p{L}\p{N}])` so "deleted" ≠ "delete" and "Address" ≠ "add"; spaceless and
+    agglutinative scripts (CJK/Hangul) match as a PREFIX, because that is what "word" means where
+    there are no gaps (削除する and 삭제하기 are the same verb). Both wordlists cover ~20 languages,
+    and both remain MIDDLE tiers: `type="submit"` and implicit-submit outrank them, sole-labeled-button
+    answers below them in languages no list covers (verified live on Sinhala).
+    Tooling, because the next one of these will not be found by reading either:
+    - `tools/audit_patterns.py` enumerates all **200** pattern sites across the extension and server
+      and classifies each by failure mode (`ascii-on-text` / `wordlist` / `framework-name` /
+      `class-substring` / `html-regex` / `url-host`). It **self-tests against the three historical
+      bugs in their pre-fix form** — a detector reporting "0 findings" is worth nothing until it has
+      been shown to fire, and all three passed code review before they were measured.
+    - `tools/test_patterns.py` (9) makes the rules mechanical: **P1** no `\b` beside a non-ASCII
+      alternative; **P2** every definition tagged `i18n:<concept>` is byte-identical to its siblings
+      (3 concepts tagged, `placeholder` has 3 legitimate copies); **P3** the auditor still fires;
+      **P4** no ASCII-only class gates page text. P1 and P2 carry negative controls — and the P1
+      control immediately earned itself: the first version of that rule **could not fire at all**,
+      because its character class excluded `)` and the shipped pattern was `…|削除)\b`.
+    - `tools/test_submit.py` (18) is the first test the submit picker has ever had — the largest
+      untested function in the project, and the only one that presses buttons. Writing it corrected
+      two of my own assumptions about code I had just edited.
+
+22. **TRUNCATION — 216,719 characters were vanishing in silence; saying so costs 0.30%.** Seven of
+    twenty live agents independently reported a bounded field that gave no sign of being bounded. The
+    defect is not the bound, it is that `value="Acme Corporation Interna"` and a field whose contents
+    really ARE that string are the same 24 characters — one of them a lie the agent cannot detect. One
+    agent wrote to a code editor four times, read back a byte-identical 60-char value each time, and
+    had no way to tell truncation from a failed write. Measured on the frozen 108-site corpus:
+    **1,304 fields cut across 66% of sites, 216,719 characters hidden** (median 379/site).
+    - Every bound on an agent-facing string now goes through **one** `markCut(s, n)` — surrogate-safe,
+      word-boundary aware, emitting `…(+N)` where N is the TRUE residual. The count is what separates
+      "clipped" from "short": `x` and `x…(+840)` cannot be confused, and the agent decides from that
+      number whether to escalate to a scoped read. Cost: **1,271 chars = 0.297% of listing payload**,
+      worst single site 1.44% — against the 2.6% the detail legend was accepted at.
+    - Three hand-rolled copies of the same five-line cut logic collapsed into that one helper, so a
+      NEW bounded field cannot reintroduce the silence by omitting the snippet.
+    - **A second bound over an already-bounded value is not defensive, it is corruption.** `label`
+      derives from four fields markCut had already marked, then re-clipped at 60 — cutting the marker
+      itself in half and emitting `…(+43` as content. Found by the corpus cap-detector, not by reading;
+      no fixture caught it because they all checked the SOURCES, which were correct.
+    - `tools/audit_truncation.py` detects the caps I have NOT found: a cap is a length that is common
+      while its NEIGHBOURS are not and past which almost nothing survives. Raw counts were useless —
+      `label@24 = 264 fields` is equally consistent with the natural mode of button text — and the
+      neighbour baseline dissolved every phantom while keeping the two real ones (`label@60`: 610
+      fields vs neighbours 14, nothing above; `near@40`: 128 vs 4.3). The last survivor,
+      `placeholder@13`, was dispositioned by looking: 28 date pickers reading `'Select Date..'`.
+    - Same measurement discipline as everywhere else, and it bit again: the first cost figure said
+      markers were **78.7%** of one site's payload, because it counted markers in the whole-page
+      STRUCTURED set and divided by the viewport-scoped STRING listing. A ratio's numerator and
+      denominator must come from the same population.
+    Fixtures: M-series in `tools/test_generality.py` (7, incl. marker-integrity over every field and a
+    verified negative control), E6/E6b for the editor cut.
+
+23. **WHAT SIXTEEN LIVE AGENTS FOUND THAT 382 FIXTURES DID NOT** — a second fan-out (non-Latin sites,
+    RTL, code editors, data tables, shadow DOM, SPAs, infinite scroll, media, forms, canvas/iframes),
+    ~500 tool calls. The truncation work held: **arithmetic exact in 10/10 escalations**, including
+    3-digit residuals, curly quotes and a combining shadda, and one agent proved the original defect
+    dead by writing twice with a byte-identical 57-char prefix distinguishable only by `(+198)` vs
+    `(+61)`. Every defect found was in RENDERING or in a message, never in the count. Fixed:
+    - **`(2 on screen)` for a page holding 39 buttons.** Google left a listbox open, which marks the
+      rest of the document `aria-hidden`; those elements are correctly dropped, and the remainder was
+      then reported in wording and punctuation identical to a true count of 2. **The agent's own
+      diagnosis (container suppression) was wrong** — a fixture reproducing a delegation root showed
+      suppression working correctly, and a second fixture reproduced the real cause in one call.
+      `aria-hidden`/`inert` drops are now COUNTED always (the full ledger stays opt-in) and stated,
+      with the recovery: close the menu and re-read.
+    - **A name belonging to the wrong element.** AccName's "exclude the control's own subtree" rule is
+      written for a LABELABLE form control; applied to anything inside a `<label>` it made siblings
+      SWAP names — each cloned the label, removed itself, and kept the other's text. All five IKEA
+      price rows, boxes correct, so name and geometry disagreed silently. Gated on labelable, NOT on
+      "has its own text" — a `<select>`'s innerText is its option text, so that simpler rule would
+      have broken the case the rule exists for. Both pinned side by side (N-series).
+    - **Modal detection missed `inert`.** NHK opens its consent sheet with `dialog.show()` (not
+      `showModal()`), no `aria-modal`, under half the viewport, below centre — all five signals miss,
+      while the site marks the background `inert`. 47 links came back `(disabled)` with no banner,
+      telling the agent the site's navigation was broken instead of "dismiss the sheet first".
+    - **`read_page` and `computer` seeing different pages.** Unsplash defers layout until
+      `visibilityState` flips; the agent's tab is hidden BY DESIGN (#12), so a read reported 18
+      elements on a page with 88 photo links and one `computer` call flipped it to 60. Detected on the
+      SYMPTOM (DOM controls vastly outnumber collectable ones), never on "the tab is hidden" — that is
+      always true, so an unconditional note would be exactly the noise #15 warns about.
+    - **An unlabelled canvas was invisible, and the anti-silence machinery was gated on it having a
+      name.** chartjs.org's 800x400 centrepiece appeared in no listing at any detail level, leaving an
+      unexplained 400px gap between two rows. The `(canvas)` marker fired only for the canvas that
+      least needed it.
+    - **Empty scoped reads (5 agents, 4 different causes, one identical output).** Now states which:
+      outside the viewport (with the `scroll_to` call to fix it), `aria-hidden` ancestor, `[inert]`,
+      candidates present but filtered (pointing at `ledger:true`), or genuinely nothing inside.
+    - **Scoped reads imported cross-origin frames from outside the scope** — a read scoped to a header
+      `<input>` came back carrying a YouTube player; one scoped to a Reddit post carried the left
+      rail's Google sign-in button, under a header promising "elements outside it are omitted".
+    - **`find` answering confidently with junk (6 agents), three independent causes.** Coverage was
+      credited on ANY score increase, including the 0.1 buried-substring weight; the >=2-token rule
+      only applied from FOUR tokens, so a 3-token query passed on one generic word; and ROLE-word
+      coverage counted, so with "link" in the query every `<a>` earned a free covered token. Now:
+      word-level evidence only, gate from 3 tokens, and CONTENT coverage (role words still decide the
+      no-text-match fallback that non-Latin pages depend on). `near=` counts as content — that one
+      change fixed two failures pointing in OPPOSITE directions (a State field confidently returned
+      for "Select City dropdown", and Naver's correct 구독 button wrongly demoted).
+    - **`fill_form` reported FAILED on selections that worked, 3/3** — react-select clears its input on
+      commit and paints the value into a sibling node, so the BEFORE/AFTER trigger-label read saw `""`
+      both times. It also asserted a mechanism it cannot know ("option click did not register"), so an
+      agent retries — and a retry on a multi-select toggles the value back off.
+    - **`form_input` reported Success into Monaco's READ-ONLY `ime-text-area`** — the IME composition
+      scratch buffer, where text sticks and reads back, so the write path's own check passed while the
+      editor never changed. The verdict now follows the readback: if what we sent is not in the field,
+      it is not a success, whatever the write path believed.
+    - **A disabled custom control vanished entirely** (`pointer-events:none` on a `<div>` wrapper, so
+      the tag-list guard did not save it), making "there is no city field" and "the city field unlocks
+      after you pick a state" the same output — and that is what let `find` answer a city query with
+      the State field.
+    - **`data-testid` presented as an accessible name.** A controlled probe listed an `<a>` whose only
+      attribute was `data-testid="totally-bogus-not-a-label"` under `name=`, and `find` scored it a
+      STRONG match. Still used (better than nothing on an icon control), now attributed on the row.
+    - **Folding destroyed what distinguished its members** — 13 identical "구독" buttons belonging to 13
+      different outlets, with `near=` (the only discriminator) dropped, `(below-fold)` dropped so its
+      absence read as "on screen", and an "ordered top-to-bottom" promise that was false.
+    - Also: four more unmarked cuts (fold labels, the `type` echo, `detail="full"` URLs at 300,
+      synthesized handles at 40) — **six of nine truncation fixes this session were the same bug in a
+      different function**, which is the argument for `markCut` being one helper rather than a rule;
+      `max_chars` residual counted ROWS not ELEMENTS (claimed 21 while dropping 99; on arXiv 74
+      vanished with no clause at all); the delta diffed its own scaffolding and cut a `was:` row into
+      `box(986,411,8)`; `checkbox value="on"` (the DOM default, never written by the page, reported as
+      CONTENTS); `target="_top"` unflagged though it destroys every ref on the page while `_blank`
+      gets a flag; the readiness banner permanently stuck on via `opacity:0` and off-viewport progress
+      bars; `(occluded/blocked)` on merely-clipped elements (an empty hit-test stack is not an
+      occluder); "you have scrolled past them" asserted at `scrollY === 0`; and a cross-extension
+      message asserting a recovery is impossible that a live agent had just performed.
+
+    **Two of my own fixes broke on the first attempt and both were caught by RUNNING them, not by
+    review:** a viewport bound referencing `vh` from another `try` block's `const` — a ReferenceError
+    swallowed by the inner `catch`, which would have silently deleted the progressbar signal entirely
+    (R8 is now its negative control) — and a scope-filter rewrite that `node --check` accepted while a
+    bash heredoc had eaten its escapes. That was the **fourth heredoc-escape incident of the session**;
+    the memory now says to prefer the Edit tool for anything containing a backslash, and to scan for
+    0x08 bytes after a bulk edit.
+
+    **Still open, deliberately, and each with its evidence:** `computer` reports the pre-dispatch
+    coordinate (the click re-measures and lands, so only the REPORT misleads — measured 343px off);
+    `value=` can be hoisted from a sibling status node (Stack Overflow's search read
+    `value="Loading…"` while the field was empty); `section=` resolves to the nearest landmark without
+    stopping at a dialog boundary, so a dialog's own close buttons are tagged as underlying page while
+    the banner tells the agent to ignore those; name/text EXTRACTION does not pierce shadow roots even
+    though COLLECTION does, which is why GitHub's `<relative-time>` timestamps and Reddit's vote
+    counts are unreachable by every text tool; composite button-fields get no name/value split (6 of
+    11 bahn.de fields, including the departure date); CSS-generated content is named in the
+    can-miss list but never surfaced (Wikipedia's rank column); and `computer` screenshots
+    intermittently time out at 60s with no diagnostic separating hung from slow.
+
+24. **NO PER-FIELD TRUNCATION, AND NO WORDLIST READS PAGE TEXT** — the two families that produced
+    almost every defect in #21–#23 were removed outright rather than fixed again. Both decisions were
+    measured before they shipped, and both measurements changed what I did.
+    - **Per-field caps: deleted.** Ablated across 39 frozen sites by turning `markCut` into the
+      identity function: **+3.1% total listing chars, median 1.002x, worst site 1.35x**. The caps were
+      buying essentially nothing, because a LABEL is bounded by human authorship already — and they
+      cost nine separate silent-cut defects in one session, six of which were the same bug in a
+      different function. Gone from `name`, `label`, `<input>` value, `placeholder`, link text, alt
+      text (the Wolfram case: a cut after "≈40." read as a finished number), `near=`, fold labels,
+      fold context, `under=`, synthesized handles, `Main heading`, and `detail="full"` URLs — that
+      last one mattered most, since a pasteable URL is the entire purpose of that mode.
+      **One class still carries a bound, deliberately:** genuinely unbounded content (`<textarea>`,
+      code editors, dialog body text) keeps a GENEROUS marked bound — 4,000 compact / 40,000 full,
+      up from 60 — purely so one essay cannot evict every other row from the caller's `max_chars`.
+      That is a budget on unbounded content, not a guess about what matters. Verified live on
+      Godbolt: a 154-char function now round-trips whole, where the 60-char cap made two writes
+      sharing a prefix indistinguishable. So the system now has exactly ONE bound: the caller's
+      `max_chars`, which is explicit, chosen by the caller, and reports how many ELEMENTS it dropped.
+    - **The submit picker's two wordlists: deleted.** This is the one place the tool takes an
+      irreversible action, and until now natural-language wordlists chose the button. Fixing them
+      (#21) made them longer, not sound. It now answers ONLY from what the document declares —
+      `type="submit"`, or HTML's implicit submit inside a real `<form>` — uses it when exactly one
+      candidate exists, and REFUSES while naming the candidates when zero or several do. That deletes
+      the "is this one destructive?" question outright: we never choose between Save and Delete
+      account, because two candidates is a refusal rather than a coin flip.
+      **The trade, stated rather than buried:** a div-form with no declared submit no longer
+      auto-submits at all (a refusal the agent can act on, since it has the listing), and a page that
+      marks a destructive button as its own `type="submit"` will now be honoured (that is what the
+      page says, and no structural signal contradicts it).
+    - **The placeholder wordlist (`_phWord`): deleted on the measurement.** Ablated with an
+      INTERLEAVED drift control on the same page load across 45 sites — base, no-wordlist, base
+      again. Its total effect on `(unselected)` flags was **14**; the drift floor, the same source
+      measured twice, was also **14**. It changed nothing beyond noise, because the structural
+      signals run first and carry every real case (`data-placeholder` / a `placeholder` token in a
+      data-* name, value or class list, an empty backing form control, a trailing ellipsis). The
+      residual limitation is unchanged and now honest: a hand-rolled non-English combobox marking
+      placeholder state by grey text ALONE is structurally indistinguishable from a chosen value, and
+      we no longer pretend a wordlist closes that gap for the ~20 languages someone listed. W1 in
+      `test_widgets.py` used to assert the flag on exactly that shape and now asserts the honest
+      output instead.
+    **What is left, and why it is not the same thing:** `tools/audit_patterns.py` still reports 7
+    "wordlist" sites, and every one matches CSS values, HTML tag names or class conventions
+    (`position: fixed`, `font-family: monaco`, `input|select|textarea`, Tailwind/FontAwesome tokens).
+    None reads page text; the auditor flags them on shape alone. **No natural-language wordlist reads
+    page text anywhere in the codebase**, and no ASCII character class gates page text (P4).
+    **Two defects found while verifying this, both live:**
+    - `form_input` reported Success writing into Monaco's READ-ONLY `ime-text-area` — the IME
+      composition buffer, where text sticks and reads back, so the write path's own check passed. The
+      verdict now follows the READBACK: if what we sent is not in the field it is not a success,
+      whatever the write path believed. Its readback also leaked the editor's line-number gutter, in
+      the one field whose entire job is verifying a write.
+    - A DISABLED custom control vanished entirely (`generic-no-label`, not the rule I predicted —
+      `read_page(ledger=true)` answered it in one call). demoqa's City field is a react-select
+      wrapper disabled until a State is chosen; it rendered the visible text "Select City" and was
+      dropped, making "there is no city field" and "the city field unlocks after you pick a state"
+      the same output — which is what let `find` answer a city query with the State field.
+    **A measurement-tool fix, same discipline:** `audit_truncation.py`'s cap detector counted
+    OCCURRENCES, so an MUI demo repeating one genuine 99-char aria-label 39 times produced a textbook
+    cap signature (39 at length 99, neighbours ~2) for a value that is not cut at all. It counts
+    DISTINCT VALUES now — a cap truncates many different strings to one length; repeated content is
+    one string. After the fix the corpus reports zero cut fields, zero marker cost, and no cap
+    signature anywhere.
+
+25. **EIGHT GENERALITY AUDITS — where "works on any site" is true, and where it was not.** Six live
+    fan-outs (component libraries, untested scripts, real forms, custom dropdowns, page archetypes,
+    the no-cap contract) plus two static code audits. **The core claim held where it matters most:**
+    6/6 non-Latin write round-trips byte-identical (Thai, Hebrew, Devanagari, Vietnamese, Greek,
+    Turkish), `fill_form`'s verify step told the truth on 6/6 component libraries with ZERO false
+    successes, RTL geometry 3/3, and **zero domain- or hostname-keyed logic anywhere**. The residual
+    narrowness is not in the collector or the write path — it is in the PAGE-LEVEL SCANS and in
+    `find`'s scorer, which is a much more specific answer than "somewhere".
+    - **The MODAL banner missed Radix — the library this project was built around.** `aria-modal`
+      null, not `showModal()`, 500x269 in a 2560x1357 viewport: all five existing signals miss, while
+      MUI/Ant/Vuetify all got a banner. What Radix (and every focus-trap library) actually does is
+      mark the dialog's SIBLINGS `aria-hidden` — a signal the collector already counted in
+      `_stateDrops` and never fed back into modality. Now: a visible dialog whose siblings are all
+      aria-hidden/inert IS modal.
+    - **The readiness probe was shadow-blind — fourth home for a bug class fixed twice.** Proven with
+      a fixture: a visible `role=progressbar` plus an `aria-busy` region inside one shadow root gave
+      `{prog: 0, busy: 0}` and a settled verdict. `document.querySelectorAll` stops at every shadow
+      boundary, so on Lit/Polymer/Shoelace/UI5/LWC the probe cannot see what it exists to see. One
+      `_deepAll` helper (bounded depth 6) now backs images, aria-busy and progressbars.
+    - **A `<select>`'s value was still cut at 60, silently** — the sole survivor of the no-cap sweep,
+      a bare `clip()` rather than `markCut`. A 413-char timezone option arrived as 60 chars ending
+      mid-word in `read_page` AND `find` AND delta, because the cut happens at COLLECTION time and
+      poisons every consumer; the same string in the same run was reported correctly by `form_input`.
+    - **PROMPT OPTIONS ARE NOT CHOSEN VALUES, and my `_phWord` deletion was 2/9 wrong.** #24 deleted
+      the placeholder wordlist on an interleaved-drift-control ablation showing it was noise. A live
+      audit of nine real dropdowns found the structural signals carry 7 — and miss the same two for
+      one reason: "empty backing control" assumes the author wrote `value=""`, and on older and
+      e-commerce widgets they usually did not. Amazon ships `<option value="-1">Select</option>`, so a
+      page whose own buy box reads "To buy, select" reported `value="Select"` as a chosen size, in
+      German and Japanese alike. **Three of four select-backed prompts on real sites used a sentinel
+      rather than an empty value** — the older-web norm, absent from the corpus. The fix is NOT the
+      wordlist back: it is structural and language-independent — first option, plus either a
+      conventional sentinel value (`-1`/`0`/`default`/`none`/empty) or value===text while siblings
+      use codes. Catches Amazon DE and JP with no vocabulary at all (W13, with a pre-selected-first-
+      option negative control).
+      **The lesson is about the measurement, not the wordlist:** the ablation was right that the
+      wordlist was noise ON THE CORPUS, and the corpus did not contain the widget family that runs
+      the largest retail sites on the web. An ablation measures the code against the sample; it
+      cannot measure the sample.
+    - **`find`'s scorer still had English shape, in three places.** (a) **Turkish İ**: Unicode folds
+      U+0130 to `i`+U+0307, so `"İstanbul".casefold() != "istanbul"` and every correctly-spelled
+      Turkish proper noun was unreachable to an agent typing lowercase ASCII — measured live, the
+      İstanbul weather link was missed entirely while the İ-spelled query ranked it first. Folding now
+      drops combining marks, which makes matching accent-insensitive for every script at once.
+      (b) **Inflection ran one way only**: `token is a prefix of label` existed, `label is a prefix of
+      token` did not, so a Greek genitive query scored ZERO on the nominative field it named while
+      junk matching a common word shipped under the confident header. English barely inflects, which
+      is why this never surfaced. (c) `under=` bypassed `markCut` — a 71-char Greek heading arrived as
+      exactly 40 chars with a trailing space.
+    - **Submit picker, four defects, and a validation.** The survey of 12 real forms VALIDATED #24's
+      structure-only rewrite: **7 resolve, 0 wrong resolutions**, and every refusal was on a page
+      where the document declared nothing visible. Fixed: `<button form="id">` outside the form was
+      invisible (the standard modal-footer pattern, spec-legal); two candidates with identical labels
+      and no name/value/formaction divergence produce an IDENTICAL submission per HTML and are now
+      collapsed rather than refused (GitHub's advanced search asked the agent to pick "the one you
+      mean" between two copies of "Search"); a declared-but-HIDDEN submit was reported as "no
+      type=submit exists" (false — Google's 0x0 btnK); and the ambiguity list carried labels only,
+      now refs.
+    - **`max_chars` miscounted a partially-sliced fold row** — a `26x …` row cut after its 7th ref
+      still matches the row pattern, so all 26 were credited as shown. Claimed "17 more" when ~41 were
+      missing. Now exact at every budget through both branches.
+    - **A regression of my own, caught by the audit:** the `form_input` readback check added in #23
+      compared the caller's text against `el.value` for a `<select>` — a machine code — so a landed
+      write was declared failed three times in one session ("Two" vs "2", "32W / 32L" vs an ASIN).
+      The check is right; it was reading the wrong field. It compares option TEXT now.
+    **Still open, with evidence, ranked:** Ant Design v6 defeats the option picker entirely (it ships
+    role-less visible options behind a DECOY hidden listbox, so the picker found zero options and then
+    presented the site's own nav bar as the field's options — a framework-family gap, since rc-select
+    powers antd); page-level scans never cross an iframe boundary (an open dialog inside a frame gets
+    no banner and no `section=dialog`); coordinate-space trust on canvas-dominated pages (on
+    OpenStreetMap the same ref reported clicks 1097px apart, and a missed click hits the map, so there
+    is no symptom); three UNINSTRUMENTED drop rules proven invisible even to `ledger:true`
+    (aria-hidden shadow subtrees, thin unlabelled controls like seek bars, and a handler-bound `<svg>`
+    classified decorative); `_stateDrops.inert` is dead code — no `_drop(el,'inert')` call exists, so
+    a bare inert region presents as fully actionable; and container-suppression thresholds count
+    UTF-16 units, which encodes Latin information density (12 units of Chinese is ~12 words).
+    **Two of my own fixes broke first and both were caught by RUNNING them:** `_deepAll` extracted
+    alone throws, every `try/catch` swallows it, and the readiness probe silently reports "settled" —
+    the exact swallowed-ReferenceError shape R8 exists for; and the fold-slice fix double-counted
+    complete rows, where T16's own counter had the same over-count it was testing for.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -483,11 +1200,18 @@ The MCP server must be stopped first — port 8765 is single-bind (close the Cla
 | Combobox option click registers but trigger label doesn't update | `fillDropdown` — verify popover scope filter isn't picking a stale option |
 | Submit fires but modal stays open | `fill_form` submit path — check `out.submit_errors` and `out.unfilled` enumeration in the result message |
 | Bridge says "Element X not found" mid-form | React re-render mid-fill_form. Confirm batched text-write path is being used (`fieldKinds` probe), and that mmid injection is additive (`window.__mmidCounter`) |
-| MCP server won't start / Claude Code shows it as failed | Run `.venv\Scripts\python.exe mcp_server.py` manually — anything on stdout other than JSON-RPC kills the transport; logs must be stderr-only. Also check port 8765 isn't already bound |
-| Tool returns "Chrome extension is not connected" | Side panel → paste BRIDGE_TOKEN → Save & Connect; the extension retries with 1s→15s backoff, so it usually self-heals within seconds of the server starting |
+| MCP server won't start / Claude Code shows it as failed | Run `.venv\Scripts\python.exe mcp_server.py` manually — anything on stdout other than JSON-RPC kills the transport; logs must be stderr-only. Then check, in order: `.mcp.json` expansion (a bare unset `${VAR}` fails silently; `.` resolves against the LAUNCH dir), whether the re-exec found `./.venv`, and whether all ten ports 8765-8774 are taken |
+| Every op returns "Permission required: … not allowed to act on `<origin>`" | Working as designed. The side panel raises "Permission requested → Allow this site" for exactly that origin. If the card is absent, the refusal was on a different origin than assumed — the message names it. See "Permission model" |
+| Every op returns "ChromeBridge is PAUSED" | The user hit Pause in the panel; only they can resume. `PAUSE_EXEMPT_OPS` still answer, which is why `sw_info`/`get_url` keep working and can mislead you into thinking the bridge is fine |
+| A NEW op you just added is refused everywhere | Gated by omission — that is the intended default. Add it to `UNGATED_OPS` only if it neither exposes page content nor delivers input, and update `tools/test_permissions.js` |
+| Tool returns "Chrome extension is not connected" | Side panel → paste BRIDGE_TOKEN → Save & Connect; the extension sweeps ports 8765-8774 and retries with 1s→15s backoff per sweep, so it usually self-heals within seconds of the server starting. If a SECOND Claude Code session is running, it owns the extension and this one never will |
+| Extension connects then immediately closes with 4001 | Protocol mismatch — reload the extension at `chrome://extensions`. The panel translates the code and the server log names both versions |
 | `read_console_messages` says capture not active | `listener_tag.js` runs at document_start — reload the page once after loading/updating the extension |
 | `computer` clicks land ~32px high | The fix-#10 attach→settle→measure ordering in `computerOp` was disturbed — never measure before `attachDebugger` + 50ms |
 | Trusted input works exactly ONCE on a tab, then "different extension" errors | Another extension injected an iframe (password manager on a login page). Run `debug_targets` — Chrome refuses CDP attach tab-wide. Untrusted paths still work; see limitation #12 |
+| `read_page` says "(N on screen)" and N looks far too small | A menu/dialog elsewhere is marking the page `aria-hidden`. The listing now says so and names the recovery; if it does not, check `_stateDrops` in `_collectInteractivePage`. Also check the hidden-tab note — some sites defer layout while the tab is in the background (limitation #23) |
+| A scoped read returns zero rows | It now tells you which of the four causes applies (off-viewport, aria-hidden, inert, genuinely empty). If it just says "0 elements" with no reason, the explanation branch was skipped — it lives before the legend's early return |
+| `form_input` says the write did NOT land | It compared the readback to what you sent and they disagree. Rich editors keep a read-only mirror textarea; use `computer` (click, ctrl+a, type). This replaced a false "Success" |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---
@@ -497,9 +1221,14 @@ The MCP server must be stopped first — port 8765 is single-bind (close the Cla
 Extracted from the larger AutoScraper-Int agent codebase, then converted from a
 self-contained pydantic-ai loop (OpenAI key) into an MCP stdio server driven by
 Claude Code (user's subscription, zero keys). The retired loop — `run_extension.py`
-REPL, Playwright path, model profiles, recipes, vision — is preserved verbatim in
-`legacy/` (note: `legacy/` files still import `core.*`/root modules and would need
-path fixes to run again).
+REPL, `harness.py`, `extension_harness.py`, the Playwright path, model profiles,
+recipes, vision — is preserved verbatim in `legacy/`.
+
+**`legacy/` does not import.** Verified: `legacy/run_extension.py` dies at import
+with `ModuleNotFoundError: No module named 'core.utils.model_profiles'` — those
+`core.*` submodules were not carried over. It is reference material, not a second
+entry point, and reviving it would need path fixes plus the missing modules. The
+only entry point is `mcp_server.py`.
 
 Conversation that produced the pre-MCP state lives in the parent project's session
 logs — search for "Boxsy form-fill" for the multi-hour debugging arc that surfaced

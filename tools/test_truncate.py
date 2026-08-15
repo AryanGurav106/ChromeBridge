@@ -16,6 +16,7 @@ Run:  python tools/test_truncate.py
 """
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -44,6 +45,27 @@ ROWS = ('mmid=13 | input[text] name="user-name"\n'
         'mmid=15 | input[password] name="password"\n'
         'mmid=17 | input[submit] name="Login"')
 PAGE = LEGEND + ROWS
+
+
+def _folded_listing():
+    """A listing shaped like arXiv's: short individual rows plus folded groups.
+
+    A folded row stands for its whole group, so counting LINES under-reports any
+    loss by the fold factor — and the two truncation branches disagreed about it.
+    """
+    legend = "\n".join(f"  - legend line {i} explaining notation at length to eat budget"
+                       for i in range(8))
+    rows = [
+        'mmid=9 | a name="archive home" | box(24,7,87,39)',
+        'mmid=17 | a "Search" | box(2233,12,82,29)',
+        "26× a in section=main - shown as ref:\"label\": "
+        + " ".join(f'{40+i}:"Author {i}"' for i in range(26)),
+        "45× a in section=main - shown as ref:\"label\": "
+        + " ".join(f'{100+i}:"Name {i}"' for i in range(45)),
+        'mmid=174 | a "Aulia Kharis" | box(255,845,156,16)',
+    ]
+    return ("Current URL: /list/cs.AI/recent\n" + legend + "\n" + "\n".join(rows),
+            2 + 26 + 45 + 1)
 
 
 def main():
@@ -137,6 +159,33 @@ async def main_async():
 
     ms.STATE["bridge"] = FB(BODY + OUTLINE)
     out = await gpt(tabId=1, max_chars=300)
+    # T16/T17: shown + claimed == true, at EVERY budget and through BOTH branches.
+    # Live on arXiv: at max_chars=600 the listing said "2 more element(s) not shown"
+    # while 135 were missing (the fallback matched only `mmid=` lines, so folded
+    # groups were dropped from the output AND left out of the count); and at a
+    # budget that reached rows the ordinary branch said nothing at all while 74
+    # vanished. Both now count ELEMENTS through one helper.
+    _text, _true = _folded_listing()
+    _bad = []
+    for cap in (400, 600, 900, 1200, 1800):
+        out = ms._truncate(_text, cap, "scope with ref_id")
+        # Count what was actually PRINTED, not what the rows declare. A partially
+        # sliced fold row still carries its "26x" prefix, so _row_elements credits
+        # all 26 while only 7 refs reached the page — the exact over-count the code
+        # fix addresses, and using the same helper here would hide it.
+        _body = out.split("[output truncated")[0]
+        shown = (len(re.findall(r"^mmid=", _body, re.M))
+                 + len(re.findall(r"(?:^|\s)\d+:", _body)))
+        m = re.search(r"(\d+) more element\(s\) not shown", out)
+        claimed = int(m.group(1)) if m else 0
+        if shown + claimed != _true:
+            _bad.append(f"cap={cap}: {shown}+{claimed}!={_true}")
+    check("T16 shown + 'N more not shown' equals the true element total, every budget",
+          not _bad, "; ".join(_bad))
+    check("T17 ...and a folded row is counted as its whole group, not as one line",
+          ms._row_elements('26× a in section=main - shown as ref:"label": 40:"x"') == 26,
+          f"got {ms._row_elements(chr(50)+chr(54)+chr(215)+chr(32)+chr(97))}")
+
     check("T15 text with no banner is unchanged by the banner path",
           not out.startswith("***"), repr(out[:60]))
 

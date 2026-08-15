@@ -107,6 +107,46 @@ async def main():
             r = await page.evaluate("(function(){ " + CLICK + "; return _clickPage(\"[mmid='" + lb[0]["mmid"] + "']\"); })()")
             lclicks = await page.evaluate("window.__lightClicks || 0")
             check("light-DOM click still works", bool(r.get("ok")) and lclicks >= 1)
+        # ---- S12: EFFECT DETECTION must cross shadow boundaries too ----------
+        # The collector crossed shadow roots long ago; the probes that decide "did
+        # this click/submit do anything?" never got the same fix — the same bug
+        # class as CLAUDE.md #9 and #15, in its fourth and fifth homes. Measured:
+        # a click that opens a Lit/Shoelace dialog inside a shadow root moves the
+        # light-DOM node count 6 -> 6 and the dialog count 0 -> 0, so "click had no
+        # detectable effect" fires on a click that WORKED — and a false FAILED gets
+        # retried, which is the double-submit class.
+        ep = await browser.new_page(viewport={"width": 1000, "height": 700})
+        await ep.set_content(
+            "<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>"
+            "<my-app></my-app><script>"
+            "class MyApp extends HTMLElement { connectedCallback(){"
+            " const r=this.attachShadow({mode:'open'});"
+            " r.innerHTML='<button id=open>Open</button><div id=host></div>';"
+            " r.getElementById('open').addEventListener('click',()=>{"
+            "  r.getElementById('host').innerHTML='<div role=\"dialog\" aria-modal=\"true\">"
+            "<p>Confirm</p><button>OK</button></div>';});}}"
+            "customElements.define('my-app',MyApp);</script></body>")
+        await ep.wait_for_timeout(200)
+        _DEEP_N = ("(function(){let c=0;const v=(r,d)=>{if(d>6)return;try{const a=r.querySelectorAll('*');"
+                   "c+=a.length;a.forEach(e=>{if(e.shadowRoot)v(e.shadowRoot,d+1);});}catch(e){}};"
+                   "v(document,0);return c;})()")
+        _LIGHT_N = "document.querySelectorAll('*').length"
+        _before = (await ep.evaluate(_LIGHT_N), await ep.evaluate(_DEEP_N))
+        await ep.evaluate("document.querySelector('my-app').shadowRoot.getElementById('open').click()")
+        await ep.wait_for_timeout(150)
+        _after = (await ep.evaluate(_LIGHT_N), await ep.evaluate(_DEEP_N))
+        check("S12 a light-DOM node count CANNOT see a shadow click's effect"
+              " (this is why the probe had to change)",
+              _after[0] == _before[0], f"light {_before[0]} -> {_after[0]}")
+        check("S12b ...while the shadow-aware count does",
+              _after[1] > _before[1], f"deep {_before[1]} -> {_after[1]}")
+        # ...and the shipped probe must use the shadow-aware form.
+        _bg = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
+        check("S12c the shipped click/submit effect probes are shadow-aware",
+              _bg.count("dup:deepall") >= 2 and "dialogs: _deep(sel).length" in _bg,
+              f"dup:deepall sites={_bg.count('dup:deepall')}")
+        await ep.close()
+
         await browser.close()
 
     failed = [r for r in results if not r[1]]

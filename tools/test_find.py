@@ -190,6 +190,119 @@ async def main():
           '"Element.querySelector"' in out and "href=" in out,
           out.splitlines()[-1].strip()[:96])
 
+    # F19/F20: the SHARED formatter path. The collector attaches `line` — the exact
+    # row read_page would print — and find must render from it rather than
+    # rebuilding the row in Python. Every other fixture here omits `line`, so
+    # without these the new path was completely untested and only the legacy
+    # fallback was being exercised.
+    page(el(mmid="70", tag="a", label="Download report", text="Download report",
+            href="/downloads/report.pdf",
+            line='mmid=70 | a "Download report" href="/downloads/report.pdf" | box(8,8,200,20)',
+            y=8))
+    out = await run("download report")
+    check("F19 find renders from the collector's line, not a parallel formatter",
+          '"Download report"' in out and "report.pdf" in out and "box(" not in out,
+          out.splitlines()[-1].strip()[:100])
+
+    # A version-skew guard: an older extension returns no `line`, and find must
+    # degrade rather than emit an empty identity.
+    page(el(mmid="71", tag="a", label="Legacy link", text="Legacy link",
+            href="/legacy", y=8))
+    out = await run("legacy link")
+    check("F20 an entry with no line still renders (older extension build)",
+          "Legacy link" in out and "/legacy" in out,
+          out.splitlines()[-1].strip()[:100])
+
+    # F21-F24: the confidence heading, reported independently by SIX live agents.
+    # Two separate causes, both letting junk through under `Found N element(s)`:
+    #  - coverage was credited on ANY score increase, including the 0.1 weight for
+    #    a fragment buried inside a longer word;
+    #  - the >=2-covered-token rule only applied from FOUR tokens, so a 3-token
+    #    query passed on one generic word.
+    page(el(mmid="337", tag="button", name="Issue body actions"),
+         el(mmid="109", tag="a", name="All issues"),
+         el(mmid="266", tag="a", name="New issue"))
+    out = await run("labels applied to this issue")
+    check("F21 a 3-token query is not answered confidently by one generic word",
+          "NO CONFIDENT MATCH" in out, out.splitlines()[0][:96])
+
+    page(el(mmid="504", tag="a", name="Browser compatibility"),
+         el(mmid="17110", tag="a", name="About", section="footer"),
+         el(mmid="374", tag="a", name="Web APIs"))
+    out = await run("the link about browser compatibility data for this API")
+    confident = out.split("NO CONFIDENT MATCH")[0]
+    strong = [l for l in confident.splitlines() if l.strip().startswith("ref_")]
+    check("F22 ...and one-token footer noise stays out of the confident list",
+          any("ref_504" in l for l in strong)
+          and not any(("ref_17110" in l or "ref_374" in l) for l in strong),
+          " | ".join(l.strip()[:40] for l in strong) or "none")
+
+    # A whole form answered "date of birth field" — 15 elements, the real DOB
+    # field ranked 8th, all under the confident header.
+    page(el(mmid="263", tag="input", value="10 Aug 2026"),
+         el(mmid="230", tag="input", placeholder="First Name"),
+         el(mmid="240", tag="input", placeholder="Last Name"))
+    out = await run("date of birth field")
+    check("F23 a query no element explains is reported as no confident match",
+          "NO CONFIDENT MATCH" in out or "No elements matched" in out,
+          out.splitlines()[0][:96])
+
+    # NEGATIVE CONTROL. The gate must stay off for short queries, where matching
+    # one word IS the whole query — this is what F1/F8/F14 depend on, and a
+    # coverage rule that ignores role words silently breaks non-Latin pages.
+    page(el(mmid="12", tag="textarea", placeholder="2人冒充保安看演唱会被罚", w=300, h=30))
+    out = await run("search box")
+    check("F24 ...while a two-word query still reaches a control via a role word",
+          "ref_12" in out and "Found" in out.splitlines()[0],
+          out.splitlines()[0][:96])
+
+    # F25/F26: near= is CONTENT coverage. Excluding it left pages whose only word
+    # matches came from adjacent text with no text coverage at all, so they fell
+    # through to the ROLE-word fallback that every combobox satisfies — and the
+    # two failures point in OPPOSITE directions, which is why one rule fixes both.
+    page(el(mmid="312", tag="input", role="combobox", near="Select State"),
+         el(mmid="275", tag="input", role="combobox"))
+    out = await run("Select City dropdown")
+    check("F25 a dropdown that is not the one asked for is not confident",
+          "NO CONFIDENT MATCH" in out, out.splitlines()[0][:96])
+
+    page(el(mmid="2229", tag="button", label="구독", name="구독",
+            near="매일경제 08월 10일 05:52 구독"),
+         el(mmid="528", tag="button", label="구독", name="구독"),
+         el(mmid="549", tag="button", label="구독", name="구독"))
+    out = await run("매일경제 구독 버튼")
+    check("F26 ...while the one identified by its near= context IS confident",
+          "Found" in out.splitlines()[0] and "ref_2229" in out.split("NO CONFIDENT MATCH")[0],
+          out.splitlines()[0][:96])
+
+    # F27: the Turkish dotted capital I. Unicode folds U+0130 to "i" + U+0307
+    # COMBINING DOT ABOVE, so "İstanbul".casefold() != "istanbul". An agent types
+    # lowercase ASCII, so EVERY correctly-spelled Turkish proper noun was
+    # unreachable — measured live on ntv.com.tr, where the İstanbul weather link
+    # was missed entirely (not even a weak match) while the İ-spelled query put it
+    # first. The fix (fold, then drop combining marks) is accent-insensitive for
+    # every script at once, which is what someone typing a query expects.
+    page(el(mmid="29", tag="a", label="İstanbul 29°", name="İstanbul 29°"),
+         el(mmid="30", tag="a", label="Hava durumu raporu", name="Hava durumu raporu"))
+    out = await run("istanbul")
+    check("F27 a lowercase-ASCII query reaches a Turkish İ-spelled label",
+          "ref_29" in out and "Found" in out.splitlines()[0], out.splitlines()[0][:96])
+
+    page(el(mmid="31", tag="input", placeholder="Αναζήτηση", w=300, h=30))
+    out = await run("αναζητησης")
+    check("F27b ...and an unaccented Greek query reaches an accented label",
+          "ref_31" in out, out.splitlines()[0][:96])
+
+    # F28: `under=` bypassed the marker — a 71-char Greek heading arrived as exactly
+    # 40 chars with a trailing space and no signal, in find's own formatter.
+    page(el(mmid="32", tag="a", label="Read more", name="Read more",
+            underHeading="Γ. Γεραπετρίτης: Τηλεφωνική επικοινωνία με τον Ιρανό υπουργό Εξωτερικών"))
+    out = await run("read more")
+    _u = [l for l in out.splitlines() if "under=" in l]
+    check("F28 a long under= heading is not cut in silence",
+          bool(_u) and ("Εξωτερικών" in _u[0] or "…(+" in _u[0]),
+          _u[0].strip()[-70:] if _u else "no under= emitted")
+
     page(NAV)
     out = await run("zzzq nonexistent widget")
     check("F9 a genuine miss says so and points at read_page",

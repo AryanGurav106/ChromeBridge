@@ -147,49 +147,60 @@ async def score(page, cdp, s: dict) -> dict | None:
         """(bn)=>{const el=document.querySelector(`[backend_node_id="${String(bn).replace(/"/g,'')}"]`);
            if(!el)return null;const a=[];for(let n=el.parentElement;n;n=n.parentElement){
              const m=n.getAttribute&&n.getAttribute('mmid'); if(m)a.push(m);}
-           const d=el.querySelector&&el.querySelector('[mmid]');
-           return {own:el.getAttribute('mmid'),ancs:a,desc:d?d.getAttribute('mmid'):null};}""", bn)
+           // ANY descendant, not the FIRST one. A <label> wrapping its <select> was
+           // scored a miss because querySelector('[mmid]') returned a different child,
+           // while the select itself WAS listed and acting on it does exactly what
+           // clicking the label would. Capped by area so a page-sized container cannot
+           // claim credit for everything inside it.
+           const _r = el.getBoundingClientRect();
+           const _small = (_r.width * _r.height) < 0.4 * innerWidth * innerHeight;
+           const ds = _small ? Array.from(el.querySelectorAll('[mmid]')).map(n=>n.getAttribute('mmid')) : [];
+           return {own:el.getAttribute('mmid'),ancs:a,descs:ds};}""", bn)
     kept = {str(e.get("mmid")) for e in (st or [])}
     res["chromebridge"] = {
         "recall": bool(probe and (probe["own"] in kept
                                   or any(a in kept for a in probe["ancs"])
-                                  or probe["desc"] in kept)),
+                                  or any(x in kept for x in (probe.get("descs") or [])))),
         "tokens": round(len(listing or "") / 4),
     }
 
     # ---- accessibility tree -------------------------------------------------
-    # Resolve the target to a Chrome backendNodeId so the AX tree is asked about
-    # the SAME element, not one with a similar name.
+    # Resolved through Runtime objectIds, NOT the DOM domain. The first version
+    # called DOM.getDocument(depth=-1, pierce=True) per sample on a CDP session
+    # reused across dozens of set_content swaps: every call measured 0.0s in
+    # isolation, yet the run wedged before sample 10 and printed nothing for
+    # minutes. describeNode on an objectId needs no document node-map, so there
+    # is no stale state to wedge on.
+    #
+    # Ancestors are resolved by INDEXED expression rather than a parent walk,
+    # because DOM.describeNode does not return parentId (verified: the walk
+    # stopped at hop 0 every time, silently giving the AX tree no ancestor
+    # credit while chromebridge got it — an unfair comparison).
     try:
-        doc = await cdp.send("DOM.getDocument", {"depth": -1, "pierce": True})
-        root = doc["root"]["nodeId"]
-        hit = await cdp.send("DOM.querySelector",
-                             {"nodeId": root, "selector": f'[backend_node_id="{bn}"]'})
-        tgt_node = hit.get("nodeId") or 0
         want = set()
-        if tgt_node:
-            desc = await cdp.send("DOM.describeNode", {"nodeId": tgt_node, "depth": 1})
-            node = desc["node"]
-            want.add(node["backendNodeId"])
-            for ch in node.get("children") or []:
-                want.add(ch["backendNodeId"])
-            # ancestors
-            cur = tgt_node
-            for _ in range(12):
-                try:
-                    d2 = await cdp.send("DOM.describeNode", {"nodeId": cur})
-                    pid = d2["node"].get("parentId")
-                    if not pid:
-                        break
-                    d3 = await cdp.send("DOM.describeNode", {"nodeId": pid})
-                    want.add(d3["node"]["backendNodeId"])
-                    cur = pid
-                except Exception:
-                    break
+        for depth in range(0, 9):
+            chain = ".parentElement" * depth
+            expr = f"document.querySelector('[backend_node_id=\"{bn}\"]')" + chain
+            ev = await cdp.send("Runtime.evaluate",
+                                {"expression": expr, "returnByValue": False})
+            oid = (ev.get("result") or {}).get("objectId")
+            if not oid:
+                break
+            try:
+                d = await cdp.send("DOM.describeNode",
+                                   {"objectId": oid, "depth": 1 if depth == 0 else 0})
+                node = d["node"]
+                want.add(node.get("backendNodeId"))
+                if depth == 0:
+                    for ch in node.get("children") or []:
+                        want.add(ch.get("backendNodeId"))
+            except Exception:
+                break
         ax = await cdp.send("Accessibility.getFullAXTree", {})
         nodes = ax.get("nodes") or []
         seen = {n.get("backendDOMNodeId") for n in nodes if not n.get("ignored")}
-        res["ax-tree"] = {"recall": bool(want & seen), "tokens": round(len(ax_lines(nodes)) / 4)}
+        res["ax-tree"] = {"recall": bool(want & seen),
+                          "tokens": round(len(ax_lines(nodes)) / 4)}
     except Exception as e:
         res["ax-tree"] = {"recall": False, "tokens": 0, "err": str(e)[:60]}
 
@@ -226,7 +237,12 @@ async def main() -> int:
         cdp = await ctx.new_cdp_session(page)
         for i, s in enumerate(samples, 1):
             try:
-                r = await score(page, cdp, s)
+                # A single pathological page must not silently stall the run —
+                # that cost three rounds of blind waiting.
+                r = await asyncio.wait_for(score(page, cdp, s), timeout=45)
+            except asyncio.TimeoutError:
+                print(f"  [{i:>3}] TIMEOUT on {s.get('website')} — skipped", flush=True)
+                r = None
             except Exception:
                 r = None
             if r:

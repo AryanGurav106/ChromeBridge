@@ -1,11 +1,30 @@
 # ChromeBridge MCP server — Claude Code is the agent (no LLM SDKs needed here).
-mcp>=1.2.0              # MCP stdio server (FastMCP)
-pydantic==2.10.4
-pydantic-core==2.27.2
+#
+# PINNING POLICY: floors, not equalities. The exact pins that used to live here
+# (pydantic==2.10.4, pydantic-core==2.27.2, httpx==0.27.2, ...) were never the
+# versions anyone actually ran: the development venv had drifted to pydantic
+# 2.13.4 / mcp 1.27.2, while a fresh `pip install -r requirements.txt` resolved
+# pydantic back to 2.10.4 and dragged mcp down to 1.12.4 with it. So the pinned
+# set was exercised by nobody, and CI would have tested a combination no human
+# had ever used. Floors keep the resolver on the versions this is developed
+# against; the one ceiling below is a real, known incompatibility.
+# Ceiling <2.0 is load-bearing, not cautious: with a bare floor the resolver
+# picks mcp 2.0.0 (checked with `pip install --dry-run --ignore-installed`),
+# a major bump away from the 1.x this is written and tested against, and
+# `from mcp.server.fastmcp import FastMCP` is exactly the kind of import a
+# major release moves. Lift it deliberately, after running the suites.
+mcp>=1.12,<2.0           # MCP stdio server (FastMCP)
+pydantic>=2.10           # pydantic-core is pydantic's own dependency — never pin it here
 
 # Utilities
-httpx==0.27.2
-requests==2.32.3
-python-dotenv==1.0.1
-pillow==11.0.0          # zoom crops + GIF export
-websockets>=12.0        # local bridge to the Chrome extension
+httpx>=0.27
+requests>=2.32
+python-dotenv>=1.0
+pillow>=11.0             # zoom crops + GIF export
+
+# Local bridge to the Chrome extension. Floor 14.0: that is where the modern
+# asyncio server API (websockets.asyncio.server.serve / ServerConnection) became
+# the supported one and the legacy WebSocketServerProtocol path started warning.
+# Ceiling 17: the legacy API was already deleted in a major bump once, so an
+# unbounded range is a build break waiting for someone else's fresh install.
+websockets>=14.0,<17.0

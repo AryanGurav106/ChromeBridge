@@ -102,11 +102,18 @@ PROBE = r"""
     if (m) ancs.push(m);
   }
   const anc = ancs.length ? ancs[0] : null;
-  let desc = null;
-  const d = el.querySelector && el.querySelector('[mmid]');
-  if (d) desc = d.getAttribute('mmid');
+
+  // ANY descendant, not the FIRST one. A <label> wrapping its <select> was
+  // scored a miss because querySelector('[mmid]') returned a different child,
+  // while the select itself WAS listed and acting on it does exactly what
+  // clicking the label would. Capped by area so a page-sized container cannot
+  // claim credit for everything inside it.
+  const _r = el.getBoundingClientRect();
+  const _small = (_r.width * _r.height) < 0.4 * innerWidth * innerHeight;
+  const ds = _small ? Array.from(el.querySelectorAll('[mmid]')).map(n=>n.getAttribute('mmid')) : [];
+
   return {
-    found: true, rendered, own, anc, ancs, desc,
+    found: true, rendered, own, anc, ancs, descs: ds,
     tag: el.tagName.toLowerCase(),
     text: (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
     w: Math.round(r.width), h: Math.round(r.height),
@@ -165,7 +172,7 @@ async def score_one(page, s: dict) -> dict:
     listed = {str(e.get("mmid")) for e in structured}
     own = probe.get("own") if probe.get("own") in listed else None
     anc = next((a for a in (probe.get("ancs") or []) if a in listed), None)
-    desc = probe.get("desc") if probe.get("desc") in listed else None
+    desc = next((x for x in (probe.get("descs") or []) if x in listed), None)
     res["rendered"] = bool(probe.get("rendered"))
     res["exact"] = bool(own)
     res["recalled"] = bool(own or anc or desc)

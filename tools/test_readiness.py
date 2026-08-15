@@ -33,7 +33,12 @@ from _extract import extract as _shared_extract  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 BG = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
-READY = _shared_extract("_readinessPage", BG, verify=True)
+# The probe calls _deepAll (the shadow-aware query). In the extension both live in
+# one scope; extracted alone the reference throws, every try/catch swallows it, and
+# the probe reports a settled page — invisibly. Same swallowed-ReferenceError shape
+# as the vh/vw bug that R8 exists for; caught by the suite this time.
+READY = (_shared_extract("_deepAll", BG, verify=True) + ";\n"
+         + _shared_extract("_readinessPage", BG, verify=True))
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -135,6 +140,38 @@ async def main():
         check("R6 a lazy image far below the fold does NOT keep the page 'loading'",
               r["imgs"] == 0,
               f"imgs={r['imgs']} — an unloaded below-fold image would make the banner permanent")
+
+        # R7/R8: the two ways a progressbar pinned the banner ON permanently.
+        # Both found by live agents on real sites, both the same shape as R6 —
+        # an indicator that can never turn off makes the warning worthless, and
+        # worse, indistinguishable from the one time it was right.
+        pg = await browser.new_page(viewport={"width": 1200, "height": 800})
+        await pg.set_content(
+            "<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>"
+            # Google Flights: Material bars idle at opacity:0 and stay in the DOM.
+            # checkVisibility() ignores opacity unless asked, so these counted forever.
+            "<div role=progressbar style='opacity:0;width:300px;height:4px'>Loading results</div>"
+            # IKEA: a parked <progress> outside the viewport, and one far below the fold.
+            "<progress style='position:absolute;left:1960px;top:84px;width:340px;height:5px'></progress>"
+            "<progress style='position:absolute;left:0;top:6549px;width:340px;height:5px'></progress>"
+            "</body>")
+        await pg.wait_for_timeout(120)
+        r = await pg.evaluate("(function(){ " + READY + "; return _readinessPage(); })()")
+        check("R7 an opacity:0 / off-viewport progressbar does NOT pin the banner on",
+              r["prog"] == 0, f"prog={r['prog']} — a stuck banner trains the reader to ignore it")
+
+        # ...and the signal must still FIRE. A fix that silently zeroes the probe
+        # looks identical to a settled page — which is exactly what my first
+        # version of the viewport bound did (ReferenceError swallowed by a catch).
+        await pg.set_content(
+            "<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>"
+            "<div role=progressbar style='width:300px;height:6px;background:#ccc'>Loading</div>"
+            "</body>")
+        await pg.wait_for_timeout(120)
+        r = await pg.evaluate("(function(){ " + READY + "; return _readinessPage(); })()")
+        check("R8 ...while a real in-viewport progressbar is still counted",
+              r["prog"] == 1, f"prog={r['prog']} — the negative control for R7")
+        await pg.close()
 
         await browser.close()
 

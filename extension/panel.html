@@ -83,6 +83,14 @@
 
 * { box-sizing: border-box; }
 
+/* The panel hides and shows almost everything through the `hidden` property, and
+   the UA sheet's [hidden] rule loses to ANY class that sets `display`. The paused
+   banner (.banner is display:flex) therefore rendered in every state, announcing
+   a pause that was not in effect — the exact opposite of what a safety indicator
+   is for. Make `hidden` win everywhere so the next display-carrying class can't
+   reintroduce it. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
@@ -225,6 +233,9 @@ html, body {
   word-break: break-word;
 }
 .alert.is-hint { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }
+/* Neutral: for facts that need explaining but are not problems (the bridge
+   landing on a different port of its span). Amber here would read as a fault. */
+.alert.is-note { background: var(--surface-sub); border-color: var(--line-soft); color: var(--text-2); }
 .alert b { font-weight: 650; }
 
 /* ---------- buttons ------------------------------------------------------ */
@@ -286,6 +297,162 @@ summary:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 2p
   color: var(--text-3);
 }
 .btn-mini:hover { background: var(--surface-sub); border-color: var(--line); color: var(--text-2); }
+
+.btn-warn {
+  background: var(--warn);
+  border-color: transparent;
+  color: #fff;
+}
+.btn-warn:hover { background: var(--warn); border-color: transparent; filter: brightness(1.08); }
+@media (prefers-color-scheme: dark) { .btn-warn { color: #1b1408; } }
+
+.btn-danger { color: var(--bad); }
+.btn-danger:hover { background: var(--bad-bg); border-color: var(--bad-line); color: var(--bad); }
+
+/* Revoke's affirmative twin, so a row that grants and a row that revokes read as
+   one pair. This one keeps a resting border where btn-danger has none: it is the
+   first-run call to action, not a destructive verb parked at the end of a row. */
+.btn-go { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); }
+.btn-go:hover { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+
+/* ---------- pause switch (safety) ---------------------------------------
+   Lives in the header so the kill switch is reachable without scrolling, in
+   every panel state. ON (knob right, amber) means PAUSED — the visible word
+   next to it says which, because a switch whose "on" is a negative reads
+   ambiguously on its own.
+------------------------------------------------------------------------- */
+.switch {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 4px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: -.005em;
+  box-shadow: var(--shadow-sm);
+}
+.switch:hover { border-color: var(--text-3); background: var(--surface); }
+.switch .track {
+  position: relative;
+  width: 26px; height: 14px; flex: none;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background .18s ease;
+}
+.switch .knob {
+  position: absolute; top: 2px; left: 2px;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(16, 17, 28, .35);
+  transition: transform .18s cubic-bezier(.16, 1, .3, 1);
+}
+.switch[aria-checked="true"] {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn);
+}
+.switch[aria-checked="true"] .track { background: var(--warn); }
+.switch[aria-checked="true"] .knob { transform: translateX(12px); }
+
+/* Paused is a whole-panel state, not a widget state — the header changes
+   temperature too, so a glance at any part of the panel answers the question. */
+body.is-paused .hero::before {
+  background:
+    radial-gradient(90% 120% at 0% 0%,   rgba(180, 83, 9, .18), transparent 62%),
+    radial-gradient(80% 110% at 100% 0%, rgba(251, 191, 36, .13), transparent 60%);
+}
+
+/* ---------- banner (paused / blocked) ------------------------------------ */
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  margin-bottom: 11px;
+  border-radius: var(--r-lg);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  color: var(--warn);
+  box-shadow: var(--shadow-sm);
+}
+.banner > svg { width: 16px; height: 16px; flex: none; margin-top: 1px; }
+.banner-body { flex: 1; min-width: 0; }
+.banner-title { font-size: 12.5px; font-weight: 700; letter-spacing: -.01em; }
+.banner-sub { font-size: 11.5px; line-height: 1.45; margin-top: 2px; }
+.banner button { flex: none; align-self: center; }
+
+/* ---------- permission request ------------------------------------------- */
+.card.is-attn {
+  border-color: var(--brand-ring);
+  box-shadow: var(--shadow-md), 0 0 0 3px var(--brand-tint);
+}
+.perm-origin {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-sub);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  padding: 8px 10px;
+  word-break: break-all;
+}
+.perm-why { margin: 9px 0 11px; font-size: 11.5px; line-height: 1.5; color: var(--text-2); }
+.perm-actions { display: flex; gap: 8px; }
+.perm-actions .btn-primary { flex: 1; }
+
+/* ---------- allowed sites ------------------------------------------------ */
+.sites { list-style: none; margin: 0; padding: 0; }
+/* .site-row is the pre-grant; it shares this rule rather than copying it, so the
+   row that offers a grant and the rows that list one cannot drift apart. */
+.sites li, .site-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 7px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.sites li:first-child { border-top: 0; padding-top: 1px; }
+.site-row { border-top: 0; padding-top: 0; }
+/* The origin being AUTHORIZED must be readable in full: an ellipsis hides the
+   END of the host, which is exactly the part that decides what is being granted
+   (…-subdo… could finish at example.co.uk or at evil.com). This is the rule
+   .perm-origin already follows for the same reason; the list below may ellipse
+   because those decisions have already been made. */
+.site-row .site-origin { white-space: normal; overflow-wrap: anywhere; }
+.pregrant { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
+.pregrant .perm-why { margin: 0; }
+.site-meta { flex: 1; min-width: 0; }
+.site-origin {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.site-when { font-size: 10.5px; color: var(--text-3); margin-top: 1px; }
+.count {
+  font-size: 10.5px;
+  font-weight: 650;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .04em;
+}
+.sites-paused {
+  margin-top: 9px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--warn);
+}
 
 /* ---------- active tab --------------------------------------------------- */
 .tab-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -509,11 +676,45 @@ input:focus { background: var(--surface); border-color: var(--brand); outline: n
         <h1>ChromeBridge</h1>
         <p>Local MCP bridge for Claude Code</p>
       </div>
+      <button class="switch" id="pause_btn" role="switch" aria-checked="false"
+              title="Pause ChromeBridge" aria-label="Pause ChromeBridge">
+        <span class="track"><span class="knob"></span></span>
+        <span id="pause_label">Active</span>
+      </button>
     </div>
   </div>
 </header>
 
 <div class="wrap">
+
+  <!-- paused ---------------------------------------------------------------
+       Shown only while bridge_paused is true. Deliberately the first thing in
+       the scroll: while this is up, every read and every action is refused.
+  ------------------------------------------------------------------------ -->
+  <div class="banner" id="paused_banner" role="status" hidden>
+    <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <rect x="4" y="3" width="3" height="10" rx="1"/><rect x="9" y="3" width="3" height="10" rx="1"/>
+    </svg>
+    <div class="banner-body">
+      <div class="banner-title">Paused</div>
+      <div class="banner-sub">Every read and every action is refused. Claude Code gets an error until you resume.</div>
+    </div>
+    <button class="btn-warn" id="resume_btn">Resume</button>
+  </div>
+
+  <!-- permission request ---------------------------------------------------
+       The first-run interaction: Claude tried to act on a site, the gate
+       refused it and recorded the origin. One click grants it.
+  ------------------------------------------------------------------------ -->
+  <section class="card is-attn" id="perm_req" aria-labelledby="perm-h" hidden>
+    <div class="label" id="perm-h">Permission requested</div>
+    <div class="perm-origin" id="perm_origin">—</div>
+    <p class="perm-why" id="perm_why">—</p>
+    <div class="perm-actions">
+      <button class="btn-primary" id="perm_allow">Allow this site</button>
+      <button id="perm_dismiss">Not now</button>
+    </div>
+  </section>
 
   <!-- connection ---------------------------------------------------------- -->
   <section class="card" aria-labelledby="conn-h">
@@ -569,6 +770,56 @@ input:focus { background: var(--surface); border-color: var(--brand); outline: n
     </div>
   </section>
 
+  <!-- trusted-input conflict ------------------------------------------------
+       Chrome refuses chrome.debugger.attach for a whole tab when ANY frame in
+       it belongs to a different extension (password managers inject exactly
+       such frames, on exactly the login pages where trusted input matters).
+       Without this the user just sees clicking stop working on one site.
+  ------------------------------------------------------------------------ -->
+  <section class="card" id="dbg_block" aria-labelledby="dbg-h" hidden>
+    <div class="label" id="dbg-h">
+      <span>Trusted input blocked</span>
+      <button class="btn-mini" id="dbg_dismiss">Dismiss</button>
+    </div>
+    <div class="alert is-hint" id="dbg_text"></div>
+  </section>
+
+  <!-- allowed sites -------------------------------------------------------- -->
+  <section class="card" aria-labelledby="sites-h">
+    <div class="label" id="sites-h">
+      <span>Sites ChromeBridge can act on</span>
+      <span class="count" id="sites_count" hidden></span>
+    </div>
+    <!-- pre-grant ----------------------------------------------------------
+         Without this the ONLY way into the permission table is a refusal, so
+         the first tool call against every new origin is guaranteed to fail and
+         the user's introduction to ChromeBridge is an error they then clear.
+         Deliberately the same row as the grants below it: it is the same
+         object, one step before it exists.
+    --------------------------------------------------------------------- -->
+    <div class="pregrant" id="pre_grant" hidden>
+      <div class="site-row" id="pre_row" hidden>
+        <div class="site-meta">
+          <div class="site-origin" id="pre_origin">—</div>
+          <div class="site-when" id="pre_sub">—</div>
+        </div>
+        <button class="btn-mini btn-go" id="pre_allow">Allow</button>
+      </div>
+      <p class="perm-why" id="pre_why" hidden></p>
+    </div>
+
+    <div id="sites_empty" class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>
+      </svg>
+      <div>No sites allowed yet.<br>Claude Code can list your tabs, but it can't read or drive a page until you allow that site.</div>
+    </div>
+    <ul class="sites" id="sites" hidden></ul>
+    <div class="sites-paused" id="sites_paused" hidden>
+      Paused — these grants are inactive until you resume.
+    </div>
+  </section>
+
   <!-- activity ------------------------------------------------------------ -->
   <section class="card" aria-labelledby="act-h">
     <div class="label" id="act-h">
@@ -616,7 +867,7 @@ input:focus { background: var(--surface); border-color: var(--brand); outline: n
           <input id="host" type="text" value="127.0.0.1" spellcheck="false" />
         </div>
         <div>
-          <label for="port">Port</label>
+          <label for="port">Port <span class="hint">— first of 10</span></label>
           <input id="port" type="number" value="8765" />
         </div>
       </div>
@@ -627,8 +878,9 @@ input:focus { background: var(--surface); border-color: var(--brand); outline: n
 
   <p class="note">
     ChromeBridge only talks to the local bridge at the address above — nothing
-    leaves your machine. Ops run on the tab Claude Code targets, using your real
-    session. Remove it any time from <code>chrome://extensions</code>.
+    leaves your machine. Pages can only be read or driven on the sites listed
+    above, using your real session; <strong>Pause</strong> stops everything at
+    once. Remove it any time from <code>chrome://extensions</code>.
   </p>
 
 </div>

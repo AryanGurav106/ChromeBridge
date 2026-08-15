@@ -134,6 +134,31 @@ async def main():
         check("D2 folding actually saves tokens", len(folded) < len(plain),
               f"{len(folded)} vs {len(plain)} chars ({(len(folded)-len(plain))/len(plain):+.0%})")
 
+        # ---- D8: a fold's shared description must be true of ALL its members -----
+        # The shape signature is tag/role/section/href/size and knows nothing about what
+        # the labels SAY. On Hacker News that put a story TITLE, site domains, timestamps
+        # and comment links in ONE bucket because they all render at ~98x16px — and a
+        # reader gets only the group's shared description, so a front-page story vanished
+        # into a metadata pile. Reported by an agent doing a real task ("find the
+        # highest-scoring story") that the fold structurally prevented.
+        hp = await browser.new_page(viewport={"width": 1200, "height": 900})
+        _rows = "".join(
+            f"<div style='height:20px'>"
+            f"<a href=/s{i} style='display:inline-block;width:98px'>Qwen 3.8 27B v{i}</a>"
+            f"<a href=/d{i} style='display:inline-block;width:98px'>huggingface{i}.co</a>"
+            f"<a href=/t{i} style='display:inline-block;width:98px'>{i+2} hours ago</a></div>"
+            for i in range(10))
+        await hp.set_content(f"<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>{_rows}</body>")
+        await hp.wait_for_timeout(140)
+        hout = await hp.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()")
+        _folds = [l for l in hout.splitlines() if "same shape" in l]
+        _mixed = [l for l in _folds if "huggingface" in l and "hours ago" in l]
+        check("D8 a fold never mixes domains with timestamps (heterogeneous labels)",
+              not _mixed, f"{len(_mixed)} mixed fold(s): {(_mixed or [''])[0][:90]}")
+        check("D8b ...while like-with-like still folds, so compression is preserved",
+              any("Qwen" in l for l in _folds), f"{len(_folds)} fold(s) emitted")
+        await hp.close()
+
         await browser.close()
 
     passed = sum(1 for r in results if r)

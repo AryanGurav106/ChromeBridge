@@ -1,0 +1,152 @@
+"""Lint suite for the failure modes that keep coming back in pattern matching.
+
+Three incidents, one shape: a matcher that reads as general and measures as
+narrow, failing with no error and no missing-result signal.
+
+  1  `/[a-z0-9]/i` gates discarded every CJK / Cyrillic / Arabic label. Found by
+     ablation, not by review.
+  2  The destructive wordlist listed 削除 / キャンセル / 삭제 / удалить behind a
+     trailing `\\b` — an ASCII-only boundary, so every non-Latin entry was dead
+     code while the comment above it claimed multilingual coverage.
+  3  The SAME concept was spelled two ways ("is this button destructive?") in two
+     tiers of one function, so 'Abbrechen' was rejected by one and accepted by
+     the other. The placeholder-word question had FOUR copies.
+
+Each of those survived reading. What catches them is a rule a machine can check,
+so this file is rules, not examples:
+
+  P1  no regex may put `\\b` next to a non-ASCII alternative  — bug 2, mechanically
+  P2  one concept, one spelling: every definition tagged `i18n:<concept>` must be
+      byte-identical to its siblings                          — bug 3, mechanically
+  P3  the pattern auditor still fires on all three historical bugs, so its "0
+      findings" means something                               — bug 1, by proxy
+  P4  no ASCII-only character class gates page text           — bug 1, directly
+
+P2 exists because the duplication is FORCED: these functions are injected into
+the page with chrome.scripting and lose their closure, so a shared constant is
+not available to them. The copies are deliberate; the drift was not.
+
+Run:  python tools/test_patterns.py
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import re
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+_spec = importlib.util.spec_from_file_location("ap", ROOT / "tools" / "audit_patterns.py")
+ap = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(ap)
+
+FILES = ["extension/background.js", "extension/listener_tag.js", "mcp_server.py"]
+results = []
+
+
+def check(name, ok, detail=""):
+    results.append(ok)
+    print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"  - {detail}" if detail else ""))
+
+
+def main() -> int:
+    findings = ap.scan()
+
+    # ---- P1: \b beside a non-ASCII alternative --------------------------------
+    # JS \w is [A-Za-z0-9_]. `\b` after 削除 asks for a boundary between two
+    # non-word characters, which never exists, so the alternative can never match.
+    # ONE implementation, used for both the scan and its control. The first
+    # version of this rule could not fire at all: the character class excluded
+    # `)`, and in the pattern that actually shipped the `\b` sits AFTER the
+    # closing paren of the alternation — `…|削除)\b` — so nothing ever matched
+    # and P1 passed by being blind. The control below is what exposed that, which
+    # is the whole argument for having one.
+    def _p1(pat: str) -> list[str]:
+        if "\\b" not in pat or not any(ord(c) > 127 for c in pat):
+            return []
+        out = []
+        # the last alternative, then any closing parens, then a literal \b
+        for m in re.finditer(r"([^|()\[\]/\\]{1,40})\)*\\b", pat):
+            tail = m.group(1)
+            if tail and ord(tail[-1]) > 127:
+                out.append(tail)
+        return out
+
+    bad = [(f["file"], f["line"], t[-12:])
+           for f in findings for t in _p1(f["pat"])]
+    check("P1 no regex puts \\b next to a non-ASCII alternative (it can never match)",
+          not bad, "; ".join(f"{a}:{b} …{c!r}" for a, b, c in bad[:4]))
+    check("P1* ...and the rule provably fires on the pattern that actually shipped",
+          bool(_p1(r"^(cancel|close|delete|削除|삭제)\b")) and not _p1(r"^(cancel|delete)\b"),
+          "fires on the shipped list, silent on its ASCII-only form")
+
+    # ---- P2: one concept, one spelling ----------------------------------------
+    tagged: dict[str, list[tuple[str, int, str]]] = defaultdict(list)
+    TAG = re.compile(r"i18n:([a-z_]+)")
+    for rel in FILES:
+        src = (ROOT / rel).read_text(encoding="utf-8")
+        lines = src.split("\n")
+        for i, line in enumerate(lines):
+            m = TAG.search(line)
+            if not m:
+                continue
+            # The definition is the next line that is not a comment.
+            for j in range(i + 1, min(i + 25, len(lines))):
+                nxt = lines[j].strip()
+                if nxt.startswith("//"):
+                    continue
+                tagged[m.group(1)].append((rel, j + 1, nxt))
+                break
+    # A concept tagged i18n: and then DELETED leaves its tombstone comments behind,
+    # and that is the outcome we WANT — a deleted wordlist cannot drift. The rule is
+    # about live copies of one definition diverging, so a concept counts as live
+    # only where a definition actually names it. Anchoring on "the next non-comment
+    # line" alone was wrong: after a tombstone that line is whatever code follows,
+    # so two unrelated statements were compared as if they were two spellings of the
+    # wordlist and P2 failed on a concept with no code left at all.
+    _KEYWORDS = {"placeholder": "_phWord", "destructive": "DESTRUCTIVE", "submit": "submitWords"}
+
+    for concept, sites in sorted(tagged.items()):
+        needle = _KEYWORDS.get(concept, concept)
+        live = [x for x in sites if needle in x[2] and "=" in x[2]]
+        if not live:
+            check(f"P2 i18n:{concept} was DELETED — no wordlist left to drift",
+                  True, f"{len(sites)} tombstone comment(s), 0 live definitions")
+            continue
+        bodies = {x[2] for x in live}
+        check(f"P2 i18n:{concept} has ONE spelling across its {len(live)} copies",
+              len(bodies) == 1,
+              f"{len(bodies)} distinct at " + ", ".join(f"{a}:{b}" for a, b, _ in live))
+    check("P2* every tagged concept was actually located in the source",
+          bool(tagged), f"concepts={sorted(tagged)}")
+    # The corresponding control for P2: the comparison must reject two copies
+    # that differ by a single alternative, which is exactly how DESTRUCTIVE drifted.
+    _a = "const D = /^(cancel|close|delete)/i;"
+    _b = "const D = /^(cancel|close|delete|remove)/i;"
+    check("P2** ...and the comparison would REJECT two copies differing by one word",
+          len({_a, _b}) == 2 and len({_a, _a}) == 1)
+
+    # ---- P3: the auditor still detects the bugs it was built for --------------
+    check("P3 the pattern auditor still fires on all three historical bugs",
+          ap.self_test(), "see self-test output above")
+
+    # ---- P4: no ASCII-only class gating page text -----------------------------
+    ascii_text = [f for f in findings if "ascii-on-text" in f["cats"]]
+    check("P4 no ASCII-only character class gates page text",
+          not ascii_text,
+          "; ".join(f"{f['file']}:{f['line']} /{f['pat'][:30]}/" for f in ascii_text[:4]))
+
+    passed = sum(1 for r in results if r)
+    print(f"\n{passed}/{len(results)} pattern-lint checks passed.")
+    return 0 if passed == len(results) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

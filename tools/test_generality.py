@@ -157,9 +157,19 @@ async def main():
               not guts, f"leaked={[g.get('text') for g in guts][:4]}")
 
         e = ent.get("gr-editor")
-        check("E6 a long editor's value is clipped in compact",
-              bool(e) and len(e.get("value") or "") == 60,
-              f"len={len((e or {}).get('value') or '')}")
+        _ev = (e or {}).get("value") or ""
+        _body = _ev.split("…(+")[0]
+        # THE 60-CHAR COMPACT BOUND IS GONE. It is what made four consecutive writes
+        # to a Monaco editor read back byte-identical, so an agent could not tell
+        # truncation from a failed write. An editor of ordinary size now arrives
+        # WHOLE in compact; only genuinely large content is bounded (M-count), and
+        # there the residual is exact.
+        check("E6 an ordinary editor's value arrives WHOLE in compact",
+              bool(e) and len(_ev) == len(_body) and "…(+" not in _ev,
+              f"content={len(_body)} total={len(_ev)}")
+        check("E6b ...and it is the real code, not a gutter or a prefix",
+              "delta" in _ev and not _ev.startswith("1 2 3"),
+              repr(_ev[:56]))
         ef = {x["mmid"]: x for x in await page.evaluate(
             "(function(){ " + COLLECT + "; return _collectInteractivePage(true, null, 'full'); })()")}
         e2 = ef.get(dm2["gr-editor"]) if (dm2 := mm) else None
@@ -218,7 +228,7 @@ async def main():
               dm["gd-tracker"] not in fmap, f"entry={fmap.get(dm['gd-tracker'])}")
         check("D9 media rows are marked as non-controls in the listing",
               "(media — not a control)" in fullstr,
-              next((l.strip()[:96] for l in fullstr.splitlines() if "(media" in l and "mmid=" in l), "ABSENT"))
+              next((l.strip()[:96] for l in fullstr.splitlines() if "(media" in l and ("ref_" in l or "mmid=" in l)), "ABSENT"))
         # The whole design rests on scoping keeping `full` cheap.
         host = await page.evaluate("() => document.getElementById('gd-detail').getAttribute('mmid')")
         scoped = await page.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(false, '" + host + "', 'full'); })()")
@@ -230,13 +240,13 @@ async def main():
         lref = dm["gd-link"]
         sfull = await page.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(false, '" + lref + "', 'full'); })()")
         check("D11 scoping to a LINK with detail=full returns that link and its href",
-              f"mmid={lref} " in sfull and "report.pdf" in sfull,
-              next((l.strip()[:110] for l in sfull.splitlines() if l.startswith("mmid=")), "EMPTY LISTING"))
+              f"ref_{lref} " in sfull and "report.pdf" in sfull,
+              next((l.strip()[:110] for l in sfull.splitlines() if l.startswith(("ref_", "mmid="))), "EMPTY LISTING"))
         iref = dm["gd-imglink"]
         ifull = await page.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(false, '" + iref + "', 'full'); })()")
         check("D12 an image-wrapping link reports its own href, not just the image",
               "/gallery" in ifull and "thumb.png" in ifull,
-              " | ".join(l.strip()[:70] for l in ifull.splitlines() if l.startswith("mmid="))[:150])
+              " | ".join(l.strip()[:70] for l in ifull.splitlines() if l.startswith(("ref_", "mmid=")))[:150])
         scomp = await page.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(true, '" + host + "', 'compact'); })()")
         check("D13 compact scoping still EXCLUDES the host (it is the container, not a result)",
               all(e["mmid"] != host for e in scomp),
@@ -254,8 +264,8 @@ async def main():
         lf = dm["gp-leaf"]
         leaf = await page.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(false, '" + lf + "', 'compact'); })()")
         check("L3 scoping to a LEAF control returns that control, not an empty listing",
-              f"mmid={lf} " in leaf,
-              next((l.strip()[:100] for l in leaf.splitlines() if l.startswith("mmid=")), "EMPTY LISTING"))
+              f"ref_{lf} " in leaf,
+              next((l.strip()[:100] for l in leaf.splitlines() if l.startswith(("ref_", "mmid="))), "EMPTY LISTING"))
         check("L4 a scoped read does not carry page-level facts",
               "Main heading:" not in leaf and "BELOW the current viewport" not in leaf,
               " / ".join(l.strip()[:60] for l in leaf.splitlines()
@@ -366,6 +376,165 @@ async def main():
         # by the scale factor while the tool reported success — the fix #10/#11/#12
         # family. Both the listed box() and the CDP click point are checked, since
         # they are computed by different functions.
+        # ---- C: a canvas does not stop existing when the window gets wider --
+        # The unlabelled-canvas gate was a VIEWPORT FRACTION (>= 25%), so
+        # chartjs.org's 800x400 centrepiece was 29.6% of a 1200x900 viewport and
+        # kept, but 11.1% of a 2327x1234 one and dropped — the largest thing on the
+        # page absent from every listing at every detail level, leaving a 400px gap
+        # between two rows. Nothing about the element changed; only the window did.
+        # The early return was also uninstrumented, so `ledger:true` reported
+        # nothing and a live agent needed six probes to find it.
+        for _vw, _vh in ((1200, 900), (2400, 1300)):
+            cp = await browser.new_page(viewport={"width": _vw, "height": _vh})
+            await cp.set_content(
+                "<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>"
+                "<div class=chart-editor><div class=chart-view>"
+                "<canvas style='display:block;box-sizing:border-box;height:400px;width:800px'"
+                " width=880 height=440></canvas></div>"
+                "<a class=chart-action>Randomize</a></div>"
+                # must stay out at every size: a sparkline is not a surface to act on
+                "<canvas id=spark width=60 height=20 style='display:block'></canvas>"
+                "</body>")
+            await cp.wait_for_timeout(140)
+            craw = await cp.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+            cvs = [f"{e.get('w')}x{e.get('h')}" for e in craw if e.get("tag") == "canvas"]
+            check(f"CV1 an unlabelled 800x400 canvas is listed at {_vw}x{_vh}",
+                  "800x400" in cvs, f"canvases={cvs}")
+            check(f"CV2 ...and a 60x20 sparkline still is not, at {_vw}x{_vh}",
+                  "60x20" not in cvs, f"canvases={cvs}")
+            cstr = await cp.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()")
+            check(f"CV3 ...and it carries the (canvas) marker telling the agent to screenshot ({_vw})",
+                  "(canvas)" in cstr, cstr.splitlines()[0][:70])
+            await cp.close()
+
+        # ---- N: a name belongs to the element it is printed against -------
+        # AccName's "exclude the control's own subtree" rule is written for a
+        # LABELABLE form control. Applied to any element inside a <label>, it made
+        # siblings SWAP names — each cloned the label, removed itself, and kept the
+        # other's text. Live on IKEA's price filters, all five rows, boxes correct:
+        # the label span at x=119 reported name="28 products28" and the 14px count
+        # badge at x=284 reported name="$0.00 - 499.99". Name and geometry
+        # disagreed with nothing saying so.
+        np_ = await browser.new_page(viewport={"width": 1200, "height": 800})
+        await np_.set_content(
+            "<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>"
+            "<label style='display:block;position:relative;height:40px'>"
+            "<input type=checkbox style='position:absolute;width:0;height:0'>"
+            "<span id=lw tabindex=0 style='position:absolute;left:119px;top:4px;"
+            "width:157px;height:21px;cursor:pointer'>$0.00 - 499.99</span>"
+            "<span id=ct tabindex=0 style='position:absolute;left:284px;top:5px;"
+            "width:14px;height:19px;cursor:pointer'>28</span></label>"
+            # The two cases the rule EXISTS for must keep working — this is the
+            # negative control, and it is why the fix gates on labelable rather
+            # than simply on "has its own text" (a <select>'s innerText is its
+            # option text, so that simpler rule would have broken it).
+            "<label>Country <select id=sel><option>France</option></select></label>"
+            "<label><input type=checkbox id=cb2> Remember me</label>"
+            "</body>")
+        await np_.wait_for_timeout(140)
+        nraw = await np_.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        nid = await np_.evaluate("""() => ({lw: lw.getAttribute('mmid'), ct: ct.getAttribute('mmid'),
+            sel: sel.getAttribute('mmid'), cb2: cb2.getAttribute('mmid')})""")
+        nby = {str(e.get("mmid")): e for e in nraw}
+        for key, want, why in (
+            ("lw", "$0.00 - 499.99", "a labelled span keeps its OWN text"),
+            ("ct", "28", "...and its sibling does not steal it"),
+            ("sel", "Country", "a wrapped <select> still adopts the label (AccName)"),
+            ("cb2", "Remember me", "a wrapped checkbox still adopts the label"),
+        ):
+            e = nby.get(str(nid.get(key))) or {}
+            got = (e.get("name") or e.get("label") or e.get("text") or "")
+            check(f"N-{key} {why}", want in got, f"got {got!r}")
+        await np_.close()
+
+        # ---- M: no agent-facing field is cut in silence -------------------
+        # Seven of twenty live agents independently reported a bounded field that
+        # gave no sign of being bounded. The failure is not the bound, it is that
+        # `value="Acme Corporation Interna"` and a field whose contents really are
+        # that string are the SAME 24 characters — one of them a lie the agent
+        # cannot detect, and one agent read back an identical 60-char prefix after
+        # four writes without ever learning its writes were landing. The three
+        # hand-rolled copies of this logic are now one markCut(), so a NEW bounded
+        # field cannot reintroduce the silence by omitting the five-line snippet.
+        mp = await browser.new_page(viewport={"width": 1200, "height": 900})
+        LONG = "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliett Kilo Lima Mike November Oscar Papa"
+        await mp.set_content(
+            "<!DOCTYPE html><meta charset=utf-8><body>"
+            f"<label for=mv>Notes</label><input id=mv value='{LONG}'>"
+            f"<label for=mp2>Query</label><input id=mp2 placeholder='{LONG}'>"
+            f"<div id=mc role=combobox tabindex=0>{LONG}</div>"
+            f"<button id=mb>{LONG}</button>"
+            "</body>")
+        await mp.wait_for_timeout(150)
+        mraw = await mp.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        mid = await mp.evaluate("""() => { const o = {};
+            for (const id of ['mv','mp2','mc','mb']) { const n = document.getElementById(id);
+              o[id] = n && n.getAttribute('mmid'); } return o; }""")
+        mby = {v: e for e in mraw for v in [str(e.get("mmid"))] }
+        MARK = "…(+"
+        # THE CONTRACT CHANGED, DELIBERATELY: these fields are no longer cut at all.
+        # Measured on 39 frozen sites, removing every per-field bound costs +3.1%
+        # total chars and 1.002x on the median page — a LABEL is bounded by human
+        # authorship, so the cap bought almost nothing and cost nine silent-cut
+        # defects. These checks previously asserted the marker was present; they now
+        # assert the value arrives WHOLE, which is the stronger guarantee.
+        for key, field, label in (("mv", "value", "an input's value"),
+                                  ("mp2", "placeholder", "a placeholder"),
+                                  ("mc", "value", "a combobox trigger's text"),
+                                  ("mb", "text", "a button's own text")):
+            e = mby.get(str(mid.get(key)))
+            got = ((e or {}).get(field) or "") or ((e or {}).get("label") or "")
+            check(f"M-{key} {label} is returned COMPLETE, not cut",
+                  got == LONG, f"len={len(got)} of {len(LONG)}: {got[-30:]!r}")
+        # The count must be the TRUE residual, not a constant: an agent decides
+        # whether to escalate to a scoped read from this number.
+        # ONE class of field still carries a bound: genuinely UNBOUNDED content, where
+        # a single essay would otherwise evict every other row from the caller's
+        # max_chars budget. There the residual must be exact — that number is how an
+        # agent decides whether a scoped read is worth a call.
+        import re as _re
+        _BIG = "sierra tango " * 500          # 6500 chars, over the 4000 textarea bound
+        await mp.set_content(
+            "<!DOCTYPE html><meta charset=utf-8><body>"
+            f"<textarea id=ta rows=4>{_BIG}</textarea></body>")
+        await mp.wait_for_timeout(140)
+        traw = await mp.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        _tv = next((e.get("value") or "" for e in traw if e.get("tag") == "textarea"), "")
+        _m = _re.search(r"…\(\+(\d+)\)$", _tv)
+        check("M-count unbounded content keeps a bound, and its residual is exact",
+              bool(_m) and len(_tv.split(MARK)[0]) + int(_m.group(1)) == len(_BIG.strip()),
+              f"shown={len(_tv.split(MARK)[0])} +{_m.group(1) if _m else '?'} vs true={len(_BIG.strip())}")
+        # A marker that is itself truncated is worse than no marker: `…(+4` reads
+        # as content. `label` derives from four fields that markCut has ALREADY
+        # bounded, and was then re-clipped at 60 — so every marked source over
+        # ~54 chars came out with its own marker sliced in half. Found by the
+        # corpus cap-detector (label@60: 610 fields, neighbours 14), not by
+        # reading the code, and not by any fixture that only checked the sources.
+        def _wellformed(entries):
+            bad = []
+            for e in entries:
+                for f in ("name", "label", "value", "placeholder", "text", "near"):
+                    v = e.get(f) or ""
+                    if isinstance(v, str) and "…(+" in v and not v.endswith(")"):
+                        bad.append(f"{f}={v[-18:]!r}")
+            return bad
+        _bad = _wellformed(mraw) + _wellformed(raw)
+        check("M-intact no field carries a marker that is itself cut in half",
+              not _bad, "; ".join(_bad[:3]))
+        # The specific shape: a long name, where `label` adopts an already-marked
+        # string and must not bound it a second time.
+        await mp.set_content(
+            "<!DOCTYPE html><meta charset=utf-8><body>"
+            f"<button id=ml aria-label='{LONG}'>x</button></body>")
+        await mp.wait_for_timeout(120)
+        lraw = await mp.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        _le = next((e for e in lraw if (e.get("name") or "").startswith("Alpha")), None)
+        check("M-derived a derived label carries its source's FULL text",
+              bool(_le) and (_le.get("label") or "") == LONG,
+              f"len={len((_le or {}).get('label') or '')} of {len(LONG)}")
+
+        await mp.close()
+
         xp = await browser.new_page(viewport={"width": 1000, "height": 700})
         await xp.set_content(
             "<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>"

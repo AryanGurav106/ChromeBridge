@@ -1,0 +1,138 @@
+name: CI
+
+# ChromeBridge's real asset is tools/test_*.py + tools/test_ops.js -- 322 checks
+# pinning the behaviour of a 443 KB extension/background.js. Until now they were
+# run by hand, one at a time, so nothing stopped a regression landing green.
+# This workflow runs all of them via tools/run_tests.py.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Cheap, fast, and catches the most likely breakage: a syntax error in the
+  # extension. background.js is never imported by the Python suites, so a stray
+  # brace there would otherwise only surface when Chrome refused to load the
+  # unpacked extension. `node --check` parses without executing, which is what
+  # we want -- these files call chrome.* APIs that do not exist outside Chrome.
+  # ---------------------------------------------------------------------------
+  extension:
+    name: Extension syntax + manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: node --check every extension script
+        run: |
+          node --check extension/background.js
+          node --check extension/panel.js
+          node --check extension/listener_tag.js
+
+      - name: manifest.json parses
+        run: |
+          node -e "
+            const fs = require('fs');
+            const m = JSON.parse(fs.readFileSync('extension/manifest.json', 'utf8'));
+            if (m.manifest_version !== 3) {
+              throw new Error('expected manifest_version 3, got ' + m.manifest_version);
+            }
+            console.log('manifest OK: mv' + m.manifest_version + ' ' + m.name + ' ' + m.version);
+          "
+
+  # ---------------------------------------------------------------------------
+  # The gate: every suite, both groups.
+  #
+  # Python 3.12 is what the project is developed and documented against
+  # (CLAUDE.md pins the .venv at 3.12); pyproject.toml declares >=3.10, which
+  # the unit-floor job below exercises separately.
+  # ---------------------------------------------------------------------------
+  tests:
+    name: Test suites (unit + browser)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # tools/test_ops.js loads background.js into a node:vm with a mocked
+      # chrome object. Node built-ins only -- no npm install.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      # Playwright is a TEST-only dependency and is deliberately not in
+      # requirements.txt, which is the runtime dependency set for the MCP
+      # server (and is consumed as-is by pyproject.toml's dynamic
+      # dependencies). The nine browser suites drive headless Chromium
+      # through it; all of them serve their own fixtures locally, so no
+      # network access to real sites is needed.
+      - name: Install Playwright and Chromium
+        run: |
+          python -m pip install 'playwright>=1.44'
+          python -m playwright install --with-deps chromium
+
+      - name: Suite inventory
+        run: python tools/run_tests.py --list
+
+      # --strict makes a SKIPPED suite a failure. Without it, a broken
+      # Playwright install would silently drop every browser suite -- the
+      # majority of the checks -- and CI would still report green: exactly
+      # the class of confident false report these suites exist to catch.
+      - name: Run all suites
+        run: python tools/run_tests.py --strict
+
+  # ---------------------------------------------------------------------------
+  # pyproject.toml claims requires-python = ">=3.10" and advertises 3.10-3.13.
+  # Nothing checked that. The unit group imports mcp_server.py and every
+  # runtime dependency, so it is a cheap proof of the claim; the browser group
+  # is skipped here because it would add a Chromium download per version for
+  # no extra coverage of the Python floor.
+  # ---------------------------------------------------------------------------
+  unit-floor:
+    name: Unit suites on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run the browser-free suites
+        run: python tools/run_tests.py --group unit --strict

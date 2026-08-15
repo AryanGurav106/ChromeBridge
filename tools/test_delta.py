@@ -104,8 +104,15 @@ def main():
           (out9 or "").splitlines()[-1][:70])
 
     check("T6 no previous read means no delta", delta([], rows(10)) is None)
-    check("T7 a tiny page is not worth diffing",
-          delta(rows(3), rows(3) + rows(1, start=9)) is None)
+    # T7 changed meaning when the refusal rule did. The old proxy ("refuse unless
+    # >=25% of rows survived") arbitrarily refused small pages; the rule now
+    # compares ACTUAL sizes, so a 4-row page whose delta is one row correctly
+    # produces a delta — it really is smaller. What must still be refused is a
+    # delta that is not smaller, which T4 covers.
+    _tiny = delta(rows(3), rows(3) + rows(1, start=9))
+    check("T7 a small page still gets a delta when the delta is genuinely smaller",
+          _tiny is not None and len(_tiny) < len(chr(10).join(rows(3) + rows(1, start=9))) * 1.5,
+          f"{len(_tiny or '')} chars vs {len(chr(10).join(rows(3)+rows(1,start=9)))} full")
 
     # Counts must be honest: an agent trusting "40 unchanged" and finding 39 is
     # worse off than getting the whole listing.

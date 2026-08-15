@@ -71,9 +71,21 @@ async def main():
         check("W1 hidden CSRF token is not adopted as a backing control",
               bool(w1) and not w1[0].get("backedBy"),
               f"backedBy={w1[0].get('backedBy') if w1 else 'ENTRY MISSING'}")
-        check("W1 unfilled custom select still flagged (unselected)",
-              bool(w1) and bool(w1[0].get("unselected")),
-              f"unselected={w1[0].get('unselected') if w1 else None}")
+        # W1 USED TO ASSERT (unselected) HERE, on the strength of an English
+        # wordlist. This trigger has NO structural placeholder signal: no
+        # data-placeholder, no `placeholder` class token, no backing form control,
+        # no trailing ellipsis — only the English words "Choose a plan". Measured
+        # across 45 frozen sites with an interleaved drift control, the wordlist's
+        # total effect on this flag was 14 against a drift floor of 14, i.e. noise;
+        # its real cost was being a SOLE gate that works in the ~20 languages
+        # somebody happened to list and silently fails in every other. Dropping the
+        # flag here is the honest trade: `value="Choose a plan"` is what the page
+        # renders, and the agent reads that as easily as we could have guessed it.
+        check("W1 a text-only trigger reports what it displays, and does not GUESS"
+              " placeholder state from an English wordlist",
+              bool(w1) and not w1[0].get("unselected")
+              and "Choose a plan" in json.dumps(w1[0], default=str),
+              f"unselected={w1[0].get('unselected') if w1 else '?'}")
         w1b = [e for e in raw if (e.get("label") or "") == "Unit"]
         check("W1b visible sibling input is not adopted as a backing control",
               bool(w1b) and not w1b[0].get("backedBy"),
@@ -198,6 +210,107 @@ async def main():
         check("W11 pick succeeds on that widget",
               bool(r11 and r11.get("ok")) and "Hawaii" in str(r11.get("actual")),
               f"ok={r11 and r11.get('ok')} actual={(r11 or {}).get('actual')!r}")
+
+        # ---- W12: a DISABLED control must not vanish -----------------------
+        # demoqa's City field: a react-select container with pointer-events:none
+        # until a State is chosen, rendering the visible text "Select City". It was
+        # dropped outright, so "there is no city field" and "the city field unlocks
+        # after you pick a state" were the SAME output — and that is what let find()
+        # answer a city query with the State field. The tag-list guard did not save
+        # it because the wrapper is a <div>; the guard is now structural (an
+        # aria-disabled wrapper, or one containing a real form control).
+        dp = await browser.new_page(viewport={"width": 1200, "height": 800})
+        await dp.set_content(
+            "<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>"
+            "<div class='css-3iigni-container' style='pointer-events:none;"
+            "width:400px;height:38px'><div class='css-16xfy0z-control'"
+            " style='width:400px;height:38px'><div class='css-hlgwow'>"
+            "<div class='css-1jqq78o-placeholder'>Select City</div>"
+            "<div><input id=ci role=combobox disabled style='width:2px'></div>"
+            "</div></div></div></body>")
+        await dp.wait_for_timeout(150)
+        drows = await dp.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        _city = next((e for e in drows if "Select City" in str(e.get("near") or "")), None)
+        check("W12 a disabled custom control is still listed, not dropped as noise",
+              bool(_city), f"entries={[(e.get('tag'), e.get('near')) for e in drows]}")
+        check("W12b ...and its disabled state is stated, so 'absent' and 'locked'"
+              " are distinguishable",
+              bool(_city) and bool(_city.get("disabled")),
+              f"disabled={(_city or {}).get('disabled')}")
+        await dp.close()
+
+        # ---- W13: a PROMPT option is not a chosen value ---------------------
+        # "empty value means prompt" assumes the author wrote value=""; on older and
+        # e-commerce widgets they usually did not. Amazon ships
+        # <option value="-1">Select</option>, so a page whose own buy box reads "To
+        # buy, select" reported value="Select" as a CHOSEN size — in German and
+        # Japanese alike. Measured on real sites: THREE of four select-backed prompts
+        # used a sentinel rather than an empty value, so this is the older-web norm.
+        # Structural and language-independent: first option, and either a
+        # conventional sentinel value or value===text while siblings use codes.
+        sp = await browser.new_page(viewport={"width": 1200, "height": 800})
+        await sp.set_content(
+            "<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>"
+            "<select id=amz><option value='-1'>Select</option>"
+            "<option value='B01'>32W / 32L</option><option value='B02'>34W</option></select>"
+            "<select id=jp><option value='-1'>選択</option>"
+            "<option value='C1'>M</option><option value='C2'>L</option></select>"
+            "<select id=txt><option value='Open this select menu'>Open this select menu</option>"
+            "<option value='1'>One</option><option value='2'>Two</option></select>"
+            # NEGATIVE CONTROL: a genuinely pre-selected first option must NOT be
+            # flagged, or every default-selected dropdown reads as empty.
+            "<select id=real><option value='B01'>32W / 32L</option>"
+            "<option value='B02'>34W</option><option value='B03'>36W</option></select>"
+            "</body>")
+        await sp.wait_for_timeout(140)
+        sraw = await sp.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        sid = await sp.evaluate("""() => ({amz: amz.getAttribute('mmid'), jp: jp.getAttribute('mmid'),
+            txt: txt.getAttribute('mmid'), real: real.getAttribute('mmid')})""")
+        sby = {str(e.get("mmid")): e for e in sraw}
+        for key, want, why in (
+            ("amz", True, "a value='-1' sentinel prompt is unselected"),
+            ("jp", True, "...in Japanese too, with no vocabulary involved"),
+            ("txt", True, "...and a prompt whose value IS its own text"),
+            ("real", False, "...while a real pre-selected first option is NOT flagged"),
+        ):
+            e = sby.get(str(sid.get(key))) or {}
+            check(f"W13-{key} {why}", bool(e.get("unselected")) == want,
+                  f"unselected={e.get('unselected')} value={e.get('value')!r}")
+        await sp.close()
+
+        # ---- W14: content that was invisible even to the DIAGNOSTIC ---------
+        # Three drop paths were bare `return`s: they removed elements without
+        # calling _drop, so `read_page(ledger=true)` — the tool whose entire job is
+        # answering "why is this element missing?" — could not see them either.
+        # Proven by a static audit with fixtures; these pin the fixes.
+        gp = await browser.new_page(viewport={"width": 1200, "height": 800})
+        await gp.set_content(
+            "<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>"
+            # a media player's PRIMARY control, unlabelled and thin
+            "<div role=slider tabindex=0 aria-valuenow=30"
+            " style='width:600px;height:8px;background:#ccc'></div>"
+            # an accordion expander bar: a real <button>, 400x12
+            "<button style='width:400px;height:12px'><svg width=8 height=8></svg></button>"
+            # ...but a labelless 10x200 anchor IS decoration (a splitter/rail)
+            "<a href=# style='display:block;width:10px;height:200px'></a>"
+            # [inert] is the W3C 'cannot be interacted with'; its counter existed
+            # and could never increment, so this presented as fully clickable
+            "<div inert><button>Wizard step 2</button></div>"
+            "<button>Play</button></body>")
+        await gp.wait_for_timeout(140)
+        gl = await gp.evaluate("(function(){ " + COLLECT
+                               + "; return _collectInteractivePage(true, null, 'compact', true); })()")
+        _kept = [(e.get("tag"), e.get("role")) for e in (gl.get("elements") or [])]
+        _rules = gl.get("byRule") or {}
+        check("W14 an unlabelled role=slider seek bar is a control, not a sliver",
+              ("div", "slider") in _kept, f"kept={_kept}")
+        check("W14b ...and a thin real <button> expander is too",
+              sum(1 for t, _ in _kept if t == "button") == 2, f"kept={_kept}")
+        check("W14c ...while a labelless 10x200 <a> is still dropped AND recorded",
+              _rules.get("sliver-decoration") == 1, f"byRule={_rules}")
+        check("W14d an [inert] region's controls are dropped and COUNTED",
+              _rules.get("inert") == 1, f"byRule={_rules}")
+        await gp.close()
 
         await browser.close()
 

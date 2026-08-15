@@ -5,3 +5,9 @@ __pycache__/
 *.pyc
 .venv/
 browser_storage/
+
+# Packaging artifacts. `pip install -e .` is the install the README now tells
+# contributors to run, and it drops chromebridge.egg-info/ in the repo root.
+*.egg-info/
+build/
+dist/

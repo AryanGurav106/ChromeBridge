@@ -452,8 +452,13 @@ const FIELDS3 = () => ([
     const a = await callOp("fill_form", { tabId: 1, fields: FIELDS3() });
     check("stale refs: submit auto-detect suppressed when NO field ref resolves",
       execCalls("_detectSubmitPage").length === 0);
-    check("stale refs: reports form filled-but-not-submitted",
-      String(a.result).includes("no submit button auto-detected"), String(a.result).split("\n")[0]);
+    // The old wording asserted a search that had not run ("no submit button
+    // auto-detected"). With the wordlist tiers gone the message states the
+    // STRUCTURAL fact instead — nothing in the form declares itself the submit —
+    // and names the recovery, which is what an agent can act on.
+    check("stale refs: reports NOT submitted, and says what would make it possible",
+      String(a.result).includes("NOT submitted")
+      && String(a.result).includes("submit_ref"), String(a.result).split("\n")[0]);
     check("stale refs: reports Filled 0/3", String(a.result).startsWith("Filled 0/3"));
 
     // Run B: EXPLICIT submit_mmid — must be skipped, not clicked.

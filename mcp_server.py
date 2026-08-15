@@ -22,6 +22,7 @@ import json
 import mimetypes
 import os
 import re
+import secrets
 import sys
 import time
 import unicodedata
@@ -33,30 +34,100 @@ _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+
+# ----------------------------------------------------------------------------
+# Run under the project's own interpreter, whatever launched us
+# ----------------------------------------------------------------------------
+# .mcp.json invokes `${CHROMEBRIDGE_PYTHON:-python}` so the repo is portable —
+# it can no longer hard-code one machine's absolute venv path. The cost is that
+# the `python` found on PATH is often NOT the one holding our dependencies, and
+# the resulting ImportError reaches the user only as "MCP server failed" with no
+# stdout to explain it (stdout is JSON-RPC).
+#
+# So: if the current interpreter cannot import `mcp` but this repo has a .venv
+# that can, hand over to it. The sentinel makes looping impossible — after one
+# hop we either succeed or fail with the real ImportError.
+def _venv_interpreter() -> Optional[str]:
+    for parts in (("Scripts", "python.exe"), ("bin", "python")):
+        cand = os.path.join(_ROOT, ".venv", *parts)
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def _reexec_under_venv_if_needed() -> None:
+    if os.environ.get("CHROMEBRIDGE_NO_REEXEC"):
+        return
+    try:
+        import mcp  # noqa: F401  — the only dependency worth probing for
+        return
+    except Exception:
+        pass
+    cand = _venv_interpreter()
+    if not cand:
+        return
+    try:
+        if os.path.samefile(cand, sys.executable):
+            return  # already the venv; the import failure is real, let it surface
+    except OSError:
+        if os.path.normcase(os.path.abspath(cand)) == os.path.normcase(os.path.abspath(sys.executable)):
+            return
+    sys.stderr.write(
+        f"[chromebridge-mcp] '{sys.executable}' cannot import mcp; "
+        f"re-running under {cand}\n"
+    )
+    sys.stderr.flush()
+    # subprocess rather than os.execv, MEASURED: on Windows execv hands argv to
+    # the C runtime unquoted, so a path containing a space -- and the default
+    # location for this project is under the user's home, "C:\Users\First Last\"
+    # -- is re-split. The child then gets no script argument, starts a REPL, and
+    # exits 0 the instant stdin EOFs: a silent success-looking failure. Manually
+    # quoting argv does not fix it either. subprocess quotes correctly, and the
+    # child inherits this process's stdin/stdout, which is what the stdio
+    # transport needs; closing the client's end of the pipe still ends the child.
+    import subprocess
+
+    env = dict(os.environ, CHROMEBRIDGE_NO_REEXEC="1")
+    sys.exit(subprocess.run(
+        [cand, os.path.abspath(__file__), *sys.argv[1:]], env=env).returncode)
+
+
+_reexec_under_venv_if_needed()
+
 from dotenv import load_dotenv
 
-load_dotenv(os.path.join(_ROOT, ".env"))
+_ENV_PATH = os.path.join(_ROOT, ".env")
+load_dotenv(_ENV_PATH)
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ImageContent, TextContent
 from pydantic import Field
 
-from core.bridge.server import ExtensionBridge
+from core.bridge.server import DEFAULT_PORT, PORT_RANGE_SPAN, ExtensionBridge
 
 # ----------------------------------------------------------------------------
 # globals
 # ----------------------------------------------------------------------------
 
 HOST = os.getenv("BRIDGE_HOST", "127.0.0.1")
-PORT = int(os.getenv("BRIDGE_PORT", "8765"))
-TOKEN = os.getenv("BRIDGE_TOKEN")
+PORT = int(os.getenv("BRIDGE_PORT", str(DEFAULT_PORT)))
 
-NOT_CONNECTED = (
-    "Chrome extension is not connected to the bridge. In Chrome: load the unpacked "
-    "extension (chrome://extensions -> Developer mode -> Load unpacked -> point at "
-    "the extension/ folder), open its side panel, paste the BRIDGE_TOKEN from .env "
-    "and click Save & Connect. The extension auto-reconnects within seconds."
-)
+
+def _not_connected(port: Optional[int] = None) -> str:
+    """The 'extension isn't there' message, naming the port ACTUALLY bound.
+
+    The port matters now that start() auto-selects one out of a range: a user
+    with two Claude Code sessions open is on 8766, and a message that hard-codes
+    8765 sends them looking for a problem that isn't there.
+    """
+    where = f"ws://{HOST}:{port}" if port else f"ws://{HOST}"
+    return (
+        f"Chrome extension is not connected to the bridge ({where}). In Chrome: load "
+        "the unpacked extension (chrome://extensions -> Developer mode -> Load "
+        "unpacked -> point at the extension/ folder), open its side panel, paste the "
+        "BRIDGE_TOKEN from .env and click Save & Connect. The extension auto-reconnects "
+        "within seconds."
+    )
 
 STATE: dict[str, Any] = {"bridge": None}
 
@@ -81,19 +152,105 @@ def _log(msg: str) -> None:
     sys.stderr.flush()
 
 
+# ----------------------------------------------------------------------------
+# BRIDGE_TOKEN — generate once, persist, never invent silently
+# ----------------------------------------------------------------------------
+
+
+def _write_token_to_env(path: str, token: str) -> str:
+    """Persist BRIDGE_TOKEN into .env and return the value the file ends up with.
+
+    Written to a sibling temp file and os.replace'd in, so a crash mid-write can
+    never leave the user with a truncated .env. The value is read back rather
+    than assumed: it both proves the write landed and makes the (rare) race
+    between two sessions starting at once converge on ONE token instead of two
+    servers each expecting a different one.
+    """
+    lines: list[str] = []
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+
+    line = f"BRIDGE_TOKEN={token}"
+    for i, existing in enumerate(lines):
+        if existing.strip().startswith("BRIDGE_TOKEN="):
+            lines[i] = line  # the placeholder from .env.example
+            break
+    else:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append("# Shared secret with the Chrome extension — paste this into the")
+        lines.append("# extension's side panel (Token -> Save & Connect).")
+        lines.append(line)
+
+    tmp = f"{path}.tmp{os.getpid()}"
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("\n".join(lines) + "\n")
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)  # replace failed; don't litter the repo root
+
+    with open(path, "r", encoding="utf-8") as fh:
+        for existing in fh.read().splitlines():
+            stripped = existing.strip()
+            if stripped.startswith("BRIDGE_TOKEN="):
+                return stripped.split("=", 1)[1].strip()
+    return token
+
+
+def _resolve_token() -> str:
+    """Return the bridge token, generating and persisting one if it is missing.
+
+    .env.example ships BRIDGE_TOKEN empty, so this is the FIRST thing a new user
+    hits. It used to fall through to a fresh random token per launch inside
+    ExtensionBridge, which meant the extension was rejected with close code 1008
+    forever while the only copy of the working token scrolled past in a stderr
+    line nobody reads — indistinguishable from the product being broken.
+    """
+    token = (os.getenv("BRIDGE_TOKEN") or "").strip()
+    if token:
+        return token
+
+    generated = secrets.token_urlsafe(16)
+    try:
+        token = _write_token_to_env(_ENV_PATH, generated)
+    except OSError as e:
+        # Falling back to an in-memory token here would recreate exactly the bug
+        # this function exists to kill, so refuse instead — with the one command
+        # that fixes it.
+        _log(f"FATAL: BRIDGE_TOKEN is not set and {_ENV_PATH} could not be written ({e}).")
+        _log("  Fix it by hand — add this line to .env, then restart Claude Code:")
+        _log(f"      BRIDGE_TOKEN={generated}")
+        _log("  ...then paste the same value into the ChromeBridge side panel in Chrome "
+             "(Token -> Save & Connect).")
+        raise RuntimeError("BRIDGE_TOKEN is not set and .env is not writable") from e
+
+    # Make it visible to anything else in this process that reads the env.
+    os.environ["BRIDGE_TOKEN"] = token
+    _log(f"BRIDGE_TOKEN was empty — generated one and saved it to {_ENV_PATH}.")
+    _log("  ONE-TIME SETUP: open the ChromeBridge side panel in Chrome, paste this "
+         "token, then click Save & Connect:")
+    _log(f"      {token}")
+    return token
+
+
 @asynccontextmanager
 async def _lifespan(_server: FastMCP):
-    bridge = ExtensionBridge(host=HOST, port=PORT, token=TOKEN)
+    bridge = ExtensionBridge(host=HOST, port=PORT, token=_resolve_token())
     try:
         await bridge.start()
     except OSError as e:
+        # start() already walked the whole range, so this really is "no port left".
         _log(
-            f"FATAL: cannot bind ws://{HOST}:{PORT} ({e}). Is another ChromeBridge "
-            "process (old run_extension.py REPL or a second mcp_server) running?"
+            f"FATAL: {e} Also check for an old run_extension.py REPL or a stray "
+            "mcp_server process holding the ports."
         )
         raise
     STATE["bridge"] = bridge
-    _log(f"bridge listening on ws://{HOST}:{PORT}; waiting for the Chrome extension to connect")
+    _log(f"bridge listening on ws://{HOST}:{bridge.port} (searched {PORT_RANGE_SPAN} ports "
+         f"from {PORT}); waiting for the Chrome extension to connect")
     try:
         yield {"bridge": bridge}
     finally:
@@ -122,7 +279,7 @@ async def _bridge() -> ExtensionBridge:
         try:
             await b.wait_until_connected(timeout=8.0)
         except Exception:
-            raise RuntimeError(NOT_CONNECTED)
+            raise RuntimeError(_not_connected(b.port))
     return b
 
 
@@ -139,7 +296,34 @@ def _q(v: Any, limit: int) -> str:
     # Mark the cut. A signed CDN URL sliced mid-query-string is visually
     # indistinguishable from a complete one, and an agent that reports or fetches
     # it fails somewhere else entirely.
-    return json.dumps(t if len(t) <= limit else t[:limit] + "…(truncated)", ensure_ascii=False)
+    # The COUNT is what makes a marker actionable — "(truncated)" says a cut
+    # happened, `…(+65)` says whether it is worth a scoped read. Same form as
+    # the collector's markCut so one vocabulary covers both tools.
+    return json.dumps(t if len(t) <= limit else _cut(t, limit), ensure_ascii=False)
+
+
+# Lines the listing writes ABOUT itself. Never elements, so never diffable.
+_META_ROW = re.compile(
+    r"more interactive element\(s\)|interactive element\(s\) are (BELOW|ABOVE)"
+    r"|listing capped at|Main heading:|PAGE IS STILL SETTLING|MODAL/DIALOG"
+    r"|output truncated|notation legend|NOTE: |underlying-page element",
+    re.I)
+
+
+def _cut(t: str, n: int = 110) -> str:
+    """Boundary-aware cut with the residual count — the delta's markCut.
+
+    An unmarked slice here shipped `box(986,411,8)` from `box(986,411,88,32)`:
+    the cut landed mid-number and the caller closed the paren, so the result
+    parsed as a plausible coordinate and was wrong. Reported by a live agent
+    that had no way to tell it from a real box.
+    """
+    t = (t or "").strip()
+    if len(t) <= n:
+        return t
+    sp = t.rfind(" ", 0, n)
+    head = t[: sp if sp > n * 0.6 else n]
+    return head + f"…(+{len(t) - len(head)})"
 
 
 def _line_ident(line: str) -> str:
@@ -150,12 +334,20 @@ def _line_ident(line: str) -> str:
     ablation audit already hit and had to solve the same way. Everything after
     the mmid is the element's actual description.
     """
-    line = re.sub(r"^mmid=\S+\s*\|\s*", "", line).strip()
+    line = re.sub(r"^(?:ref_|mmid=)\S+\s*\|\s*", "", line).strip()
     # FOLDED GROUP LINES embed their refs inline (`18:"Hacker News"->/news`), so a
     # re-render that renumbers mmids would change the whole line and every folded
     # group would read as "changed". Normalise those refs out too — the labels and
     # hrefs are the identity, the numbers are not.
     line = re.sub(r"(^|\s)\d+:(?=[\"'])", r"\1REF:", line)
+    # ...and strip the fold CARDINALITY, for exactly the same reason. `7× a "past"`
+    # and `6× a "past"` differ only by a count, but that count is part of the line,
+    # so ONE new row arriving re-folds the group and every member of it appears as
+    # both ADDED and REMOVED in the same response. Measured live on a GitHub issue
+    # list: 17 of 18 rows under "NO LONGER LISTED" still plainly existed. That
+    # section is the one an agent must act on — a ~94% false rate there refunds the
+    # whole token saving and costs a turn.
+    line = re.sub(r"^\d+(×|x)(?=\s)", "N×", line)
     # STRIP GEOMETRY. box(x,y,w,h) is where a row is, not what it is. A live
     # agent expanding a Bootstrap accordion saw 7 rows in NEW and the SAME 7 in
     # GONE, byte-identical apart from y=63 -> y=10: nothing had been removed,
@@ -194,14 +386,52 @@ def _delta_listing(prev: list[str], cur: list[str]) -> Optional[str]:
     cur_idents = set(seen)
     removed = [i for i in prev_idents if i not in cur_idents]
 
-    # Not worth it if most rows changed anyway.
-    if unchanged < max(4, 0.25 * len(cur)):
+    # WORTH IT IFF THE DELTA IS ACTUALLY SMALLER. The old rule was a proxy
+    # (refuse unless >=25% of rows survived) and it inverted on the exact case
+    # deltas exist for: opening a modal collapses the listing from 75 rows to 6,
+    # `unchanged` falls to 0, and it refused with "changed too much for a delta
+    # to be smaller" about a page that had just become tiny. Two agents hit this
+    # independently and one never saw a working delta at all.
+    #
+    # Size is the real criterion, so measure it rather than predicting it.
+    _delta_cost = sum(len(x) + 4 for x in added) + sum(len(i[:110]) + 4 for i in removed[:25])
+    _full_cost = sum(len(x) + 1 for x in cur)
+    if _delta_cost >= _full_cost * 0.75:
         return None
-    if len(added) + len(removed) > 0.6 * len(cur):
-        return None
+
+    # SAME ELEMENT, NEW STATE is a CHANGE, not a death and a birth. Rendering it
+    # as remove+add told agents that the tab they had just selected "no longer
+    # exists" — reported independently by three agents, and the recommended
+    # recovery (re-read to be sure) is a wasted round-trip for a ref printed as
+    # live three lines above.
+    def _mm(row):
+        m = re.match(r"mmid=(\S+)", row.strip())
+        return m.group(1) if m else None
+    _added_by_mm = {}
+    for r in added:
+        k = _mm(r)
+        if k:
+            _added_by_mm.setdefault(k, r)
+    changed = []
+    for i in list(removed):
+        k = _mm(prev_text.get(i, i))
+        if k and k in _added_by_mm:
+            changed.append((prev_text.get(i, i), _added_by_mm[k]))
+            removed.remove(i)
+            added = [a for a in added if a is not _added_by_mm[k]]
+            _added_by_mm.pop(k, None)
 
     head = [f"[DELTA — {unchanged} row(s) unchanged since the last observation of this "
             f"page and omitted here; their refs are still valid]"]
+    if changed:
+        head.append(f"CHANGED ({len(changed)}) — same ref, new state:")
+        for before, after in changed[:25]:
+            head.append(f"  ~ {after.strip()}")
+            # An unmarked cut here produced `box(986,411,8)` from
+            # `box(986,411,88,32)` — the slice landed mid-number and the
+            # formatter closed the paren, so the result was a syntactically
+            # valid, wrong coordinate. Use the same marked cut as the rows.
+            head.append(f"      (was: {_cut(before, 100)})")
     if added:
         head.append(f"NEW OR CHANGED ({len(added)}):")
         head.extend("  + " + ln for ln in added)
@@ -209,10 +439,10 @@ def _delta_listing(prev: list[str], cur: list[str]) -> Optional[str]:
         head.append(f"NO LONGER LISTED ({len(removed)}) — these left the listing. They were "
                     f"either removed from the page OR merely scrolled out of the viewport, so a "
                     f"ref may still work; re-read without delta to be sure:")
-        head.extend("  - " + prev_text.get(i, i)[:110] for i in removed[:25])
+        head.extend("  - " + _cut(prev_text.get(i, i)) for i in removed[:25])
         if len(removed) > 25:
             head.append(f"  - …and {len(removed) - 25} more")
-    if not added and not removed:
+    if not added and not removed and not changed:
         head.append("Nothing changed since your last read of this page.")
     return "\n".join(head)
 
@@ -332,6 +562,28 @@ def _split_banner(text: str) -> tuple[str, str]:
     return (m.group(1), text[m.end():]) if m else ("", text or "")
 
 
+# What counts as an element ROW in a listing: an individual `mmid=` line, or a
+# folded group line (`26x a in section=main - shown as ref:"label" ...`), which
+# stands for its whole group.
+_ROW_LINE = re.compile(r"^(?:ref_|mmid=|\s*\d+(?:×|x)\s)")   # mmid= tolerated: older extension
+
+
+def _row_elements(text: str) -> int:
+    """How many ELEMENTS the row lines in `text` account for.
+
+    A folded group line stands for its whole group, so counting LINES
+    under-reports a loss by the fold factor. One definition, shared by both
+    truncation branches — two copies is how they came to disagree.
+    """
+    n = 0
+    for ln in text.split("\n"):
+        if not _ROW_LINE.match(ln):
+            continue
+        m = re.match(r"\s*(\d+)(?:×|x)\s", ln)
+        n += int(m.group(1)) if m else 1
+    return n
+
+
 def _truncate(text: str, max_chars: int, hint: str = "") -> str:
     """Truncate with advice the caller has not already taken.
 
@@ -353,10 +605,16 @@ def _truncate(text: str, max_chars: int, hint: str = "") -> str:
         # without ever being identified. If the budget cannot hold both, the
         # notation lecture is what goes; an agent can act on rows it cannot fully
         # decode far better than on a decoder ring with nothing to decode.
-        rows = [ln for ln in text.split("\n") if ln.startswith("mmid=")]
-        if rows and len(text[:max_chars].split("\n")[-1]) >= 0 and not any(
-            ln.startswith("mmid=") for ln in text[:max_chars].split("\n")
-        ):
+        # A FOLDED GROUP LINE IS A ROW TOO. Matching only `mmid=` excluded every
+        # `26× a in section=main …` line, so the fallback dropped them from the
+        # output AND left them out of the residual count. Measured live on arXiv:
+        # at max_chars=600 the listing said "2 more element(s) not shown" while
+        # 135 were missing, and on a first run said nothing at all while 74
+        # vanished — the exact silence this fallback exists to prevent, one level
+        # up from the field markers. Folds are also the most efficient payload
+        # available: one ~400-char line carries 26 acting refs.
+        rows = [ln for ln in text.split("\n") if _ROW_LINE.match(ln)]
+        if rows and not any(_ROW_LINE.match(ln) for ln in text[:max_chars].split("\n")):
             head = text.split("\n", 1)[0]          # "Current URL: ..." keeps context
             kept, body = [], 0
             budget = max(0, max_chars - len(head) - 1)
@@ -365,7 +623,13 @@ def _truncate(text: str, max_chars: int, hint: str = "") -> str:
                     break
                 kept.append(ln)
                 body += len(ln) + 1
-            dropped = len(rows) - len(kept)
+            # A ROW IS NOT AN ELEMENT. A folded row stands for its whole group
+            # (`18x a "past" ... mmids: 21,58,84,...`), so counting rows
+            # under-reports the loss by the fold factor. Measured live: this said
+            # "21 more element(s) not shown" while 99 were dropped, and on arXiv
+            # the clause was omitted altogether while 74 vanished — the exact
+            # silence the truncation work exists to remove, one level up.
+            dropped = _row_elements("\n".join(rows[len(kept):]))
             return (
                 head + "\n" + "\n".join(kept)
                 + f"\n\n[output truncated at {max_chars} chars — the notation legend was"
@@ -374,9 +638,33 @@ def _truncate(text: str, max_chars: int, hint: str = "") -> str:
                 + (f" — {hint}" if hint else "")
                 + "]"
             )
+        # THE ORDINARY PATH MUST COUNT WHAT IT CUT TOO. The fallback above engages
+        # only when a plain slice would return NO rows at all; whenever the slice
+        # reaches rows, this branch runs — and it used to say nothing but "output
+        # truncated at N chars". Measured live on arXiv: 74 elements vanished with
+        # no clause whatsoever. That is the same silence the field markers exist to
+        # end, one level up. Counted in ELEMENTS, not lines, because a folded row
+        # stands for its whole group.
+        _slice = text[:max_chars]
+        # A PARTIALLY SLICED FOLD ROW IS NOT A SHOWN ROW. `26× a … refs: 40:"x" 41:"y" …`
+        # cut after its 7th ref still matches _ROW_LINE, so _row_elements credited all
+        # 26 as shown while 19 refs were never printed. Measured on arXiv: claimed
+        # "17 more element(s) not shown" when ~41 were missing. Count only the refs
+        # that actually survived the cut in the final (possibly partial) row.
+        _lines = _slice.split("\n")
+        _lost = _row_elements(text) - _row_elements(_slice)
+        _partial = bool(_lines) and _ROW_LINE.match(_lines[-1]) and not any(
+            ln == _lines[-1] for ln in text.split(chr(10)))
+        if _partial:
+            _last = _lines[-1]
+            m = re.match(r"\s*(\d+)(?:×|x)\s", _last)
+            if m:
+                _printed = len(re.findall(r"(?:^|\s)\d+:", _last))
+                _lost += max(0, int(m.group(1)) - _printed)
         return (
-            text[:max_chars]
+            _slice
             + f"\n\n[output truncated at {max_chars} chars"
+            + (f" — {_lost} more element(s) not shown" if _lost > 0 else "")
             + (f" — {hint}" if hint else "")
             + "]"
         )
@@ -464,6 +752,10 @@ async def read_page(
         bool,
         Field(description="Return only what CHANGED since your last read of this page, instead of the whole listing. Use after a click/fill when you expect a small change (a dialog opened, a row was added) — unchanged rows and their refs stay valid from the previous read. Falls back to the full listing automatically when the page changed too much for a delta to be smaller, or after a navigation."),
     ] = False,
+    ledger: Annotated[
+        bool,
+        Field(description="DIAGNOSTIC. Instead of a listing, return every element the collector DROPPED and which rule dropped it. Use when the page visibly contains something the listing does not — it answers \"why is this element missing?\" in one call instead of a guessing loop."),
+    ] = False,
 ) -> str:
     """Get a structured representation of the page's elements. Interactive elements
     carry ref ids (ref_N) usable with form_input, computer (scroll_to / ref clicks),
@@ -499,6 +791,35 @@ async def read_page(
     # where the query string is the point).
     _d = str(detail).lower()
     _detail = _d if _d in ("full", "brief") else "compact"
+    if ledger:
+        # THE DROP LEDGER, exposed. It existed in the collector and was reachable
+        # from nothing an agent can call, so two live agents were told to use it by
+        # the tool's own messages and could not — and diagnosing a missing canvas
+        # took six DOM probes when this answers it in one call. The listing is
+        # replaced, not annotated: this is a debugging view, not an observation.
+        led = await b.call("get_interactive_elements", tabId=tabId,
+                           scopeMmid=scope_mmid, detail=_detail, ledger=True, structured=True)
+        if not isinstance(led, dict):
+            return f"ledger unavailable (extension returned {type(led).__name__} — reload the extension)"
+        by = led.get("byRule") or {}
+        rows = led.get("dropped") or []
+        head = [f"DROP LEDGER — {led.get('kept', '?')} element(s) kept, {len(rows)} dropped.",
+                "Counts by rule (the rule that removed each element):"]
+        for rule, n in sorted(by.items(), key=lambda kv: -kv[1]):
+            head.append(f"  {n:>5}  {rule}")
+        head.append("")
+        head.append("Dropped elements (largest first — a big one missing is usually the real problem):")
+        rows = sorted(rows, key=lambda r: -((r.get("w") or 0) * (r.get("h") or 0)))
+        for r in rows[:60]:
+            head.append(f"  {r.get('tag')}"
+                        + (f"[role={r.get('role')}]" if r.get("role") else "")
+                        + f" {r.get('w')}x{r.get('h')}"
+                        + (f" {r.get('text')!r}" if r.get("text") else "")
+                        + f"  <- {r.get('rule')}")
+        if len(rows) > 60:
+            head.append(f"  …and {len(rows) - 60} more")
+        return _truncate("\n".join(head), max_chars)
+
     listing = await b.call("get_interactive_elements", tabId=tabId,
                            scopeMmid=scope_mmid, detail=_detail)
     out = str(listing)
@@ -592,6 +913,13 @@ async def read_page(
                 continue
             t = ln.strip()
             if not t or t.startswith("- ") or t.startswith("["):
+                continue
+            # ...and skip the listing's own scaffolding. These lines describe the
+            # listing, not the page, so diffing them reports a meta-message as an
+            # element that appeared or vanished — measured live, where a previous
+            # read's truncation notice was counted among four elements that had
+            # "left the listing".
+            if _META_ROW.search(t):
                 continue
             # EXPLODE FOLDED GROUPS. A group line packs dozens of elements into one
             # string, so ONE changed label rewrites the whole line and the delta
@@ -770,10 +1098,26 @@ async def find(
     # option matcher already normalises; this scorer above it did not.
     def _nfc(x):
         return unicodedata.normalize("NFC", str(x or ""))
+
+    def _fold(x: str) -> str:
+        """casefold, then drop combining marks left behind by the fold.
+
+        Unicode folds U+0130 (Turkish dotted capital I) to "i" + U+0307 COMBINING
+        DOT ABOVE, so `"İstanbul".casefold() != "istanbul"`. An agent types
+        lowercase ASCII; every correctly-spelled Turkish proper noun was therefore
+        unreachable, and the miss was silent — measured live on ntv.com.tr, where
+        `find("istanbul hava durumu")` missed the İstanbul weather link entirely
+        while the İ-spelled query ranked it first.
+        Decomposing to NFD and dropping Mn marks makes accent-insensitive matching
+        work for every script at once (Greek tonos, Vietnamese, Devanagari nukta),
+        which is what a person typing a query actually expects.
+        """
+        return "".join(c for c in unicodedata.normalize("NFD", (x or "").casefold())
+                       if not unicodedata.combining(c))
     query = _nfc(query)
-    tokens = [t for t in re.split(r"\W+", query.casefold(), flags=re.UNICODE)
+    tokens = [t for t in re.split(r"\W+", _fold(query), flags=re.UNICODE)
               if len(t) > 1 and t not in _STOP]
-    q_full = query.strip().casefold()
+    q_full = _fold(query.strip())
 
     def _hit(token: str, text: str) -> float:
         """WORD-AWARE match weight. A bare `token in text` substring test ranked
@@ -801,17 +1145,31 @@ async def find(
             return 1.0          # whole word: "search" in "search box"
         if re.search(r"\b" + re.escape(token), text):
             return 0.5          # word prefix: "combo" in "combobox"
+        # THE OTHER DIRECTION: the LABEL is a prefix of the QUERY TOKEN. That is what
+        # inflection looks like — a Greek genitive "αναζητησης" against a field
+        # labelled with the nominative "αναζητηση", German compounds, Turkish and
+        # Finnish agglutination. Only "token is a prefix of the label" existed, so a
+        # correctly-inflected query in any inflecting language scored ZERO on the very
+        # field it named, while junk matching some common word shipped under the
+        # confident header. English barely inflects, which is why this never surfaced
+        # in development. Gated at 5+ chars with the label within 3 of the token, so
+        # "cat" cannot claim "catastrophe", and weighted just under a real prefix match
+        # so an exact hit always outranks an inflected one.
+        if len(token) >= 5:
+            for w in re.findall(r"\w{4,}", text):
+                if token.startswith(w) and len(w) >= len(token) - 3:
+                    return 0.45
         if token in text:
             return 0.1          # buried in a word: "field" in "Duffield"
         return 0.0
 
     def score(el: dict) -> float:
-        label = _nfc(el.get("label")).casefold()
+        label = _fold(_nfc(el.get("label")))
         tag = str(el.get("tag") or "").casefold()
         role = str(el.get("role") or "").casefold()
-        placeholder = _nfc(el.get("placeholder")).casefold()
-        name = _nfc(el.get("name")).casefold()
-        near = _nfc(el.get("near")).casefold()
+        placeholder = _fold(_nfc(el.get("placeholder")))
+        name = _fold(_nfc(el.get("name")))
+        near = _fold(_nfc(el.get("near")))
         s = 0.0
         _cov = set()
         _covText = set()      # tokens that matched this element's TEXT, not its type
@@ -827,11 +1185,29 @@ async def find(
             # let "field" inside "Duffield Memorial" outrank a real search box
             # whose only signal was the role word — the exact inversion F4 exists
             # to prevent, reintroduced by the coverage rule above it.
-            if max(_hl, _hn, _hp) >= 0.5:
+            # near= IS content — weaker content, but a word that appeared next to
+            # the element, not a property of its type. Excluding it meant a page
+            # whose only word-matches came from near= had _text_possible False and
+            # fell through to the ROLE-word fallback, which every combobox
+            # satisfies: "Select City dropdown" then confidently returned the
+            # STATE field (near="Select State"). Including it also recovers the
+            # opposite case — Naver's 구독 button, whose outlet name lives only in
+            # near=, is now confident for "매일경제 구독 버튼" instead of demoted.
+            if max(_hl, _hn, _hp) >= 0.5 or _hit(t, near) >= 0.5:
                 _covText.add(t)
             if t == role or t == tag:
                 s += 1.0
-            if s > _before:
+            # COVERAGE NEEDS WORD-LEVEL EVIDENCE, not merely a higher score.
+            # `s > _before` was satisfied by the 0.1 buried-substring weight, so
+            # the token "over" buried inside "Stack Overflow" counted as covering
+            # the query "over" — and one covered token clears the bar on a short
+            # query, which is how three "Stack Overflow" boilerplate links came
+            # back under `Found 3 element(s) matching "over"`. `_covText` right
+            # below already demanded >= 0.5 for exactly this reason; `_cov`, the
+            # set the confidence GATE reads, did not. A type match (role/tag) and
+            # an adjacent-text word hit are real coverage; a buried fragment is not.
+            if (max(_hl, _hn, _hp) >= 0.5 or _hit(t, near) >= 0.5
+                    or t == role or t == tag):
                 _cov.add(t)
         # Spaceless scripts cannot be tokenised, so "搜索按钮" (search + button)
         # stayed one token and scored 0 against a label reading just "搜索" —
@@ -955,7 +1331,15 @@ async def find(
     # Only LONG queries are gated. With one or two words, matching one of them IS
     # full coverage; the pathology is a ten-word question where a single common
     # word ("about") carries footer boilerplate into the confident list.
-    _need = 2 if len(tokens) >= 4 else 1
+    # THREE tokens, not four. "labels applied to this issue" reduces to
+    # {labels, applied, issue}; at the old threshold one generic token ("issue")
+    # was full coverage, so "Issue body actions", "All issues" and "New issue" all
+    # arrived as confident matches for a question about labels. Two of three is
+    # the weakest ratio that still means the match explains the query. Queries of
+    # one or two words are ungated on purpose: there, matching one word IS the
+    # query, and F1/F8/F14 depend on a lone role word reaching a control whose
+    # label is in another script.
+    _need = 2 if len(tokens) >= 3 else 1
     # ROLE WORDS FILTER A TYPE; CONTENT WORDS IDENTIFY AN ELEMENT. The query
     # "classList documentation link" reported 792 confident matches on MDN,
     # because "link" is a role word that matches every <a> and one matched token
@@ -969,9 +1353,20 @@ async def find(
     # is the case F8/F14 protect.
     _text_possible = any(_COVTEXT.get(id(el), 0) > 0 for _sc, el in scored)
     def _ok(el):
-        if _COV.get(id(el), 0) < _need:
-            return False
-        return (not _text_possible) or _COVTEXT.get(id(el), 0) > 0
+        # COUNT CONTENT COVERAGE, NOT TYPE COVERAGE. A role word ("link", "button",
+        # "dropdown") is satisfied by every element of that type, so it inflates
+        # every candidate's coverage equally and explains nothing about WHICH one
+        # was asked for. With `link` in the query, every <a> on the page scored a
+        # covered token for free — which is how "About" and "Web APIs" reached the
+        # confident list for "the link about browser compatibility data for this
+        # API" (each covering exactly one CONTENT word) alongside the real answer
+        # (covering two). Role coverage still decides the fallback below.
+        if _text_possible:
+            return _COVTEXT.get(id(el), 0) >= _need
+        # NOTHING on the page matched by text — a Chinese-only page where "search
+        # box" can land only via the role word. Then type coverage is all there is,
+        # and refusing it would make find useless on those pages (F8/F14/F24).
+        return _COV.get(id(el), 0) >= _need
     strong_all = [(sc, el) for sc, el in scored if sc >= 1.0 and _ok(el)]
     _demoted = [(sc, el) for sc, el in scored if sc >= 1.0 and not _ok(el)]
     strong = strong_all[:20]
@@ -1008,37 +1403,57 @@ async def find(
         # `ref_1363 [a] href="..." section=main` with no label at all and had to
         # infer which link was which by reading the API name out of the URL.
         # Adding a field must not delete another.
-        ident = ""
-        attrs = ""
-        if el.get("name"):
-            ident += f" name={_q(el['name'], 80)}"
-        if el.get("value"):
-            ident += f" value={_q(el['value'], 80)}"
-        if el.get("placeholder"):
-            ident += f" placeholder={_q(el['placeholder'], 80)}"
-        if el.get("src"):
-            attrs += f" src={_q(el['src'], 120)}"
-        # href was NEVER emitted. find() showed image src but not link targets, so
-        # on a task literally about URLs a live agent got an anchor with no name, no
-        # text and no href — the one attribute that says where it goes was the one
-        # missing, while read_page(detail="full") had it all along.
-        if el.get("href"):
-            attrs += f" href={_q(el['href'], 120)}"
-        if not ident:
-            txt = (el.get("text") or el.get("label") or "").strip()[:120]
-            ident = f' "{txt}"' if txt else " (unlabeled)"
-        ident += attrs
+        # ONE FORMATTER, shared with read_page. The collector attaches `line` —
+        # the exact row read_page would print for this element, produced by the
+        # SAME function. This tool used to rebuild that row in Python, and the
+        # drift between the two implementations produced five of the eleven
+        # defects a nine-agent live study found (unlabelled quoted strings,
+        # backslash-u escaping, missing href, and a label deleted the moment href
+        # was added). Reusing the rendered line makes that class impossible.
+        #
+        # The fallback stays for entries from an older extension build that does
+        # not attach `line` — a version skew must degrade, not crash.
+        line = (el.get("line") or "").strip()
+        if line:
+            ident = " " + re.sub(r"^mmid=\S+\s*\|\s*", "", line)
+            ident = re.sub(r"\s*\|\s*box\([^)]*\)\s*$", "", ident)
+            # The tag is printed separately below, so drop the leading duplicate.
+            _tag = str(el.get("tag") or "")
+            if _tag and ident.strip().startswith(_tag):
+                ident = " " + ident.strip()[len(_tag):].strip()
+        else:
+            ident = ""
+            attrs = ""
+            if el.get("name"):
+                ident += f" name={_q(el['name'], 80)}"
+            if el.get("value"):
+                ident += f" value={_q(el['value'], 80)}"
+            if el.get("placeholder"):
+                ident += f" placeholder={_q(el['placeholder'], 80)}"
+            if el.get("src"):
+                attrs += f" src={_q(el['src'], 120)}"
+            if el.get("href"):
+                attrs += f" href={_q(el['href'], 120)}"
+            if not ident:
+                txt = (el.get("text") or el.get("label") or "").strip()[:120]
+                ident = f' "{txt}"' if txt else " (unlabeled)"
+            ident += attrs
         # POSITIONAL / STRUCTURAL CONTEXT. Without this, five identically-named
         # "Launch demo modal" buttons were distinguishable only by guessing that
         # the lowest ref came first in the DOM — correct, but on no positive
         # signal. section= and near= are already computed per element; they just
         # never reached this tool. y= disambiguates repeats down a long page.
+        # The shared line ALREADY carries near= and section=. Appending them again
+        # produced `section=main` twice per row and `near="freeSolo freeSolo"` —
+        # a regression from the formatter unification, found by two agents
+        # independently. Only add context the line does not already state.
         ctx = ""
-        if el.get("section"):
+        _has = ident  # the rendered line, whatever it contains
+        if el.get("section") and f"section={el['section']}" not in _has:
             ctx += f"  section={el['section']}"
         if el.get("underHeading"):
-            ctx += f"  under={_q(el['underHeading'], 40)}"
-        if el.get("near") and el.get("near") != el.get("name"):
+            ctx += f"  under={_q(el['underHeading'], 200)}"
+        if el.get("near") and el.get("near") != el.get("name") and "near=" not in _has:
             ctx += f"  near={_q(el['near'], 40)}"
         if el.get("y") is not None:
             ctx += f"  y={el.get('y')}"
