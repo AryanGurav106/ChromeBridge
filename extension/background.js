@@ -1629,8 +1629,12 @@ async function readinessNote(tabId) {
   if (r.prog) bits.push(`${r.prog} progress indicator(s) visible`);
   if (r.busy) bits.push(`${r.busy} region(s) marked aria-busy`);
   if (!bits.length) return '';
+  // Says "any coordinate" rather than "box() coordinates": box() is opt-in now
+  // (`geometry=true`), so naming it would describe a field most reads do not
+  // contain, while the warning still applies to a screenshot coordinate or one
+  // carried from an earlier geometry read.
   return `*** PAGE IS STILL SETTLING (${bits.join('; ')}). Content may still be arriving, ` +
-         `and box() coordinates may shift as it does — re-observe before trusting a coordinate, ` +
+         `and any coordinate may shift as it does — re-observe before trusting one, ` +
          `and do NOT conclude something is absent from this read alone. Refs are re-measured at ` +
          `click time, so acting BY REF is safe. ***\n`;
 }
@@ -3284,7 +3288,7 @@ function _frameShellsPage() {
 // Collect + serialize the contents of cross-origin iframes (depth-1) and
 // return text to APPEND to the main listing. Each frame's entries act through
 // selector [mmid='f<frameId>:<n>'] — resolveFrameSelector routes the ops.
-async function collectCrossFrames(tabId) {
+async function collectCrossFrames(tabId, geometry) {
   let frames = [];
   try { frames = await chrome.webNavigation.getAllFrames({ tabId }) || []; } catch (e) { return ''; }
   const children = frames.filter(f => f.frameId !== 0 && f.parentFrameId === 0 &&
@@ -3359,7 +3363,14 @@ async function collectCrossFrames(tabId) {
       const flags = (e.active ? ` (${e.active})` : '') + (e.required ? ' (required)' : '') +
                     (e.unselected ? ' (unselected)' : '') + (e.disabled ? ' (disabled)' : '');
       const rl = (e.role && e.role !== e.tag) ? ` role=${e.role}` : '';
-      lines.push(`mmid=f${fid}:${e.mmid} | ${e.tag}${id}${rl}${flags} | box(${e.x + shell.x},${e.y + shell.y},${e.w},${e.h})`);
+      // `ref_` , not `mmid=`. The main listing moved to ref_N and tells the agent
+      // "Act on a row by its ref_N", while these rows still announced themselves
+      // with the internal spelling — two vocabularies for one concept, in the one
+      // place (a cross-origin frame) where the agent is already least sure how to
+      // address the element. The banner below says "act with ref f<fid>:N"; now
+      // the rows agree with it.
+      const _xbox = geometry ? ` | box(${e.x + shell.x},${e.y + shell.y},${e.w},${e.h})` : '';
+      lines.push(`ref_f${fid}:${e.mmid} | ${e.tag}${id}${rl}${flags}${_xbox}`);
     }
     if (lines.length) {
       text += `\n[CROSS-ORIGIN IFRAME f${fid}${shell.title ? ` "${shell.title}"` : ''}${host ? ` (${host})` : ''} — ` +
@@ -3639,7 +3650,7 @@ function _domTextPage(scopeMmid) {
   return text + " Other Alt Texts in the page: " + alts + outline;
 }
 
-function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
+function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry) {
   // DROP LEDGER. The collector could not explain its own omissions: ~17 bare
   // `return`s in the element loop and four destructive post-passes removed
   // elements with no record of which rule fired. Every investigation therefore
@@ -7176,7 +7187,23 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
       else off = " (outside the viewport)";
     }
     const med = e.mediaOnly ? (e.cssBackground ? " (media — CSS background, not an <img>)" : " (media — not a control)") : "";
-    return `ref_${e.mmid} | ${tagtype}${identity}${act}${rl}${sec}${req}${uns}${dis}${orph}${bak}${nt}${tp}${sy}${ed}${pop}${col}${cnv}${xf}${sr}${med} | box(${e.x},${e.y},${e.w},${e.h})${occ}${clip}${off}`;
+    // GEOMETRY IS OPT-IN. box(x,y,w,h) was on every row: ~22 characters times
+    // 199 rows is ~4,400 on the craigslist listing, and WorkArena
+    // (arXiv:2403.07718) measured adding coordinates to an AXTree at 68.2% ->
+    // 72.6% on MiniWoB's small pages but 45.5% -> 41.2% on its complex ones —
+    // "seemingly harmless features actually degrade performance" once the
+    // observation is already large, and dense pages are our case. Refs
+    // re-measure at click time (fix #11), so no action needs the number; it
+    // exists for the agent's spatial reasoning, which is the use that measured
+    // negative. Ours is also partly untrustworthy already: #23 records ~110px
+    // drift on loading pages and #25 the same ref reporting clicks 1,097px apart
+    // on OpenStreetMap.
+    // Spatial STATE survives regardless — (below-fold), (above-fold),
+    // (off to the side), (occluded/blocked), (clipped-in-scroll-panel) are all
+    // untouched. Only the exact numbers move behind `geometry=true`, and x/y/w/h
+    // stay in the structured array unconditionally for find, delta and computer.
+    const box = geometry ? ` | box(${e.x},${e.y},${e.w},${e.h})` : '';
+    return `ref_${e.mmid} | ${tagtype}${identity}${act}${rl}${sec}${req}${uns}${dis}${orph}${bak}${nt}${tp}${sy}${ed}${pop}${col}${cnv}${xf}${sr}${med}${box}${occ}${clip}${off}`;
   }
   // ROLELESS OVERLAYS: some consent layers (Ryanair's CMP) are plain divs —
   // no role=dialog anywhere, so the modal banner can't anchor. The occlusion
@@ -7889,7 +7916,7 @@ async function handleOp({ id, op, params }) {
         const _scopeMmid = params?.scopeMmid != null ? String(params.scopeMmid) : null;
         result = await runInTab(t.id, _collectInteractivePage,
           [!!params?.structured, _scopeMmid, (params?.detail === 'full' || params?.detail === 'brief') ? params.detail : 'compact',
-           !!params?.ledger]);
+           !!params?.ledger, !!params?.geometry]);
         // Ledger mode returns an object, not a listing: skip the cross-frame
         // append and the readiness banner, both of which assume a string.
         if (params?.ledger) break;
@@ -7898,7 +7925,7 @@ async function handleOp({ id, op, params }) {
         // prefixed mmids — resolveFrameSelector routes the agent's actions.
         if (!params?.structured && typeof result === 'string') {
           try {
-            const extra = await collectCrossFrames(t.id);
+            const extra = await collectCrossFrames(t.id, !!params?.geometry);
             // A SCOPED READ MUST NOT IMPORT FRAMES FROM OUTSIDE THE SCOPE. This
             // pass runs AFTER the scope filter and used to append unconditionally,
             // so a read scoped to an <input> in a page header came back carrying a

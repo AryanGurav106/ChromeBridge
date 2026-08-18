@@ -756,6 +756,10 @@ async def read_page(
         bool,
         Field(description="DIAGNOSTIC. Instead of a listing, return every element the collector DROPPED and which rule dropped it. Use when the page visibly contains something the listing does not — it answers \"why is this element missing?\" in one call instead of a guessing loop."),
     ] = False,
+    geometry: Annotated[
+        bool,
+        Field(description="Add box(x,y,w,h) pixel coordinates to every row. OFF by default: refs re-measure at click time so no action needs the number, and it costs ~22 characters per row. Turn it on only when you need to reason about LAYOUT — what is beside or above what, or a coordinate for `computer` on a canvas. Spatial state — (below-fold), (off to the side), (occluded/blocked) — is always reported regardless."),
+    ] = False,
 ) -> str:
     """Get a structured representation of the page's elements. Interactive elements
     carry ref ids (ref_N) usable with form_input, computer (scroll_to / ref clicks),
@@ -836,7 +840,7 @@ async def read_page(
         return _truncate("\n".join(head), max_chars)
 
     listing = await b.call("get_interactive_elements", tabId=tabId,
-                           scopeMmid=scope_mmid, detail=_detail)
+                           scopeMmid=scope_mmid, detail=_detail, geometry=bool(geometry))
     out = str(listing)
     if out.startswith("__SCOPE_MISS__"):
         # The ref is well-formed but absent from THIS document — almost always a ref

@@ -893,6 +893,28 @@ const FIELDS3 = () => ([
     a = argsOf();
     check("read_page: an unrecognised detail value fails safe to compact",
       !!a && a[2] === "compact", JSON.stringify(a));
+
+    // `geometry` is the 5th positional. Same class of gap as detail="brief":
+    // every offline geometry test calls the collector directly, so a flag that
+    // never reached it would look perfect here and drop box() from every
+    // geometry=true call in production.
+    callLog.length = 0;
+    await callOp("get_interactive_elements", { tabId: 1 });
+    a = argsOf();
+    check("read_page: geometry defaults to false (box() is opt-in)",
+      !!a && a[4] === false, JSON.stringify(a));
+
+    callLog.length = 0;
+    await callOp("get_interactive_elements", { tabId: 1, geometry: true });
+    a = argsOf();
+    check("read_page: geometry=true is forwarded to the collector",
+      !!a && a[4] === true, JSON.stringify(a));
+
+    callLog.length = 0;
+    await callOp("get_interactive_elements", { tabId: 1, geometry: true, detail: "brief", scopeMmid: "7" });
+    a = argsOf();
+    check("read_page: geometry composes with detail and ref_id scoping",
+      !!a && a[4] === true && a[2] === "brief" && a[1] === "7", JSON.stringify(a));
   });
 
   await test("read_network_requests", async () => {
