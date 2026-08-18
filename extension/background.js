@@ -6598,15 +6598,38 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
   // detail level and is unaffected by serialization.
   if (LEDGER) {
     const kept = new Set(out.map((e) => String(e.mmid)));
+    // A post-pass can drop an mmid that a later pass re-adds; report only
+    // entries that really are absent from the final listing, or the ledger
+    // accuses rules of removals that did not stick.
+    const absent = _ledger.filter((d) => !kept.has(String(d.mmid)));
+    // DEMOTION IS NOT A DROP, and an element can be both. `_note` records a
+    // heuristic's verdict as `was:<rule>` while LEAVING the element in place, so
+    // filing those entries beside real drops made the ledger wrong in the two
+    // ways that matter most for the one tool whose whole job is explaining
+    // omissions. Measured on gutenberg.org: `was:generic-no-label` 50 and
+    // `parent-child-dedup` 104 -> 154 were THE SAME 50 elements — demoted by a
+    // heuristic, then genuinely removed in favour of their labelled <a> child.
+    // The header therefore claimed 317 dropped out of a pool of 313, the true
+    // cause was buried under a rule that no longer removes anything, and a
+    // demoted element that IS in the listing (craigslist's 9, rakuten's 7) was
+    // reported as absent. Absence is decided by the spec rule alone.
+    const hard = new Set(absent.filter((d) => !/^was:/.test(d.rule) && d.mmid)
+                               .map((d) => String(d.mmid)));
+    const dropped = absent.filter(
+      (d) => !/^was:/.test(d.rule) || !(d.mmid && hard.has(String(d.mmid))));
+    const tally = (rows) => rows.reduce(
+      (acc, d) => { acc[d.rule] = (acc[d.rule] || 0) + 1; return acc; }, {});
     return {
       kept: out.length,
       elements: out,
-      // A post-pass can drop an mmid that a later pass re-adds; report only
-      // entries that really are absent from the final listing, or the ledger
-      // accuses rules of removals that did not stick.
-      dropped: _ledger.filter((d) => !kept.has(String(d.mmid))),
-      byRule: _ledger.filter((d) => !kept.has(String(d.mmid)))
-        .reduce((acc, d) => { acc[d.rule] = (acc[d.rule] || 0) + 1; return acc; }, {}),
+      dropped,
+      byRule: tally(dropped),
+      // Kept, sent last as decoration, still actionable by ref. Reported apart
+      // so "why is this element missing?" and "why is it in the decoration
+      // tier?" are never answered by the same number.
+      demoted: _ledger.filter((d) => /^was:/.test(d.rule) && kept.has(String(d.mmid))),
+      byRuleDemoted: tally(_ledger.filter(
+        (d) => /^was:/.test(d.rule) && kept.has(String(d.mmid)))),
     };
   }
   // ONE FORMATTER. `find` maintained a parallel Python formatter over these same

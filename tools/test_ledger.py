@@ -62,6 +62,20 @@ PAGE = """<!doctype html><meta charset=utf-8><body style="margin:0">
   <button id=hidden style="width:100px;height:24px;display:none">Hidden</button>
   <!-- aria-hidden subtree -->
   <div aria-hidden="true"><button id=ah style="width:100px;height:24px">Aria Hidden</button></div>
+  <!-- DEMOTED but KEPT: a heuristic judged it non-content, which under the
+       prominence-not-existence rule marks it and leaves it in the listing. It
+       must be reported as demoted and must NOT appear among the drops. -->
+  <div id=demoted onclick="void 0" style="pointer-events:none;width:200px;height:24px">Muted Row</div>
+  <!-- DEMOTED and THEN genuinely removed. Absence is decided by the spec rule
+       alone, so this element must appear in `dropped` EXACTLY ONCE, attributed
+       to parent-child-dedup and not to the heuristic that merely demoted it.
+       Live shape this reproduces (gutenberg.org): 50 elements carried both a
+       `was:generic-no-label` entry and a `parent-child-dedup` entry, so the
+       header reported more drops than the page had elements and the real cause
+       sat under a rule that no longer removes anything. -->
+  <div id=both onclick="void 0" style="pointer-events:none;width:300px;height:36px">
+    <button id=bothkid style="pointer-events:auto;width:280px;height:30px">Nested Real Control</button>
+  </div>
   <!-- far below the fold -->
   <div style="height:3000px"></div>
   <button id=below style="width:100px;height:24px">Below Fold</button>
@@ -130,6 +144,46 @@ async def main():
         by = led.get("byRule") or {}
         check("L5 the rule breakdown accounts for every reported drop",
               sum(by.values()) == len(dropped), f"{sum(by.values())} vs {len(dropped)}")
+
+        # L7-L10: DEMOTION IS NOT A DROP. Under prominence-not-existence a
+        # heuristic marks an element and leaves it in place, so the ledger has two
+        # populations to keep apart — and it did not. Both failures were live:
+        # craigslist/rakuten reported demoted-but-PRESENT elements as dropped, and
+        # gutenberg counted 50 elements twice (once demoted, once genuinely
+        # deduped), claiming more drops than the page had elements while hiding the
+        # rule that actually decided their absence.
+        demoted = led.get("demoted") or []
+        dem_ids = {str(d["mmid"]) for d in demoted}
+        drop_ids = [str(d["mmid"]) for d in dropped]
+
+        async def mm(el_id):
+            return await page.evaluate(
+                f"()=>{{const e=document.getElementById('{el_id}');return e?e.getAttribute('mmid'):null;}}")
+
+        m_dem, m_both = await mm("demoted"), await mm("both")
+        check("L7 an element a heuristic demoted is reported as demoted, not dropped",
+              str(m_dem) in dem_ids and str(m_dem) not in drop_ids,
+              f"mmid={m_dem} in demoted={str(m_dem) in dem_ids} in dropped={str(m_dem) in drop_ids}"
+              f" rules={[d['rule'] for d in demoted]}")
+        check("L7b ...and is still in the listing, actionable by ref",
+              any(str(e["mmid"]) == str(m_dem) for e in led["elements"]))
+        check("L8 the two populations are disjoint — nothing is both dropped and demoted",
+              not (dem_ids & set(drop_ids)), f"both={list(dem_ids & set(drop_ids))[:5]}")
+        check("L9 no element is counted twice among the drops",
+              len(drop_ids) == len(set(drop_ids)),
+              f"{len(drop_ids)} entries, {len(set(drop_ids))} distinct")
+        both_rules = [d["rule"] for d in dropped if str(d["mmid"]) == str(m_both)]
+        # Asserted as a CONTRACT, not as one rule name: this fixture's wrapper is
+        # removed by same-box-wrapper-collapse rather than parent-child-dedup, and
+        # which container rule wins is an implementation detail. What must hold is
+        # that exactly one entry survives and it names a rule that really removes.
+        check("L10 a demoted-then-removed element is attributed to the rule that "
+              "actually removed it, once",
+              len(both_rules) == 1 and not both_rules[0].startswith("was:"),
+              f"mmid={m_both} rules={both_rules}")
+        check("L10b every reported drop names a spec rule, never a demotion",
+              not [d["rule"] for d in dropped if str(d["rule"]).startswith("was:")],
+              str([d["rule"] for d in dropped if str(d["rule"]).startswith("was:")][:4]))
         check("L6 real controls survive (the ledger did not eat the listing)",
               any((e.get("name") or e.get("label") or "").strip() == "Real Button"
                   for e in led["elements"]),

@@ -803,10 +803,25 @@ async def read_page(
             return f"ledger unavailable (extension returned {type(led).__name__} — reload the extension)"
         by = led.get("byRule") or {}
         rows = led.get("dropped") or []
-        head = [f"DROP LEDGER — {led.get('kept', '?')} element(s) kept, {len(rows)} dropped.",
+        dem = led.get("demoted") or []
+        by_dem = led.get("byRuleDemoted") or {}
+        head = [f"DROP LEDGER — {led.get('kept', '?')} element(s) kept"
+                + (f" ({len(dem)} of them DEMOTED)" if dem else "")
+                + f", {len(rows)} dropped.",
                 "Counts by rule (the rule that removed each element):"]
         for rule, n in sorted(by.items(), key=lambda kv: -kv[1]):
             head.append(f"  {n:>5}  {rule}")
+        if dem:
+            # A demoted element is PRESENT — listed last under PROBABLY DECORATION
+            # and actionable by ref. Reported in its own block because the reader
+            # of this tool is asking "why is X missing?", and answering that with a
+            # rule that kept X sends them looking for a bug that is not there.
+            head.append("")
+            head.append("Demoted but KEPT — a size/shape/label heuristic judged these "
+                        "non-content, so they are listed last (PROBABLY DECORATION) "
+                        "rather than removed. Still actionable by ref:")
+            for rule, n in sorted(by_dem.items(), key=lambda kv: -kv[1]):
+                head.append(f"  {n:>5}  {rule[4:] if rule.startswith('was:') else rule}")
         head.append("")
         head.append("Dropped elements (largest first — a big one missing is usually the real problem):")
         rows = sorted(rows, key=lambda r: -((r.get("w") or 0) * (r.get("h") or 0)))
