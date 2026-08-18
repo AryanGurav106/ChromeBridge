@@ -229,14 +229,23 @@ async def score_step(page, s: dict, policy: dict) -> dict:
         r["status"] = "ok"
     elif in_structured:
         ent = by_mmid[in_structured[0]]
-        if ent.get("offscreen"):
+        # ORDER MATTERS, and getting it wrong hid a real result. Classifying on
+        # `offscreen` FIRST reported 43 steps as below_viewport after collection
+        # had started keeping offscreen controls — which is impossible, and was
+        # this classifier mislabelling elements the 150-entry CAP had removed
+        # from a listing that would otherwise have carried them. An element can
+        # be both offscreen and past the cap; the cap is then the filter that
+        # actually removed it, and the recovery is a scoped read, not a scroll.
+        if "listing capped at" in listing:
+            r["status"] = "over_cap"
+            r["reads"] += 1
+        elif ent.get("offscreen"):
             # The listing carries a below/above-fold count and tells the agent to
             # scroll; the scroll is an action, the re-read is the observation.
             r["status"] = "below_viewport"
             r["reads"] += 1
         else:
-            # On-screen, collected, and cut by the entry cap or the char budget.
-            # Recovery is a scoped read or a raised budget — one more observation.
+            # On-screen, collected, and cut by the char budget.
             r["status"] = "over_cap"
             r["reads"] += 1
     else:

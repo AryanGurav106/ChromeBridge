@@ -4787,29 +4787,34 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
       if (!_peReal) _note(el, 'was:pointer-events-none');
       peDisabled = true;
     }
-    // Tally real controls below the fold before dropping them, so we can surface
-    // a "scroll down" hint instead of leaving the agent blind to them.
-    if (visible && !inViewport && !inModal) {
-      const _bfRole = el.getAttribute('role');
-      const _real = ['a','button'].includes(tagL) || formyTags.has(tagL) ||
-                    (_bfRole && strongInteractiveRoles.has(_bfRole));
-      if (_real && ay >= vh) belowFoldCount++;
-      else if (_real && (ay + r.height) <= 0) aboveFoldCount++;
-      // The viewport has TWO axes. Controls parked off to the side — carousel
-      // slides, kanban columns, an RTL page scrolled horizontally — were counted
-      // by neither branch and hinted by nothing, so read_page said the page was
-      // complete when it was not.
-      else if (_real && (ax >= vw || (ax + r.width) <= 0)) sideCount++;
-    }
-    // FIND REACH: the STRING listing stays viewport-scoped (token discipline),
-    // but the STRUCTURED array — which backs the `find` tool — keeps real
-    // controls that are merely scrolled out of view, flagged offscreen.
-    // Without this, find() is viewport-bound: a semantically perfect query
-    // ("Launch demo modal button") returns 13 wrong answers because the target
-    // is 200px below the fold, and the SAME query works after scrolling. Clicks
-    // auto-scroll (scrollIntoView in _clickPage/_rectForPage), so these refs are
-    // immediately actionable — the agent never needs to engineer a scroll first.
-    const keepForFind = structured && visible && !inViewport && (() => {
+    // ONE COLLECTION, TWO PRESENTATIONS.
+    //
+    // This predicate used to begin `structured &&`, which made element
+    // EXISTENCE depend on the output format the caller asked for. The structured
+    // array (behind `find`) kept real controls that were merely scrolled out of
+    // view; the string listing (behind `read_page`) dropped them right here, at
+    // COLLECTION time. So `find` could reach a below-fold button that
+    // `read_page` could not see — same page, same instant, two answers.
+    //
+    // CLAUDE.md #6 recorded that as a deliberate token-discipline trade. It had
+    // never been priced. `tools/bench_trajectory.py` priced it over Mind2Web's
+    // labelled gold paths: we report **96.0% recall while the agent can act on
+    // 50.9%** of targets from the read it was handed — 78 of 173 steps had the
+    // target collected and absent, forcing a scroll and a re-read on 62% of
+    // steps and roughly doubling their token cost. Not one of those steps was
+    // the 150-entry cap; all were the viewport.
+    //
+    // Presentation may COMPACT an offscreen control. Collection may not DELETE
+    // it. That is prominence-not-existence applied to a serialization flag, and
+    // the flag was the least defensible decider of the two — a heuristic at
+    // least guesses about the element; this only knew what the caller asked for.
+    //
+    // Original justification, still true and now served for both formats: a
+    // semantically perfect query ("Launch demo modal button") returned 13 wrong
+    // answers because the target sat 200px below the fold. Clicks auto-scroll
+    // (`scrollIntoView` in `_clickPage`/`_rectForPage`), so these refs are
+    // immediately actionable and the agent never has to engineer a scroll.
+    const keepOffscreen = visible && !inViewport && (() => {
       const rr = el.getAttribute('role');
       if (['a', 'button'].includes(tagL) || formyTags.has(tagL) ||
           (rr && strongInteractiveRoles.has(rr))) return true;
@@ -4835,7 +4840,27 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
       } catch (e) {}
       return false;
     })();
-    if (!visible || (!inViewport && !inModal && !keepForFind)) return _drop(el, !visible ? 'not-visible' : 'outside-viewport');
+    // COUNT ONLY WHAT IS ACTUALLY ABSENT. This tally drives the "N more elements
+    // are BELOW the current viewport — scroll down" hint, and it used to run
+    // BEFORE the keep decision. That was safe only because every offscreen
+    // control was then dropped, so the tally and the drop set were the same
+    // population by construction. They are not any more: with the rows present,
+    // a tally that still predicted the drop would advertise a scroll to reach
+    // elements printed a few lines above it, and the two numbers would disagree
+    // about the same page. It has to FOLLOW the drop, not anticipate it.
+    if (visible && !inViewport && !inModal && !keepOffscreen) {
+      const _bfRole = el.getAttribute('role');
+      const _real = ['a','button'].includes(tagL) || formyTags.has(tagL) ||
+                    (_bfRole && strongInteractiveRoles.has(_bfRole));
+      if (_real && ay >= vh) belowFoldCount++;
+      else if (_real && (ay + r.height) <= 0) aboveFoldCount++;
+      // The viewport has TWO axes. Controls parked off to the side — carousel
+      // slides, kanban columns, an RTL page scrolled horizontally — were counted
+      // by neither branch and hinted by nothing, so read_page said the page was
+      // complete when it was not.
+      else if (_real && (ax >= vw || (ax + r.width) <= 0)) sideCount++;
+    }
+    if (!visible || (!inViewport && !inModal && !keepOffscreen)) return _drop(el, !visible ? 'not-visible' : 'outside-viewport');
     // Sub-8×8 elements are almost always decoration: SVG path fragments, hover
     // hot-spots, screen-reader spacers. Semantics beat pixels though — a 6×6
     // styled role=checkbox/radio/switch is a real control (dense dashboards,
@@ -7026,7 +7051,23 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
     // y=-5504, y=-2401, y=-1215 all tagged "below-fold", and the accompanying
     // advice ("scroll down and re-observe") sends the agent further away from
     // the target. The sign of y already says which way.
-    const off = e.offscreen ? ((e.y || 0) < 0 ? " (above-fold)" : " (below-fold)") : "";
+    // DIRECTION, ON ALL THREE AXES THAT EXIST. This read `y < 0 ? above : below`,
+    // which was complete only while horizontally-offscreen controls were dropped
+    // rather than listed. Now that collection keeps them (see keepOffscreen), a
+    // carousel slide parked to the right would be labelled "(below-fold)" and
+    // send the agent scrolling down for something that is sideways — the same
+    // shape of defect as CLAUDE.md #23's "you have scrolled past them" asserted
+    // at scrollY === 0. `innerWidth`/`innerHeight` are read directly rather than
+    // via the outer vw/vh consts: reaching across scopes for those is exactly
+    // the swallowed-ReferenceError that R8 exists to catch.
+    let off = "";
+    if (e.offscreen) {
+      const _ey = e.y || 0, _ex = e.x || 0;
+      if (_ey + (e.h || 0) <= 0) off = " (above-fold)";
+      else if (_ey >= innerHeight) off = " (below-fold)";
+      else if (_ex >= innerWidth || _ex + (e.w || 0) <= 0) off = " (off to the side — scroll horizontally)";
+      else off = " (outside the viewport)";
+    }
     const med = e.mediaOnly ? (e.cssBackground ? " (media — CSS background, not an <img>)" : " (media — not a control)") : "";
     return `ref_${e.mmid} | ${tagtype}${identity}${act}${rl}${sec}${req}${uns}${dis}${orph}${bak}${nt}${tp}${sy}${ed}${pop}${col}${cnv}${xf}${sr}${med} | box(${e.x},${e.y},${e.w},${e.h})${occ}${clip}${off}`;
   }
