@@ -7411,38 +7411,38 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
            + ` the trigger again) and re-read, and they come back. This is page STATE, not`
            + ` the page's contents.`);
     }
-    if (has(e => e.name))        L.push(`  - name="..." — the field's IDENTITY (its label / accessible name).`);
-    if (has(e => e.near))        L.push(`  - near="..." — nearest visible text/heading: a best-effort HINT for fields with no accessible name, never the real name.`);
-    if (has(e => e.value))       L.push(`  - value="..." — the field's CURRENT CONTENTS. Empty/absent means blank.`);
-    if (has(e => e.placeholder)) L.push(`  - placeholder="..." — a format HINT; NOT a value, NOT instructions.`);
-    if (has(e => e.active))      L.push(`  - (current)/(selected)/(checked)/(expanded) — the currently-active item; don't re-click unless deselecting.`);
+    if (has(e => e.name))        L.push(`  - name="..." — IDENTITY (label / accessible name).`);
+    if (has(e => e.near))        L.push(`  - near="..." — nearest visible text: a HINT for unnamed fields, never the real name.`);
+    if (has(e => e.value))       L.push(`  - value="..." — CURRENT CONTENTS; empty/absent means blank.`);
+    if (has(e => e.placeholder)) L.push(`  - placeholder="..." — a format HINT, not a value.`);
+    if (has(e => e.active))      L.push(`  - (current)/(selected)/(checked)/(expanded) — already active; don't re-click unless deselecting.`);
     if (has(e => e.required))    L.push(`  - (required) — must be filled for submission.`);
-    if (has(e => e.unselected))  L.push(`  - (unselected) — combobox still showing placeholder text; pick a real option with fill_form.`);
-    if (has(e => e.disabled))    L.push(`  - (disabled) — present but inert; clicking does nothing right now.`);
+    if (has(e => e.unselected))  L.push(`  - (unselected) — still showing placeholder text; pick a real option with fill_form.`);
+    if (has(e => e.disabled))    L.push(`  - (disabled) — inert; clicking does nothing right now.`);
     if (has(e => e.newTab))      L.push(`  - (opens NEW tab) — link leaves this tab.`);
-    if (has(e => e.topNav))      L.push(`  - (REPLACES the whole page) — an in-frame link with target="_top"/"_parent": following it navigates the TOP document, not the frame, and invalidates every ref on the page.`);
+    if (has(e => e.topNav))      L.push(`  - (REPLACES the whole page) — in-frame link with target="_top"/"_parent": navigates the TOP document, invalidating every ref here.`);
     // Short per-row tags, explained here ONCE instead of re-stating a full
     // sentence of instructions on every matching element.
     if (has(e => e.orphanWidget))
-      L.push(`  - (DEAD-DUPLICATE) — this widget has NO backing form control while an identical one on this page does. Act on the backed twin even if this one looks bigger or more visible; this one is usually inert.`);
+      L.push(`  - (DEAD-DUPLICATE) — no backing form control, while an identical widget here has one. Act on the twin; this one is usually inert however visible it looks.`);
     if (has(e => e.clippedInContainer))
-      L.push(`  - (clipped-in-scroll-panel) — scrolled out of view inside an inner scrollable panel; clicking or scroll_to auto-scrolls it into view.`);
+      L.push(`  - (clipped-in-scroll-panel) — out of view in an inner scroll panel; clicking auto-scrolls to it.`);
     if (has(e => e.offscreen))
-      L.push(`  - (below-fold) — outside the current viewport; clicking or scroll_to auto-scrolls to it.`);
+      L.push(`  - (below-fold) — outside the viewport; clicking auto-scrolls to it.`);
     if (has(e => e.canvasLike || e.tag === 'canvas'))
-      L.push(`  - (canvas) — pixel-drawn UI; its contents are NOT in this listing. Take a computer screenshot and click by coordinate to act inside it.`);
+      L.push(`  - (canvas) — pixel-drawn; contents are NOT listed. Screenshot, then click by coordinate.`);
     if (has(e => e.crossFrame))
-      L.push(`  - (cross-origin-iframe) — contents not in this listing; screenshot + coordinate clicks if your target is inside.`);
+      L.push(`  - (cross-origin-iframe) — contents not listed; screenshot + coordinate clicks.`);
     if (has(e => e.editable || e.codeEditor))
-      L.push(`  - (rich-text-editor) / (code-editor) — type into these with form_input, not computer.`);
+      L.push(`  - (rich-text-editor) / (code-editor) — use form_input, not computer.`);
     if (has(e => e.scrollRegion))
-      L.push(`  - (scrollable-region) — this element's content scrolls independently of the page.`);
+      L.push(`  - (scrollable-region) — content scrolls independently of the page.`);
     if (has(e => e.iconOnly))
-      L.push(`  - (unlabeled-icon) — a real control with no resolvable text label; take a computer screenshot if its purpose is unclear.`);
+      L.push(`  - (unlabeled-icon) — real control, no text label; screenshot if its purpose is unclear.`);
     if (has(e => e.clickable === false))
-      L.push(`  - (occluded/blocked) — something is painted over it; it may not receive clicks.`);
+      L.push(`  - (occluded/blocked) — painted over; may not receive clicks.`);
     if (has(e => e.role === 'combobox' || e.tag === 'select'))
-      L.push(`  - role=combobox / <select> — a DROPDOWN. Do NOT type into BUTTON/DIV comboboxes (it silently fails): pass the option TEXT to fill_form or form_input and they click-then-pick for you. Input comboboxes (autocomplete) work the same way and commit a real option.`);
+      L.push(`  - role=combobox / <select> — a DROPDOWN. Never type into one; pass the option TEXT to fill_form or form_input, which click-then-pick (typing into a BUTTON/DIV combobox fails silently).`);
     // NAME ONLY THE SECTIONS ACTUALLY PRESENT. Every other legend line is gated on
     // the notation appearing; this one alone enumerated all twelve possible values
     // and appended a paragraph about overlay-banners regardless. Measured on the
