@@ -45,6 +45,15 @@ def _regex_allowed(src: str, i: int) -> bool:
 def extract(name: str, src: str, verify: bool = False) -> str:
     marker = f"function {name}("
     i = src.index(marker)
+    # KEEP A LEADING `async`. The slice started at "function", so an async function
+    # came back without its modifier and every `await` inside it became a syntax
+    # error — which made async page functions untestable by every suite that uses
+    # this helper, and looked like a bug in the function rather than in the slicer.
+    # Found when the WebMCP probes (_pageToolsPage / _callPageToolPage) could not be
+    # extracted at all.
+    _pre = src.rfind("async", max(0, i - 6), i)
+    if _pre != -1 and src[_pre + len("async"):i].strip() == "":
+        i = _pre
     j = src.index("{", i) + 1
     depth = 1
     n = len(src)

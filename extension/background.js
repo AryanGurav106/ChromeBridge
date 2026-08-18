@@ -1613,6 +1613,31 @@ function _readinessPage() {
 // Returns '' when the page is settled, or a banner naming exactly what is still
 // moving. Stated as one line at the TOP of an observation, because it changes how
 // everything below should be read — coordinates, absences and refs alike.
+// WebMCP probe result, cached per tab+URL so a read_page on a page already
+// probed pays nothing. Keyed by URL because a navigation replaces the document
+// and therefore the registered toolset; the `toolchange` event can also change it
+// mid-page, which is why page_tools always re-reads and only this NOTICE is
+// cached.
+const _webmcpSeen = new Map();   // tabId -> { url, n }
+async function webmcpNote(tabId) {
+  let url = '';
+  try { url = (await chrome.tabs.get(tabId)).url || ''; } catch (e) {}
+  const hit = _webmcpSeen.get(tabId);
+  let n = (hit && hit.url === url) ? hit.n : null;
+  if (n === null) {
+    n = 0;
+    try {
+      const r = await runInTab(tabId, _pageToolsPage, []);
+      if (r && r.supported) n = (r.tools || []).length;
+    } catch (e) {}
+    _webmcpSeen.set(tabId, { url, n });
+  }
+  if (!n) return '';
+  return `*** THIS PAGE DECLARES ${n} AGENT TOOL(S) (WebMCP). The site describes these ` +
+         `capabilities itself, with names and JSON Schemas — prefer them over driving the UI. ` +
+         `Read them with page_tools, run one with call_page_tool. ***\n`;
+}
+
 async function readinessNote(tabId) {
   let r = null;
   try { r = await runInTab(tabId, _readinessPage); } catch (e) {}
@@ -3384,6 +3409,85 @@ async function collectCrossFrames(tabId, geometry) {
   }
   _frameShells.set(tabId, offsets);
   return text;
+}
+
+// --------------------- WebMCP: tools the PAGE declares ---------------------
+// A page that registers WebMCP tools has described its own capabilities, with a
+// name, a description and a JSON Schema. That is strictly better than anything
+// we can infer from its markup, and it is the one capability unavailable to every
+// Playwright/CDP-launcher agent: WebMCP does not support headless browsing, while
+// ChromeBridge is an MV3 extension in the user's real, logged-in Chrome — exactly
+// the client the standard targets. Chrome's own model-context-tool-inspector
+// extension is the existence proof that an extension can enumerate and invoke
+// these.
+//
+// MAIN world, not a content script: content scripts run isolated, and the spec
+// gates visibility with an `exposedTo` origin list. `runInTab` already injects
+// with world:"MAIN".
+//
+// Feature-detected and degrading to `supported:false`, so this costs nothing on
+// the ~100% of today's pages that declare nothing. `document.modelContext` is the
+// current surface; `navigator.modelContext` was deprecated in Chrome 150 and is
+// checked second so an older build still answers.
+async function _pageToolsPage() {
+  const mc = (typeof document !== 'undefined' && document.modelContext) ||
+             (typeof navigator !== 'undefined' && navigator.modelContext) || null;
+  if (!mc || typeof mc.getTools !== 'function') return { supported: false, tools: [] };
+  let raw = [];
+  try { raw = (await mc.getTools()) || []; } catch (e) {
+    return { supported: true, error: String((e && e.message) || e), tools: [] };
+  }
+  const tools = [];
+  for (const t of raw) {
+    if (!t || !t.name) continue;
+    // getTools() returns inputSchema as a JSON STRING; parse it so the agent gets
+    // a schema rather than an escaped blob it has to unpack itself.
+    let schema = t.inputSchema;
+    if (typeof schema === 'string') { try { schema = JSON.parse(schema); } catch (e) {} }
+    tools.push({
+      name: String(t.name),
+      description: String(t.description || ''),
+      inputSchema: schema || null,
+      // readOnlyHint === false marks a MUTATING tool. This is the declared
+      // destructiveness signal that #24 deleted the submit wordlists for lacking:
+      // the page saying so itself, with no vocabulary involved.
+      // untrustedContentHint marks page-supplied content as a prompt-injection
+      // risk, the same posture the side panel already takes toward tab titles.
+      annotations: t.annotations || null,
+      origin: String(t.origin || (typeof location !== 'undefined' ? location.origin : '')),
+    });
+  }
+  return { supported: true, tools };
+}
+
+async function _callPageToolPage(name, argsJson) {
+  const mc = (typeof document !== 'undefined' && document.modelContext) ||
+             (typeof navigator !== 'undefined' && navigator.modelContext) || null;
+  if (!mc || typeof mc.getTools !== 'function') {
+    return { ok: false, error: 'this page declares no WebMCP tools (document.modelContext is unavailable here)' };
+  }
+  let raw = [];
+  try { raw = (await mc.getTools()) || []; } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+  const t = raw.find((x) => x && x.name === name);
+  if (!t) {
+    // Name the alternatives rather than just refusing — the same rule the submit
+    // picker follows when it cannot resolve a single candidate.
+    return { ok: false, error: 'no tool named ' + JSON.stringify(String(name)),
+             available: raw.map((x) => x && x.name).filter(Boolean) };
+  }
+  try {
+    const res = await mc.executeTool(t, typeof argsJson === 'string' ? argsJson : JSON.stringify(argsJson || {}));
+    return { ok: true,
+             // executeTool resolves null on navigation, which is a real outcome
+             // (the tool worked and moved the page) and not an error.
+             navigated: res === null || res === undefined,
+             result: (res === null || res === undefined) ? '' : String(res),
+             readOnly: !!(t.annotations && t.annotations.readOnlyHint) };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
 }
 
 function _domTextPage(scopeMmid) {
@@ -7971,6 +8075,18 @@ async function handleOp({ id, op, params }) {
         const t = await resolveTab(params);
         result = { url: t.url, title: t.title }; break;
       }
+      case "page_tools": {
+        const t = await resolveTab(params);
+        result = JSON.stringify(await runInTab(t.id, _pageToolsPage, []));
+        break;
+      }
+      case "call_page_tool": {
+        const t = await resolveTab(params);
+        result = JSON.stringify(await runInTab(t.id, _callPageToolPage,
+          [String(params?.name || ''), params?.args == null ? '{}' :
+            (typeof params.args === 'string' ? params.args : JSON.stringify(params.args))]));
+        break;
+      }
       case "get_dom_text": {
         const t = await resolveTab(params);
         const text = await runInTab(t.id, _domTextPage, [params && params.scopeMmid ? String(params.scopeMmid) : null]);
@@ -8029,6 +8145,17 @@ async function handleOp({ id, op, params }) {
           // sentinel, which is an error the server translates, not a listing.
           if (!result.startsWith('__SCOPE_MISS__')) {
             try { result = (await readinessNote(t.id)) + result; } catch (e) {}
+            // WEBMCP DISCOVERABILITY. A page that declares its own tools has said
+            // what it can do far better than we can infer it, and an agent that is
+            // never told will re-derive it from markup instead. One line when
+            // there is something to say, nothing at all otherwise — the standing
+            // rule from #10's detail legend: never filter silently, but never
+            // charge for a notice nobody needs.
+            //
+            // Probed once per page load and cached, so the extra round trip is
+            // paid on the first read of a URL rather than on every observation.
+            // On today's web `supported` is false and this is one cache entry.
+            try { result = (await webmcpNote(t.id)) + result; } catch (e) {}
           }
         }
         break;

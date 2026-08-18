@@ -128,6 +128,11 @@ const GATED = [
   "get_dom_text", "get_interactive_elements", "click", "enter_text", "press_keys",
   "fill_field", "fill_form", "computer", "javascript_exec", "screenshot",
   "file_upload", "read_console_messages", "read_network_requests", "page_fingerprint",
+  // WebMCP: page_tools READS what the page declares and call_page_tool ACTS on the
+  // page as the user, so both belong here. They are gated by omission from
+  // UNGATED_OPS, which is the intended default for a new op — this list is what
+  // proves the default actually held rather than being assumed.
+  "page_tools", "call_page_tool",
 ];
 
 (async function main() {

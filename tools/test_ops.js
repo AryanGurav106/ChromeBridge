@@ -965,6 +965,45 @@ const FIELDS3 = () => ([
       r && r.ok === false && /unknown op: bogus_op/.test(String(r.error)), JSON.stringify(r));
   });
 
+  // ---- WebMCP ops through the ROUTER. Every offline check of the page functions
+  // calls them directly, which is exactly the gap CLAUDE.md #19 describes: a param
+  // that never reaches the page would look perfect there and be inert in
+  // production. These assert the wiring, not the WebMCP logic.
+  await test("page_tools / call_page_tool reach the page with the right arguments", async () => {
+    resetState();
+    currentStubs["_pageToolsPage"] = () => ({ supported: true, tools: [{ name: "t1" }] });
+    currentStubs["_callPageToolPage"] = () => ({ ok: true, result: "done" });
+
+    const argsOf = (fn) => {
+      const e = [...callLog].reverse().find((l) => l.kind === "exec" && l.name === fn);
+      return e ? e.args : null;
+    };
+
+    let r = await callOp("page_tools", { tabId: 1 });
+    check("page_tools: routed to the page and the reply is JSON",
+      r && r.ok !== false && /"supported":true/.test(String(r.result)), JSON.stringify(r).slice(0, 120));
+
+    callLog.length = 0;
+    r = await callOp("call_page_tool", { tabId: 1, name: "addToCart", args: '{"sku":"A-1"}' });
+    let a = argsOf("_callPageToolPage");
+    check("call_page_tool: name and args JSON are forwarded verbatim",
+      !!a && a[0] === "addToCart" && a[1] === '{"sku":"A-1"}', JSON.stringify(a));
+
+    // An object is accepted and serialized, so a caller passing a dict is not
+    // silently turned into "[object Object]" for the page to choke on.
+    callLog.length = 0;
+    await callOp("call_page_tool", { tabId: 1, name: "x", args: { sku: "B-2" } });
+    a = argsOf("_callPageToolPage");
+    check("call_page_tool: an object argument is serialized, not stringified to [object Object]",
+      !!a && a[1] === '{"sku":"B-2"}', JSON.stringify(a));
+
+    callLog.length = 0;
+    await callOp("call_page_tool", { tabId: 1, name: "x" });
+    a = argsOf("_callPageToolPage");
+    check("call_page_tool: omitted args become an empty JSON object",
+      !!a && a[1] === "{}", JSON.stringify(a));
+  });
+
   // -------------------------------------------------------------------------
   console.log(`\n${passCount} passed, ${failCount} failed, ${passCount + failCount} total checks`);
   if (failCount) {

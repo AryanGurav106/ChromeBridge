@@ -713,6 +713,79 @@ async def main():
               "1,240" in whole and "東京" in whole)
         await tb.close()
 
+        # ---- WM: WebMCP — tools the PAGE declares about itself -------------------
+        # Tested against a STUB document.modelContext so discovery, schema parsing,
+        # the annotation surface and the zero-cost-when-absent path are all pinned
+        # without needing a Chrome origin trial. The real API is verified live.
+        PT = extract("_pageToolsPage")
+        CT = extract("_callPageToolPage")
+        wm = await browser.new_page(viewport={"width": 900, "height": 700})
+        await wm.set_content("<!doctype html><meta charset=utf-8><body><button>ui</button></body>")
+        await wm.wait_for_timeout(60)
+
+        # Absent API first: this is every page on today's web, and it must report
+        # "not supported" rather than erroring or looking like a broken bridge.
+        none = await wm.evaluate("(function(){ " + PT + "; return _pageToolsPage(); })()")
+        check("WM1 a page with no modelContext reports supported=false, not an error",
+              none.get("supported") is False and none.get("tools") == [],
+              json.dumps(none)[:80])
+
+        await wm.evaluate("""() => {
+            document.modelContext = {
+              getTools: async () => ([
+                { name: 'searchProducts', description: 'Search the catalogue',
+                  // getTools() returns inputSchema as a JSON STRING
+                  inputSchema: JSON.stringify({type:'object',properties:{query:{type:'string'}}}),
+                  annotations: { readOnlyHint: true }, origin: 'https://shop.example' },
+                { name: 'addToCart', description: '注文に追加',
+                  inputSchema: JSON.stringify({type:'object',properties:{sku:{type:'string'}}}),
+                  annotations: { readOnlyHint: false, untrustedContentHint: true },
+                  origin: 'https://shop.example' },
+              ]),
+              executeTool: async (t, argsJson) => {
+                if (t.name === 'addToCart') return 'added ' + JSON.parse(argsJson).sku;
+                if (t.name === 'navigateAway') return null;
+                return 'searched';
+              },
+            };
+        }""")
+        got = await wm.evaluate("(function(){ " + PT + "; return _pageToolsPage(); })()")
+        names = [t["name"] for t in got.get("tools", [])]
+        check("WM2 declared tools are enumerated with their names",
+              got.get("supported") is True and names == ["searchProducts", "addToCart"],
+              str(names))
+        check("WM3 inputSchema arrives PARSED, not as an escaped string",
+              isinstance(got["tools"][0].get("inputSchema"), dict)
+              and got["tools"][0]["inputSchema"]["properties"]["query"]["type"] == "string",
+              type(got["tools"][0].get("inputSchema")).__name__)
+        # readOnlyHint is the DECLARED destructiveness signal that #24 removed the
+        # submit wordlists for lacking. It must survive to the caller intact.
+        check("WM4 readOnlyHint=false survives as the declared 'this changes state' signal",
+              got["tools"][1]["annotations"]["readOnlyHint"] is False
+              and got["tools"][1]["annotations"]["untrustedContentHint"] is True,
+              json.dumps(got["tools"][1]["annotations"]))
+        check("WM5 a non-Latin description is not mangled",
+              got["tools"][1]["description"] == "注文に追加",
+              got["tools"][1]["description"])
+
+        ran = await wm.evaluate("(function(){ " + CT + "; return _callPageToolPage('addToCart', '{\"sku\":\"A-1\"}'); })()")
+        check("WM6 call_page_tool runs the named tool and returns its result",
+              ran.get("ok") is True and ran.get("result") == "added A-1"
+              and ran.get("readOnly") is False, json.dumps(ran)[:90])
+        miss = await wm.evaluate("(function(){ " + CT + "; return _callPageToolPage('nope', '{}'); })()")
+        check("WM7 an unknown tool name is refused AND the alternatives are named",
+              miss.get("ok") is False and "searchProducts" in (miss.get("available") or []),
+              json.dumps(miss)[:100])
+        # executeTool resolves null on navigation: a real outcome, not a failure,
+        # and every previously-read ref is stale afterwards.
+        await wm.evaluate("""() => { const g = document.modelContext.getTools;
+            document.modelContext.getTools = async () => (await g()).concat(
+              [{ name: 'navigateAway', description: 'go', inputSchema: '{}', annotations: {} }]); }""")
+        nav = await wm.evaluate("(function(){ " + CT + "; return _callPageToolPage('navigateAway', '{}'); })()")
+        check("WM8 a tool that navigates reports navigated=true rather than failing",
+              nav.get("ok") is True and nav.get("navigated") is True, json.dumps(nav)[:90])
+        await wm.close()
+
         await browser.close()
 
     passed = sum(1 for _, ok, _ in results if ok)
