@@ -164,7 +164,7 @@ immediately; only status-reporting ops keep answering while paused.
 
 ## What Claude gets
 
-22 MCP tools. The names and schemas mirror Claude-in-Chrome so a model that
+24 MCP tools. The names and schemas mirror Claude-in-Chrome so a model that
 knows one knows the other:
 
 | | |

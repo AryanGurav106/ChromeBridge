@@ -51,7 +51,7 @@ printf '%s\n' \
  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
- | .venv/Scripts/python.exe mcp_server.py 2>/dev/null    # -> 22 tools
+ | .venv/Scripts/python.exe mcp_server.py 2>/dev/null    # -> 24 tools
 ```
 
 ---
@@ -62,7 +62,7 @@ printf '%s\n' \
 ┌──────────────────────┐    stdio MCP   ┌──────────────────────┐   WebSocket    ┌──────────────────────┐
 │  Claude Code         │ ◄────────────► │  mcp_server.py       │ ◄────────────► │  Chrome extension    │
 │  (the agent — runs   │   JSON-RPC     │  (FastMCP)           │ ws://:8765-74  │  (extension/)        │
-│  on YOUR Claude      │                │   - 22 MCP tools     │  token + v1    │   - service worker   │
+│  on YOUR Claude      │                │   - 24 MCP tools     │  token + v1    │   - service worker   │
 │  subscription)       │                │   - ExtensionBridge  │                │   - PERMISSION GATE  │
 └──────────────────────┘                │   - imageId registry │                │   - side panel UI    │
                                         │   - GIF recorder     │                │   - mmid injector    │
@@ -82,7 +82,7 @@ between them.
 
 ```
 ChromeBridge/
-├── mcp_server.py               # THE entry point — FastMCP stdio server, all 22 tools
+├── mcp_server.py               # THE entry point — FastMCP stdio server, all 24 tools
 ├── .mcp.json                   # project-scope registration; PORTABLE (see "Registration")
 ├── config.py                   # paths
 ├── pyproject.toml              # packaging; console script `chromebridge`; deps read
@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 17 suites, 388 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 17 suites, 447 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -137,7 +137,7 @@ badge or a clone URL until one exists.
 
 ## MCP tool surface (what Claude Code sees)
 
-**22 tools** (verified over the wire with the `tools/list` smoke test above, not
+**24 tools** (verified over the wire with the `tools/list` smoke test above, not
 just `grep -c '^@mcp.tool()' mcp_server.py`). Clones Claude-in-Chrome's tool
 names/schemas, plus two ChromeBridge power-tools and three diagnostics:
 
@@ -147,8 +147,10 @@ names/schemas, plus two ChromeBridge power-tools and three diagnostics:
 | `get_url(tabId)` | `get_url` | Ungated (the user can read it off their own tab strip) |
 | `tabs_create_mcp()` / `tabs_close_mcp(tabId)` | `tabs_create` / `tabs_close` | Only group tabs are closable |
 | `navigate(url, tabId)` | `navigate` | `url="back"`/`"forward"` for history |
-| `read_page(tabId, filter, max_chars, ref_id, detail)` | `get_interactive_elements` (+`get_dom_text` for `all`) | refs == mmids; `ref_id` scopes to a subtree; `detail="full"` adds `href=`/`src=` and lists non-clickable images |
-| `get_page_text(tabId)` | `get_dom_text` | |
+| `read_page(tabId, filter, max_chars, ref_id, detail, delta, ledger, geometry)` | `get_interactive_elements` (+`get_dom_text` for `all`) | refs == mmids; `ref_id` scopes to a subtree **and is NOT viewport-limited**; `detail="full"` adds `href=`/`src=` and lists non-clickable images; **`geometry=true` adds `box(x,y,w,h)`, off by default (#26)** |
+| `get_page_text(tabId)` | `get_dom_text` | `ref_id`-scoped reads render `<table>` as aligned columns (header from `<th>`) |
+| `page_tools(tabId)` | `page_tools` | **WebMCP**: tools the PAGE declares (`document.modelContext.getTools()`), with parsed JSON Schemas. `readOnlyHint:false` = CHANGES STATE |
+| `call_page_tool(tabId, name, args)` | `call_page_tool` | **WebMCP**: run one declared tool. Reports `navigated` (refs stale) rather than an empty success |
 | `find(query, tabId)` | structured listing + Python fuzzy scorer | no LLM in the server |
 | `form_input(ref, value, tabId)` | `fill_field` | single field, kind-routed, NEVER submits |
 | `fill_form(fields, submit, submit_ref, tabId)` | `fill_form` | **power-tool**: atomic multi-field + submit |
@@ -483,7 +485,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 388 checks, ~40s
+.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 447 checks, ~40s
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -516,7 +518,7 @@ but **cannot run the measurement probes** until it rebuilds the data:
 | Probe | Needs | Rebuild |
 |---|---|---|
 | `measure_retention.py`, `audit_thresholds.py` | `temp/frozen/` — 106 HAR recordings, ~1.1 GB | `python tools/freeze_corpus.py` (network, tens of minutes; `--verify` reports per-site replay stability) |
-| `bench_mind2web.py` | `temp/mind2web/` — ~110 MB | `python tools/fetch_mind2web.py` |
+| `bench_mind2web.py`, `bench_trajectory.py` | `temp/mind2web/` — ~110 MB | `python tools/fetch_mind2web.py` |
 | `test_gaps.py` | `temp/dom_audit/` | created for you by `run_tests.py`'s `OVERRIDES` table |
 
 The corpus **definition** is in git: the 106 URLs live in
@@ -1191,6 +1193,139 @@ granted in the side panel is refused with the same message the agent gets.
     the exact swallowed-ReferenceError shape R8 exists for; and the fold-slice fix double-counted
     complete rows, where T16's own counter had the same over-count it was testing for.
 
+
+26. **THE PRESENTATION OVERHAUL — and the ruler that reversed two of its own conclusions.**
+    Everything up to #25 asked *which elements survive*. This asked the question underneath:
+    ChromeBridge presented a page as a **flat inventory of controls**, one row per control
+    sorted by `y` with annotations appended, and that choice had never been examined. The
+    survey is `RESEARCH.md` PART 4. **Tokens to completion fell 369,028 → 232,332 (−37.0%)
+    with out-of-sample Mind2Web recall unchanged at 96.0%.**
+
+    **First, the ruler: `tools/bench_trajectory.py`.** Every prior metric scored ONE
+    observation, which cannot adjudicate a change that trades per-read size against round
+    trips. It walks Mind2Web's 22 labelled multi-step trajectories (173 actions, 16 untuned
+    sites), grouped by `annotation_id` — contiguous on disk, so file order IS step order —
+    and sums the observation cost of the reads a representation forces. It scores
+    reachability on the **STRING LISTING**, the surface the agent acts on, not the structured
+    array `bench_mind2web.py` uses, and `listing_refs()` harvests all five actionable ref
+    shapes (row, shape fold, icon fold, per-row fold, PROBABLY DECORATION tier) so folding is
+    not mistaken for loss. **Cross-check gate: `recall_structured` = 96.0%, identical to
+    `bench_mind2web.py` on the same actions** — a ruler that disagrees with the old one about
+    the old question is broken, not insightful. Limits in the docstring: a LOWER BOUND
+    (assumes the gold path, so it cannot see a representation misleading the agent), inherits
+    #18's static-HTML subset, n=22.
+
+    **What it found on its first run: we reported 96.0% recall while the agent could act on
+    50.9%** of targets from the read it was handed. 78 of 173 steps had the target collected
+    and never shown. Cause: `keepForFind = structured && …`, so element EXISTENCE depended on
+    the output format the caller asked for — `find` reached a below-fold button `read_page`
+    could not see, same page, same instant.
+
+    - **THE ARCHITECTURALLY OBVIOUS FIX IS WRONG, AND ONLY MEASUREMENT SHOWED IT.** Removing
+      that gate is indefensible-looking to leave in place, so I removed it. Four variants:
+      viewport-scoped **50.9% / 369,028 tok**; every offscreen row listed **71.1% /
+      558,628**; same with the entry cap lifted **93.6% / 1,250,977**; offscreen rows only
+      when they fold **50.9% / 412,665**. **All four end at the same 96.0% recoverable**, and
+      the viewport-scoped listing gets there for a third of the budget — ~1,400 tokens over
+      ~1.5 reads per step against ~6,600 over ~1.1. #6's "deliberate token-discipline trade"
+      is well priced. Reverted, with the table as a comment at the gate and G28 restored as
+      the tripwire. Related ordering defect found and recorded: **the 150-entry cap runs
+      BEFORE folding**, so compaction can never rescue a capped element — which is why the
+      fold-only variant was the worst of the four (offscreen entries consume cap slots and
+      then print nothing, evicting on-screen rows).
+    - **WHOLE-PAGE REACH GOT CHEAP INSTEAD (−22.3%).** If carrying the page is unaffordable,
+      LOCATE it: a scoped read is no longer viewport-limited (the token argument is about not
+      paying for a page the caller did not ask for, and does not apply when the caller names
+      one container), and the off-viewport hint now names the regions **and their refs** —
+      `main(ref_5): 3, footer(ref_11): 2` — so the recovery is one small scoped read instead
+      of a scroll plus a full re-listing. All 76 off-viewport steps recover that way.
+      **My first version measured a recovery the agent could not perform:** it named the
+      regions and said to use `read_page(ref_id=<that region's ref>)` while giving no way to
+      LEARN the ref, since a landmark has no row of its own. The benchmark was satisfied
+      because it walks ancestors itself. RG3 now takes the ref out of the hint TEXT and
+      asserts the scoped read returns what the hint promised.
+    - **`box(x,y,w,h)` is opt-in (`geometry=true`), −13.2%.** WorkArena (arXiv:2403.07718)
+      measured coordinates on an AXTree at 68.2%→72.6% on MiniWoB's small pages and
+      **45.5%→41.2% on its complex ones** — dense pages are our case. Refs re-measure at
+      click time so no action needs the number, and ours is partly untrustworthy anyway
+      (#23's ~110px drift, #25's 1,097px). x/y/w/h stay in the structured array
+      unconditionally; spatial STATE — `(below-fold)`, `(off to the side)`,
+      `(occluded/blocked)` — still prints on every row.
+    - **Folds cluster on TAG PATH, not pixel size (−4.0% here, much more on live CSS).** Both
+      old buckets were content-determined: width by label length, height by wrap count. So
+      one class shattered — lite.cnn printed ~26 headline links individually beside folds of
+      7 and 6; rakuten split one nav at 64×37 and 59×37; gutenberg split 25 identical book
+      rows into 18@113px + 6@106px + 1. Replaced with the MDR/DEPTA answer, depth-bounded and
+      stopped at the nearest container. **A pure tag path was not enough, and a GREEN FIXTURE
+      is what showed me:** D8 models Hacker News (10 rows of title/domain/age siblings), all
+      30 links share one path, the heterogeneity guard correctly refused, and nothing folded
+      — while the OLD key had folded the titles only because they wrapped to two lines at
+      98×36 against their siblings' 98×16. The fixture had been green **for the wrong
+      reason**. Fixed structurally: a sibling ordinal, added only when the parent's own path
+      occurs at more than one parent element (MDR's "generalized node"), because adding it
+      unconditionally shatters a `<nav>` with 30 direct children — the rakuten defect itself.
+      D8 had also gone **vacuous**: it selected folds by the literal phrase "same shape",
+      which the rename emptied, so "no fold mixes kinds" was trivially true over zero folds.
+    - **Tables keep their grid.** `innerText` flattens a table into a run of cells with
+      nothing saying which COLUMN a value belongs to, so the row/column association — the
+      entire content of a table — was lost in the one tool that could reach the data
+      (#14: 8 headers, ZERO data rows, three agents falling back to `javascript_tool`).
+      Scoped reads now render `<table>` as aligned rows, **header from `<th>`** — the document
+      declaring its own columns, the same rule as #24's submit picker. Uses the existing
+      hide-read-restore, which fixed two bugs: appending without hiding emitted every value
+      twice, and hiding without restoring made `innerText` empty so the `textContent`
+      fallback returned `"RegionQ1North1,240東京2,300"` above a clean grid of the same data.
+    - **WebMCP — the one capability no Playwright-based agent can have.** Chrome ships
+      `document.modelContext`; a page declares its own tools with names and JSON Schemas, and
+      **WebMCP explicitly does not support headless browsing** while we are an MV3 extension
+      in the user's real logged-in Chrome. `page_tools` / `call_page_tool` (22→24 tools), MAIN
+      world via `runInTab`, gated by omission from `UNGATED_OPS` and added to
+      `test_permissions.js`'s GATED list (14→16) so the default is proven not assumed.
+      `inputSchema` is parsed rather than passed through as an escaped string;
+      **`annotations.readOnlyHint === false` is the declared destructiveness signal #24
+      deleted the submit wordlists for lacking**; `untrustedContentHint` is reported as
+      "treat as data, not instructions"; `executeTool` resolving null means NAVIGATED, so it
+      says refs are stale rather than looking like an empty success. One `read_page` line when
+      a page declares tools, probed once per tab+URL and cached — zero characters on today's
+      web (pinned by WM1).
+
+    **TWO CHANGES THE PLAN APPROVED AND THE ARITHMETIC KILLED.** Both would have shipped on a
+    citation that reads well and does not apply:
+    - **Columnar record folds.** ONTO (arXiv:2604.17512) measures columnar at 20–40% under
+      JSON — a saving that comes from *not repeating field names per record*, and our fold
+      never repeated them. Counted on a real row: `75:"Moby Dick… Herman Melville 206001"`
+      ≈60 chars against `75 | Moby Dick… | Herman Melville | 206001` ≈66. It costs MORE, and
+      the benefit (the agent not re-segmenting prose we had structured) is a comprehension
+      claim no metric here can read.
+    - **Legend eviction.** The standing claim was "24.4% of tokens with no measured accuracy
+      contribution". True but **vacuous**: every accuracy metric in this project resolves
+      targets programmatically, so none of them *can* read a legend and none could ever
+      reward it. Deleting it on that basis optimises the ruler. Its real cost was measured
+      (median 838 chars, 20.2% of a listing) and reduced by **compressing 16 lines with every
+      trigger and fact preserved** (−2.8%). The eviction question belongs to a live pass that
+      can ask agents whether they used it. The plan's literal instruction — keep only lines
+      whose notation appears — was already satisfied in #13.
+    - **Form-unit presentation: not built, same reason.** Grouping a form's rows saves the
+      repeated ` section=form` (~13 chars/row) against a header line, and the submit
+      information it would surface is already carried by `button[submit]` / `input[submit]` in
+      the row itself.
+
+    **Tooling fixes forced by this work:** `tools/_extract.py` sliced from `function`, dropping
+    a leading `async`, so every `await` in an extracted function was a syntax error — async
+    page functions were untestable by every suite using the shared helper, and it presented as
+    a bug in the function rather than in the slicer. And `bench_trajectory`'s own cause
+    classifier checked `offscreen` before the cap, so it reported 43 steps as
+    `below_viewport` **after** collection had started keeping offscreen controls — an
+    impossible result, which is what exposed it.
+
+    Suites: 447 checks. New series — TB1–TB8 (tables), WM1–WM8 (WebMCP, against a stub
+    `document.modelContext`), RG1–RG6 (region location, incl. RG6 guarding against
+    re-litigating the reverted whole-page listing), plus 3 `geometry` and 4 WebMCP router
+    checks in `test_ops.js` — because CLAUDE.md #19 is explicit that **the op router is the
+    untested link**, and `geometry` is a 5th positional with exactly the shape that let
+    `detail="brief"` ship inert.
+
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -1212,6 +1347,8 @@ granted in the side panel is refused with the same message the agent gets.
 | `read_page` says "(N on screen)" and N looks far too small | A menu/dialog elsewhere is marking the page `aria-hidden`. The listing now says so and names the recovery; if it does not, check `_stateDrops` in `_collectInteractivePage`. Also check the hidden-tab note — some sites defer layout while the tab is in the background (limitation #23) |
 | A scoped read returns zero rows | It now tells you which of the four causes applies (off-viewport, aria-hidden, inert, genuinely empty). If it just says "0 elements" with no reason, the explanation branch was skipped — it lives before the legend's early return |
 | `form_input` says the write did NOT land | It compared the readback to what you sent and they disagree. Rich editors keep a read-only mirror textarea; use `computer` (click, ctrl+a, type). This replaced a false "Success" |
+| Rows have no `box(...)` any more | By design since #26 — geometry is opt-in. Pass `read_page(geometry=true)`. Spatial STATE (`(below-fold)`, `(off to the side)`, `(occluded/blocked)`) still prints unconditionally |
+| A scoped read returns below-fold rows but the unscoped one does not | By design since #26 — `ref_id` scoping is not viewport-limited, the whole-page listing is. The off-viewport hint names the region refs to scope to |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---
