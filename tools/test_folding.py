@@ -151,7 +151,13 @@ async def main():
         await hp.set_content(f"<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>{_rows}</body>")
         await hp.wait_for_timeout(140)
         hout = await hp.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()")
-        _folds = [l for l in hout.splitlines() if "same shape" in l]
+        # MATCH THE ROW'S SHAPE, NOT ITS PROSE. This selected on the literal
+        # phrase "same shape", so renaming the group header to "same structure"
+        # (when the fold key moved from pixel size to tag path) emptied this list
+        # — and D8, a NEGATIVE check that no fold mixes kinds, then passed
+        # vacuously on zero folds while D8b was the only thing that noticed.
+        # `N× ` is the fold row's actual signature and survives wording changes.
+        _folds = [l for l in hout.splitlines() if re.match(r"^\d+×\s", l)]
         _mixed = [l for l in _folds if "huggingface" in l and "hours ago" in l]
         check("D8 a fold never mixes domains with timestamps (heterogeneous labels)",
               not _mixed, f"{len(_mixed)} mixed fold(s): {(_mixed or [''])[0][:90]}")

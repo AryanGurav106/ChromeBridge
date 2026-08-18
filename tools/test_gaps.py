@@ -340,26 +340,22 @@ async def main():
                "CAPTURED" if len(g27) == 2 and not g27_bad else "MISSED",
                f"found={len(g27)} falsely_flagged={len(g27_bad)}")
 
-        # --- G28 ONE COLLECTION, TWO PRESENTATIONS ---
-        # This probe used to assert the OPPOSITE: below-fold controls reachable by
-        # find() and deliberately absent from the string listing. That asymmetry
-        # came from `keepForFind = structured && ...`, which let the requested
-        # OUTPUT FORMAT decide whether an element existed. tools/bench_trajectory.py
-        # priced it over Mind2Web gold paths — 96.0% recall against 50.9% first-read
-        # reachability, a forced scroll and re-read on 62% of steps — and it is now
-        # collected once and presented twice. The probe is inverted on purpose;
-        # it is here so nobody re-splits the two paths without meaning to.
+        # --- G28 find-reach: below-fold control in structured output only ---
+        # The asymmetry this pins looks indefensible — the requested OUTPUT FORMAT
+        # decides whether an element exists, so find() reaches a below-fold button
+        # that read_page cannot see. It was removed on that argument and
+        # tools/bench_trajectory.py priced all three alternatives over Mind2Web
+        # gold paths: listing every offscreen row costs 1.51x tokens for +20.2pp
+        # first-read reachability, 3.39x for +42.7pp, and folding-only costs 1.12x
+        # for +0.0pp. All four variants end at the same 96.0% recoverable, so the
+        # viewport-scoped listing reaches the same place for a third of the budget.
+        # Kept deliberately, and this probe is the tripwire.
         deep = named("Deep below fold action")
         deep_in_string = "Deep below fold action" in listing
-        # It must also SAY it is off-viewport, or the agent reads a below-fold row
-        # as being on screen — the failure #23 recorded when (below-fold) was
-        # dropped from folded rows and its absence read as "on screen".
-        marked = deep_in_string and ("(below-fold)" in listing or "(outside the viewport)" in listing)
-        ok28 = bool(deep) and bool(deep[0].get("offscreen")) and deep_in_string and marked
-        report("G28 a below-fold control is in BOTH presentations, flagged off-viewport",
+        ok28 = bool(deep) and bool(deep[0].get("offscreen")) and not deep_in_string
+        report("G28 below-fold control reachable by find() but kept out of the listing",
                "CAPTURED" if ok28 else "MISSED",
-               f"inStructured={bool(deep)} offscreen={deep[0].get('offscreen') if deep else None} "
-               f"inStringListing={deep_in_string} flagged={marked}")
+               f"inStructured={bool(deep)} offscreen={deep[0].get('offscreen') if deep else None} inStringListing={deep_in_string}")
 
         # --- G29 unmatched option must FAIL LOUDLY, not click something arbitrary ---
         g29 = await page.evaluate(

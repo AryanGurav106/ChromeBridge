@@ -4787,34 +4787,43 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
       if (!_peReal) _note(el, 'was:pointer-events-none');
       peDisabled = true;
     }
-    // ONE COLLECTION, TWO PRESENTATIONS.
+    // FIND REACH: the STRING listing stays viewport-scoped (token discipline),
+    // but the STRUCTURED array — which backs the `find` tool — keeps real
+    // controls that are merely scrolled out of view, flagged offscreen.
+    // Without this, find() is viewport-bound: a semantically perfect query
+    // ("Launch demo modal button") returns 13 wrong answers because the target
+    // is 200px below the fold, and the SAME query works after scrolling. Clicks
+    // auto-scroll (scrollIntoView in _clickPage/_rectForPage), so these refs are
+    // immediately actionable — the agent never needs to engineer a scroll first.
     //
-    // This predicate used to begin `structured &&`, which made element
-    // EXISTENCE depend on the output format the caller asked for. The structured
-    // array (behind `find`) kept real controls that were merely scrolled out of
-    // view; the string listing (behind `read_page`) dropped them right here, at
-    // COLLECTION time. So `find` could reach a below-fold button that
-    // `read_page` could not see — same page, same instant, two answers.
+    // THE `structured &&` GATE IS DELIBERATE AND NOW MEASURED. It looks
+    // indefensible — element EXISTENCE depending on which output format the
+    // caller asked for, so `find` can reach a below-fold button that `read_page`
+    // cannot see on the same page in the same instant. It was removed on exactly
+    // that argument and `tools/bench_trajectory.py` priced all three variants
+    // over Mind2Web's labelled gold paths:
     //
-    // CLAUDE.md #6 recorded that as a deliberate token-discipline trade. It had
-    // never been priced. `tools/bench_trajectory.py` priced it over Mind2Web's
-    // labelled gold paths: we report **96.0% recall while the agent can act on
-    // 50.9%** of targets from the read it was handed — 78 of 173 steps had the
-    // target collected and absent, forcing a scroll and a re-read on 62% of
-    // steps and roughly doubling their token cost. Not one of those steps was
-    // the 150-entry cap; all were the viewport.
+    //   variant                          first-read reachable   tokens to completion
+    //   viewport-scoped (this code)                     50.9%                369,028
+    //   every offscreen row listed, cap 150             71.1%                558,628
+    //   every offscreen row listed, cap lifted          93.6%              1,250,977
+    //   offscreen rows only when they FOLD              50.9%                412,665
     //
-    // Presentation may COMPACT an offscreen control. Collection may not DELETE
-    // it. That is prominence-not-existence applied to a serialization flag, and
-    // the flag was the least defensible decider of the two — a heuristic at
-    // least guesses about the element; this only knew what the caller asked for.
+    // All four end at the SAME 96.0% recoverable, because the listing says what
+    // is off-viewport and `find` reaches it by ref. The viewport-scoped listing
+    // gets there for a third of the budget — ~1,400 tokens over ~1.5 reads per
+    // step against ~6,600 over ~1.1. The compact-only variant was worse than
+    // both: offscreen entries consume the 150 entry slots (the cap runs BEFORE
+    // folding) and then print nothing, evicting on-screen rows — over_cap steps
+    // went 43 -> 69.
     //
-    // Original justification, still true and now served for both formats: a
-    // semantically perfect query ("Launch demo modal button") returned 13 wrong
-    // answers because the target sat 200px below the fold. Clicks auto-scroll
-    // (`scrollIntoView` in `_clickPage`/`_rectForPage`), so these refs are
-    // immediately actionable and the agent never has to engineer a scroll.
-    const keepOffscreen = visible && !inViewport && (() => {
+    // So the trade CLAUDE.md #6 recorded is real and well priced, and the tidy
+    // architectural argument did not survive being measured. Whole-page reach
+    // has to get cheaper before it can be afforded, which is what a region index
+    // is for — naming an off-viewport region costs one line, listing its
+    // contents costs hundreds. Do not remove this gate again without a
+    // representation that makes the 1,250,977 column affordable.
+    const keepForFind = structured && visible && !inViewport && (() => {
       const rr = el.getAttribute('role');
       if (['a', 'button'].includes(tagL) || formyTags.has(tagL) ||
           (rr && strongInteractiveRoles.has(rr))) return true;
@@ -4842,13 +4851,13 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
     })();
     // COUNT ONLY WHAT IS ACTUALLY ABSENT. This tally drives the "N more elements
     // are BELOW the current viewport — scroll down" hint, and it used to run
-    // BEFORE the keep decision. That was safe only because every offscreen
-    // control was then dropped, so the tally and the drop set were the same
-    // population by construction. They are not any more: with the rows present,
-    // a tally that still predicted the drop would advertise a scroll to reach
-    // elements printed a few lines above it, and the two numbers would disagree
-    // about the same page. It has to FOLLOW the drop, not anticipate it.
-    if (visible && !inViewport && !inModal && !keepOffscreen) {
+    // BEFORE the keep decision, predicting the drop rather than following it.
+    // In the string path those are the same population, so it read correctly;
+    // in the STRUCTURED path they are not, and the count advertised a scroll to
+    // reach elements that were in the array already. Following the drop is right
+    // in both, and it is what keeps the count honest if the keep rule ever
+    // widens again.
+    if (visible && !inViewport && !inModal && !keepForFind) {
       const _bfRole = el.getAttribute('role');
       const _real = ['a','button'].includes(tagL) || formyTags.has(tagL) ||
                     (_bfRole && strongInteractiveRoles.has(_bfRole));
@@ -4860,7 +4869,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
       // complete when it was not.
       else if (_real && (ax >= vw || (ax + r.width) <= 0)) sideCount++;
     }
-    if (!visible || (!inViewport && !inModal && !keepOffscreen)) return _drop(el, !visible ? 'not-visible' : 'outside-viewport');
+    if (!visible || (!inViewport && !inModal && !keepForFind)) return _drop(el, !visible ? 'not-visible' : 'outside-viewport');
     // Sub-8×8 elements are almost always decoration: SVG path fragments, hover
     // hot-spots, screen-reader spacers. Semantics beat pixels though — a 6×6
     // styled role=checkbox/radio/switch is a real control (dense dashboards,
@@ -6890,16 +6899,107 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
     // unactionable or unanswerable — this is a serialization change only. The
     // structured array is returned untouched above, which is what `find` and
     // every audit consume.
-    const recSig = new Map();
+    // TAG PATH, NOT PIXEL SIZE. The signature used to bucket rendered geometry
+    // (`round(w/40)`, `round(h/20)`), and BOTH of those are content-determined
+    // for text: width is set by how long the label is, and height by how many
+    // lines it wraps to. So one semantic class shattered into buckets of one.
+    // Measured live on three of five random sites: lite.cnn.com printed ~26
+    // headline links individually beside folds of 7 and 6 — one list, one tag,
+    // one height, one x-origin, differing only in headline length; rakuten split
+    // a single nav at 64x37 and 59x37; gutenberg split 25 identical book rows
+    // into 18@113px + 6@106px + 1 orphan, because long titles wrap.
+    //
+    // The classical answer is to cluster on STRUCTURE — the root-to-node tag
+    // path (MDR / DEPTA / tag-path clustering). Members of one repeated record
+    // group share their ancestor chain up to the container that repeats them;
+    // two different lists do not. It is also the honest criterion: "these are
+    // the same kind of thing" is a claim about markup, not about how wide the
+    // text happened to render.
+    //
+    // Bounded depth and a stop at the nearest structural container, so the path
+    // discriminates within a page without becoming a whole-document fingerprint
+    // (which would make every element unique and fold nothing).
+    const _STOP = /^(main|nav|header|footer|aside|form|section|article|ul|ol|table|tbody|thead|tr|dl)$/;
+    const _structSig = (el) => {
+      const parts = [];
+      let n = el;
+      for (let d = 0; n && d < 6; d++) {
+        const t = (n.tagName || '').toLowerCase();
+        if (!t) break;
+        let rl = '';
+        try { rl = (n.getAttribute && n.getAttribute('role')) || ''; } catch (err) {}
+        parts.push(rl ? t + '[' + rl + ']' : t);
+        if (_STOP.test(t)) break;
+        n = n.parentElement;
+      }
+      return parts.join('<');
+    };
+    // POSITION MATTERS, BUT ONLY INSIDE A REPEATED PARENT.
+    //
+    // A pure tag path is right for lists and wrong for multi-field rows. Both
+    // cases are real and they pull in opposite directions:
+    //
+    //   list   <ul><li><a>Fashion</a></li> x16          -> path identical, one group. GOOD.
+    //   record <div><a>title</a><a>domain</a><a>age</a> -> path identical, ONE group of
+    //          x10                                         30 mixed things, so the
+    //                                                      heterogeneity guard refuses
+    //                                                      and nothing folds at all.
+    //
+    // A sibling ordinal fixes the record case and destroys the list case: a <nav>
+    // holding 30 direct <a> children would fragment into 30 groups of one — the
+    // exact rakuten defect this rewrite exists to fix.
+    //
+    // What separates them is not the child count, it is whether the PARENT ITSELF
+    // REPEATS. Ten sibling <div> rows sharing one tag path are MDR's "generalized
+    // node"; a single <nav> is not. So the ordinal is added only when the parent's
+    // own path occurs at more than one parent element. Structural, no threshold.
+    //
+    // (Found because the old geometry key passed a fixture this one failed: the
+    // titles wrapped to two lines at 98x36 while their metadata siblings were
+    // 98x16, so `round(h/20)` separated title from metadata BY ACCIDENT. Fixtures
+    // encode behaviour, not intent, and that one had been green for the wrong
+    // reason.)
+    const _cand = [];
     for (const e of shown) {
       if (inCompact.has(e.mmid) || e.section === 'dialog' || e.mediaOnly) continue;
       const label = (e.name || e.label || e.text || '').trim();
       if (!label) continue;                       // unlabeled rows fold badly
-      // Signature = "the same KIND of thing": tag, role, region, and whether it
-      // carries a link. Box size is bucketed, not exact, so a grid whose cards
-      // differ by a pixel still folds.
-      const k = [e.tag, e.role || '', e.section || '', e.href ? 'L' : '',
-                 Math.round((e.w || 0) / 40), Math.round((e.h || 0) / 20)].join('|');
+      let el = null;
+      try { el = mmidReg.get(String(e.mmid)) || null; } catch (err) {}
+      _cand.push({ e, el, path: el ? _structSig(el) : '', par: (el && el.parentElement) || null });
+    }
+    // parent tag path -> the distinct parent elements carrying it.
+    const _parGroups = new Map();
+    for (const c of _cand) {
+      if (!c.par) continue;
+      const pp = _structSig(c.par);
+      if (!_parGroups.has(pp)) _parGroups.set(pp, new Set());
+      _parGroups.get(pp).add(c.par);
+    }
+    const recSig = new Map();
+    for (const c of _cand) {
+      const { e, el, par } = c;
+      let sig = c.path;
+      // No element (cross-frame entries live in another document) — fall back to
+      // the old geometry bucket rather than folding everything together.
+      if (!sig) sig = 'geo:' + Math.round((e.w || 0) / 40) + 'x' + Math.round((e.h || 0) / 20);
+      else if (par) {
+        try {
+          const pp = _structSig(par);
+          const reps = _parGroups.get(pp);
+          if (reps && reps.size > 1) {
+            // Ordinal among same-tag siblings: within a repeated record this
+            // identifies the FIELD, which is also the column W1b aligns on.
+            let ord = 0;
+            for (const sib of par.children) {
+              if (sib === el) break;
+              if (sib.tagName === el.tagName) ord++;
+            }
+            sig += '#' + ord;
+          }
+        } catch (err) {}
+      }
+      const k = [e.tag, e.role || '', e.section || '', e.href ? 'L' : '', sig].join('|');
       if (!recSig.has(k)) recSig.set(k, []);
       recSig.get(k).push(e);
     }
@@ -6943,8 +7043,13 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
       }).join(' ');
       const kind = m0.role || m0.tag;
       const where = m0.section ? ` in section=${m0.section}` : '';
+      // The header no longer claims "same shape (~WxH px)". Members are grouped
+      // by tag path now, so they can legitimately differ in rendered size — a
+      // wrapped two-line title next to a one-line one — and repeating the first
+      // member's box as the group's shape would be a false statement about the
+      // other N-1. "Same structure" is what is actually being asserted.
       compactBlocks.set('rec:' + k,
-        `${members.length}× ${kind}${where}, same shape (~${m0.w}x${m0.h}px)` +
+        `${members.length}× ${kind}${where}, same structure` +
         `${m0.href ? ' — each is a link, shown as ref:"label"→href' : ' — shown as ref:"label"'}` +
         ` (act on any via its ref): ${items}`);
       members.forEach((m) => { m.groupKey = 'rec:' + k; inCompact.add(m.mmid); });
@@ -7052,14 +7157,16 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger) {
     // advice ("scroll down and re-observe") sends the agent further away from
     // the target. The sign of y already says which way.
     // DIRECTION, ON ALL THREE AXES THAT EXIST. This read `y < 0 ? above : below`,
-    // which was complete only while horizontally-offscreen controls were dropped
-    // rather than listed. Now that collection keeps them (see keepOffscreen), a
-    // carousel slide parked to the right would be labelled "(below-fold)" and
-    // send the agent scrolling down for something that is sideways — the same
-    // shape of defect as CLAUDE.md #23's "you have scrolled past them" asserted
-    // at scrollY === 0. `innerWidth`/`innerHeight` are read directly rather than
-    // via the outer vw/vh consts: reaching across scopes for those is exactly
-    // the swallowed-ReferenceError that R8 exists to catch.
+    // a two-way answer to a three-way question. Offscreen entries DO reach the
+    // string listing — modal scroll content is the common case — and a control
+    // parked off to the SIDE (a carousel slide, a kanban column, an RTL page
+    // scrolled horizontally) was labelled "(below-fold)", sending the agent
+    // scrolling down for something that is sideways. Same shape of defect as
+    // CLAUDE.md #23's "you have scrolled past them" asserted at scrollY === 0:
+    // a confident direction that is simply the wrong one.
+    // `innerWidth`/`innerHeight` are read directly rather than via the outer
+    // vw/vh consts — reaching across scopes for those is exactly the swallowed
+    // ReferenceError that R8 exists to catch.
     let off = "";
     if (e.offscreen) {
       const _ey = e.y || 0, _ex = e.x || 0;
