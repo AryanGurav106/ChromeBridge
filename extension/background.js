@@ -3510,7 +3510,89 @@ function _domTextPage(scopeMmid) {
   } catch (e) {}
   if (_scopeEl) {
     let _st = "";
-    try { _st = (_scopeEl.innerText || _scopeEl.textContent || "").trim(); } catch (e) {}
+    // TABLES KEEP THEIR GRID. innerText flattens a table into a run of cells with
+    // nothing that says which COLUMN a value came from, so the row/column
+    // association — the entire content of a table — was lost in the one tool that
+    // could reach the data at all. CLAUDE.md #14: a scoped read of a table
+    // returned 8 column headers and ZERO data rows, and three separate live
+    // agents fell back to javascript_tool from three different directions.
+    //
+    // Rendered as aligned rows instead, with the header taken from <th> — the
+    // DOCUMENT declaring its own column names rather than a heuristic guessing
+    // them, which is the same "answer only from what the page declares" rule the
+    // submit picker was rewritten around in #24. Tables without <th> still get
+    // their grid, just unnamed.
+    //
+    // HIDE-READ-RESTORE, the mechanism already used here for editor gutters and
+    // collapsed panels: the tables are hidden BEFORE innerText so the prose read
+    // does not contain them, then re-rendered and appended. Appending without
+    // hiding emitted every cell twice, which doubles the cost of the one region
+    // the caller explicitly asked for.
+    const _tbls = [];
+    try {
+      if (_scopeEl.tagName === 'TABLE') _tbls.push(_scopeEl);
+      _scopeEl.querySelectorAll('table').forEach((t) => { if (_tbls.indexOf(t) < 0) _tbls.push(t); });
+    } catch (e) {}
+    try {
+      for (const t of _tbls) { saved.push([t, t.style.visibility]); t.style.visibility = 'hidden'; }
+    } catch (e) {}
+    // When the scope IS the table there is no prose to read, and reading it
+    // anyway produced garbage: innerText is '' for the hidden subtree, so the
+    // textContent fallback fired and returned every cell concatenated with no
+    // separators at all — "RegionQ1North1,240東京2,300" — directly above a clean
+    // grid of the same data. The fallback is right for a scope that genuinely
+    // does not render; it is wrong for one we hid ourselves.
+    const _scopeIsTable = _tbls.indexOf(_scopeEl) >= 0;
+    if (!_scopeIsTable) {
+      try { _st = (_scopeEl.innerText || _scopeEl.textContent || "").trim(); } catch (e) {}
+    }
+    // Un-hide before reading cells: innerText returns '' for a visibility:hidden
+    // subtree, so building the grid while still hidden would emit an empty one —
+    // and falling back to textContent instead would leak genuinely hidden cells.
+    // `saved` still holds these nodes, so the restore at the end is idempotent.
+    try {
+      for (const t of _tbls) {
+        const s = saved.find((p) => p[0] === t);
+        t.style.visibility = s ? s[1] : '';
+      }
+    } catch (e) {}
+    try {
+      const _cell = (c) => ((c.innerText || c.textContent || '').replace(/\s+/g, ' ').trim());
+      const _grids = [];
+      for (const t of _tbls.slice(0, 5)) {
+        const rows = [];
+        let trs = [];
+        try { trs = Array.from(t.querySelectorAll('tr')); } catch (e) {}
+        for (const tr of trs) {
+          let cells = [];
+          try { cells = Array.from(tr.children).filter((c) => /^(TD|TH)$/.test(c.tagName)); } catch (e) {}
+          if (!cells.length) continue;
+          rows.push({ head: cells.every((c) => c.tagName === 'TH'), vals: cells.map(_cell) });
+        }
+        if (rows.length < 2) continue;   // not a data grid worth re-rendering
+        const wide = rows.reduce((m, r) => Math.max(m, r.vals.length), 0);
+        const out = rows.map((r) => {
+          const v = r.vals.slice();
+          while (v.length < wide) v.push('');
+          return (r.head ? '  ' : '  ') + v.join(' | ');
+        });
+        // A separator under the header row is what makes the alignment readable as
+        // a table rather than as pipe-separated prose.
+        const hi = rows.findIndex((r) => r.head);
+        if (hi >= 0) out.splice(hi + 1, 0, '  ' + Array(wide).fill('---').join(' | '));
+        _grids.push(`--- TABLE (${rows.length} row(s) x ${wide} column(s)) ---\n` + out.join('\n'));
+      }
+      if (_grids.length) _st = (_st ? _st + '\n\n' : '') + _grids.join('\n\n');
+      // Skipping the prose read is only correct when a grid REPLACES it. A table
+      // below the 2-row grid threshold produced neither: scoping to a one-row
+      // table returned "(this region contains no text)" for a region that plainly
+      // contains text. Caught by a fixture whose assertion (no grid emitted) was
+      // still passing — the check was right and incomplete, so it now asserts the
+      // content too.
+      else if (_scopeIsTable) {
+        try { _st = (_scopeEl.innerText || '').trim(); } catch (e) {}
+      }
+    } catch (e) {}
     try { saved.forEach(([n, v]) => { n.style.visibility = v; }); } catch (e) {}
     return _st || "(this region contains no text)";
   }

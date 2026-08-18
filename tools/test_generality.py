@@ -647,6 +647,72 @@ async def main():
               "コンポーネント内の見出し" in outline,
               next((l.strip() for l in outline.splitlines() if "見出し" in l), "ABSENT"))
 
+        # ---- TB: a scoped table keeps its ROW/COLUMN association ----------------
+        # innerText flattens a table into a run of cells with nothing saying which
+        # column a value belongs to, so the row/column association — which is the
+        # entire content of a table — was lost in the one tool that could reach the
+        # data at all. CLAUDE.md #14: a scoped read of a table returned 8 column
+        # headers and ZERO data rows, and three separate live agents fell back to
+        # javascript_tool from three different directions.
+        tb = await browser.new_page(viewport={"width": 900, "height": 700})
+        await tb.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await tb.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<div id=wrap><p>Notes before.</p>"
+            "<table><thead><tr><th>Region</th><th>Q1</th><th>Q2</th></tr></thead><tbody>"
+            "<tr><td>North</td><td>1,240</td><td>1,600</td></tr>"
+            "<tr><td>東京</td><td>2,300</td><td>2,450</td></tr>"
+            "</tbody></table><p>Notes after.</p></div>"
+            "<table id=solo><tr><td>x</td><td>y</td></tr><tr><td>z</td><td>w</td></tr></table>"
+            "<table id=one><tr><td>lonely</td></tr></table>"
+            "<button>Go</button></body>")
+        await tb.wait_for_timeout(130)
+        await tb.evaluate("(function(){ " + COLLECT
+                          + "; return _collectInteractivePage(true,null,'compact',false,false); })()")
+
+        async def scoped(el_id):
+            mm = await tb.evaluate(
+                f"()=>{{const e=document.getElementById('{el_id}');return e?e.getAttribute('mmid'):null;}}")
+            if not mm:
+                return None
+            return await tb.evaluate("(function(){ " + DOMTEXT
+                                     + "; return _domTextPage('" + str(mm) + "'); })()")
+
+        w = await scoped("wrap") or ""
+        rows = [l.strip() for l in w.splitlines() if "|" in l and "---" not in l]
+        check("TB1 a scoped table renders as aligned rows, not flattened cells",
+              "--- TABLE (" in w and any(r.startswith("North |") for r in rows),
+              next((r for r in rows if r.startswith("North")), "NO DATA ROW") [:70])
+        check("TB2 column names come from <th> (the document declaring them)",
+              any(r.startswith("Region |") for r in rows),
+              next((r for r in rows if "Region" in r), "NO HEADER")[:70])
+        check("TB3 a non-Latin cell survives with its row intact",
+              any(r.startswith("東京 |") and "2,300" in r for r in rows),
+              next((r for r in rows if "東京" in r), "ABSENT")[:70])
+        # Cells must not appear twice: the first version appended the grid WITHOUT
+        # hiding the table first, so every value was emitted once as flat text and
+        # again in the grid — doubling the cost of the one region the caller asked
+        # for.
+        check("TB4 cells are not duplicated as flat text alongside the grid",
+              w.count("1,240") == 1, f"'1,240' x{w.count('1,240')}")
+        check("TB5 surrounding prose in the scope is preserved",
+              "Notes before." in w and "Notes after." in w)
+
+        s = await scoped("solo") or ""
+        check("TB6 a table that IS the scope returns the grid with no textContent garbage",
+              "--- TABLE (" in s and "xy" not in s.replace("\n", "") and "x | y" in s,
+              s.replace("\n", " / ")[:80])
+        o = await scoped("one") or ""
+        check("TB7 a single-row table is not re-rendered as a grid, but its text "
+              "still comes back",
+              "--- TABLE (" not in o and "lonely" in o, o[:60])
+        # The hide is temporary; leaving it applied would blank the table for the
+        # NEXT reader. Same restore discipline as the gutter strip.
+        whole = await tb.evaluate("(function(){ " + DOMTEXT + "; return _domTextPage(); })()")
+        check("TB8 hidden-then-restored: the whole-page read still sees the table",
+              "1,240" in whole and "東京" in whole)
+        await tb.close()
+
         await browser.close()
 
     passed = sum(1 for _, ok, _ in results if ok)
