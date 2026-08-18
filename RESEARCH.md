@@ -389,3 +389,271 @@ arXiv:2511.17131 · LineRetriever arXiv:2507.00210 · tag-path clustering / MDR 
 STEM (Liu 2003, Zhai & Liu 2005, Miao 2009, Springer KAIS 10.1007/s10115-017-1062-0) ·
 VIPS (MSR TR-2003-79, still the segmentation baseline per an 8,490-page comparison) ·
 Playwright ARIA snapshots + MCP incremental diffs (playwright.dev/docs/aria-snapshots).
+
+---
+
+# PART 4 — PRESENTATION: how a page should be rendered to an agent (2026-08)
+
+PART 3 is about *which elements survive*. That is a small, downstream question. This part
+is about the one nobody in this project has examined: **ChromeBridge presents a web page as
+a flat inventory of controls, and every other design decision follows from that choice.**
+
+```
+ref_52 | a "post" section=header | box(2218,0,44,44)
+```
+
+One row per control, sorted by `y`, with annotations appended. It is a good inventory. But
+an inventory is only one of at least five presentation stances available, and we use no
+other. The literature below is organised by stance, not by paper.
+
+*Sourcing caveat as in PART 3: read via fetched abstracts/HTML with a summarizing model.
+Every number is second-hand until re-derived on our own harness.*
+
+## 4.1 Present at the granularity you ACT at
+
+We have an asymmetry nobody noticed because the two halves were built at different times:
+
+- **We act at form granularity.** `fill_form(fields, submit, submit_ref)` is atomic — all
+  text writes in one page-context script, comboboxes clicked-and-picked, submit resolved
+  structurally. The tool takes a form as one thing.
+- **We observe at element granularity.** The same form arrives as 5–30 unrelated rows
+  scattered through a y-sorted list, and the agent has to reassemble it.
+
+*Build the web for agents, not agents for the web* (arXiv:2506.10953) makes this its
+central design claim: agent interfaces should offer **"unified higher-level actions"**
+rather than click/type primitives, under six AWI principles of which one is verbatim our
+problem — *optimal representations: efficient, task-relevant observations without
+superfluous information*. *Web Verbs* (arXiv:2602.17245) proposes the same unit from the
+other end: typed, semantically documented functions as the thing an agent discovers.
+
+Concretely, the observation should look like the call:
+
+```
+form "Search apartments / housing for rent"  → fill_form(submit=ref_68)
+    q       input[text]   placeholder="search apartments / housing for rent"
+    min/max input[text]   price
+    beds    select        value="all" (unselected)
+```
+
+Shorter than five independent rows, and it names the call the agent is about to make. Our
+own `find` docstring already tells the agent to pass option TEXT to `fill_form` — the tool
+surface is form-shaped and the observation is not.
+
+## 4.2 Structure beats coordinates — and coordinates have *measured* harm on dense pages
+
+This is the most uncomfortable finding in the survey, because it is a direct measurement
+against a field we print on every single row.
+
+WorkArena (arXiv:2403.07718) added coordinates/bounding boxes to an AXTree observation:
+
+| observation | MiniWoB (small pages) | WorkArena (complex pages) |
+|---|---|---|
+| AXTree baseline | 68.2% | **45.5%** |
+| AXTree + coordinates | **72.6%** | **41.2%** |
+| vision-augmented | 67.7% | 41.8% |
+
+Coordinates helped on simple pages and **cost 4.3pp on complex ones**. The authors'
+explanation: *"the prompt becomes longer and seems to overwhelm the LLM… seemingly harmless
+features… actually degrade performance"*, because the tree is already large and extra
+fields distract.
+
+`box(x,y,w,h)` is ~22 characters × 199 rows ≈ **4,400 characters on the craigslist listing**
+— and craigslist is precisely the complex-page case where the measurement went negative.
+Worse, we already know the field is partly untrustworthy: #23 records printed `box()`
+drifting ~110px on loading pages, and #25 records the same ref reporting clicks 1,097px
+apart on OpenStreetMap. **Refs re-measure at click time, so the coordinate is not needed to
+act** — it exists for the agent's spatial reasoning, which is exactly the use the WorkArena
+number calls into question.
+
+What the same literature says to spend that budget on instead:
+
+- **Hierarchy.** D2Snap's ablation ranks it the strongest of three features (PART 3 §3.2).
+  We convey none — no nesting, no indentation, `section=` only.
+- **Layout as arrangement, not as numbers.** Tarsier renders a page to whitespace-structured
+  ASCII preserving 2D position, and reports **unimodal GPT-4 on Tarsier text beating GPT-4V
+  on Tarsier screenshots by 10–20%** (internal benchmark, unpublished — treat as directional).
+  The signal that helped was *relative arrangement*, which four numbers per row do not give.
+
+**Proposal:** `box()` becomes opt-in (`geometry=true`), and the freed budget buys nesting.
+The test is a matched comparison at equal token count: indented-without-boxes vs
+flat-with-boxes.
+
+## 4.3 Repeated records want columns, not quoted prose
+
+Our fold row collapses a repeated group correctly and then throws away the structure inside
+each member:
+
+```
+75:"Moby Dick; Or, The Whale Herman Melville 206001 downloads"
+```
+
+Title, author and download count are all there, concatenated into one quoted string. We had
+them separated in the DOM and re-flattened them, so the agent must re-segment prose we
+already had structured. On gutenberg that is 25 rows of it.
+
+The format literature is unusually consistent here:
+
+- **ONTO** (arXiv:2604.17512) — columnar encoding of repeated records, **20–40% fewer tokens
+  than JSON with accuracy maintained**; header amortises over record count. Its stated
+  limitation is *heterogeneous* records — which is exactly what our `_kind()` shape guard
+  already screens for.
+- **Notation Matters** (arXiv:2605.29676) — TOON/TRON beat JSON/XML specifically on
+  **tabular and repeated records**.
+- Markdown/CSV-family notation is the most token-efficient of the readable formats (34–38%
+  under JSON); **XML is worst on both axes** (14% above JSON in tokens, lowest comprehension
+  at 67.1%) — worth recording so nobody proposes tags.
+
+So:
+
+```
+25× book row | ref | title                      | author          | downloads
+        75   | Moby Dick; Or, The Whale         | Herman Melville | 206001
+        93   | A Room with a View               | E. M. Forster   | 153005
+```
+
+**This is also the missing answer to a defect we have carried since #14:** a table's 195
+data values were unreachable by ref, `read_page(ref_id=<table>, filter="all")` returned 8
+column headers and zero data, and three separate agents fell back to `javascript_tool`. A
+table is the canonical columnar case. One mechanism fixes the fold *and* gives tables a
+representation they have never had.
+
+## 4.4 A page is a table of contents, not a document
+
+Progressive disclosure is the consensus long-context pattern — *Is Progressive Disclosure
+All You Need for Long-Context Agents?* (arXiv:2607.17598), and the index → summary → detail
+→ source layering now standard in agent context design. Region4Web (PART 3 §3.2) is its web
+instance.
+
+**We already have the drill mechanism, already measured: `ref_id` scoping returned an href
+in 924 characters instead of 13,575.** What we do not have is the right default — the agent
+pays for the whole document first and can only scope *afterwards*, so the cheap path is
+reachable only once the expensive one has been taken.
+
+Inverted:
+
+```
+Page: apartments / housing for rent — 199 controls in 4 regions
+  header        12 controls  nav, account
+  search form    9 controls  submit=ref_68
+  results       25 rows      columnar: title, price, beds, location
+  filters       31 controls  13 checkboxes, 10 ranges, 4 dropdowns
+Expand: read_page(ref_id=…). Full listing: read_page(regions=false).
+```
+
+This is the change with the largest possible upside and the most honest risk: it adds a
+round trip, so it must be judged on **tokens-to-task-completion, not tokens-per-observation**.
+A region index that sends the agent back for three expansions has lost.
+
+It also composes with everything above — a region is where a purpose label lives, where a
+columnar fold attaches, and the unit at which a delta is cheap.
+
+## 4.5 WebMCP: the page may already describe itself, and we are the only kind of client that can read it
+
+Chrome is shipping a standard for pages to declare their own capabilities as callable tools,
+which makes the entire DOM-inference problem moot wherever it is adopted.
+
+**The API** (Chrome for Developers, `developer.chrome.com/docs/ai/webmcp`; W3C Web Machine
+Learning CG, accepted Sept 2025; early preview Chrome 146, origin trial from 149,
+`chrome://flags/#enable-webmcp-testing` for local work — version details differ across
+sources, verify before building):
+
+```javascript
+await document.modelContext.registerTool({          // navigator.modelContext deprecated in Chrome 150
+  name: 'addTodo',
+  description: "Add a new item to the to-do list",
+  inputSchema: { type: "object", properties: { text: { type: "string" } } },
+  execute: async ({ text }) => `Added to-do: ${text}`,
+  annotations: { readOnlyHint: false, untrustedContentHint: true },
+});
+```
+
+Consumption side: `document.modelContext.getTools()` returns `{name, description,
+inputSchema, annotations, origin, window}`; `document.modelContext.executeTool(tool,
+inputJsonString)` invokes one; a `toolchange` event fires when the set changes. A
+declarative variant annotates ordinary HTML forms. There is also a testing surface,
+`navigator.modelContextTesting`, with `listTools()` / `executeTool()`.
+
+**Feasibility is already proven by an extension.** The Chrome team ships
+`beaufortfrancois/model-context-tool-inspector`, an extension that enumerates a page's
+registered tools and executes them. We reach the main world through CDP `Runtime.evaluate`
+already (`javascript_tool`), so `getTools()` is inside existing plumbing. *Caveat to check:
+content scripts run in an isolated world and the spec has an `exposedTo` origin list, so
+enumerate from the MAIN world, not from a content script.*
+
+**We are structurally advantaged, uniquely.** WebMCP explicitly does not support headless
+browsing. ChromeBridge is an MV3 extension in the user's real, logged-in Chrome — the exact
+client this standard is for. Every Playwright/CDP-launcher competitor sits on the wrong side
+of that line, and this is the first capability where our architecture wins by construction
+rather than by effort.
+
+Two further connections worth recording:
+
+- **`annotations.readOnlyHint` is the declared destructiveness signal that #24 deleted the
+  wordlists for lacking.** We replaced natural-language guessing with "answer only from what
+  the document declares"; WebMCP *is* the document declaring it. The same principle extends
+  with no new machinery.
+- **`untrustedContentHint`** is a prompt-injection marker on page-supplied content, which
+  belongs in the same place our panel already treats tab titles as attacker-controlled.
+
+**Presentation consequence:** where a page declares tools, the best presentation of that page
+is *not a DOM listing at all*. `read_page` should lead with the declared tools and their
+schemas, and a `call_page_tool` op should exist. The listing stays the fallback for
+undeclared pages — which is nearly all of them today and will remain the majority for years,
+so this is strictly additive.
+
+**Cheapest first step, worth doing regardless of adoption rate:** detect and report. One
+conditional line — *"this page declares 4 agent tools; read them with page_tools()"* — costs
+zero on pages without them and is unambiguously better than re-deriving intent from markup.
+
+## 4.6 The counterweight, and the rule it implies
+
+WorkArena's finding is not only about coordinates. It is that *seemingly harmless features
+degrade performance* once the observation is already large. We ship roughly eighteen distinct
+annotation tags — `(required)` `(unselected)` `(current)` `(below-fold)` `(occluded/blocked)`
+`(disabled)` `(opens NEW tab)` `(opens menu/popup)` `(collapsed)` `(scrollable region)`
+`(unlabeled-icon)` `(image/media)` `(code-editor)` `(canvas)` … — plus `name=` `value=`
+`placeholder=` `near=` `under=` `section=` `role=` and a legend.
+
+Our defence is real but has never been written as a rule: **almost every tag traces to a
+specific live-agent failure it prevents** (#11, #14, #23, #25). That is the correct bar, and
+it should be stated as one — *an annotation must be earned by a measured failure it prevents,
+and priced against the listing*. It is the same discipline #22 applied to truncation markers
+(0.297%) and #10 to the detail legend (2.6%).
+
+The legend itself **fails that bar today**: measured at 24.4% of listing tokens with no
+measured accuracy contribution. That is the cheapest available win and is already queued.
+
+The rule also argues against §4.4: a purpose string per region is a new field, and it must be
+paid for by what the region index removes.
+
+## 4.7 Confirmed, no action
+
+- **Our row notation is a good choice.** Pipe-delimited compact rows sit in the
+  markdown/CSV-family that measures most token-efficient; XML is the worst on both tokens
+  and comprehension. No format migration is warranted.
+- **Integer `ref_N` handles are right.** Tarsier's `[23]`, browser-use's indices,
+  Set-of-Mark's marks and our mmids all converge independently on small integer handles
+  rather than selectors or XPath. Already done.
+
+## 4.8 Ranked
+
+1. **Columnar folds** (§4.3) — subsumes PART 3's fold-key fix, fills the table hole open
+   since #14, serialization-only so out-of-sample recall cannot move.
+2. **`box()` opt-in** (§4.2) — the largest single token line item in the listing, and the
+   only field with published evidence of *harm* on exactly our kind of page.
+3. **WebMCP detect-and-report** (§4.5) — cheap, additive, and the one place our architecture
+   wins by construction.
+4. **Form-unit presentation** (§4.1) — aligns the observation with the action we already ship.
+5. **Region index as the default** (§4.4) — biggest upside, real risk; judge on
+   tokens-to-completion.
+6. **Kill the legend** (§4.6) — queued, unblocked, 24.4%.
+
+## Sources added in this part
+
+Build the web for agents, not agents for the web arXiv:2506.10953 · Web Verbs
+arXiv:2602.17245 · WorkArena arXiv:2403.07718 (coordinate/feature ablation) · ONTO
+arXiv:2604.17512 · Notation Matters arXiv:2605.29676 · Is Progressive Disclosure All You
+Need for Long-Context Agents? arXiv:2607.17598 · Signifiers as a First-class Abstraction
+arXiv:2302.06970 · Tarsier github.com/reworkd/tarsier · WebMCP: developer.chrome.com/docs/ai/webmcp
+(+ /imperative-api), W3C webmachinelearning/webmcp, model-context-tool-inspector
+(github.com/beaufortfrancois) · BrowserGym observation formats browsergym.readthedocs.io.
