@@ -678,6 +678,21 @@ async def main():
             return await tb.evaluate("(function(){ " + DOMTEXT
                                      + "; return _domTextPage('" + str(mm) + "'); })()")
 
+        # A capability the agent cannot DISCOVER is not a capability. A <table> is
+        # not interactive, so it has no row and find cannot reach it — verifying the
+        # renderer live on the Fed's H.15 page required javascript_tool to look the
+        # ref up, which is the exact fallback CLAUDE.md #14 recorded three agents
+        # being forced into. The listing now names the tables and hands over refs.
+        _full = await tb.evaluate("(function(){ " + COLLECT
+                                  + "; return _collectInteractivePage(false,null,'compact',false,false); })()")
+        _tnote = next((l for l in _full.splitlines() if "data table(s)" in l), "")
+        check("TB9 the listing names the page's data tables and hands over their refs",
+              "data table(s)" in _tnote and "ref_" in _tnote and "3x3" in _tnote,
+              _tnote.strip()[:110])
+        _tref = re.search(r"ref_(\d+) \(3x3\)", _tnote)
+        check("TB10 ...and that ref scopes to the table it named",
+              bool(_tref), _tref.group(0) if _tref else "NO REF")
+
         w = await scoped("wrap") or ""
         rows = [l.strip() for l in w.splitlines() if "|" in l and "---" not in l]
         check("TB1 a scoped table renders as aligned rows, not flattened cells",
@@ -824,6 +839,14 @@ async def main():
               f"{sub.count('(below-fold)')} rows flagged below-fold")
         check("RG5 ...and content outside the scope stays out of it",
               "Home" not in sub and "F1" not in sub)
+        # PAGE-LEVEL FACTS MUST NOT LEAK INTO A SCOPED READ. Found live: a read
+        # scoped to craigslist's footer returned 7 links under "the DOM holds 955
+        # controls but only 7 were collectable", inviting the agent to hunt for 948
+        # elements it had just excluded on purpose. The gap that note reports is
+        # meaningless once the caller narrows the read. Same class as #11.
+        check("RG7 the hidden-tab 'DOM holds N controls' note is absent when scoped",
+              "were collectable" not in sub,
+              next((l.strip() for l in sub.splitlines() if "collectable" in l), ""))
         # Unscoped reads must NOT start carrying the whole page: that variant was
         # measured at 1.51x-3.39x tokens for the same 96.0% recoverable and reverted.
         check("RG6 the UNSCOPED listing is still viewport-only",

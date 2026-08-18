@@ -1097,8 +1097,14 @@ async def call_page_tool(
     tabId: Annotated[int, Field(description="Tab ID whose page declares the tool.")],
     name: Annotated[str, Field(description="Tool name exactly as page_tools reported it.")],
     args: Annotated[
-        Optional[str],
-        Field(description='Arguments as a JSON object string, matching the tool\'s inputSchema — e.g. \'{"query":"laptops"}\'. Omit for a tool that takes none.'),
+        # BOTH SHAPES. Declaring this `str` only looks right and fails in practice:
+        # an MCP client given '{"instrument":"..."}' parses it to an object before
+        # validation, so the natural call is rejected with a pydantic string_type
+        # error that says nothing about tools. Found on the first live invocation.
+        # The extension already accepted either (pinned in test_ops.js); it was the
+        # server schema that was narrower than its own callers.
+        Optional[Union[str, dict]],
+        Field(description='Arguments matching the tool\'s inputSchema — a JSON object, or the same thing as a string. Omit for a tool that takes none.'),
     ] = None,
 ) -> str:
     """Run one tool the page declared (WebMCP). Call page_tools first for the schema.
@@ -1107,7 +1113,10 @@ async def call_page_tool(
     `CHANGES STATE` deserves the same care as a form submit.
     """
     b = await _bridge()
-    raw = await b.call("call_page_tool", tabId=tabId, name=name, args=args or "{}")
+    # Normalise to the JSON string executeTool() expects, whichever shape arrived.
+    _a = "{}" if args in (None, "") else (args if isinstance(args, str)
+                                         else json.dumps(args, ensure_ascii=False))
+    raw = await b.call("call_page_tool", tabId=tabId, name=name, args=_a)
     try:
         d = raw if isinstance(raw, dict) else json.loads(str(raw))
     except Exception:

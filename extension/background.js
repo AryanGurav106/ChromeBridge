@@ -7636,7 +7636,15 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // warns about. The symptom is a large gap between the controls the DOM holds
     // and the controls we could see.
     try {
-      if (document.visibilityState === 'hidden') {
+      // NOT ON A SCOPED READ. The signal is a gap between what the DOCUMENT holds
+      // and what we collected — which is meaningless once the caller has narrowed
+      // the read to one container, where a large gap is the entire point. Observed
+      // live: a read scoped to craigslist's footer returned 7 links under
+      // "the DOM holds 955 controls but only 7 were collectable", inviting the
+      // agent to go hunting for 948 elements it had just excluded on purpose. Same
+      // class as #11's page-level facts leaking into scoped reads (Main heading,
+      // below-fold counts), and the same fix.
+      if (document.visibilityState === 'hidden' && !scopeMmid) {
         const _domCtl = document.querySelectorAll('a[href],button,input,select,textarea').length;
         if (_domCtl >= 20 && out.length * 3 <= _domCtl) {
           L.push(`  - NOTE: the DOM holds ${_domCtl} controls but only ${out.length} were collectable.`
@@ -7750,6 +7758,31 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       }
     }
     L.push(`Act on a row by its ref_N: form_input (one field), fill_form (a whole form incl. dropdowns/checkboxes, with optional submit), computer (left_click / hover / scroll_to by ref, or screenshot to look at pixels).`);
+    // DATA TABLES, AND THEIR REFS. A <table> is not interactive, so it has no row
+    // in the listing and `find` cannot reach it — which meant the columnar table
+    // renderer was real and unreachable: verifying it live on the Fed's H.15 page
+    // required javascript_tool to look the ref up, which is the exact fallback
+    // CLAUDE.md #14 recorded three agents being forced into. A capability the agent
+    // cannot discover is not a capability. Same shape as the off-viewport region
+    // hint: name the thing and hand over the ref.
+    // Unscoped only — inside a scoped read this is a page-level fact (#11).
+    if (!scopeMmid) {
+      try {
+        const _dt = [];
+        for (const t of document.querySelectorAll('table')) {
+          const rs = t.querySelectorAll('tr').length;
+          const cs = t.querySelector('tr') ? t.querySelector('tr').children.length : 0;
+          const mm = t.getAttribute('mmid');
+          if (rs >= 2 && cs >= 2 && mm) _dt.push(`ref_${mm} (${rs}x${cs})`);
+          if (_dt.length >= 6) break;
+        }
+        if (_dt.length) {
+          L.push(`  - ${_dt.length} data table(s), NOT in the rows above: ${_dt.join(', ')}` +
+                 ` — read one with read_page(ref_id=…, filter="all") and the cells come back as` +
+                 ` aligned columns with their header.`);
+        }
+      } catch (e) {}
+    }
     return L.join('\n') + '\n';
   })();
   return (

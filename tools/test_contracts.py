@@ -117,6 +117,20 @@ def main() -> int:
           "(the panel must recognise what the server sends)",
           "4001" in py and "4001" in read("extension/panel.js"))
 
+    # C10: a tool parameter must not be NARROWER than the way clients call it.
+    # `call_page_tool(args=...)` was declared `Optional[str]`, which looks right and
+    # fails on first use: an MCP client handed '{"instrument":"..."}' parses it into
+    # an object before validation, so the natural call is rejected with a pydantic
+    # string_type error that mentions nothing about tools. The extension already
+    # accepted either shape (test_ops.js pins that); only the server schema was
+    # narrow. Checked statically because the failure is in the SIGNATURE, which is
+    # what a client sees, not in any code path a runtime call would reach.
+    _srv = read("mcp_server.py")   # NOT `py`, which is core/bridge/server.py
+    check("C10 call_page_tool accepts args as an object OR a string, and normalises",
+          "Optional[Union[str, dict]]" in _srv
+          and "json.dumps(args, ensure_ascii=False)" in _srv,
+          "args annotation is Optional[Union[str, dict]] with a json.dumps fallback")
+
     print(f"\n{passed} passed, {failed} failed, {passed + failed} total checks")
     if failures:
         print("failing: " + ", ".join(failures))
