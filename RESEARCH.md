@@ -181,3 +181,211 @@ post-action verify+Reflexion retry, one-shot CDP `DOMSnapshot.captureSnapshot`.
 **Benchmarks/surveys:** Online-Mind2Web arXiv:2504.01382 · WebArena arXiv:2307.13854 · AssistantBench arXiv:2407.15711 · WebGames arXiv:2502.18356 · GAIA arXiv:2311.12983 · GUI-agents survey arXiv:2504.13865.
 
 *Caveat: a few aggregator leaderboard figures and some very recent (2025-11+/2026) arXiv IDs could not be independently verified; their numbers are flagged in-text and excluded from core claims.*
+
+---
+
+# PART 3 — The 2026 observation-space literature, read against the MCP architecture (2026-08)
+
+PARTS 1–2 were written against the retired Playwright/pydantic-ai loop and are kept
+for provenance. This part is written against `mcp_server.py` + `extension/background.js`
+as they stand, and against the measured numbers in CLAUDE.md #16/#17/#22.
+
+**Two of these findings say a decision we already shipped is probably wrong.** That is
+the useful part; the confirmations are listed for completeness but change nothing.
+
+*Sourcing caveat, applied throughout:* these were read via fetched abstracts/HTML with a
+summarizing model, not by working through the PDFs. Treat every number below as
+second-hand until it is re-derived on our own harness — which is the same rule CLAUDE.md
+#16 already imposes on our own flattering results.
+
+## 3.1 The finding most likely to mean we are wrong: reduction is model-capability-dependent
+
+*Read More, Think More: Revisiting Observation Reduction for Web Agents* (arXiv:2604.01535)
+reports that observation reduction is **not universally beneficial** — it helps
+low-capability models and **hurts high-capability ones**, with higher-capability models
+gaining up to **+17.5pp from raw HTML over an accessibility tree**. The mechanism is
+specific and testable: strong models exploit layout and **CSS `z-index`** for grounding,
+so "intercepted element" errors (clicked the wrong thing) *fell* for strong models given
+more detail, while "not-found" errors (hallucinated ids) rose only for weak ones.
+
+ChromeBridge's consumer is **always** frontier-class — Claude Code is the agent loop, by
+design, with no weak-model mode to serve. And we default to `compact`.
+
+Our own measurements already pointed here and we read them the other way:
+
+| detail | tokens (frozen corpus) | presence | answerability |
+|---|---|---|---|
+| `compact` (default) | ~1,300 | 0.94 | **0.50** |
+| `brief` | ~2,265 | — | **0.792** |
+| `full` | ~2,741 | 0.96 | 0.793 |
+
+We priced the loss at *half the answerable facts a page can pose* (#16), shipped the
+lossy setting as the default, and treated the gap as something the agent escalates out of
+per-call. The literature says the escalation should be the exception, not the standing
+state.
+
+**Proposal:** make `brief` the default; keep `compact` as an explicit budget mode. Cost
++74% tokens on a median page for +0.29 answerability — and `brief` exists precisely
+because it was measured to carry `full`'s information for 17% fewer tokens.
+
+**What would falsify it:** our answerability is derived from the DOM, so it measures
+*information present*, not *task success*. Their +17.5pp is HTML-vs-AXTree, and `brief`
+is neither. This is convergent evidence, not a settled result — adjudicate it with 3.5.
+
+## 3.2 Hierarchy is the feature we discard most confidently, and the literature ranks it first
+
+*Beyond Pixels: Exploring DOM Downsampling for LLM-Based Web Agents* (arXiv:2508.04412,
+already in PART 1's sources but not its argument) ablates three features — hierarchy,
+text, attributes — and finds **hierarchy the strongest**: the configuration with the most
+hierarchical downsampling scored lowest (65% vs 73% / 71%). Its explicit criticism:
+"element extraction renders low-dimensional element arrays, disregarding hierarchy as a
+UI feature."
+
+That is a description of our output. We emit a **flat, y-sorted list of rows**; `section=`
+(nearest landmark) is the only structural signal, and CLAUDE.md #23 already records it
+resolving *past* a dialog boundary — so it is not even a reliable region marker.
+
+**Our 96.0% Mind2Web recall does not refute this.** Recall answers "was the target
+listed", not "did the agent pick the right one out of 199". D2Snap and Region4Web measure
+task success. The claim is **untested by us, not disproven** — and #17's head-to-head
+table has the same limit: it compares recall-per-token, so a representation that improves
+*choosing* would score identically.
+
+*Region4Web: Rethinking Observation Space Granularity for Web Agents* (arXiv:2605.07134)
+is the constructive version. It reorganises the AXTree into **functional regions** via
+bottom-up merge/cut edge classification over node features (**role, depth, subtree size,
+child count**), then attaches each region a *purpose* and a *state summary*. Reported:
+**−43% tokens (6,437 → 3,671) and +2.3pp success** across four backbones; regions alone
+moved 48.5% → 50.3%.
+
+The bridge to what we already ship: **our fold rows are already primitive regions.**
+`13× button "구독" — one per list row, ordered top-to-bottom` states a purpose and a
+member set. Generalising folds *into* named regions is the same move Region4Web makes,
+minus the fine-tuned Qwen3-0.6B — every edge feature they classify on is computable
+structurally, which is the form this project requires anyway (no server-side model).
+
+This is the biggest open architectural question in the project. It should be attempted
+**after** 3.5, because tokens-vs-answerability cannot adjudicate it.
+
+## 3.3 The fold-bucket bug has a twenty-year-old answer: cluster tag paths, not widths
+
+Measured today on five sites: the shape-bucket key includes `Math.round(w/40)`, and width
+is **content-determined** for text, so one semantic class shatters into buckets of one —
+lite.cnn.com printed ~26 headline links individually beside two folds of 7 and 6, all one
+list of `a` at height 17 and x=65; rakuten split one nav into 64×37 and 59×37; gutenberg
+split 25 identical book rows into 18@113px + 6@106px + 1 orphan.
+
+The classical family solves exactly this by keying on **structure**:
+
+- **MDR** (Mining Data Records) — repeated adjacent sibling "generalized nodes".
+  Documented weakness: assumes DOM **adjacency**, so it breaks on records interleaved
+  with unrelated elements.
+- **DEPTA** — segmentation then **partial tree alignment**; tolerates non-contiguous
+  records.
+- **Tag-path clustering** — cluster distinct root-to-leaf **tag paths** by how they
+  co-occur and intersperse; the record structure is the cluster.
+- **STEM** — suffix-tree formulation of the same idea.
+
+Our fold is *already* non-contiguity-tolerant (it groups by shape across the document,
+not by sibling runs), which is MDR's documented failure mode. So the fix is to change
+**only the key** — shape → structural signature (tag path / ancestor chain) — keeping the
+grouping semantics we have. That is strictly a gain over MDR, not a rewrite.
+
+Cheap to validate: folding is **serialization-only** (the structured array is returned
+before the pass), so out-of-sample recall cannot move by construction. Only tokens need
+measuring.
+
+## 3.4 Truncation should downsample, not decapitate
+
+**AdaptiveD2Snap** infers downsampling parameters to hit a **token budget** (default
+4,096) rather than cutting content. We do the opposite: keep full-detail rows and drop
+the tail — craigslist at `max_chars=3200` dropped **122 of 199** elements.
+
+Our own architecture already contains the right rule one level up. `_truncate` drops the
+legend before it drops rows (#13), and the whole filtering overhaul rests on *a heuristic
+may decide prominence, never existence*. Extend the same principle to the budget:
+**degrade detail before dropping existence.** A natural order — `box()` coordinates →
+label length → fold harder → step down the detail level → only then drop elements.
+
+We do *announce* the drop, which is better than the field's silent pruning. But an
+announced absence is still an absence, and 122 is most of the page.
+
+## 3.5 The metric to steal: Minimal Failure Set coverage
+
+*Revisiting Observation Reduction for Web Agents: Comprehensive Evaluation with a
+Lightweight Framework* (arXiv:2605.29397) defines coverage as **the fraction of instances
+in which a reduction method fully retains the Minimal Failure Set** — the minimal set of
+elements whose removal makes the task fail.
+
+That is sharper than our `presence` metric in exactly the way we need: `presence` is
+task-agnostic (is the element listed at all), while MFS coverage is conditioned on what
+the task actually required, and sits directly on the catastrophic-loss axis the
+asymmetric-loss framing is built around. Mind2Web's labels give us a single-element MFS
+today, and the definition generalises to multi-element sets.
+
+**This is the ruler 3.1 and 3.2 both need.** Hierarchy and detail level change
+*grounding*; tokens-vs-answerability measures *presence*. We cannot adjudicate a
+grounding change with a presence metric, which is why both questions are currently
+un-decidable on our own harness.
+
+## 3.6 Delta is probably the wrong thing to have made opt-in
+
+Playwright's MCP server ships incremental diffs with `[unchanged]` markers for roughly a
+**94% payload reduction**, and the reported empirical distribution is the striking part:
+**52.9% of steps exhibit zero change, and 74.4% stay under 5% DOM change** — changes are
+typically a dropdown expanding or a tooltip appearing.
+
+We have `read_page(delta=true)` measured at **−96%** (6,300 → 220 chars), but it is
+opt-in, so the majority case pays full price by default. Independently, 2604.01535
+recommends **diff-based observation history** as the token-efficient alternative to
+reduction — i.e. the way to afford *more* detail per observation. That composes directly
+with 3.1: **`brief` + delta may dominate `compact` without delta on both axes at once.**
+
+The existing refusals (no prior read, tiny page, wholesale change, scoped read,
+navigation) are correct and should stay. The change is to *attempt* delta automatically on
+a repeat read of an unchanged URL and say when it engaged.
+
+## 3.7 Where this project is ahead, and should not trade it away
+
+- **Nobody in this literature measures whether the representation lies.** The
+  hallucination work — HalluClear's *Element Existence* class (arXiv:2604.17284), UI-CUBE
+  (arXiv:2511.17131), the PING taxonomy — treats a missing element as a **model** failure
+  to be detected downstream by verifiers and judges. Our `markCut` / no-silent-omission /
+  prominence-not-existence / drop-ledger program treats it as a **representation-supply**
+  failure, which is where it is actually fixable. #22's *216,719 characters hidden across
+  66% of sites, priced at 0.297% to disclose* is the kind of number nobody else appears to
+  be producing.
+- **The drop ledger has no analog.** Region4Web, D2Snap and Prune4Web all prune without a
+  record; none can explain its own omissions. Ours corrected the container-suppression
+  hypothesis in one call after six DOM-mutation probes had failed to.
+- **HAR replay over MHTML.** NEXT-EVAL (arXiv:2505.17125) builds its eval sets from MHTML
+  snapshots. We measured MHTML at **0% element retention** under Playwright (it does not
+  execute JS) and rejected it (#20); our corpus keeps JS running.
+- **Caveat in the other direction:** UI-CUBE reports agents at 68–87% of human performance
+  on simple tasks but only **15–32% on complex workflows**, attributed to memory,
+  hierarchical planning and state coordination. Representation is not the binding
+  constraint on long-horizon reliability. Do not over-attribute what better DOM output
+  can buy.
+
+## 3.8 Ranked next actions
+
+1. **Fold key: shape → structural signature** (3.3). Contained, serialization-only,
+   fixes a defect measured on three of five sites today.
+2. **Degrade-before-drop truncation** (3.4). The principle is already shipped one level
+   up; this applies it to the budget.
+3. **MFS coverage in `measure_retention.py` / `bench_mind2web.py`** (3.5). Builds the
+   ruler the next two need.
+4. **Flip the default to `brief`** (3.1). After 3.5 can adjudicate it.
+5. **Delta on repeat reads of an unchanged URL** (3.6).
+6. **Functional regions** (3.2). Largest, last, and gated on 3.5.
+
+## Sources added in this part
+
+Region4Web arXiv:2605.07134 · Read More, Think More arXiv:2604.01535 · Revisiting
+Observation Reduction (MFS coverage) arXiv:2605.29397 · Beyond Pixels / D2Snap
+arXiv:2508.04412 (+ webfuse.com/blog/dom-downsampling-for-llm-based-web-agents for
+AdaptiveD2Snap) · NEXT-EVAL arXiv:2505.17125 · HalluClear arXiv:2604.17284 · UI-CUBE
+arXiv:2511.17131 · LineRetriever arXiv:2507.00210 · tag-path clustering / MDR / DEPTA /
+STEM (Liu 2003, Zhai & Liu 2005, Miao 2009, Springer KAIS 10.1007/s10115-017-1062-0) ·
+VIPS (MSR TR-2003-79, still the segmentation baseline per an 8,490-page comparison) ·
+Playwright ARIA snapshots + MCP incremental diffs (playwright.dev/docs/aria-snapshots).
