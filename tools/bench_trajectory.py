@@ -240,10 +240,35 @@ async def score_step(page, s: dict, policy: dict) -> dict:
             r["status"] = "over_cap"
             r["reads"] += 1
         elif ent.get("offscreen"):
-            # The listing carries a below/above-fold count and tells the agent to
-            # scroll; the scroll is an action, the re-read is the observation.
+            # The listing says what is off-viewport, and now also WHICH REGIONS hold
+            # it, so there are two recoveries with very different prices: scroll and
+            # re-read the whole page, or read one region by ref. Charge the cheaper
+            # one the agent can actually reach, because charging a full re-read
+            # would price a capability the tool no longer forces.
             r["status"] = "below_viewport"
             r["reads"] += 1
+            r["recovery"] = "rescan"
+            best = None
+            for anc in (probe.get("ancs") or [])[:6]:
+                if anc not in by_mmid and anc != in_structured[0]:
+                    pass
+                try:
+                    sub = await page.evaluate(
+                        "(function(){ " + COLLECT + "; return _collectInteractivePage("
+                        + policy["args"].replace("null", "'" + str(anc) + "'", 1) + "); })()")
+                except Exception:
+                    continue
+                if not isinstance(sub, str) or not sub:
+                    continue
+                # Only counts if the target is actually reachable in that scoped read
+                # — a region that does not contain it is not a recovery.
+                if any(c in listing_refs(sub) for c in in_structured):
+                    n = round(len(sub) / 4)
+                    if best is None or n < best:
+                        best = n
+            if best is not None and best < r["base_tokens"]:
+                r["recovery"] = "scoped"
+                r["scoped_tokens"] = best
         else:
             # On-screen, collected, and cut by the char budget.
             r["status"] = "over_cap"
@@ -253,10 +278,12 @@ async def score_step(page, s: dict, policy: dict) -> dict:
     # Recoverable with an extra read, as opposed to absent from the observation
     # entirely at any budget.
     r["recoverable"] = r["status"] in ("ok", "below_viewport", "over_cap")
-    # An extra read costs another observation. Approximating the post-scroll or
-    # scoped listing at the same size as the first is crude but it is the same
-    # crudeness for every policy, which is what a comparison needs.
+    # An extra read costs another observation. A forced RESCAN is charged at the
+    # size of the listing it re-reads; a SCOPED recovery is charged at the measured
+    # size of that scoped read, which is the whole point of naming the regions.
     r["tokens"] = r["base_tokens"] * r["reads"]
+    if r.get("recovery") == "scoped":
+        r["tokens"] = r["base_tokens"] + r["scoped_tokens"]
     return r
 
 
@@ -332,6 +359,11 @@ def report(res: dict) -> dict:
           f"{summary['recall_structured']:.1%}   <- cross-check")
     print(f"tasks completable end-to-end      {summary['task_complete']:.1%}")
     print(f"status: {dict(Counter(s['status'] for s in steps))}")
+    rec = Counter(s.get("recovery") for s in scored if s.get("recovery"))
+    if rec:
+        # A "scoped" recovery means the region index let the agent read ONE container
+        # by ref instead of re-listing the page after a scroll.
+        print(f"off-viewport recovery: {dict(rec)}")
     # THE POPULATION NO SINGLE-OBSERVATION METRIC CAN SEE: collected, and not in
     # the listing the agent read. Split by cause, because the two have opposite
     # fixes — `below_viewport` is the deliberate viewport scoping (a scroll), and

@@ -786,6 +786,51 @@ async def main():
               nav.get("ok") is True and nav.get("navigated") is True, json.dumps(nav)[:90])
         await wm.close()
 
+        # ---- RG: off-viewport content is LOCATED, and reachable without scrolling -
+        # A bare "76 more elements are BELOW the viewport" leaves exactly one move:
+        # scroll and re-read the whole page. Measured on Mind2Web gold paths that is
+        # 76 of 173 steps at a full extra listing each. Naming the regions AND their
+        # refs, plus letting a scoped read escape the viewport filter, replaces that
+        # with one small read.
+        rg = await browser.new_page(viewport={"width": 900, "height": 600})
+        await rg.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await rg.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<header><a href=/h>Home</a></header>"
+            "<main><p>top</p><div style='height:1400px'></div>"
+            "<a href=/d1>Deep One</a><a href=/d2>Deep Two</a><button>Deep Btn</button></main>"
+            "<footer><a href=/f1>F1</a><a href=/f2>F2</a></footer></body>")
+        await rg.wait_for_timeout(140)
+        full = await rg.evaluate("(function(){ " + COLLECT
+                                 + "; return _collectInteractivePage(false,null,'compact',false,false); })()")
+        note = next((l for l in full.splitlines() if l.startswith("[")), "")
+        check("RG1 the off-viewport hint names the REGIONS, not just a count",
+              "main(ref_" in note and "footer(ref_" in note, note[:120])
+        m = re.search(r"main\(ref_(\d+)\): (\d+)", note)
+        check("RG2 ...with a per-region count", bool(m) and m.group(2) == "3",
+              m.group(0) if m else "NO MATCH")
+        # The advice has to be PERFORMABLE. The first version named the regions and
+        # said to use read_page(ref_id=<that region's ref>) while giving no way to
+        # learn the ref, because a landmark container is not interactive and has no
+        # row — so the measurement assumed a recovery the agent could not carry out.
+        sub = await rg.evaluate("(function(){ " + COLLECT
+                                + "; return _collectInteractivePage(false,'" + (m.group(1) if m else "0")
+                                + "','compact',false,false); })()")
+        check("RG3 the ref in that hint actually scopes to the region",
+              "Deep One" in sub and "Deep Two" in sub and "Deep Btn" in sub,
+              f"{len([l for l in sub.splitlines() if l.startswith('ref_')])} rows")
+        check("RG4 a SCOPED read escapes the viewport filter (the whole point)",
+              sub.count("(below-fold)") >= 3,
+              f"{sub.count('(below-fold)')} rows flagged below-fold")
+        check("RG5 ...and content outside the scope stays out of it",
+              "Home" not in sub and "F1" not in sub)
+        # Unscoped reads must NOT start carrying the whole page: that variant was
+        # measured at 1.51x-3.39x tokens for the same 96.0% recoverable and reverted.
+        check("RG6 the UNSCOPED listing is still viewport-only",
+              "Deep One" not in full and "Home" in full,
+              f"{len([l for l in full.splitlines() if l.startswith('ref_')])} rows unscoped")
+        await rg.close()
+
         await browser.close()
 
     passed = sum(1 for _, ok, _ in results if ok)

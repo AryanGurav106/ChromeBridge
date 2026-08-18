@@ -4410,6 +4410,9 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   // can tell the agent to scroll (it has no other signal that they exist — this
   // is the #1 reason it gives up on long pages / below-fold forms).
   let belowFoldCount = 0;
+  // Off-viewport real controls tallied by landmark region, so the "scroll down"
+  // hint can say WHERE they are instead of only how many there are.
+  const _offRegions = {};
   let aboveFoldCount = 0;   // same idea for controls scrolled ABOVE the viewport
   let sideCount = 0;        // ...and for controls off the LEFT or RIGHT edge
   // Whether tag genuinely needs to be listed even with no visible text label
@@ -5020,7 +5023,14 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // is for — naming an off-viewport region costs one line, listing its
     // contents costs hundreds. Do not remove this gate again without a
     // representation that makes the 1,250,977 column affordable.
-    const keepForFind = structured && visible && !inViewport && (() => {
+    // A SCOPED READ IS NOT VIEWPORT-LIMITED. The whole-page token argument above
+    // is about not paying for a page the caller did not ask for. It does not apply
+    // when the caller names ONE container: `read_page(ref_id=…)` is a request for
+    // that region, and answering it with "nothing here, it is below the fold" made
+    // the region index useless — the agent would be told where its target was and
+    // then be unable to read it without scrolling anyway. Measured cost of the
+    // blind scroll it replaces: 76 of 173 gold-path steps, at a full re-read each.
+    const keepForFind = (structured || !!scopeMmid) && visible && !inViewport && (() => {
       const rr = el.getAttribute('role');
       if (['a', 'button'].includes(tagL) || formyTags.has(tagL) ||
           (rr && strongInteractiveRoles.has(rr))) return true;
@@ -5058,6 +5068,31 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       const _bfRole = el.getAttribute('role');
       const _real = ['a','button'].includes(tagL) || formyTags.has(tagL) ||
                     (_bfRole && strongInteractiveRoles.has(_bfRole));
+      // WHERE, not just how many. "76 more elements are BELOW the viewport" tells
+      // the agent to scroll and re-read the whole page — measured at 76 of 173
+      // gold-path steps, a full extra listing each. Naming the REGIONS costs a few
+      // words and lets it scope straight to one with read_page(ref_id=…), which is
+      // now possible because a scoped read is no longer viewport-limited.
+      if (_real) {
+        try {
+          const _s = section(el) || 'page';
+          if (!_offRegions[_s]) _offRegions[_s] = { n: 0, mmid: null };
+          _offRegions[_s].n++;
+          // AND ITS REF, or the advice is unperformable. The first version named
+          // the regions and told the agent to "read one directly with
+          // read_page(ref_id=<that region's ref>)" — while giving it no way to
+          // learn that ref, because a landmark container is not interactive and so
+          // has no row of its own. The measurement assumed a recovery the agent
+          // could not actually carry out. Landmarks DO carry mmids (verified:
+          // main=5, footer=11 on a probe page), so the ref is emitted; when one is
+          // missing the label is still named and the ref simply omitted.
+          if (_offRegions[_s].mmid === null) {
+            const _host = el.closest && el.closest('main, nav, header, footer, aside, form, section, [role=main], [role=navigation], [role=banner], [role=contentinfo], [role=complementary], [role=search]');
+            const _hm = _host && _host.getAttribute && _host.getAttribute('mmid');
+            if (_hm) _offRegions[_s].mmid = _hm;
+          }
+        } catch (e) {}
+      }
       if (_real && ay >= vh) belowFoldCount++;
       else if (_real && (ay + r.height) <= 0) aboveFoldCount++;
       // The viewport has TWO axes. Controls parked off to the side — carousel
@@ -6942,7 +6977,29 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     ? `\n[${belowFoldCount > 0 ? `${belowFoldCount} more interactive element(s) are BELOW the current viewport` : ''}` +
       `${belowFoldCount > 0 && aboveFoldCount > 0 ? '; ' : ''}` +
       `${aboveFoldCount > 0 ? `${aboveFoldCount} interactive element(s) are ABOVE the viewport` + ((window.scrollY || document.documentElement.scrollTop || 0) > 1 ? ` (you have scrolled past them)` : ` (nothing has been scrolled — these sit at negative coordinates, e.g. an off-screen skip-link)`) : ''}` +
-      ` — if you don't see your target, scroll ${belowFoldCount > 0 ? 'down' : 'up'} and re-observe.]`
+      ` — if you don't see your target, scroll ${belowFoldCount > 0 ? 'down' : 'up'} and re-observe.` +
+      // NAME THE REGIONS. A bare count leaves only one move: scroll and re-read
+      // the whole page. Saying which landmarks hold the off-viewport controls lets
+      // the agent read ONE of them by ref instead — cheaper than a full re-listing,
+      // and possible now that a scoped read is not viewport-limited. Sorted by
+      // count so the biggest region reads first, and capped so a page with many
+      // landmarks does not turn one hint into a paragraph.
+      (() => {
+        try {
+          const ks = Object.keys(_offRegions).sort((a, b) => _offRegions[b].n - _offRegions[a].n);
+          if (!ks.length) return '';
+          const shown = ks.slice(0, 4).map((k) => {
+            const r = _offRegions[k];
+            return `${k}${r.mmid ? `(ref_${r.mmid})` : ''}: ${r.n}`;
+          }).join(', ');
+          const anyRef = ks.slice(0, 4).some((k) => _offRegions[k].mmid);
+          return ` They are in — ${shown}${ks.length > 4 ? ', …' : ''};` +
+                 (anyRef ? ` read one directly with read_page(ref_id=…) using the ref shown — a scoped`
+                         + ` read is NOT limited to the viewport, so it returns that whole region.`
+                         : ``) +
+                 ` find also reaches all of them by ref, without scrolling first.`;
+        } catch (e) { return ''; }
+      })() + `]`
     : "";
   // MODAL FOCUS: when a TRUE modal is open, the underlying page is flagged
   // (occluded/blocked) line by line — accurate, but 40 such lines bury the
