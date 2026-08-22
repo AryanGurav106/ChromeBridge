@@ -189,13 +189,39 @@ async def main():
 
         # --- G7 ARIA grid datepicker ---
         cells = [e for e in raw if e.get("role") == "gridcell" or "June " in (e.get("name") or "")]
+        # ASSERT THE PROPERTY, NOT THE PHRASING. This looked for the literal string
+        # "cells as mmid:label" — the ARIA-grid compaction's old wording — and had
+        # been reporting PARTIAL ever since repeated-record folding took that job
+        # over. The fold does it strictly better (one line, every ref, every label,
+        # in document order) so the probe was flagging an improvement as a gap. Same
+        # failure as D8, which went vacuous when a rename emptied the phrase it
+        # matched on: a check keyed to wording tracks the wording, not the behaviour.
         gridcell_lines = [ln for ln in listing.split("\n") if "role=gridcell" in ln]
-        compact = [ln for ln in listing.split("\n") if "cells as mmid:label" in ln]
+        one_line = [ln for ln in listing.split("\n")
+                    if 'ref:"label"' in ln or "cells as mmid:label" in ln]
+        # The load-bearing question is actionability: is every cell reachable by ref
+        # from the listing, without paying a row each?
+        _refs = {str(e["mmid"]) for e in cells if e.get("mmid")}
+        # THE DECORATION TIER COUNTS AS ACTIONABLE. This fixture's calendar is 6x7 =
+        # 42 cells of which only 30 are days; the other 12 are the month's empty
+        # padding, so they have no label and land in the PROBABLY DECORATION line
+        # rather than the fold. They are still reachable by ref — that is the whole
+        # point of demoting instead of deleting — and a scanner that reads only the
+        # fold reports 12 phantom losses. Found by this check firing on its first run.
+        _decor = [ln for ln in listing.split("\n") if "PROBABLY DECORATION" in ln]
+        _shown = {r for r in _refs
+                  if any(f"{r}:" in ln for ln in one_line)
+                  or any(f"ref_{r} " in ln or f"ref_{r})" in ln for ln in _decor)}
         if not cells:
             report("G7 datepicker gridcells", "MISSED", "tabindex=-1 cursor:pointer cells dropped entirely")
-        elif compact and not gridcell_lines:
+        elif one_line and not gridcell_lines and len(_shown) == len(_refs):
             report("G7 datepicker gridcells", "CAPTURED",
-                   f"{len(cells)} cells collected, listing compacted to {len(compact)} block line(s)")
+                   f"{len(cells)} cells collected; all {len(_refs)} refs actionable from "
+                   f"{len(one_line)} compacted line(s) instead of {len(cells)} rows")
+        elif one_line and len(_shown) < len(_refs):
+            report("G7 datepicker gridcells", "PARTIAL",
+                   f"compacted, but {len(_refs) - len(_shown)} of {len(_refs)} cell refs "
+                   f"are NOT in the listing — compaction lost actionability")
         else:
             report("G7 datepicker gridcells", "PARTIAL",
                    f"{len(gridcell_lines)} individual gridcell lines in listing — compaction not applied")
