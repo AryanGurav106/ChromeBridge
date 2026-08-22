@@ -3739,16 +3739,23 @@ function _domTextPage(scopeMmid) {
         // non-empty cell in a table that has three or more columns is not a data row,
         // it is a heading for the rows beneath it. Marked as such, and its followers
         // indented, so row grouping survives alongside column association.
-        let _sect = 0;
         const out = grid.map((r) => {
           const v = r.vals.slice();
           for (let i = 0; i < wide; i++) if (v[i] === undefined) v[i] = '';
           const filled = v.filter((x) => x !== '').length;
+          // MARK THE HEADING, DO NOT GUESS THE DEPTH. Indenting the rows that
+          // follow a section looked tidier and asserted something the render cannot
+          // know: on the Fed's H.15 page it put "Bank prime loan" under
+          // "[section] Financial" when it is a top-level instrument, because the
+          // indent flag has no way to learn where a section ENDS. The source encodes
+          // that with `class="stub in3"`, and reading a class to infer meaning is the
+          // author-habit guessing this whole pass removed. The marker alone
+          // disambiguates the two `1-year` rows -- read up to the nearest preceding
+          // [section] -- without claiming a nesting level.
           if (wide >= 3 && filled === 1 && !r.head) {
-            _sect = 1;
             return '  [section] ' + v.find((x) => x !== '');
           }
-          return '  ' + (_sect ? '  ' : '') + v.join(' | ');
+          return '  ' + v.join(' | ');
         });
         const hi = grid.findIndex((r) => r.head);
         if (hi >= 0) out.splice(hi + 1, 0, '  ' + Array(wide).fill('---').join(' | '));
