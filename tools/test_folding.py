@@ -278,6 +278,47 @@ async def main():
         # Quoted, so the fold row's near="Elements Real Link" does not count — a
         # bare substring match made this assert 3 rows and read as a failure of the
         # code rather than of the test.
+        # TR11: NO INDENT LEVEL IS SKIPPED. A bare div/span/li wrapper prints no
+        # line (#27 dropped the word to save characters) but kept incrementing
+        # depth, so every descendant row paid a space for a row that is not there —
+        # seen live on svelte.dev as ref_69 at indent 2 with its own child at indent
+        # 5. Indentation under an invisible parent is also unreadable: there is no
+        # row at the shallower level to group under, so it reads as a gap. TR6 only
+        # bounds the maximum depth, which a skipped level passes.
+        wp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await wp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await wp.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'><main>"
+            # TWO bare wrappers as SIBLINGS, each branching. Both conditions are
+            # needed for one to survive pruning while printing nothing: >=2 kept
+            # children of its own, AND a kept ancestor with >=2 kept children --
+            # otherwise the second pruning clause splices it out. A single nested
+            # chain passes this check VACUOUSLY, verified by re-introducing the
+            # defect and watching the check still pass.
+            "<div><a href=#a style='display:block;width:120px;height:22px'>One</a>"
+            "<a href=#b style='display:block;width:120px;height:22px'>Two</a></div>"
+            "<div><a href=#c style='display:block;width:120px;height:22px'>Three</a>"
+            "<a href=#d style='display:block;width:120px;height:22px'>Four</a></div>"
+            "</main></body>")
+        await wp.wait_for_timeout(150)
+        w_tree = await wp.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'tree'); })()")
+        _rows = [l for l in w_tree.split("scroll_to by ref, or screenshot to look at pixels).\n")[-1]
+                 .splitlines() if l.strip()]
+        _depths = [len(l) - len(l.lstrip(" ")) for l in _rows]
+        _seen, _gap = set(), None
+        for d in _depths:
+            if d > 0 and (d - 1) not in _seen:
+                _gap = d
+                break
+            _seen.add(d)
+        check("TR11 no row is indented under a level that printed nothing",
+              _gap is None,
+              f"depths={_depths} first orphaned depth={_gap}"
+              + (f"  rows={[l[:44] for l in _rows]}" if _gap is not None else ""))
+        await wp.close()
+
         # TR10: an element's accessible name falls back to its descendants' text
         # concatenated, so a page shell reads as the whole page — demoqa's outermost
         # div arrived as a 390-char first row naming every nav item, heading, field

@@ -5110,7 +5110,11 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     if (tagL === 'iframe' || tagL === 'frame') {
       let accessible = false;
       try { accessible = !!el.contentDocument; } catch (e) {}
-      if (accessible) return;
+      // Recorded, not silent: its inner elements ARE listed individually, so the
+      // frame is a container rather than a control — but an agent asking the
+      // ledger why the iframe has no row of its own used to get no answer at
+      // all. This was one of the uninstrumented exits L10c cannot see.
+      if (accessible) return _drop(el, 'iframe-contents-listed-instead');
       crossFrame = true;
     }
     // A DISABLED CONTROL IS STILL A CONTROL. `isInteractive` asks "can this be
@@ -5184,15 +5188,21 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         try { const sr = el.getBoundingClientRect(); canvasLike = sr.width * sr.height >= 0.25 * vw * vh; } catch (e) {}
       }
     }
-    if (!canvasLike && (tagL === 'div' || tagL === 'svg')) {
-      try {
-        const cn = typeof el.className === 'string' ? el.className : (el.className && el.className.baseVal) || '';
-        // "off-canvas"/"offcanvas" (USWDS/Bootstrap drawer classes) are NOT
-        // drawing surfaces — that match told the agent to use vision for an
-        // entire IRS page of plain HTML.
-        canvasLike = /(^|[\s-])canvas($|[\s_-])/i.test(cn) && !/off-?canvas/i.test(cn);
-      } catch (e) {}
-    }
+    // REMOVED: `canvasLike = /(^|[\s-])canvas($|[\s_-])/i.test(className)`, with an
+    // `!/off-?canvas/i` exception bolted on after it told an agent to use VISION for
+    // an entire IRS page of plain HTML (USWDS/Bootstrap name their drawer
+    // "off-canvas"). A word-match on a class name, plus a list of the cases where
+    // the word means something else, is the exact shape #21-#28 kept being burned
+    // by — and #27's commit message already claimed this regex was gone. It was
+    // removed from `isInteractive` only; this second copy still drove the (canvas)
+    // marker and the "escalate to a screenshot" hint.
+    //
+    // Nothing replaces it because a drawing surface declares itself: <canvas>, or a
+    // viewport-dominating bare <svg>, both handled above. tldraw's `.tl-canvas`
+    // CONTAINS a real <canvas>, which is what gets marked. The three guards that
+    // used to follow this branch — page-spanning height, >40 chars of text, an
+    // accessible inner iframe — existed only to undo its false positives, and are
+    // kept for the <svg> path they also cover.
     if (canvasLike && tagL !== 'canvas') {
       // A drawing surface is viewport-sized and pixel-opaque: page-spanning
       // height or real text content means it's an HTML wrapper, not a canvas.
@@ -8131,6 +8141,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
         return;
       }
       const pad = ' '.repeat(depth);
+      let _blank = false;
       const e = ent.get(el);
       if (e) {
         // A CONTAINER'S LABEL IS ITS CONTENTS, AND ITS CONTENTS ARE PRINTED BELOW
@@ -8204,9 +8215,18 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
         const _bare = !role && !nm && !extra && (tag === 'div' || tag === 'span' || tag === 'li');
         if (!_bare) {
           out.push(pad + tag + (role && role !== tag ? `[${role}]` : '') + (nm ? ` "${nm}"` : '') + extra);
+        } else {
+          // A NODE THAT PRINTS NOTHING MUST NOT COST AN INDENT. #27 dropped the
+          // word from bare div/span/li wrappers to save characters and left them
+          // still incrementing depth, so every descendant row paid a space for a
+          // line that is not there — visible as ref_69 at indent 2 with its own
+          // child at indent 5. Indentation under an invisible parent also cannot be
+          // read: the reader sees a gap, not a grouping, because there is no row at
+          // the shallower level to group under.
+          _blank = true;
         }
       }
-      _emitChildren(kids.get(el) || [], depth + 1);
+      _emitChildren(kids.get(el) || [], _blank ? depth : depth + 1);
     };
     // IDENTICAL SIBLING SUBTREES COLLAPSE — and this is NOT a signature.
     //

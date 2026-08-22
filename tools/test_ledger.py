@@ -198,6 +198,11 @@ async def main():
             "not-connected", "not-visible", "checkVisibility-false", "aria-hidden",
             "inert", "outside-viewport", "not-interactive",
             "contenteditable-non-root", "inside-editor-host", "canvas-measure-failed",
+            # A same-origin iframe: its inner elements are listed individually, so
+            # the frame is a container rather than a control. This exit used to be
+            # SILENT -- one of the uninstrumented removals this test cannot see, so
+            # the ledger had no answer for "why does the iframe have no row".
+            "iframe-contents-listed-instead",
         }
         _rogue = sorted({str(d["rule"]) for d in dropped} - SPEC_DELETES)
         check("L10c nothing outside the spec-decided set deletes an element",

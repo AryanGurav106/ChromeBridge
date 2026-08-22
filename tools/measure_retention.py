@@ -318,7 +318,20 @@ def summarise(rows: list[dict], label: str) -> dict:
                       "median_entries": ent,
                       "presence": round(pres, 4), "answerability": round(ans, 4),
                       "retention": round((pres + ans) / 2, 4)}
-        print(f"{level:<9} {tok:>8} {flat:>8} {ent:>8} {pres:>9.3f} {ans:>11.3f}")
+        # RATIO OF MEDIANS IS NOT THE MEDIAN RATIO, and the difference is not
+        # academic here: the two columns' medians came from different sites, so the
+        # implied cost of the tree format read as 1.65x while the median SITE was
+        # 1.10x. The per-site ratio is the statistic that answers "what does this
+        # format cost me on a page", so it is what prints; the mean is shown beside
+        # it because the distribution has a long tail (a handful of component-heavy
+        # SPAs run several times the median) and one number cannot say that.
+        _r = [x[level]["approx_tokens"] / x[level]["flat_tokens"]
+              for x in scored
+              if x[level].get("flat_tokens") and x[level].get("approx_tokens")]
+        _rs = (f"  tree/flat per site: median {statistics.median(_r):.2f}x"
+               f"  mean {statistics.fmean(_r):.2f}x  worst {max(_r):.2f}x") if _r else ""
+        out[level]["tree_over_flat_median"] = round(statistics.median(_r), 4) if _r else None
+        print(f"{level:<9} {tok:>8} {flat:>8} {ent:>8} {pres:>9.3f} {ans:>11.3f}{_rs}")
     mrr = statistics.fmean(r["findability"]["mrr"] for r in scored if "findability" in r)
     top3 = statistics.fmean(r["findability"]["top3"] for r in scored if "findability" in r)
     out["findability"] = {"mrr": round(mrr, 4), "top3": round(top3, 4)}

@@ -464,6 +464,46 @@ async def main():
                   "(canvas)" in cstr, cstr.splitlines()[0][:70])
             await cp.close()
 
+        # CV4: a drawing surface DECLARES itself. NOTE the wrapper carries onclick:
+        # without it the div is not interactive, has no entry, and this check passes
+        # VACUOUSLY -- confirmed by running it against the pre-removal collector,
+        # which is the only way to know a fixture reproduces what it names. The second copy of a class-name
+        # regex — /(^|[\s-])canvas($|[\s_-])/ over className, with an
+        # `!/off-?canvas/` exception bolted on after it told an agent to use VISION
+        # for an entire IRS page of plain HTML — survived the #27 removal, which
+        # only took the copy in isInteractive. A word-match on a class name plus a
+        # list of the cases where the word means something else is the shape this
+        # project keeps being burned by. Nothing replaces it: tldraw's .tl-canvas
+        # CONTAINS a real <canvas>, and that is what gets marked.
+        dp2 = await browser.new_page(viewport={"width": 1100, "height": 800})
+        await dp2.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await dp2.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            # A page-builder wrapper whose class merely contains the WORD, holding
+            # ordinary HTML. It must not be announced as pixels.
+            "<div class='editor-canvas-wrap' onclick='void 0'"
+            " style='width:900px;height:600px'>"
+            "<button style='width:120px;height:30px'>Ordinary control</button></div>"
+            # The real thing, declared by its tag, inside a similarly-named wrapper.
+            "<div class='tl-canvas' style='width:900px;height:600px'>"
+            "<canvas width=880 height=580 style='display:block;width:880px;height:580px'></canvas>"
+            "</div></body>")
+        await dp2.wait_for_timeout(160)
+        _cstr2 = await dp2.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'flat'); })()")
+        _craw2 = await dp2.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        check("CV4 a class merely containing the word 'canvas' is not announced as pixels",
+              not any(e.get("canvasLike") and e.get("tag") != "canvas" for e in _craw2),
+              f"non-canvas tags marked canvasLike="
+              f"{[e.get('tag') for e in _craw2 if e.get('canvasLike') and e.get('tag') != 'canvas']}")
+        check("CV4b ...while the real <canvas> inside it still is",
+              "(canvas)" in _cstr2 and any(e.get("tag") == "canvas" for e in _craw2),
+              f"marker={'(canvas)' in _cstr2} canvas entries="
+              f"{sum(1 for e in _craw2 if e.get('tag') == 'canvas')}")
+        await dp2.close()
+
         # ---- N: a name belongs to the element it is printed against -------
         # AccName's "exclude the control's own subtree" rule is written for a
         # LABELABLE form control. Applied to any element inside a <label>, it made
