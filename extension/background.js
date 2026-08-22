@@ -4698,6 +4698,34 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     const head = t.slice(0, (c >= 0xD800 && c <= 0xDBFF) ? n - 1 : n);
     return head + '…(+' + (t.length - head.length) + ')';
   };
+  // ONE COPY of the icon-library handle lookup. It existed only inside the
+  // name-rescue branch, which is gated on `accessibleName.length > 0` — so it was
+  // unreachable for a control with NO accessible name, the commonest icon case and
+  // the exact one its own comment cites ("an icon+badge collapses to just the badge
+  // count, `a \"3\"` for a messages menu"). Now synthLabel consults it too, and the
+  // logic is defined once: #21's lesson was that one concept spelled twice drifts
+  // into two behaviours.
+  //
+  // These functions are injected with chrome.scripting and lose their closure, so
+  // the duplication this replaces was forced at the file level but not inside one
+  // function.
+  const _iconClassHandle = (el) => {
+    const ICON_SEL = '[class*="fa-"],[class*="bi-"],[class*="icon-"],[class*="lucide-"],'
+      + '[class*="ph-"],[class*="ri-"],[class*="ti-"],[class*="mdi-"],[class*="bx-"],'
+      + '[class*="octicon-"],[class*="tabler-"],[class*="la-"],[class*="gg-"]';
+    const ICON_RE = /(?:^|\s)(?:fa|far|fas|fab|fal|bi|icon|lucide|ph|ri|ti|mdi|bx|bxs|gg|la|las|octicon|tabler)-([a-z][a-z0-9-]{2,})/;
+    const ICON_SKIP = /^(sm|lg|xs|xl|[0-9]x|fw|solid|regular|light|bold|thin|fill|duotone|brands|outline|filled|line|spin|pulse)$/;
+    try {
+      const scope = [];
+      try { if (el.getAttribute && el.getAttribute('class')) scope.push(el); } catch (e) {}
+      for (const ic of (el.querySelectorAll ? el.querySelectorAll(ICON_SEL) : [])) scope.push(ic);
+      for (const ic of scope) {
+        const m = ICON_RE.exec((ic.getAttribute && ic.getAttribute('class')) || '');
+        if (m && !ICON_SKIP.test(m[1])) return m[1].replace(/-/g, ' ');
+      }
+    } catch (e) {}
+    return '';
+  };
   const synthLabel = (el) => {
     try {
       const svgTitle = el.querySelector('svg title, title');
@@ -4727,6 +4755,13 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       }
       const childTitled = el.querySelector('[title]');
       if (childTitled) { const t = (childTitled.getAttribute('title') || '').trim(); if (t) return t; }
+      // An icon library's own token for the glyph. Attributed, so the row says the
+      // name came off a class name rather than from anything the page declares.
+      const _ich = _iconClassHandle(el);
+      if (_ich) {
+        try { el.__abSynthAttr = 'icon-class'; } catch (e) {}
+        return _ich;
+      }
       // SHADOW-SLOTTED text: a link wrapping a web component whose label lives
       // in the component's OPEN shadow root (<a><onboarding-tile/></a> on
       // archive.org) — host.innerText is empty for shadow content, so read the
@@ -5803,31 +5838,14 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         if (tAttr.length > 2) {
           accessibleName = tAttr;
         } else {
-          // Icon-sprite class as identity. Every icon library names its glyph
-          // `<lib>-<what-it-is>`, which is the only handle such a control has —
-          // without it an icon+badge collapses to just the badge count (`a "3"`
-          // for a messages menu).
-          //
-          // Two fixes over the original FontAwesome/Bootstrap-only version:
-          //  - read the class with getAttribute. On an <svg> — Lucide, Feather,
-          //    Heroicons, Tabler, i.e. most of the modern set — .className is an
-          //    SVGAnimatedString that stringifies to "[object SVGAnimatedString]",
-          //    so the old read could never match an SVG icon at all.
-          //  - the prefix list covers icon LIBRARIES rather than two of them.
-          // The selector is only a cheap prefilter; the regex is the real gate,
-          // so a class like "graph-container" matching [class*="ph-"] is rejected.
-          const ICON_SEL = '[class*="fa-"],[class*="bi-"],[class*="icon-"],[class*="lucide-"],' +
-            '[class*="ph-"],[class*="ri-"],[class*="ti-"],[class*="mdi-"],[class*="bx-"],' +
-            '[class*="octicon-"],[class*="tabler-"],[class*="la-"],[class*="gg-"]';
-          const ICON_RE = /(?:^|\s)(?:fa|far|fas|fab|fal|bi|icon|lucide|ph|ri|ti|mdi|bx|bxs|gg|la|las|octicon|tabler)-([a-z][a-z0-9-]{2,})/;
-          const ICON_SKIP = /^(sm|lg|xs|xl|[0-9]x|fw|solid|regular|light|bold|thin|fill|duotone|brands|outline|filled|line|spin|pulse)$/;
+          // Icon-sprite class as identity — see _iconClassHandle, which is the
+          // single definition and is also reached from synthLabel for controls
+          // that have no accessible name at all.
           try {
-            for (const ic of (el.querySelectorAll ? el.querySelectorAll(ICON_SEL) : [])) {
-              const m = ICON_RE.exec((ic.getAttribute && ic.getAttribute('class')) || '');
-              if (m && !ICON_SKIP.test(m[1])) {
-                accessibleName = m[1].replace(/-/g, ' ') + ' (' + accessibleName + ')';
-                break;
-              }
+            const _ic2 = _iconClassHandle(el);
+            if (_ic2) {
+              accessibleName = _ic2 + ' (' + accessibleName + ')';
+              try { el.__abSynthAttr = 'icon-class'; } catch (e2) {}
             }
           } catch (e) {}
         }
@@ -6114,6 +6132,25 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       } else {
         _note(el, 'was:generic-no-label');   // recorded, no longer removed
       }
+    }
+    // A BADGE IS NOT A NAME. The icon-handle rescue keyed on `accessibleName`,
+    // but a link or button whose only content is an icon plus a count has an
+    // EMPTY accessible name and a `label` of "3" taken from its text — so neither
+    // the rescue (which requires a non-empty name) nor synthLabel (which requires
+    // an empty label) was ever reached, and the messages menu listed as `a "3"`.
+    // That is the exact failure the icon lookup's own comment describes.
+    //
+    // Same test as the rescue: a label of one or two characters with no letter in
+    // any script is a glyph or a count, not an identity. Attributed, so the row
+    // says the name came off a class name.
+    if (!iconOnly && label && label.length <= 2 && !/\p{L}/u.test(label)) {
+      try {
+        const _ib = _iconClassHandle(el);
+        if (_ib) {
+          label = _ib + ' (' + label + ')';
+          try { el.__abSynthAttr = 'icon-class'; } catch (e) {}
+        }
+      } catch (e) {}
     }
     // Unlabeled splitters/rails are never meaningful click targets, and a
     // fuzzy-matching agent can fire them by accident. Two signals, semantic
@@ -7904,6 +7941,21 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       } catch (err) { return false; }
       return true;
     };
+    // A DECLARED CONTROL NEVER LOSES ITS NAME. The rollup below drops a label the
+    // descendants account for, which is right for a container and wrong for a
+    // control: an <a> whose only child wrapper repeats its text had its own name
+    // deleted, leaving `ref_7 | a` — a link the agent cannot identify. TR8d
+    // caught it. A control's name IS its identity; only a container's label is a
+    // summary of what is printed beneath it.
+    const _declaredControl = (el) => {
+      const t = (el.tagName || '').toLowerCase();
+      if (['a', 'button', 'input', 'select', 'textarea', 'summary'].indexOf(t) >= 0) return true;
+      try {
+        const r = el.getAttribute && el.getAttribute('role');
+        if (r && INTERACTIVE_ROLES.has(r)) return true;
+      } catch (err) {}
+      return false;
+    };
     const _sameRow = (a, b) => (
       (a.label || '') === (b.label || '') && (a.name || '') === (b.name || '') &&
       (a.value || '') === (b.value || '') && (a.placeholder || '') === (b.placeholder || '') &&
@@ -7978,9 +8030,44 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       const pad = ' '.repeat(depth);
       const e = ent.get(el);
       if (e) {
+        // A CONTAINER'S LABEL IS ITS CONTENTS, AND ITS CONTENTS ARE PRINTED BELOW
+        // IT. An element's accessible name falls back to the concatenation of its
+        // descendants' text, so a page shell reads as the whole page: demoqa's
+        // outermost div arrived as a 390-character first row naming every nav
+        // item, heading, field and the copyright line — every word of which is on
+        // its own row underneath. In a FLAT list that string was the only way to
+        // know what the container held; in a tree the nesting says it, so the
+        // repetition is redundant by construction rather than by judgement.
+        //
+        // The test is exact, with no threshold: remove each kept descendant's
+        // label from this node's label, then discard everything that is not a
+        // letter or a digit in any script. If nothing is left, the descendants
+        // account for all of it. A container with prose of its own keeps its
+        // label, because that prose survives the subtraction.
+        let _e = e;
+        try {
+          const _own = (e.name || e.label || e.text || '');
+          if (_own && !_declaredControl(el) && (kids.get(el) || []).length) {
+            let _res = _own;
+            const _sub = (n, d) => {
+              if (d > 8) return;
+              for (const c of (kids.get(n) || [])) {
+                const ce = ent.get(c);
+                const cl = ce && (ce.name || ce.label || ce.text || '');
+                if (cl && cl.length > 1) _res = _res.split(cl).join(' ');
+                _sub(c, d + 1);
+              }
+            };
+            _sub(el, 0);
+            if (!_res.replace(/[^\p{L}\p{N}]/gu, '')) {
+              _e = Object.assign({}, e, { name: '', label: '', text: '' });
+              _sawRolled = true;
+            }
+          }
+        } catch (err) {}
         // `section=` is exactly what the tree replaces: an ancestor's label,
         // repeated on every row, when the ancestor is now one line above.
-        let _row = _fmtLine(e).replace(/ section=[a-z-]+/g, '');
+        let _row = _fmtLine(_e).replace(/ section=[a-z-]+/g, '');
         const _also = alsoRefs.get(el);
         if (_also && _also.length) {
           // Prepended, not appended: the refs are alternatives for the SAME
@@ -8164,6 +8251,9 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
   // Set by _treeLines when it puts more than one ref on a row, so the legend
   // line explaining that notation appears only when the notation does (#13).
   let _sawAlso = false;
+  // Set when a container's label was dropped because its descendants account
+  // for all of it — the legend says so only when it happened.
+  let _sawRolled = false;
   if (TREEFMT) {
     for (const l of _treeLines()) lines.push(l);
   } else
@@ -8214,7 +8304,17 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     // so a label-less control is still targetable (and the agent knows why it
     // has no text — a candidate for analyze_screen if the icon's purpose is
     // unclear).
-    if (!identity && e.text) identity = ` "${e.text}"`;
+    // `text` wins over `label` in general, and must: an earlier ordering bug let a
+    // hoisted label suppress an element's own visible text. But when the label
+    // strictly CONTAINS the text and is longer, it is the same content plus more —
+    // provable from the two strings, not a preference. That is the icon+badge
+    // case: text "3", label "search (3)", and printing the text alone gave
+    // `a "3"` for a messages menu, which is the failure the icon lookup exists to
+    // prevent and could not reach.
+    if (!identity && e.text) {
+      identity = (e.label && e.label.length > e.text.length && e.label.indexOf(e.text) >= 0)
+        ? ` "${e.label}"` : ` "${e.text}"`;
+    }
     if (!identity && e.iconOnly) identity = " (unlabeled-icon)";
     else if (!identity && e.label) identity = ` "${e.label}"`;
     // near= is ALWAYS a supplement, never a replacement — an earlier ordering
@@ -8231,7 +8331,10 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     const req = e.required ? " (required)" : "";
     const uns = e.unselected ? " (unselected)" : "";
     const dis = e.disabled ? " (disabled)" : "";
-    const sy  = e.synth ? ` (name taken from ${e.synth} — an automation hook, not an accessible name)` : "";
+    const sy  = !e.synth ? ""
+      : e.synth === 'icon-class'
+        ? ` (name read off an icon-library class name, not an accessible name)`
+        : ` (name taken from ${e.synth} — an automation hook, not an accessible name)`;
     const nt  = e.newTab ? " (opens NEW tab)" : "";
     const tp  = e.topNav ? " (REPLACES the whole page, destroying this frame and every f-ref in it)" : "";
     // SHORT TAGS, explained once in the legend. These parentheticals used to
@@ -8538,6 +8641,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
            + ` something here, read_page(ledger=true) names them.`);
     }
     if (_sawAlso)                L.push(`  - ref_A ref_B | ... — one row, several refs: nested elements with the SAME label and the SAME box. Any of them acts on that spot; they are listed together instead of as identical rows.`);
+    if (_sawRolled)              L.push(`  - a container row with no text of its own — its label was every label indented beneath it, so it is not repeated here.`);
     if (has(e => e.name))        L.push(`  - name="..." — IDENTITY (label / accessible name).`);
     if (has(e => e.near))        L.push(`  - near="..." — nearest visible text: a HINT for unnamed fields, never the real name.`);
     if (has(e => e.value))       L.push(`  - value="..." — CURRENT CONTENTS; empty/absent means blank.`);

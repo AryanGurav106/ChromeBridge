@@ -193,15 +193,25 @@ async def measure_page(page, name: str) -> dict:
     if not truth:
         return {"name": name, "skipped": "no ground truth"}
 
+    # FORMAT MATTERS AND WAS BEING LEFT UNSET. `format` is the 6th positional of
+    # _collectInteractivePage and TREEFMT is `format === 'tree'`, so omitting it
+    # measured the FLAT listing -- while the shipped default has been "tree" since
+    # CLAUDE.md #27. Every corpus token figure this tool produced described a
+    # surface the agent no longer receives by default. Both are measured now, and
+    # the default one is what `approx_tokens` reports; `flat_tokens` keeps the
+    # older series comparable and prices the format choice on real pages.
     levels = {}
     for level in ("compact", "brief", "full"):
-        listing = await page.evaluate(
-            "(function(){ " + COLLECT + "; return _collectInteractivePage(false, null, '"
-            + level + "'); })()")
+        async def _listing(fmt: str) -> str:
+            return await page.evaluate(
+                "(function(){ " + COLLECT + "; return _collectInteractivePage("
+                "false, null, '" + level + "', false, false, '" + fmt + "'); })()") or ""
+        tree_listing, flat_listing = await _listing("tree"), await _listing("flat")
         structured = await page.evaluate(
             "(function(){ " + COLLECT + "; return _collectInteractivePage(true, null, '"
             + level + "'); })()")
-        levels[level] = {"listing": listing or "", "structured": structured or []}
+        levels[level] = {"listing": tree_listing, "flat": flat_listing,
+                         "structured": structured or []}
 
     # Cap the question set so one enormous page cannot dominate the corpus mean.
     sample = truth[:60]
@@ -219,6 +229,7 @@ async def measure_page(page, name: str) -> dict:
         res[level] = {
             "chars": len(listing),
             "approx_tokens": round(len(listing) / 4),
+            "flat_tokens": round(len(data["flat"]) / 4),
             "entries": len(structured),
             "presence": round(present / len(sample), 4),
             "answerability": round(answerable / len(sample), 4),
@@ -296,16 +307,18 @@ def summarise(rows: list[dict], label: str) -> dict:
         return {}
     out = {"label": label, "sites": len(scored)}
     print(f"\n=== {label} ({len(scored)} sites) ===")
-    print(f"{'level':<9} {'tokens~':>8} {'entries':>8} {'presence':>9} {'answerable':>11}")
+    print(f"{'level':<9} {'tree~':>8} {'flat~':>8} {'entries':>8} {'presence':>9} {'answerable':>11}")
     for level in ("compact", "brief", "full"):
         tok = statistics.median(r[level]["approx_tokens"] for r in scored)
+        flat = statistics.median(r[level].get("flat_tokens", 0) for r in scored)
         ent = statistics.median(r[level]["entries"] for r in scored)
         pres = statistics.fmean(r[level]["presence"] for r in scored)
         ans = statistics.fmean(r[level]["answerability"] for r in scored)
-        out[level] = {"median_tokens": tok, "median_entries": ent,
+        out[level] = {"median_tokens": tok, "median_flat_tokens": flat,
+                      "median_entries": ent,
                       "presence": round(pres, 4), "answerability": round(ans, 4),
                       "retention": round((pres + ans) / 2, 4)}
-        print(f"{level:<9} {tok:>8} {ent:>8} {pres:>9.3f} {ans:>11.3f}")
+        print(f"{level:<9} {tok:>8} {flat:>8} {ent:>8} {pres:>9.3f} {ans:>11.3f}")
     mrr = statistics.fmean(r["findability"]["mrr"] for r in scored if "findability" in r)
     top3 = statistics.fmean(r["findability"]["top3"] for r in scored if "findability" in r)
     out["findability"] = {"mrr": round(mrr, 4), "top3": round(top3, 4)}

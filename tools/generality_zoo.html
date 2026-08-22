@@ -167,6 +167,18 @@ int delta(int x) { return x * 5; }</div>
 </section>
 
 <section>
+  <h2>Icon plus badge</h2>
+  <!-- A messages menu: no aria-label, no title, so its accessible name is EMPTY
+       and its `label` is the badge count taken from its text. Neither the
+       icon-handle rescue (needs a non-empty name) nor synthLabel (needs an empty
+       label) could reach it, and it listed as `a "3"` -- the exact failure the
+       icon lookup's own comment describes. -->
+  <a id="gt-badge" href="#msgs" style="display:block;width:40px;height:30px">
+    <i class="fa fa-envelope" style="display:inline-block;width:16px;height:16px"></i><span>9</span>
+  </a>
+</section>
+
+<section>
   <h2>Demoted, never deleted</h2>
   <!-- The react-select-after-commit shape. Once a value is chosen the wrapper
        adopts the chosen label, so wrapper and inner control read identically and

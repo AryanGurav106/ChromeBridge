@@ -97,6 +97,7 @@ async def main():
             const o = {};
             for (const id of ['gb-data','gc-icon','gg-tiny','gh-tiny-unnamed','gk-empty','gk-filled',
                               'gp-wrap','gp-inner','gq-shell',
+                              'gt-badge',
                               'gf-editor','gr-editor','gm-not-editor','go-code-block','gl-emoji','gn-svg-icon'])
               { const n = document.getElementById(id); o[id] = n && n.getAttribute('mmid'); }
             return o;
@@ -118,6 +119,18 @@ async def main():
               bool(e) and "bell" in (e.get("name") or ""),
               f"name={(e or {}).get('name')!r}  (SVG .className is an SVGAnimatedString, "
               f"so the old read matched nothing)")
+        # A name read off a class name is a GUESS, not something the page says out
+        # loud. #23 made this fix for data-* automation hooks and left the icon path
+        # unattributed, so a library's token for a glyph sat in the slot the legend
+        # calls "the field's IDENTITY" with nothing marking it.
+        check("N4b ...and says so, because a class name is not an accessible name",
+              bool(e) and e.get("synth") == "icon-class",
+              f"synth={(e or {}).get('synth')!r}")
+        _bg = ent.get("gt-badge")
+        check("N4c an icon+badge link is not listed as its badge count alone",
+              bool(_bg) and "envelope" in ((_bg.get("label") or "") + (_bg.get("name") or "")),
+              f"label={(_bg or {}).get('label')!r} text={(_bg or {}).get('text')!r}"
+              f" (it used to list as just the count)")
 
         # ---- T: tiny native controls -------------------------------------------
         e = ent.get("gg-tiny")

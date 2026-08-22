@@ -278,6 +278,40 @@ async def main():
         # Quoted, so the fold row's near="Elements Real Link" does not count — a
         # bare substring match made this assert 3 rows and read as a failure of the
         # code rather than of the test.
+        # TR10: an element's accessible name falls back to its descendants' text
+        # concatenated, so a page shell reads as the whole page — demoqa's outermost
+        # div arrived as a 390-char first row naming every nav item, heading, field
+        # and the copyright line, every word of which was on its own row beneath it.
+        # A flat list needed that string; a tree states it by nesting. Dropped only
+        # when the descendants account for ALL of it (exact, no threshold), and
+        # never for a declared control, whose name is its identity not a summary.
+        rp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await rp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await rp.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<div id=shell onclick='void 0' style='width:400px'>"
+            "<a href=#a style='display:block;width:200px;height:24px'>Elements</a>"
+            "<a href=#b style='display:block;width:200px;height:24px'>Forms</a></div>"
+            "<div id=card onclick='void 0' style='width:400px'>"
+            "A quarterly summary of regional performance."
+            "<a href=#d style='display:block;width:200px;height:24px'>Read more</a>"
+            "</div></body>")
+        await rp.wait_for_timeout(150)
+        r_tree = await rp.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'tree'); })()")
+        _shell = [l for l in r_tree.splitlines()
+                  if l.startswith("ref_") and " div" in l and "Elements" in l]
+        check("TR10 a container whose label is only its descendants' labels prints"
+              " without it",
+              not _shell,
+              f"shell row still carries the concatenation: {(_shell or ['none'])[0][:80]}")
+        check("TR10b ...while a container with prose of its own keeps its label",
+              any("A quarterly summary" in l for l in r_tree.splitlines()),
+              next((l.strip()[:70] for l in r_tree.splitlines()
+                    if "quarterly" in l), "LABEL LOST"))
+        await rp.close()
+
         _link = [l for l in c_tree.splitlines() if '"Real Link"' in l]
         check("TR8d a declared control (<a>) is NEVER merged into its child wrapper",
               len(_link) == 2,
