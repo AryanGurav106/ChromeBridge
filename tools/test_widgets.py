@@ -327,6 +327,51 @@ async def main():
               _rules.get("inert") == 1, f"byRule={_rules}")
         await gp.close()
 
+        # ---- W15: a DISABLED control still exists ------------------------------
+        # The most-reported false negative in the project: ~6 live agents across two
+        # fan-outs found demoqa's City field absent from the listing, from find, and
+        # from the decoration tier, because a react-select disabled until State is
+        # chosen is a pointer-events:none wrapper around a disabled 4px input, and
+        # `isInteractive` asks "can this be operated" -- the wrong question for
+        # existence. The consequence is the dangerous kind: "this form has no City
+        # field" and "the City field unlocks once you pick a State" were the same
+        # output, which is also what let find answer a city query with the State field.
+        dp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await dp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await dp.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'><form>"
+            "<label>State</label>"
+            "<div style='width:419px;height:38px'><div>Select State</div>"
+            "<input id=st style='width:4px;height:24px'></div>"
+            "<label>City</label>"
+            "<div id=cw style='width:419px;height:38px;pointer-events:none'><div>Select City</div>"
+            "<input id=cty disabled style='width:4px;height:24px'></div>"
+            "<button type=submit>Submit</button></form></body>")
+        await dp.wait_for_timeout(150)
+        _st = await dp.evaluate("(function(){ " + COLLECT
+                                + "; return _collectInteractivePage(true,null,'compact',false,false); })()")
+        _lst = await dp.evaluate("(function(){ " + COLLECT
+                                 + "; return _collectInteractivePage(false,null,'compact',false,false); })()")
+        _cty = await dp.evaluate(
+            "()=>document.getElementById('cty').getAttribute('mmid')")
+        _e = next((e for e in _st if str(e.get("mmid")) == str(_cty)), None)
+        check("W15 a disabled form control is COLLECTED, not deleted",
+              _e is not None, f"city input mmid={_cty} present={_e is not None}")
+        check("W15b ...flagged (disabled), so 'absent' and 'switched off' differ",
+              bool(_e) and _e.get("disabled") is True
+              and any("Select City" in l and "(disabled)" in l for l in _lst.splitlines()),
+              next((l.strip() for l in _lst.splitlines() if "Select City" in l), "NOT IN LISTING"))
+        # The rescue must not turn containers into controls: an earlier version kept
+        # anything CONTAINING a form control, so <html>/<body>/<form> and every
+        # wrapper became clickable targets and actions resolved to them.
+        _wrap = await dp.evaluate("()=>document.getElementById('cw').getAttribute('mmid')")
+        _forms = [e for e in _st if e.get("tag") in ("html", "body", "form")]
+        check("W15c ...and no container was promoted to a control",
+              not _forms and not any(str(e.get("mmid")) == str(_wrap) and not e.get("demoted")
+                                     for e in _st),
+              f"containers listed={[e.get('tag') for e in _forms]}")
+        await dp.close()
+
         await browser.close()
 
     passed = sum(1 for _, ok, _ in results if ok)

@@ -4186,7 +4186,28 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         if (!(n.innerText || '').trim()) return false;   // styling with nothing rendered proves nothing
         const c = ((n.ownerDocument && n.ownerDocument.defaultView) || window).getComputedStyle(n);
         if (/^pre/.test(c.whiteSpace || '')) return true;
-        return /mono|consol|courier|menlo|monaco|code/i.test(c.fontFamily || '');
+        // MEASURE MONOSPACE, DO NOT RECOGNISE FONT NAMES. This read
+        // /mono|consol|courier|menlo|monaco|code/ against font-family, which is a
+        // list of the fonts someone happened to think of: a site shipping "Berkeley
+        // Mono" or "Fira Code" matches by luck, one shipping "Iosevka" or a
+        // self-hosted `--font-editor` does not, and nothing about the failure is
+        // visible. Monospace has an actual definition — every glyph advances the
+        // same width — so measure it. General for any font, any name, any language,
+        // and it cannot be wrong about a font it has never heard of.
+        const _win = (n.ownerDocument && n.ownerDocument.defaultView) || window;
+        const _doc = n.ownerDocument || document;
+        const probe = _doc.createElement('span');
+        probe.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;white-space:pre;';
+        probe.style.font = c.font || ((c.fontSize || '') + ' ' + (c.fontFamily || ''));
+        (_doc.body || _doc.documentElement).appendChild(probe);
+        let narrow = 0, wide = 0;
+        try {
+          probe.textContent = 'iiiiiiiiii';
+          narrow = probe.getBoundingClientRect().width;
+          probe.textContent = 'WWWWWWWWWW';
+          wide = probe.getBoundingClientRect().width;
+        } finally { probe.remove(); }
+        return narrow > 0 && Math.abs(narrow - wide) / Math.max(narrow, wide) < 0.02;
       } catch (e) { return false; }
     };
     // Does this box RENDER code anywhere inside it? Two text-bearing monospace/pre
@@ -4819,7 +4840,40 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       if (accessible) return;
       crossFrame = true;
     }
-    if (!crossFrame && !isInteractive(el)) return _drop(el, 'not-interactive');
+    // A DISABLED CONTROL IS STILL A CONTROL. `isInteractive` asks "can this be
+    // operated", which is the wrong question for existence: a control the page has
+    // switched off is exactly the thing an agent needs to be told about, because
+    // otherwise "this form has no City field" and "the City field unlocks once you
+    // pick a State" are the same output. Measured on demoqa across two fan-outs and
+    // ~6 agents: the City widget is a 419x38 react-select rendering the visible text
+    // "Select City", with a disabled 4x24 <input> inside it, and BOTH were deleted —
+    // absent from the listing, from find, and from the decoration tier.
+    //
+    // The test is the one already used for pointer-events ten lines below: is this a
+    // native form control, does it CONTAIN one, or has the page marked it
+    // aria-disabled. Structural and spec-anchored — no class names, no library
+    // names, no size. Such an element is kept and flagged (disabled), which is a
+    // state the listing already has vocabulary for.
+    // NARROW ON PURPOSE. My first version also kept anything that CONTAINED a form
+    // control, copied from the pointer-events test below — but that test only ever
+    // sees elements already known to have pointer-events:none, whereas this one sees
+    // every node on the page. So <html>, <body>, <form> and every wrapper div became
+    // "controls": mmids landed on containers and actions resolved to them, clicking a
+    // container for zero effect and typing into it for no value (test_gaps G2d/G2g,
+    // test_shadow light-DOM click). Turning containers into controls is the same
+    // defect as losing a control, pointed the other way.
+    //
+    // What remains is only what the DOCUMENT declares: a native form control (a
+    // control per HTML whatever its state), or an element the page itself marked
+    // aria-disabled. The disabled <input> inside a react-select is enough — that is
+    // the ref an agent acts on, and it carries (disabled).
+    const _switchedOffControl = () => {
+      try {
+        if (['input', 'select', 'textarea', 'button'].includes(tagL)) return true;
+        return el.getAttribute('aria-disabled') === 'true';
+      } catch (e) { return false; }
+    };
+    if (!crossFrame && !isInteractive(el) && !_switchedOffControl()) return _drop(el, 'not-interactive');
     if (decorativeTags.has(tagL)) {
       const rr = el.getAttribute('role');
       if (!rr || !INTERACTIVE_ROLES.has(rr)) {
@@ -6101,7 +6155,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           // while its siblings' values are not (a real option list uses codes or ids).
           if (!unselected && _o && el.selectedIndex === 0 && el.options.length > 2) {
             const _txt = (_o.text || '').trim();
-            const _isSentinel = /^(-1|0|default|none|null|undefined|choose|select)$/i.test(_v);
+            const _isSentinel = /^(-1|0|default|none|null|undefined)$/i.test(_v);
             let _siblingsDiffer = false;
             try {
               let same = 0, seen = 0;
@@ -7010,7 +7064,26 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // A post-pass can drop an mmid that a later pass re-adds; report only
     // entries that really are absent from the final listing, or the ledger
     // accuses rules of removals that did not stick.
-    const absent = _ledger.filter((d) => !kept.has(String(d.mmid)));
+    let absent = _ledger.filter((d) => !kept.has(String(d.mmid)));
+    // THE LEDGER MUST ANSWER FOR THE REGION IT WAS ASKED ABOUT. Drops are recorded
+    // during the whole-document walk, so a scoped ledger reported every drop on the
+    // page: a read scoped to demoqa's City wrapper kept 0 elements and reported 319
+    // drops, 137 of them not-visible elements from elsewhere entirely. The one
+    // diagnostic that exists to answer "why is THIS element missing" was answering
+    // about the whole document, which is how ~6 agents failed to find out what
+    // dropped the City control even after running it.
+    if (scopeMmid) {
+      try {
+        const _root = mmidReg.get(String(scopeMmid));
+        if (_root) {
+          absent = absent.filter((d) => {
+            const el = d.mmid ? mmidReg.get(String(d.mmid)) : null;
+            if (!el) return false;
+            return el === _root || _root.contains(el);
+          });
+        }
+      } catch (e) {}
+    }
     // DEMOTION IS NOT A DROP, and an element can be both. `_note` records a
     // heuristic's verdict as `was:<rule>` while LEAVING the element in place, so
     // filing those entries beside real drops made the ledger wrong in the two
@@ -7075,6 +7148,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   // order; (3) if anything is left over, we say so explicitly.
   const LISTING_CAP = 150;
   let shown = out, hiddenCount = 0;
+  let _capTail = [];
   if (out.length > LISTING_CAP) {
     // mediaOnly rows exist only in `full`, which is only ever requested BECAUSE the
     // agent wants a URL or an image. Letting the cap spend its budget on nav links
@@ -7089,6 +7163,28 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     shown = pri.concat(rest.slice(0, budget));
     shown.sort(readingOrder);   // re-impose reading order on the kept subset
     hiddenCount = out.length - shown.length;
+    // THE CAP MAY NOT DELETE. Everything else in this collector answers to
+    // prominence-not-existence -- a heuristic may decide how loudly an element is
+    // announced, never whether it exists -- and the entry cap was the one filter
+    // still exempt from it. Measured live: on Hacker News it removed 10 of 30
+    // front-page stories, one of them the second-most-commented thread on the
+    // page, and an agent proved the advertised recovery impossible (scroll_to
+    // reported success and the re-read came back byte-identical, because the cap
+    // slices in document order). Two agents answered a "which has the most"
+    // question correctly and said in writing that it was luck.
+    //
+    // So the tail keeps its refs. A ref and a short label is a handful of
+    // characters against the ~90 a full row costs, so the whole overflow fits in
+    // roughly the space of eight rows -- and nothing on the page is unreachable
+    // any more, which is the property that matters.
+    try {
+      const _shownIds = new Set(shown.map((e) => String(e.mmid)));
+      _capTail = out.filter((e) => !_shownIds.has(String(e.mmid)))
+        .map((e) => {
+          const lab = (e.name || e.label || e.text || '').trim();
+          return e.mmid + (lab ? ':' + JSON.stringify(lab.length > 40 ? lab.slice(0, 40) + '…' : lab) : '');
+        });
+    } catch (e) {}
   }
   // Unscoped `full` on a dense page is the failure mode this level invites; name
   // it rather than just emitting the payload.
@@ -7104,7 +7200,11 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       `plus a re-read returns byte-identical output. Recover by narrowing instead — read_page(ref_id=…) ` +
       `on a smaller region, find (it searches the whole page), or read_page(ref_id=…, filter="all") if ` +
       `the rows you want are in a list or table. A question about the LARGEST or FIRST of something is ` +
-      `not answerable from a capped listing: the omitted entries may hold the answer.`
+      `not answerable from the rows above alone -- but every omitted entry is listed by ref ` +
+      `below, so nothing here is unreachable.` +
+      (_capTail.length ? `
+OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
+        `same order as the page): ${_capTail.join(' ')}` : '')
     : "";
   // The listing is viewport-only. If real controls (form fields, links, buttons)
   // sit below the fold, the agent otherwise has NO signal they exist and gives up
