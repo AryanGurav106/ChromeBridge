@@ -915,6 +915,25 @@ const FIELDS3 = () => ([
     a = argsOf();
     check("read_page: geometry composes with detail and ref_id scoping",
       !!a && a[4] === true && a[2] === "brief" && a[1] === "7", JSON.stringify(a));
+
+    // `format` is the 6th positional — same shape as geometry and detail="brief",
+    // both of which shipped inert because the router was the one untested link.
+    callLog.length = 0;
+    await callOp("get_interactive_elements", { tabId: 1 });
+    a = argsOf();
+    check("read_page: format defaults to flat", !!a && a[5] === "flat", JSON.stringify(a));
+
+    callLog.length = 0;
+    await callOp("get_interactive_elements", { tabId: 1, format: "tree" });
+    a = argsOf();
+    check("read_page: format='tree' is forwarded to the collector",
+      !!a && a[5] === "tree", JSON.stringify(a));
+
+    callLog.length = 0;
+    await callOp("get_interactive_elements", { tabId: 1, format: "nonsense" });
+    a = argsOf();
+    check("read_page: an unknown format fails safe to flat",
+      !!a && a[5] === "flat", JSON.stringify(a));
   });
 
   await test("read_network_requests", async () => {

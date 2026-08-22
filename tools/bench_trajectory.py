@@ -100,6 +100,14 @@ PROBE = bm.PROBE
 POLICIES: dict[str, dict] = {
     # The shipped default, whatever it currently is.
     "current": {"args": "false, null, 'compact', false", "reads": 1},
+    # TREE: the same entries, re-shaped. Serialization only — it consumes the
+    # structured array the collector already returns, so refs, AccName, visibility
+    # and every flag are identical and the ONLY variable is the shape. That is the
+    # comparison worth making; adding text nodes at the same time would confound it.
+    # Same 6th positional the op router will send. Identical population to
+    # `current` -- post viewport-filter, post entry-cap -- so the only variable is
+    # the shape.
+    "tree": {"args": "false, null, 'compact', false, false, 'tree'", "reads": 1},
 }
 
 

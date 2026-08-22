@@ -172,6 +172,63 @@ async def main():
               any("Qwen" in l for l in _folds), f"{len(_folds)} fold(s) emitted")
         await hp.close()
 
+        # ---- TR: the tree format, which needs no classification at all ----------
+        # The fold SIGNATURE was rewritten four times in one day -- pixel buckets,
+        # tag path, tag path + sibling ordinal, tag path + class -- because "are
+        # these the same kind of thing?" has no heuristic answer. The tree does not
+        # ask it: siblings whose subtree shapes are BYTE-IDENTICAL are the same kind
+        # by construction, and their contents line up by position.
+        tp = await browser.new_page(viewport={"width": 1200, "height": 1400})
+        await tp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        hn = "".join(
+            f"<tr><td><span class=titleline><a href=/s{i}>Story {i}</a></span> "
+            f"<span class=sitebit><a href=/d{i}>site{i}.com</a></span></td></tr>"
+            f"<tr><td class=subtext><a href=/u{i}>user{i}</a> "
+            f"<a href=/c{i}>{i} comments</a></td></tr>" for i in range(6))
+        arx = "".join(
+            f"<div class=meta><div class=list-authors><a href=/a1>Author {i}A</a>, "
+            f"<a href=/a2>Author {i}B</a>, <a href=/a3>Author {i}C</a></div></div>"
+            for i in range(8))
+        await tp.set_content("<!doctype html><meta charset=utf-8><body style='margin:0'>"
+                             f"<main><table>{hn}</table><section>{arx}</section></main></body>")
+        await tp.wait_for_timeout(170)
+
+        async def coll(fmt):
+            arg = "false,null,'compact',false,false" + (",'tree'" if fmt else "")
+            return await tp.evaluate("(function(){ " + COLLECT
+                                     + "; return _collectInteractivePage(" + arg + "); })()")
+
+        t_flat, t_tree = await coll(None), await coll("tree")
+        check("TR1 the tree indents rows under the page's own structure",
+              "\n main" in ("\n" + t_tree) or t_tree.count("\n table") >= 1,
+              next((l for l in t_tree.splitlines() if l.strip() == "main"), "NO main NODE"))
+        # Hacker News' user and comments links are same-class siblings, so the flat
+        # key groups them and the heterogeneity guard then refuses -- 12 loose rows.
+        # Positionally they are two distinct columns, which is what they are.
+        _pos = [l for l in t_tree.splitlines() if l.strip().startswith("#")]
+        check("TR2 identical sibling records collapse POSITIONALLY, one line per field",
+              any('"user0"' in l and '"user5"' in l for l in _pos)
+              and any('"0 comments"' in l and '"5 comments"' in l for l in _pos),
+              f"{len(_pos)} position lines")
+        check("TR3 ...and no position line mixes two different fields",
+              not any(('"user0"' in l and '"0 comments"' in l) for l in _pos))
+        # The flat fold put all 24 arXiv authors in ONE line, losing which paper
+        # each belonged to. Positions keep first/second/third author apart.
+        check("TR4 a 3-field record keeps its fields in separate positions",
+              sum(1 for l in _pos if "Author" in l) == 3,
+              f"{sum(1 for l in _pos if 'Author' in l)} author position lines")
+        check("TR5 every folded member keeps its own ref",
+              all(f'"Author {i}A"' in t_tree for i in range(8)))
+        # Pass-through wrappers must not each buy an indent level: that was 80% of
+        # the tree's cost before pruning (36,576 of 45,868 chars on one real page).
+        deep = max((len(l) - len(l.lstrip(" ")) for l in t_tree.splitlines()), default=0)
+        check("TR6 pass-through wrappers are pruned, so indentation stays shallow",
+              deep <= 8, f"deepest indent {deep} spaces")
+        check("TR7 the tree is not more expensive than the flat listing here",
+              len(t_tree) <= len(t_flat),
+              f"tree {len(t_tree)} vs flat {len(t_flat)} chars")
+        await tp.close()
+
         await browser.close()
 
     passed = sum(1 for r in results if r)

@@ -756,6 +756,10 @@ async def read_page(
         bool,
         Field(description="DIAGNOSTIC. Instead of a listing, return every element the collector DROPPED and which rule dropped it. Use when the page visibly contains something the listing does not — it answers \"why is this element missing?\" in one call instead of a guessing loop."),
     ] = False,
+    format: Annotated[
+        str,
+        Field(description="\"flat\" (default) is one row per control, sorted top-to-bottom. \"tree\" indents rows under the page's own structure (header / nav / main / form / table) and collapses identical sibling groups positionally, so a repeated record shows which field is which. Use \"tree\" when you need to understand how the page is ORGANISED, or when a flat listing gave you many similar-looking rows you cannot tell apart."),
+    ] = "flat",
     geometry: Annotated[
         bool,
         Field(description="Add box(x,y,w,h) pixel coordinates to every row. OFF by default: refs re-measure at click time so no action needs the number, and it costs ~22 characters per row. Turn it on only when you need to reason about LAYOUT — what is beside or above what, or a coordinate for `computer` on a canvas. Spatial state — (below-fold), (off to the side), (occluded/blocked) — is always reported regardless."),
@@ -840,7 +844,8 @@ async def read_page(
         return _truncate("\n".join(head), max_chars)
 
     listing = await b.call("get_interactive_elements", tabId=tabId,
-                           scopeMmid=scope_mmid, detail=_detail, geometry=bool(geometry))
+                           scopeMmid=scope_mmid, detail=_detail, geometry=bool(geometry),
+                           format=("tree" if str(format).lower() == "tree" else "flat"))
     out = str(listing)
     if out.startswith("__SCOPE_MISS__"):
         # The ref is well-formed but absent from THIS document — almost always a ref
