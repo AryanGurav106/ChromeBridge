@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 17 suites, 488 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 17 suites, 498 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -485,7 +485,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 488 checks, ~40s
+.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 498 checks, ~40s
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -1591,6 +1591,145 @@ granted in the side panel is refused with the same message the agent gets.
     children as the negative control that a demotion did not swallow its subtree),
     N5–N5c (AccName separator), L10c (the delete-set tripwire).
 
+29. **AFTER THE DEMOTIONS: WHERE THE COST WENT, AND SEVEN PATTERNS REPLACED BY
+    DECLARATIONS.** #28 stopped five container heuristics from deleting, which
+    raised presence 2.8pp and cost +51% entries. This is the pass that paid for it
+    and then kept going on the same rule — *if a matcher reads as general and
+    measures as narrow, replace it with what the document declares.*
+
+    **THE TREE'S REAL COST IS 1.09x, AND THE RULER SAID 1.65x.** `measure_retention`
+    called the collector with three positionals, so `format` was undefined and
+    `TREEFMT = format === 'tree'` was false: **every corpus token figure this project
+    ever produced described the FLAT listing**, while the shipped default has been
+    the tree since #27. Worse, the table divided median tree tokens by median flat
+    tokens — two medians drawn from different sites. The per-site statistic is
+    **median 1.09x**, which matches the +8.7% recorded when the tree shipped; mean is
+    1.83x because a handful of component-heavy SPAs run several times the median,
+    and the worst (svelte at 9.12x) does **not reproduce** — it is one of the 18
+    named non-deterministic replays, so it is not being chased. Median, mean and
+    worst all print now. Presence and findability come from the structured array and
+    were never format-dependent, so #28's numbers stand.
+
+    **A drift control that finally works:** two replicates of identical code gave
+    1917 vs 1908 tokens with identical entries and MRR — a **0.5% floor**, tight
+    enough to judge a 2% change. The 14-page probe I reached for first had a 4%
+    floor because a third of its HARs replay empty; it was measuring its own sample.
+
+    **PRESENTATION: THREE THINGS THAT WERE PRINTED TWICE.**
+    - **Identical nested rows share one row.** Once the container rules stopped
+      deleting, one demoqa nav item printed as `span "Elements" > div "Elements" >
+      div "Elements" > span > svg` — five lines for one thing. The elements must
+      EXIST (one of them carries the handler) but a row whose every printed field
+      repeats the row above is not information, and suppressing an exact duplicate
+      is not a guess. Collapse requires **exact** equality of label/name/value/
+      placeholder and all four box fields, and that both ends be undeclared
+      generics: an `<a>`, `<button>`, `<input>` or interactive ARIA role always keeps
+      its own row, because there the tag IS the information (TR8d). The survivor
+      carries every ref, in document order, outermost first — printed side by side
+      rather than one being named the real one, because #28 measured these rules
+      deleting 2.8pp of ground truth and they have not earned the right to rank.
+    - **A container's label is its contents, and its contents are printed below it.**
+      An accessible name falls back to the concatenation of descendants' text, so
+      demoqa's outermost div was the FIRST row carrying 390 characters — every nav
+      item, heading, field label and the copyright line, each on its own row
+      underneath. Exact test, no threshold: subtract each kept descendant's label,
+      discard everything that is not a letter or digit in any script, drop the label
+      only if nothing remains. A container with prose of its own keeps it (TR10b).
+      **A declared control never loses its name** — TR8d caught the first version
+      deleting an `<a>`'s name because its child wrapper repeated it, leaving
+      `ref_7 | a`. NOT extended to printing the residual when some remains: a
+      container labelled "Buy the Pro plan" holding a link "Pro plan" would become
+      "Buy the", which is worse than the concatenation.
+    - **A row that prints nothing costs no indent.** #27 dropped the tag word from
+      bare `div`/`span`/`li` wrappers and left them incrementing depth, so every
+      descendant paid a space for a line that is not there — `ref_69` at indent 2
+      with its own child at indent 5 on svelte.dev. Indentation under an invisible
+      parent is also unreadable: there is no row at the shallower level to group
+      under. Indentation fell 8.0% → 4.2% of the tree body; tokens **1912 → 1868**.
+      **A latent bug made the tree's own pruning inert:** the parent→children map
+      was built BEFORE both reduction loops, so anything they removed still had an
+      edge and was still walked. Fixing it took a level off every row and exposed
+      that the pruning was deleting the `<table>` the same function had just decided
+      to keep, leaving the **parser-inserted `<tbody>`** to stand in for it.
+
+    **SEVEN MATCHERS REPLACED BY DECLARATIONS.** Each was a list of the things
+    someone thought of; each is now something the page states.
+    | was | now |
+    |---|---|
+    | `/(^\|[\s-])canvas($\|[\s_-])/` on className, with `!/off-?canvas/` bolted on after it told an agent to use VISION for an IRS page of plain HTML | nothing — `<canvas>`, or a viewport-dominating `<svg>`, declare it. tldraw's `.tl-canvas` *contains* a real canvas. **#27's commit claimed this was already removed; only the `isInteractive` copy went** |
+    | `active\|selected\|current` class token deciding which tab is selected — and a wrong `(current)` tells the agent *not to click* | the selected tab's `aria-controls` panel is the rendered one; or ARIA's roving tabindex (0 here, -1 on a sibling). Both run first; the wordlist is instrumented and W16c pins that it fires only where nothing is declared |
+    | `[data-radix-popper-content-wrapper], [data-popper-placement], [data-floating-ui-portal]` as the popover candidate list | `role=listbox`/`menu` first, then a structural test: rendered, out of flow or stacked, not containing the trigger, ≥2 sibling clickable rows. Bounded to body children and the trigger's few ancestors |
+    | `[class*="helper"], [class*="error"]` excluding help text from `value=` — English words on author-chosen class names, so a German "fehlertext" landed in the field | `aria-describedby` / `aria-errormessage`, which is where HTML puts the association. **Removing the substrings broke nothing, including the MUI fixture they were added for** |
+    | `t.length > 8` gating shadow-only text in `get_page_text` | "does it contain a letter or a digit, in any script" — a PUA icon glyph is category Co and pure punctuation is P/S, while `1,204` and `3 日前` pass. The shortest strings on a page are often the answer |
+    | a bare `slice(0, 60)` on a hoisted value — the last unmarked cut in the value path | `markCut` with the true residual. The 60 above it is a *test* of whether the text is short enough to be a selection display, which is a different question from how much to print |
+    | `text` unconditionally beating `label` in `_fmtLine`, so an icon+badge listed as `a "3"` | when `label` strictly CONTAINS `text` and is longer it is the same content plus more, which is provable from the two strings — `a "envelope (9)"` |
+
+    **THREE FALSE NEGATIVES AND ONE CONFIDENTLY WRONG ANSWER.**
+    - **Text extraction now crosses shadow boundaries, like collection always has.**
+      `innerText` and `textContent` both stop at a shadow boundary, so a custom
+      element rendering all its text inside its own shadow root read as EMPTY while
+      the user plainly saw it — and because such an element usually sits INSIDE a
+      link, the result was a silently *amputated* string, not a missing one:
+      `<a>opened <relative-time>3 days ago</relative-time></a>` came back `"opened"`.
+      That is GitHub's timestamps and Reddit's vote counts, listed in #23 as
+      unreachable by every text tool. `_deepText` walks the COMPOSED tree (a host
+      with a shadow root renders its shadow content only, light children arriving
+      through `<slot>`, so descending into both would print slotted text twice),
+      depth-bounded, and is used ONLY where `innerText` came back empty — it does
+      not reproduce innerText's CSS-aware line breaking.
+    - **`value=` belongs to the field.** A declared live region (`aria-live`,
+      `role=status/alert/log/progressbar`, `<output>`) is transient announcement
+      text, never contents — Stack Overflow's search reported `value="Loading…"` on
+      an empty field. And **the wrapper walk had no boundary in two places**: two
+      hops reach `<body>` on a shallow page, so the hoist could report the whole
+      page's text as a field's value (only `length <= 60` stood in the way, and it
+      held merely because most pages have more than 60 characters) and the
+      `(unselected)` pass could find any placeholder-classed node anywhere and flag
+      a FILLED field empty. One `_inFieldWrapper` helper bounds both: a wrapper
+      holding a SECOND control belongs to a group, and body/landmark/form/table is
+      never one field's selection display.
+    - **The worst dropdown failure on record, fixed.** #25 recorded Ant Design v6
+      defeating the option picker, which then "presented the site's own nav bar as
+      the field's options". Three causes: rc-select points `aria-controls` at a
+      HIDDEN decoy listbox while painting real role-less rows in a separate portal
+      (a declared scope that is **not rendered** is a decoy — that is the test, and
+      it needs no framework name); the sample probe then **widened to the whole
+      document**, where anything carrying `[aria-selected]` or `li[data-value]`
+      qualified; and the candidate list was three library attribute names the portal
+      does not carry. `_pickOptionPage` never scanned the document — the two are
+      marked KEEP IN SYNC and had drifted, the probe also missing the
+      "container-holds-the-trigger" rejection.
+    - **The ledger's silent exit.** `if (accessible) return;` skipped a same-origin
+      iframe with no record, so the one diagnostic that answers "why is this
+      missing" had nothing to say. Recorded as `iframe-contents-listed-instead` and
+      added to `L10c`'s permitted set — **the tripwire only sees RECORDED deletes,
+      so an unrecorded one is invisible to it.**
+
+    **THREE FIXTURES WERE VACUOUS, AND RUNNING EACH ONE AGAINST THE PRE-FIX
+    COLLECTOR IS NOW ROUTINE.** Every fixture reproduces what you *thought* the
+    cause was, and the only way to know is to watch it fail: **CV4** passed pre-fix
+    because its wrapper div was not interactive for any other reason, so it had no
+    entry to be wrong about (it needs an `onclick`); **TR11** passed because a single
+    nested chain of bare wrappers is spliced out by the pruning clause added the
+    same day, so it needs TWO sibling bare wrappers each branching; **W18b** passed
+    because the German help text contained the field's own name
+    ("Lieblings*film*" for a field named "Film") and the pre-existing label-bleed
+    guard rejected it. All three now carry the requirement in a comment, because the
+    next person to touch them will simplify the markup and re-vacuum them.
+    Related: **TR6 bounded the maximum indent, which a skipped level passes** — the
+    invariant that catches it is that no row sits at a depth no printed row occupies.
+    And **the auditor printed three of its six risky categories**: `framework-name`
+    and `class-substring` were counted in its summary and never listed, so those
+    three sites could not be reviewed from its output at all — the same failure as
+    #28's three missed delete rules, in the tool that exists to prevent it.
+
+    Suites: 498 checks. New series — TR8–TR8d, TR9, TR10/TR10b, TR11 (tree folding,
+    declared structure, container-label rollup, indent integrity), S13–S13c (shadow
+    text), W16–W16c (declared tab state, with the wordlist counter as its deletion
+    gate), W17/W17b (the decoy listbox), W18–W18c (value= provenance), N4b/N4c (icon
+    names attributed, and an icon+badge keeping its handle), CV4/CV4b (a drawing
+    surface declares itself).
+
 
 ## Debugging starting points
 
@@ -1598,6 +1737,10 @@ granted in the side panel is refused with the same message the agent gets.
 |---------|---------------|
 | Listing has 0 elements after a click | `_collectInteractivePage` — check `isInteractive`, visibility filter, and `aria-hidden` / `inert` exclusion |
 | An element you can see is missing from every listing | Since #28 no heuristic deletes, so it is one of ten rules — run `read_page(ledger=true)` scoped to its container and read the name. If the name is not in `L10c`'s `SPEC_DELETES` set, a rule started deleting again and that test should have caught it |
+| A row starts with several refs (`ref_4 ref_5 ref_6 \| div "…"`) | By design since #29 — nested elements with the SAME label and the SAME box share one row, in document order, outermost first. Any of them acts on that spot; they are not ranked, because #28 measured those rules deleting 2.8pp of ground truth |
+| A container row has no text of its own | By design since #29 — its label was every label indented beneath it, so it is not repeated. A container with prose of its own keeps its label, and a declared control NEVER loses its name (TR8d) |
+| A dropdown reports options belonging to something else | Fixed in #29 and pinned by W17/W17b. A declared `aria-controls` scope that is not RENDERED is a decoy (rc-select/antd), and nothing widens past a declaration any more. If it recurs, check that `sampleOptions` and `_pickOptionPage` still agree — they are marked KEEP IN SYNC and have drifted twice |
+| A field shows `value=` text it does not contain | #29 bounded this twice: a declared live region (`aria-live`/`role=status`) is never contents, and the wrapper walk stops at a second control or a landmark. If it recurs, the hoist escaped its widget — check `_inFieldWrapper` |
 | Two rows with the same label, one nested under the other | Working as designed since #28. The container rules that used to pick one and delete the other now demote; the tree states the nesting by position and deliberately does not rank them, because the demoted one is sometimes the real control |
 | Click does nothing (no DOM change) | `_clickPage` pointer sequence + `clickTrusted` coordinate timing |
 | Combobox option click registers but trigger label doesn't update | `fillDropdown` — verify popover scope filter isn't picking a stale option |
