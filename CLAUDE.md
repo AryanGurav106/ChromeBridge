@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 17 suites, 500 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 17 suites, 502 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -118,6 +118,8 @@ ChromeBridge/
 │   ├── audit_dom_quality.py    #   recall / ambiguity / payload across the 106-site corpus
 │   ├── audit_ablation.py       #   neuter one library signature, diff 106 sites
 │   ├── audit_detail_cost.py    #   what detail="full" costs vs the compact default
+│   ├── audit_patterns.py       #   every regex/wordlist site, by failure mode (self-tested)
+│   ├── audit_thresholds_static.py  # every hardcoded NUMBER, and whether one deletes
 │   ├── measure_retention.py    #   presence / answerability / findability vs tokens
 │   ├── bench_mind2web.py       #   the only out-of-sample number in the project
 │   ├── test_*.py / test_*.js   #   the 17 suites (see tools/README.md — do not duplicate it)
@@ -485,7 +487,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 500 checks, ~40s
+.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 502 checks, ~40s
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -1039,15 +1041,19 @@ granted in the side panel is refused with the same message the agent gets.
 
     **Still open, deliberately, and each with its evidence:** `computer` reports the pre-dispatch
     coordinate (the click re-measures and lands, so only the REPORT misleads — measured 343px off);
-    `value=` can be hoisted from a sibling status node (Stack Overflow's search read
-    `value="Loading…"` while the field was empty); `section=` resolves to the nearest landmark without
+    `section=` resolves to the nearest landmark without
     stopping at a dialog boundary, so a dialog's own close buttons are tagged as underlying page while
-    the banner tells the agent to ignore those; name/text EXTRACTION does not pierce shadow roots even
-    though COLLECTION does, which is why GitHub's `<relative-time>` timestamps and Reddit's vote
-    counts are unreachable by every text tool; composite button-fields get no name/value split (6 of
+    the banner tells the agent to ignore those — note `section=` is stripped from the tree format, so
+    since #27 this only affects `format="flat"`, and the exact live shape (a close button that is a
+    SIBLING of the dialog panel inside a shared overlay wrapper) has not been reproduced offline;
+    composite button-fields get no name/value split (6 of
     11 bahn.de fields, including the departure date); CSS-generated content is named in the
     can-miss list but never surfaced (Wikipedia's rank column); and `computer` screenshots
     intermittently time out at 60s with no diagnostic separating hung from slow.
+    **FIXED SINCE, in #29:** `value=` hoisted from a sibling status node (a declared live region is
+    never contents, and both wrapper walks now stop at a widget boundary — W18), and name/text
+    EXTRACTION not piercing shadow roots (`_deepText` walks the composed tree — S13). A stale
+    open-items list is worse than none: it sends the next reader to re-derive something already done.
 
 24. **NO PER-FIELD TRUNCATION, AND NO WORDLIST READS PAGE TEXT** — the two families that produced
     almost every defect in #21–#23 were removed outright rather than fixed again. Both decisions were

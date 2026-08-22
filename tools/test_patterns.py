@@ -191,6 +191,34 @@ def main() -> int:
           f"comment@{_c} code={bool(mask[_c + 4]) if _c > 0 else '?'}"
           f"  string@{_s} code={bool(mask[_s + 4]) if _s > 0 else '?'}")
 
+    # ---- P6: no chosen NUMBER gates existence either ---------------------------
+    # audit_patterns covers regexes and wordlists; magic numbers are the other half
+    # of the same family, and #28 was five container rules deleting on thresholds
+    # nobody had enumerated (8 contained controls, 25% of the viewport, 3
+    # descendants, 12 residual characters, 4px, a name-length richness score). This
+    # asserts mechanically what L10c asserts at runtime: no line combines a chosen
+    # number with a delete outside the permitted set.
+    from audit_thresholds_static import (  # noqa: PLC0415
+        gating_existence, scan as scan_nums, self_test as num_self_test,
+    )
+
+    _rows = scan_nums()
+    _bad = gating_existence(_rows)
+    check("P6 no chosen number gates whether an element EXISTS",
+          not _bad,
+          "; ".join(f"bg.js:{b['line']} [{b['num']}] deletes as '{b['rule']}'"
+                    for b in _bad[:3])
+          or f"{len(_rows)} thresholds, "
+             f"{sum(1 for r in _rows if r['kind'] in ('viewport-fraction', 'pixel-count', 'element-count'))}"
+             f" of them layout judgements, none deleting")
+    # And the detector must be shown to fire, because it found two of its own
+    # classifier bugs the first time it was asked to: `ts\\b` matched inside
+    # `removedHosts` so shadow-host-collapse was filed as a DURATION, and
+    # entry-field geometry (`h.w`, `e.x`) was not recognised as pixels at all.
+    check("P6* ...and the detector provably flags all five pre-#28 container deletes",
+          num_self_test(),
+          "see self-test output above")
+
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} pattern-lint checks passed.")
     return 0 if passed == len(results) else 1
