@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 17 suites, 468 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 17 suites, 475 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -485,7 +485,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 468 checks, ~40s
+.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 475 checks, ~40s
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -1503,12 +1503,102 @@ granted in the side panel is refused with the same message the agent gets.
     T18 (fold truncation), plus 3 `format` router checks, because #19 is explicit that
     the op router is the untested link.
 
+28. **ZERO HEURISTICS DECIDE EXISTENCE — and the audit that said "three" had missed
+    half of them.** #27 closed with an honest-looking residue: "`not-interactive`,
+    `parent-child-dedup` and `delegation-root` remain heuristics that delete." That
+    list was assembled by reading the code, and it was **wrong by three rules**. What
+    actually deleted was found by running a fixture and asking the ledger why an
+    element was absent: the answer named `container-suppression`, a rule the audit had
+    not mentioned at all. Enumerating the call sites mechanically
+    (`grep -o "_drop(el, '...'\|_dropMmids(...)"`) then found `same-box-wrapper-collapse`
+    and `shadow-host-collapse` as well. **Six container rules could delete, not three,
+    and the two static audits in the last commit message both missed the same three.**
+
+    All five heuristic deletions are now demotions. What may still remove an element is
+    exactly: the page not rendering it (`not-visible`, `checkVisibility-false`,
+    `not-connected`), the page declaring it absent (`aria-hidden`, `inert`), the
+    **complement of the declaration set** in `isInteractive` (`not-interactive` — HTML
+    interactive tags, `audio/video[controls]`, `canvas`/`svg`, an ARIA interactive role,
+    `onclick`/`tabindex`/`contenteditable`, a registered listener, `cursor:pointer`, a
+    measured-monospace editor host), an inheritance correction (`contenteditable-non-root`
+    / `inside-editor-host` — `isContentEditable` is inherited, so every descendant of an
+    editor reports true and only the root is the control), the caller's own `max_chars`,
+    and one measurement-error path. **"The page declared nothing about this element" is
+    not a guess about what matters.**
+
+    **THE MEASUREMENT THAT MATTERED WAS NOT THE ONE I RAN FIRST.** On Mind2Web the five
+    conversions cost **+2.2% tokens (tree) / +1.3% (flat) for exactly nothing** — recall
+    96.0%, first-read reachability 51.4%, both unchanged to the digit — and three of the
+    five rules did not fire at all. That reads as "these rules were carrying nothing and
+    removing them is free", and it is an artefact of the corpus: Mind2Web is static HTML
+    with no CSS, so a rule keyed on box geometry or a `cursor:pointer` wrapper has nothing
+    to trip on. On the **frozen corpus of 34 live-captured pages**, matched:
+
+    | | before | after |
+    |---|---|---|
+    | compact entries | 148 | **223.5 (+51%)** |
+    | presence (ground truth derived independently of the collector) | 0.929 | **0.957** |
+    | findability MRR | 0.949 | **0.982** |
+    | compact tokens | 996 | 1,099.5 (+10.4%) |
+    | answerability | 0.511 | 0.514 |
+
+    These rules were deleting **a third of every listing's entries and 2.8pp of
+    ground-truth elements**, and `find` could not reach them either — the MRR gain is the
+    same elements becoming findable. #25's lesson repeats exactly: *an ablation measures
+    the code against the sample; it cannot measure the sample.* A change priced on the
+    only out-of-sample corpus we have would have been recorded as free and pointless.
+
+    **The tree is why the deletions were never needed.** `parent-child-dedup` exists
+    because a FLAT list cannot say "this one is inside that one" — so it had to pick one
+    and drop the other. The tree indents the child under the parent and says it by
+    position. Same for `same-box-wrapper-collapse` (twins, decided by a `name.length*2 +
+    label.length` richness score) and `shadow-host-collapse` (a custom-element host
+    matching its shadow child within 4px/8px). Every threshold in the set is a chosen
+    number: 8 contained controls, 25% of the viewport, 3 descendants, 12 residual
+    characters, 1.2x and 0.85x the viewport. None is declared by any document.
+
+    **No marker was added to demoted rows in the tree, deliberately.** The flat format
+    pulls them into a `PROBABLY DECORATION` line; the obvious symmetry would be a
+    `(minor)` token per tree row. It is not there because the fixture showed the demoted
+    element can be **the real control** — H1's inner `<input>` is what the agent writes
+    to, and its wrapper is what survives. Labelling that row "minor" would be a claim
+    about relative importance made by the very rules just measured deleting 2.8pp of
+    ground truth. Nesting states the relationship without ranking it.
+
+    **A latent double-count, fixed with the same rule as #27's.** The passes that judge
+    finished ENTRIES rather than elements mid-walk each called `_dropMmids` directly, so
+    an element judged by two of them got two `was:` ledger rows for one listing row —
+    the identical failure that once had the ledger's header claiming 42 demotions while
+    the decoration tier named 30. `_noteEntries(arr, mmids, rule)` now carries `_note`'s
+    FIRST-REASON-WINS to all five.
+
+    **`L10c` is the tripwire, because reading is what failed here.** It enumerates the
+    ten rule names permitted to appear in `dropped` and fails on anything else, so a
+    future rule that starts deleting is caught by a test rather than by a live agent.
+    `L10` itself had to be rewritten: it asserted that a demoted-then-removed element is
+    attributed to the rule that removed it, and **there is no longer any such case** — it
+    now pins that an element two heuristics judge comes back present, once, under exactly
+    one reason.
+
+    Also fixed this round: **AccName 1.2 step 2F was concatenating sibling element
+    children with no separator**, so a name assembled from `<span>4</span><span>9秒39…</span>`
+    read `49秒39` — a wrong NUMBER, silently, in the field that decides identity. Per the
+    spec each child contribution is space-delimited; `_contentName` now adds the space for
+    element children while leaving a single text node untouched (N5/N5b/N5c, the third
+    keeping the wrapping-label exclusion that only applies to labelable controls).
+
+    Suites: 475 checks. New series — H1–H3 (no heuristic deletes, with the shell's
+    children as the negative control that a demotion did not swallow its subtree),
+    N5–N5c (AccName separator), L10c (the delete-set tripwire).
+
 
 ## Debugging starting points
 
 | Symptom | Where to look |
 |---------|---------------|
 | Listing has 0 elements after a click | `_collectInteractivePage` — check `isInteractive`, visibility filter, and `aria-hidden` / `inert` exclusion |
+| An element you can see is missing from every listing | Since #28 no heuristic deletes, so it is one of ten rules — run `read_page(ledger=true)` scoped to its container and read the name. If the name is not in `L10c`'s `SPEC_DELETES` set, a rule started deleting again and that test should have caught it |
+| Two rows with the same label, one nested under the other | Working as designed since #28. The container rules that used to pick one and delete the other now demote; the tree states the nesting by position and deliberately does not rank them, because the demoted one is sometimes the real control |
 | Click does nothing (no DOM change) | `_clickPage` pointer sequence + `clickTrusted` coordinate timing |
 | Combobox option click registers but trigger label doesn't update | `fillDropdown` — verify popover scope filter isn't picking a stale option |
 | Submit fires but modal stays open | `fill_form` submit path — check `out.submit_errors` and `out.unfilled` enumeration in the result message |

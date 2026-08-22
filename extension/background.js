@@ -3992,6 +3992,21 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       }
     } catch (e) {}
   };
+  // Post-pass demotion, carrying `_note`'s FIRST-REASON-WINS rule over to the
+  // passes that judge finished ENTRIES rather than elements mid-walk (same-box
+  // twins, delegation roots, container suppression). They run in sequence and
+  // can each judge the same element; without this the ledger records one `was:`
+  // entry per pass for a single listing row, which is precisely the double-count
+  // that once had the ledger's header claiming 42 demotions while the decoration
+  // tier named 30. Takes the array as a parameter because `out` is declared
+  // further down this function.
+  const _noteEntries = (arr, mmids, rule) => {
+    const fresh = new Set();
+    for (const e of arr) {
+      if (mmids.has(e.mmid) && !e.demoted) { e.demoted = rule; fresh.add(e.mmid); }
+    }
+    _dropMmids(fresh, rule);
+  };
   // DETAIL LEVELS. `compact` (default) is what every observation gets: identity,
   // state and geometry, with URLs and media deliberately absent. `full` adds the
   // fields that are structurally missing from a compact listing — href, src, and
@@ -4452,6 +4467,34 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   const INTERACTIVE_ROLES = new Set(['button','link','menuitem','menuitemcheckbox','menuitemradio',
     'tab','checkbox','radio','switch','option','combobox','searchbox','textbox',
     'slider','spinbutton','treeitem']);
+  // NAME FROM CONTENT, SPACE-SEPARATED, per AccName 1.2 step 2F: each child's
+  // contribution is APPENDED WITH A SEPARATOR, which is what Chrome's own accname
+  // does. We concatenated instead, and on a spaceless script the seam is invisible
+  // and the result is a wrong NUMBER. Measured live on Baidu: a hot-search row is
+  // <a><span>4</span><span>9秒39!…</span></a> -- rank 4 and a 9.39-second record --
+  // and it was reported as "49秒39", i.e. 49.39 seconds. In English the seam shows
+  // ("4Global bond selloff") and a reader recovers; in Chinese "49秒39" reads as one
+  // natural token and nothing about it looks wrong.
+  //
+  // Only ELEMENT children get the separator. A pure text node is left alone, so
+  // <button>Save</button> is untouched and only nodes with multiple element
+  // children change at all.
+  const _contentName = (node) => {
+    try {
+      const parts = [];
+      for (const n of node.childNodes) {
+        if (n.nodeType === 3) parts.push(n.nodeValue || '');
+        else if (n.nodeType === 1) {
+          const t = (n.innerText != null ? n.innerText : n.textContent) || '';
+          if (t.trim()) parts.push(' ' + t + ' ');
+        }
+      }
+      return parts.join('').replace(/\s+/g, ' ').trim();
+    } catch (e) {
+      try { return ((node.innerText || node.textContent) || '').replace(/\s+/g, ' ').trim(); }
+      catch (e2) { return ''; }
+    }
+  };
   const isInteractive = (el) => {
     const tag = el.tagName.toLowerCase();
     // <summary> is the native disclosure-widget click target (details/summary).
@@ -5581,7 +5624,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
             const own = ownMmid && clone.querySelector(`[mmid="${ownMmid}"]`);
             if (own) own.remove();
             else { const sameTag = clone.querySelector(el.tagName.toLowerCase()); if (sameTag) sameTag.remove(); }
-            accessibleName = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+            accessibleName = _contentName(clone);
           } catch (e) {
             accessibleName = (wrap.innerText || '').trim();
           }
@@ -5912,7 +5955,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     })();
     // De-double BEFORE truncating: slicing first would split the second copy and
     // hide the doubling (e.g. "Explore all products in Kitchen Explore all prod…").
-    let buttonText = (!formyTags.has(tagL) && !ceRoot && !codeEditor) ? collapseDoubled((el.innerText || '').trim().replace(/\s+/g, ' ')) : '';
+    let buttonText = (!formyTags.has(tagL) && !ceRoot && !codeEditor) ? collapseDoubled(_contentName(el)) : '';
     // Word-boundary truncation with a visible marker — a raw slice cut Habr's
     // article title at "…ÐºÐ°Ðº ÑƒÑÑ‚Ñ€Ð¾ÐµÐ½ Frisbe" (lost "eTube") with no signal.
     // (buttonText: no cap)
@@ -6073,7 +6116,14 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         }
         walker = composedParent(walker);
       }
-      if (skip) return _drop(el, 'parent-child-dedup');
+      // DEMOTE, NOT DELETE. Same-label container suppression is a guess about
+      // which of two nested elements the reader means, and a guess must never
+      // decide what EXISTS. The tree makes the deletion unnecessary as well as
+      // wrong: a flat list cannot say "this one is inside that one", so it had
+      // to pick; the tree indents the child under the parent and says it by
+      // position. The guard below still protects a real control from being
+      // demoted in favour of a generic wrapper.
+      if (skip) _note(el, 'was:parent-child-dedup');
     }
     const _mmid = el.getAttribute('mmid');
     // Interactive ONLY via a bound JS handler, with no semantic role/tag of its own:
@@ -6523,8 +6573,13 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       }
     }
     if (removedHosts.size) {
-      _dropMmids(removedHosts, 'shadow-host-collapse');
-      for (let i = out.length - 1; i >= 0; i--) if (removedHosts.has(out[i].mmid)) out.splice(i, 1);
+      // DEMOTE, NOT DELETE. "Host and inner control are the same visual thing"
+      // is inferred from a 4px/8px box tolerance — a chosen number, so it sets
+      // prominence only. The label transfer above still happens, so the inner
+      // control keeps the host's slotted text; the host keeps its ref, which
+      // matters because a custom element can carry the handler its shadow child
+      // does not.
+      _noteEntries(out, removedHosts, 'was:shadow-host-collapse');
     }
   }
   // SAME-BOX WRAPPER COLLAPSE (light DOM): one visual control often survives as
@@ -6596,8 +6651,12 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       }
     }
     if (drop.size) {
-      _dropMmids(drop, 'same-box-wrapper-collapse');
-      for (let i = out.length - 1; i >= 0; i--) if (drop.has(out[i].mmid)) out.splice(i, 1);
+      // DEMOTE, NOT DELETE. Which of two same-box twins is "the" control is
+      // decided here by a richness score — name length doubled plus label
+      // length — i.e. a guess, and this file's own rule is that a guess may
+      // set prominence and never existence. The label MERGE above stays: the
+      // surviving twin still gets the richer name. The other keeps its ref.
+      _noteEntries(out, drop, 'was:same-box-wrapper-collapse');
     }
   }
   // BUTTON-LIKE INPUT FALLBACK NAME, applied only now that every label-adoption
@@ -6665,8 +6724,13 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       const _big = (e.h >= vh * 0.5) || (e.w * e.h >= 0.25 * vw * vh);
       if (contained >= 8 && _big) drop.add(e.mmid);
     }
-    _dropMmids(drop, 'delegation-root');
-    if (drop.size) for (let i = out.length - 1; i >= 0; i--) if (drop.has(out[i].mmid)) out.splice(i, 1);
+    // DEMOTE, NOT DELETE — same rule as parent-child-dedup. Both thresholds
+    // here (>=8 contained, >=25% of the viewport) are numbers someone chose;
+    // an app shell and a big clickable card differ by degree, not by anything
+    // the document declares. So the verdict marks prominence and the element
+    // keeps its ref. The entry is already built at this point, so this writes
+    // `demoted` on it directly rather than going through `_note`.
+    _noteEntries(out, drop, 'was:delegation-root');
   }
   // DUPLICATE-LABEL DISAMBIGUATION: >=3 controls sharing one short label
   // ("More info" ×4 on dashboard stat cards) are indistinguishable by name —
@@ -6760,8 +6824,13 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         if (residual.replace(/[\s|·•,;:.\-—]/g, '').length < 12) drop.add(be.mmid);
       }
       if (drop.size) {
-        _dropMmids(drop, 'container-suppression');
-        for (let i = out.length - 1; i >= 0; i--) if (drop.has(out[i].mmid)) out.splice(i, 1);
+        // DEMOTE, NOT DELETE. Every number in this pass is chosen rather than
+        // declared: 3 descendants, 12 residual characters, 1.2x and 0.85x the
+        // viewport. The pass had already been caught deleting ordinary clickable
+        // CARDS once (see the comment above, and the delegation pass that
+        // learned the same lesson at threshold 3); demoting removes the class of
+        // failure instead of retuning the number that produced it.
+        _noteEntries(out, drop, 'was:container-suppression');
       }
     }
   }

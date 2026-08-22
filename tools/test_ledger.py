@@ -172,15 +172,38 @@ async def main():
         check("L9 no element is counted twice among the drops",
               len(drop_ids) == len(set(drop_ids)),
               f"{len(drop_ids)} entries, {len(set(drop_ids))} distinct")
+        # L10 used to assert that a demoted-THEN-REMOVED element was attributed to
+        # the rule that removed it. No heuristic removes any more — the five
+        # container rules (parent-child-dedup, delegation-root,
+        # container-suppression, same-box-wrapper-collapse, shadow-host-collapse)
+        # all demote — so that scenario has no case left, and the invariant worth
+        # pinning is the one that replaced it: this element is judged by a
+        # container rule AND by pointer-events, and must come back present, once,
+        # under exactly ONE reason.
+        both_dem = [d["rule"] for d in demoted if str(d["mmid"]) == str(m_both)]
         both_rules = [d["rule"] for d in dropped if str(d["mmid"]) == str(m_both)]
-        # Asserted as a CONTRACT, not as one rule name: this fixture's wrapper is
-        # removed by same-box-wrapper-collapse rather than parent-child-dedup, and
-        # which container rule wins is an implementation detail. What must hold is
-        # that exactly one entry survives and it names a rule that really removes.
-        check("L10 a demoted-then-removed element is attributed to the rule that "
-              "actually removed it, once",
-              len(both_rules) == 1 and not both_rules[0].startswith("was:"),
-              f"mmid={m_both} rules={both_rules}")
+        both_rows = [e for e in led["elements"] if str(e["mmid"]) == str(m_both)]
+        check("L10 an element two heuristics judge is present exactly once, under "
+              "exactly one reason, and is not among the drops",
+              len(both_rows) == 1 and len(both_dem) == 1 and not both_rules,
+              f"mmid={m_both} rows={len(both_rows)} demotions={both_dem} drops={both_rules}")
+        # THE TRIPWIRE. The user-visible promise is "no heuristic decides whether
+        # an element exists", and the only way to keep it true as code changes is
+        # to enumerate what may delete and fail on anything else. Every name here
+        # is either the page declaring the element absent, the complement of the
+        # declaration set in isInteractive (not-interactive), an inheritance
+        # correction (a contenteditable/editor descendant is content, not a
+        # control), a caller budget, or a measurement error path.
+        SPEC_DELETES = {
+            "not-connected", "not-visible", "checkVisibility-false", "aria-hidden",
+            "inert", "outside-viewport", "not-interactive",
+            "contenteditable-non-root", "inside-editor-host", "canvas-measure-failed",
+        }
+        _rogue = sorted({str(d["rule"]) for d in dropped} - SPEC_DELETES)
+        check("L10c nothing outside the spec-decided set deletes an element",
+              not _rogue,
+              f"rogue delete rules={_rogue}" if _rogue
+              else f"delete rules seen={sorted({str(d['rule']) for d in dropped})}")
         check("L10b every reported drop names a spec rule, never a demotion",
               not [d["rule"] for d in dropped if str(d["rule"]).startswith("was:")],
               str([d["rule"] for d in dropped if str(d["rule"]).startswith("was:")][:4]))

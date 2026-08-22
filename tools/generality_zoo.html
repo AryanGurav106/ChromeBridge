@@ -166,6 +166,37 @@ int delta(int x) { return x * 5; }</div>
   <div id="gi-host" aria-hidden="true"></div>  <!-- host is aria-hidden; button lives inside -->
 </section>
 
+<section>
+  <h2>Demoted, never deleted</h2>
+  <!-- The react-select-after-commit shape. Once a value is chosen the wrapper
+       adopts the chosen label, so wrapper and inner control read identically and
+       parent-child-dedup used to DELETE the inner one — the field the agent had
+       just written to. Both must exist; the tree expresses the nesting by
+       position, which is the whole reason the deletion was never needed. -->
+  <div id="gp-wrap" role="button" tabindex="0" aria-label="Subscribe"
+       style="width:140px;height:34px;border:1px solid #999">
+    <span id="gp-inner" onclick="void 0" aria-label="Subscribe"
+          style="display:inline-block;width:90px;height:22px">Sub</span>
+  </div>
+</section>
+
+<!-- Delegation-root candidate: handler-only, no role/tabindex/onclick, taller
+     than half the viewport, wrapping well over 8 real controls. Positioned OFF
+     TO THE SIDE so a 1200px fixture cannot push the rest of the zoo below the
+     fold — the structured array retains off-viewport entries, which is what
+     these checks read. -->
+<div id="gq-shell" style="position:absolute;left:1400px;top:0;width:1200px;height:1200px">
+  <a href="#a1" style="display:block;width:80px;height:20px">one</a>
+  <a href="#a2" style="display:block;width:80px;height:20px">two</a>
+  <a href="#a3" style="display:block;width:80px;height:20px">three</a>
+  <a href="#a4" style="display:block;width:80px;height:20px">four</a>
+  <a href="#a5" style="display:block;width:80px;height:20px">five</a>
+  <a href="#a6" style="display:block;width:80px;height:20px">six</a>
+  <a href="#a7" style="display:block;width:80px;height:20px">seven</a>
+  <a href="#a8" style="display:block;width:80px;height:20px">eight</a>
+  <a href="#a9" style="display:block;width:80px;height:20px">nine</a>
+</div>
+
 <script>
   // A label exactly at the 60-char truncation boundary, ending on an astral
   // character — slicing UTF-16 units here produces a lone surrogate.
@@ -183,6 +214,11 @@ int delta(int x) { return x * 5; }</div>
 
   // Opened on demand by the test, so the rest of the page stays observable.
   document.getElementById('gs-card').addEventListener('click', function () {});
+
+  // The ONLY interactivity signal on the delegation-root candidate: a bound
+  // handler, which is exactly what listener_tag.js exists to see. No role, no
+  // tabindex, no onclick attribute — the shape a React/Vue app shell has.
+  document.getElementById('gq-shell').addEventListener('click', function () {});
 
   window.__openShadowDialog = function () {
     const host = document.createElement('div');

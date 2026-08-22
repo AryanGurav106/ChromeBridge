@@ -96,6 +96,7 @@ async def main():
         mm = await page.evaluate("""() => {
             const o = {};
             for (const id of ['gb-data','gc-icon','gg-tiny','gh-tiny-unnamed','gk-empty','gk-filled',
+                              'gp-wrap','gp-inner','gq-shell',
                               'gf-editor','gr-editor','gm-not-editor','go-code-block','gl-emoji','gn-svg-icon'])
               { const n = document.getElementById(id); o[id] = n && n.getAttribute('mmid'); }
             return o;
@@ -128,6 +129,39 @@ async def main():
               " decide prominence, never existence",
               bool(_t2) and _t2.get("demoted") == "was:too-small-unnamed",
               f"demoted={(_t2 or {}).get('demoted')!r} entry={'present' if _t2 else 'ABSENT'}")
+
+        # ---- H: no heuristic deletes ---------------------------------------------
+        # The complete list of rules that can remove an element is now:
+        # not-visible / not-connected / aria-hidden / inert (all spec-decided,
+        # the page declaring the element absent) plus `not-interactive`, which is
+        # the COMPLEMENT of the declaration set in isInteractive — HTML
+        # interactive tags, audio/video[controls], canvas/svg, an ARIA
+        # interactive role, onclick/tabindex/contenteditable, a registered
+        # listener, cursor:pointer, a measured-monospace editor host. "The page
+        # declared nothing about this element" is not a guess about what matters.
+        # Everything that IS such a guess demotes. H1/H2 pin the last two rules
+        # that used to delete; H3 is the negative control that the demotion is a
+        # real verdict and not an accident of the fixture.
+        _pw, _pi = ent.get("gp-wrap"), ent.get("gp-inner")
+        check("H1 a same-label child of a listed control EXISTS, demoted not deleted"
+              " — the field react-select renames on commit",
+              bool(_pw) and bool(_pi) and _pi.get("demoted") == "was:parent-child-dedup",
+              f"wrapper={'present' if _pw else 'ABSENT'} inner={'present' if _pi else 'ABSENT'}"
+              f" inner.demoted={(_pi or {}).get('demoted')!r}")
+        _qs = ent.get("gq-shell")
+        check("H2 a handler-only app shell over 9 controls EXISTS, demoted not deleted",
+              bool(_qs) and _qs.get("demoted") == "was:delegation-root",
+              f"entry={'present' if _qs else 'ABSENT'} demoted={(_qs or {}).get('demoted')!r}")
+        check("H3 ...and the shell's 9 children are listed on their own, undemoted"
+              " (a demotion that swallowed its subtree would be a deletion by"
+              " another name)",
+              sum(1 for e in raw if (e.get("label") or "") in
+                  ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+                  and not e.get("demoted")) == 9,
+              "kept+undemoted children="
+              + str(sum(1 for e in raw if (e.get("label") or "") in
+                        ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+                        and not e.get("demoted"))))
 
         # ---- C: combobox state without English ----------------------------------
         e = ent.get("gk-empty")
@@ -853,6 +887,42 @@ async def main():
               "Deep One" not in full and "Home" in full,
               f"{len([l for l in full.splitlines() if l.startswith('ref_')])} rows unscoped")
         await rg.close()
+
+        # ---- N5: AccName's inter-child separator -------------------------------
+        # Per AccName 1.2 step 2F each child's contribution is appended WITH A
+        # SEPARATOR. We concatenated, and on a spaceless script the seam is invisible
+        # and the result is a wrong NUMBER: Baidu's hot-search row is
+        # <a><span>4</span><span>9秒39!…</span></a> -- rank 4, a 9.39-second record --
+        # reported as "49秒39", i.e. 49.39 seconds. In English the seam shows and a
+        # reader recovers; in Chinese it reads as one natural token.
+        nm = await browser.new_page(viewport={"width": 900, "height": 700})
+        await nm.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await nm.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<a href=/a id=cjk><span>4</span><span>9秒39！中国机器人</span></a>"
+            "<button id=plain>Save</button>"
+            "<label id=lw>Country <select id=sel><option>France</option></select></label>"
+            "</body>")
+        await nm.wait_for_timeout(140)
+        _n = await nm.evaluate("(function(){ " + COLLECT
+                               + "; return _collectInteractivePage(true,null,'compact',false,false); })()")
+        _ids = await nm.evaluate(
+            "()=>({cjk:document.getElementById('cjk').getAttribute('mmid'),"
+            "plain:document.getElementById('plain').getAttribute('mmid'),"
+            "sel:document.getElementById('sel').getAttribute('mmid')})")
+
+        def _nm(k):
+            e = next((x for x in _n if str(x.get("mmid")) == str(_ids[k])), None)
+            return (e.get("name") or e.get("label") or e.get("text") or "") if e else ""
+
+        check("N5 sibling element children are space-separated, not fused into one number",
+              _nm("cjk").startswith("4 9秒39"), repr(_nm("cjk")))
+        # Negative controls: a pure text node must not gain spaces, and the wrapping
+        # label must still EXCLUDE the control's own subtree.
+        check("N5b ...a single text node is untouched", _nm("plain") == "Save", repr(_nm("plain")))
+        check("N5c ...and a wrapping label still excludes its control's subtree",
+              _nm("sel") == "Country", repr(_nm("sel")))
+        await nm.close()
 
         # ---- RG8/RG9: MANY containers sharing one tag ----------------------------
         # The shape that broke live and that no fixture modelled. Al Jazeera has 20
