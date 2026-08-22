@@ -4670,6 +4670,34 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       return s;
     } catch (e) { return ''; }
   };
+  // THE BOUNDARY OF ONE FIELD'S WIDGET. Two separate passes walk up two wrappers
+  // from an <input> — one hoisting the displayed selection into `value=`, one
+  // looking for a placeholder node to set `(unselected)` — and NEITHER had a stop
+  // condition. On a shallow page two hops reach <body>, so the first could report
+  // the whole page's text as a field's contents (only a `length <= 60` test stood
+  // in the way, and it held merely because most pages have more than 60 characters)
+  // and the second could flag a FILLED field unselected because some unrelated
+  // widget elsewhere has a placeholder node.
+  //
+  // A wrapper holding a SECOND control belongs to a group, not to this field, and
+  // body / a landmark / a form / a table is never one field's selection display.
+  // Structural, and the same reasoning that keeps form_input's popover-search
+  // fallback inside its widget (#14/W10). Defined once because #21's lesson was
+  // that one concept spelled twice drifts into two behaviours — and these two had
+  // already drifted apart in every other respect.
+  const _FIELD_STOP = {
+    MAIN: 1, NAV: 1, HEADER: 1, FOOTER: 1, ASIDE: 1, SECTION: 1,
+    FORM: 1, FIELDSET: 1, TABLE: 1, UL: 1, OL: 1, BODY: 1, HTML: 1,
+  };
+  const _inFieldWrapper = (w, el) => {
+    try {
+      if (!w || _FIELD_STOP[w.tagName]) return false;
+      for (const c of w.querySelectorAll('input, select, textarea, [role="combobox"]')) {
+        if (c !== el) return false;
+      }
+      return true;
+    } catch (e) { return false; }
+  };
   const _contentName = (node) => {
     try {
       const parts = [];
@@ -6070,6 +6098,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           if (tagL === 'input' && el.getAttribute('role') === 'combobox') {
             let w = el.parentElement;
             for (let d = 0; w && d < 2; d++, w = w.parentElement) {
+              if (!_inFieldWrapper(w, el)) break;
               // Exclude BUTTON/icon text from the hoist — Naver's empty search
               // box reported value="ê²€ìƒ‰ ê²€ìƒ‰" (its adjacent search buttons'
               // labels). Only the selection-display text counts.
@@ -6083,8 +6112,37 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
                 // field — an MUI Autocomplete with helperText is exactly this
                 // shape, and the agent then believes a required field is filled.
                 clone.querySelectorAll('button, [role="button"], input, select, textarea, svg,' +
-                                       ' label, p, small, legend, [class*="helper"], [class*="error"]')
+                                       ' label, p, small, legend,' +
+                // A DECLARED LIVE REGION IS NEVER A FIELD'S VALUE. Stack Overflow's
+                // search reported value="Loading…" while the field was empty: the
+                // text came from a sibling status node inside the wrapper. A page
+                // that marks a node aria-live / role=status / role=alert / output
+                // has SAID it is transient announcement text, so no vocabulary is
+                // needed to know it is not the contents of an input.
+                                       ' [aria-live], [role="status"], [role="alert"],' +
+                                       ' [role="log"], [role="progressbar"], output')
                      .forEach(n => n.remove());
+                // HELP AND ERROR TEXT, BY DECLARATION rather than by class name.
+                // This used to strip [class*="helper"] and [class*="error"] — two
+                // English words matched against author-chosen class names, so a
+                // German "fehlertext" or a Japanese class matched nothing and the
+                // prose landed in value=. HTML already has the association: the
+                // field points at its description with aria-describedby and at its
+                // error with aria-errormessage. Those ids survive cloneNode, so the
+                // referenced nodes can be removed exactly.
+                try {
+                  const _ids = ((el.getAttribute('aria-describedby') || '') + ' ' +
+                                (el.getAttribute('aria-errormessage') || '')).trim().split(/\s+/);
+                  // Compared directly rather than built into a selector: an id is
+                  // author-controlled text and interpolating it into
+                  // querySelector is both an escaping hazard and needless here.
+                  const _want = new Set(_ids.filter(Boolean));
+                  if (_want.size) {
+                    for (const _n of Array.from(clone.querySelectorAll('[id]'))) {
+                      if (_want.has(_n.id)) _n.remove();
+                    }
+                  }
+                } catch (e) {}
                 t = (clone.textContent || '').trim().replace(/\s+/g, ' ');
               } catch (e) { t = (w.innerText || '').trim().replace(/\s+/g, ' '); }
               if (t && t.length <= 60) {
@@ -6095,7 +6153,14 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
                 // CONTAINS, not equals: any leftover that still carries the field's
                 // own name is label bleed, not a chosen value.
                 if (accessibleName && t.toLowerCase().indexOf(accessibleName.toLowerCase()) !== -1) return '';
-                return t.slice(0, 60);
+                // dup:markcut — this was a bare slice(0, 60): the last unmarked cut
+                // in the value path, so a hoisted selection longer than 60 chars was
+                // reported as if it were the whole value. #24 removed per-field caps
+                // everywhere else; this one survived because it sits inside a
+                // fallback nobody re-read. The 60 above is a "is this short enough to
+                // be a selection display" TEST, which is a different question from
+                // how much of it to print.
+                return markCut(t, 4000);
               }
             }
           }
@@ -6509,6 +6574,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           if (!(el.value || '').trim()) {
             let w = el.parentElement;
             for (let d = 0; w && d < 2; d++, w = w.parentElement) {
+              if (!_inFieldWrapper(w, el)) break;
               try {
                 const ph = w.querySelector('[class*="placeholder"]');
                 if (ph && (ph.innerText || '').trim()) { unselected = true; break; }

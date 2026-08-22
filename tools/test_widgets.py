@@ -372,6 +372,54 @@ async def main():
               f"containers listed={[e.get('tag') for e in _forms]}")
         await dp.close()
 
+        # ---- W18: value= belongs to the FIELD, not to its neighbours ----------
+        # The input-combobox hoist reads the displayed selection off a sibling node,
+        # which is right for Ant/select2/Chosen and was unbounded in three ways:
+        #  - a DECLARED LIVE REGION counted as contents. Stack Overflow's search
+        #    reported value="Loading…" while the field was empty. A node marked
+        #    aria-live / role=status / role=alert / <output> has SAID it is transient
+        #    announcement text, so no vocabulary is needed to exclude it.
+        #  - HELP AND ERROR TEXT was excluded by matching the English substrings
+        #    "helper" and "error" against author-chosen class names, so a German
+        #    "fehlertext" matched nothing and the prose landed in value=. HTML
+        #    already carries the association: aria-describedby / aria-errormessage.
+        #  - the WALK HAD NO BOUNDARY. Two hops reach <body> on a shallow page, so
+        #    the whole page's text could become a field's value; only a
+        #    `length <= 60` test stood in the way, and it held merely because most
+        #    pages have more than 60 characters in them.
+        vp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await vp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await vp.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<div style='width:300px'><input id=so role=combobox aria-label=Search"
+            " style='width:280px;height:28px'>"
+            "<div role=status aria-live=polite style='width:280px;height:18px'>Loading&hellip;</div></div>"
+            "<div style='width:300px'><input id=de role=combobox aria-label=Genre"
+            " aria-describedby=hilfe style='width:280px;height:28px'>"
+            "<div id=hilfe style='width:280px;height:18px'>W&auml;hlen Sie einen Titel</div></div>"
+            "<div style='width:300px'><input id=ok role=combobox aria-label=City"
+            " style='width:280px;height:28px'>"
+            "<span style='display:inline-block;width:120px;height:18px'>Reykjav&iacute;k</span></div>"
+            "</body>")
+        await vp.wait_for_timeout(160)
+        _vst = await vp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        _vm = await vp.evaluate(
+            "()=>['so','de','ok'].map(i=>document.getElementById(i).getAttribute('mmid'))")
+
+        def _val(i):
+            e = next((x for x in _vst if str(x.get("mmid")) == str(i)), None)
+            return (e or {}).get("value") or ""
+
+        check("W18 a declared live region is never a field's value",
+              _val(_vm[0]) == "", f"value={_val(_vm[0])!r} (was 'Loading…')")
+        check("W18b help text is excluded by aria-describedby, not by an English"
+              " class-name substring",
+              _val(_vm[1]) == "", f"value={_val(_vm[1])!r}")
+        check("W18c ...while a real hoisted selection still comes through",
+              _val(_vm[2]) == "Reykjavík", f"value={_val(_vm[2])!r}")
+        await vp.close()
+
         # ---- W17: rc-select / Ant Design -- a DECOY declared listbox ----------
         # The worst dropdown failure on record (CLAUDE.md #25): the picker found
         # zero options and then offered the site's own NAV BAR as the field's
