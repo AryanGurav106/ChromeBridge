@@ -372,6 +372,50 @@ async def main():
               f"containers listed={[e.get('tag') for e in _forms]}")
         await dp.close()
 
+        # ---- W16: which tab is selected, decided by DECLARATIONS -------------
+        # `(current)/(selected)` tells the agent "already active; don't re-click",
+        # so a wrong one suppresses a real action. It used to be answered, after
+        # every ARIA signal, by an active|selected|current CLASS TOKEN — the only
+        # wordlist left in the state path. ARIA's own tab pattern declares two
+        # better signals and neither was used: the selected tab's aria-controls
+        # panel is the rendered one, and the pattern specifies tabindex="0" on the
+        # active tab with -1 on the others. None of the three tabsets below carries
+        # aria-selected. The counter proves the fallback is reached ONLY by the
+        # tabset that declares nothing — instrumentation, so the wordlist can be
+        # deleted on evidence rather than on the argument.
+        tp2 = await browser.new_page(viewport={"width": 900, "height": 700})
+        await tp2.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await tp2.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<div role=tablist><div role=tab aria-controls=pa style='width:90px;height:26px'>A-one</div>"
+            "<div role=tab aria-controls=pb style='width:90px;height:26px'>A-two</div></div>"
+            "<div id=pa style='width:200px;height:20px'>panel a</div>"
+            "<div id=pb style='display:none'>panel b</div>"
+            "<div role=tablist><div role=tab tabindex=0 style='width:90px;height:26px'>B-one</div>"
+            "<div role=tab tabindex=-1 style='width:90px;height:26px'>B-two</div></div>"
+            "<div role=tablist><div role=tab class='tab active' style='width:90px;height:26px'>C-one</div>"
+            "<div role=tab class=tab style='width:90px;height:26px'>C-two</div></div></body>")
+        await tp2.wait_for_timeout(150)
+        _t = await tp2.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        _act = {}
+        for e in _t:
+            lab = (e.get("label") or e.get("name") or "").strip()
+            if lab[:2] in ("A-", "B-", "C-"):
+                _act[lab] = e.get("active") or ""
+        check("W16 aria-controls panel visibility decides the selected tab",
+              _act.get("A-one") == "selected" and _act.get("A-two") == "",
+              f"A-one={_act.get('A-one')!r} A-two={_act.get('A-two')!r}")
+        check("W16b roving tabindex (0 here, -1 on a sibling) decides it too",
+              _act.get("B-one") == "selected" and _act.get("B-two") == "",
+              f"B-one={_act.get('B-one')!r} B-two={_act.get('B-two')!r}")
+        _hits = await tp2.evaluate("()=>window.__abClassActiveHits||0")
+        check("W16c the class-token fallback is reached ONLY where the document"
+              " declares nothing",
+              _act.get("C-one") == "selected" and _act.get("C-two") == "" and _hits == 1,
+              f"C-one={_act.get('C-one')!r} class-fallback fired {_hits}x (expected 1)")
+        await tp2.close()
+
         await browser.close()
 
     passed = sum(1 for _, ok, _ in results if ok)

@@ -178,7 +178,15 @@ def main() -> int:
         if by_cat.get(c):
             print(f"{c:<18}{len(by_cat[c]):>7}   {RISK[c]}")
 
-    show = [args.cat] if args.cat else ["ascii-on-text", "wordlist", "html-regex"]
+    # EVERY risky category is listed, not three of them. framework-name and
+    # class-substring were counted in the table above and never printed, so the
+    # three sites in them could not be reviewed from this tool's output at all —
+    # a category you cannot read is a category nobody audits. "other" stays behind
+    # --cat/--full because it is 209 structural/formatting patterns.
+    show = [args.cat] if args.cat else [
+        "ascii-on-text", "wordlist", "framework-name", "html-regex",
+        "class-substring", "url-host",
+    ]
     for c in show:
         rows = by_cat.get(c) or []
         if not rows:

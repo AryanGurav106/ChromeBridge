@@ -45,6 +45,7 @@ def extract(name: str) -> str:
 COLLECT = extract("_collectInteractivePage")
 CLICK = extract("_clickPage")
 TYPE = extract("_enterTextPage")
+DOMTEXT = extract("_domTextPage")
 
 results: list[tuple[str, bool, str]] = []
 
@@ -151,6 +152,51 @@ async def main():
               _bg.count("dup:deepall") >= 2 and "dialogs: _deep(sel).length" in _bg,
               f"dup:deepall sites={_bg.count('dup:deepall')}")
         await ep.close()
+
+        # ---- S13: TEXT extraction crosses shadow boundaries, like COLLECTION --
+        # The collector has recursed into open shadow roots for a long time; text
+        # extraction never did, so the two disagreed about the same element. A
+        # custom element that renders all its text inside its own shadow root read
+        # as EMPTY, and because it usually sits INSIDE a link or button the result
+        # was a silently amputated name rather than a missing one:
+        # "opened <relative-time>3 days ago</relative-time>" came back "opened".
+        # That is GitHub's timestamps and Reddit's vote counts, unreachable by
+        # every text tool.
+        tp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await tp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await tp.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<h1>Thread</h1><p>Ordinary light-DOM prose, long enough to matter.</p>"
+            "<a id=lnk href=#x style='display:block;width:300px;height:26px'>"
+            "<span>opened </span><my-time id=mt></my-time></a>"
+            "<vote-count id=vc style='display:block;width:60px;height:20px'></vote-count>"
+            "<icon-only id=io style='display:block;width:20px;height:20px'></icon-only>"
+            "<script>"
+            "document.getElementById('mt').attachShadow({mode:'open'})"
+            ".innerHTML='<span>3 days ago</span>';"
+            "document.getElementById('vc').attachShadow({mode:'open'})"
+            ".innerHTML='<span>1,204</span>';"
+            "document.getElementById('io').attachShadow({mode:'open'})"
+            ".innerHTML='<span>\\uf002</span>';"
+            "</script></body>")
+        await tp.wait_for_timeout(200)
+        _sa = await tp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        _lk = next((e for e in _sa if e.get("tag") == "a"), None)
+        check("S13 a name assembled across a shadow boundary is COMPLETE, not clipped",
+              bool(_lk) and "3 days ago" in ((_lk.get("label") or "") + (_lk.get("name") or "")),
+              f"label={(_lk or {}).get('label')!r} (innerText alone gives just 'opened')")
+        _txt = await tp.evaluate("(function(){ " + DOMTEXT + "; return _domTextPage(); })()")
+        # The noise gate here used to be `t.length > 8` — a chosen number, and the
+        # shortest strings on a page are often the ANSWER. It is now "does this
+        # contain a letter or a digit, in any script", so a private-use icon glyph
+        # is still excluded with no length involved.
+        check("S13b short shadow-only text (a vote count) is no longer dropped by a"
+              " length threshold",
+              "1,204" in _txt, f"present={'1,204' in _txt}")
+        check("S13c ...while a private-use icon glyph is still excluded",
+              "" not in _txt, f"leaked={chr(0xf002) in _txt}")
+        await tp.close()
 
         await browser.close()
 

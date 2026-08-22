@@ -227,7 +227,62 @@ async def main():
         check("TR7 the tree is not more expensive than the flat listing here",
               len(t_tree) <= len(t_flat),
               f"tree {len(t_tree)} vs flat {len(t_flat)} chars")
+        # The document declares a <table>; a <tbody> is often inserted by the
+        # PARSER and names an implementation detail. The pruning pass used to
+        # remove the table it had just decided to keep and let the tbody stand in
+        # for it — invisible until the tree started being built from a post-prune
+        # parent map.
+        check("TR9 a declared <table> survives pruning; the parser's <tbody> does not"
+              " stand in for it",
+              any(l.strip().startswith("table ") for l in t_tree.splitlines())
+              and not any(l.strip() == "tbody" for l in t_tree.splitlines()),
+              next((l for l in t_tree.splitlines()
+                    if l.strip().startswith("table ") or l.strip() == "tbody"), "NEITHER"))
         await tp.close()
+
+        # TR8: once the container heuristics stopped deleting (#28), one nav item
+        # printed as a chain of same-label wrappers. They must still EXIST — one of
+        # them carries the handler — but a row whose every printed field repeats the
+        # row above is not information. The <a> is the negative control: a declared
+        # control never merges into its child, because there the tag IS the fact.
+        cp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await cp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await cp.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'><div id=nav>"
+            "<span id=a onclick='void 0' style='display:block;width:200px;height:30px'>"
+            "<div id=b onclick='void 0' style='width:200px;height:30px'>"
+            "<div id=c onclick='void 0' style='width:200px;height:30px'>Elements</div>"
+            "</div></span>"
+            "<a id=real href=#x style='display:block;width:200px;height:30px'>"
+            "<div id=rk onclick='void 0' style='width:200px;height:30px'>Real Link</div>"
+            "</a></div></body>")
+        await cp.wait_for_timeout(150)
+        c_tree = await cp.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'tree'); })()")
+        c_arr = await cp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        _rows = [l for l in c_tree.splitlines() if "Elements" in l and l.strip().startswith("ref_")]
+        _ids = await cp.evaluate(
+            "()=>['a','b','c'].map(i=>document.getElementById(i).getAttribute('mmid'))")
+        check("TR8 identical nested rows share ONE row carrying every ref",
+              len(_rows) == 1 and all(f"ref_{m}" in _rows[0] for m in _ids),
+              f"{len(_rows)} row(s) mmids={_ids} -> {(_rows or ['NONE'])[0].strip()[:90]}")
+        check("TR8b ...in document order, outermost first",
+              bool(_rows) and [_rows[0].index("ref_" + m) for m in _ids]
+              == sorted(_rows[0].index("ref_" + m) for m in _ids),
+              f"positions={[(m, (_rows or [''])[0].find('ref_' + m)) for m in _ids]}")
+        check("TR8c ...and every folded ref is still in the structured array",
+              all(any(str(e.get("mmid")) == str(m) for e in c_arr) for m in _ids),
+              f"present={[any(str(e.get('mmid')) == str(m) for e in c_arr) for m in _ids]}")
+        # Quoted, so the fold row's near="Elements Real Link" does not count — a
+        # bare substring match made this assert 3 rows and read as a failure of the
+        # code rather than of the test.
+        _link = [l for l in c_tree.splitlines() if '"Real Link"' in l]
+        check("TR8d a declared control (<a>) is NEVER merged into its child wrapper",
+              len(_link) == 2,
+              f"{len(_link)} row(s): {[l.strip()[:60] for l in _link]}")
+        await cp.close()
 
         await browser.close()
 

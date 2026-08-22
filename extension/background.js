@@ -3808,7 +3808,17 @@ function _domTextPage(scopeMmid) {
                 .map((c) => (c.innerText || '').trim()).filter(Boolean).join('\n').trim();
         } catch (e) {}
         // Skip what the base text already covers (slotted content) and noise.
-        if (t && t.length > 8 && seen.indexOf(t.slice(0, 40)) === -1) {
+        //
+        // The noise gate was `t.length > 8`, a chosen number, and short shadow-only
+        // text is exactly the case worth keeping: a vote count, a price, a
+        // timestamp, a badge — the shortest strings on the page are often the
+        // ANSWER. Replaced with the question the number was approximating: does
+        // this text contain a letter or a digit, in any script? An icon-font glyph
+        // sits in the Private Use Area (category Co) and pure punctuation is P/S,
+        // so neither passes, while "1,204" and "3 日前" both do. No length, no
+        // vocabulary, no script assumption. Repetition is already handled by the
+        // indexOf check beside it.
+        if (t && /[\p{L}\p{N}]/u.test(t) && seen.indexOf(t.slice(0, 40)) === -1) {
           // TAG first: an id of 'wa-dialog' on an <sl-dialog> named a component that
           // does not exist in the document, in a list where every other entry is a
           // tag name. aria-label is a real name; an id is not.
@@ -4445,8 +4455,48 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       // aria-selected; lichess's lobby tabs carry no ARIA state at all).
       const _ahRole = el.getAttribute('role');
       if (_ahRole === 'tab' || _ahRole === 'option') {
+        // TWO DECLARED SIGNALS FIRST, both from ARIA's own tab pattern, both
+        // language- and framework-neutral. They are strictly better evidence than
+        // a class name and were simply never used.
+        //
+        // (1) FUNCTIONAL: the selected tab is the one whose aria-controls panel is
+        //     rendered while a sibling tab's panel is not. That is what "selected"
+        //     MEANS for a tabset, so it cannot be wrong about a site it has never
+        //     seen — no vocabulary is involved.
+        // (2) ROVING TABINDEX: the pattern specifies tabindex="0" on the active tab
+        //     and tabindex="-1" on the inactive ones. Requiring a sibling to
+        //     actually carry -1 is what makes this evidence rather than a guess:
+        //     a page that puts tabindex="0" on every tab says nothing by it.
+        try {
+          const _sibs = [];
+          const _tl = el.closest && el.closest('[role="tablist"]');
+          if (_tl) {
+            for (const t of _tl.querySelectorAll('[role="tab"]')) if (t !== el) _sibs.push(t);
+          }
+          const _panelShown = (t) => {
+            const id = t.getAttribute && t.getAttribute('aria-controls');
+            if (!id) return null;
+            const pn = document.getElementById(id);
+            if (!pn) return null;
+            try { return !!(pn.checkVisibility ? pn.checkVisibility() : pn.offsetParent); }
+            catch (err) { return null; }
+          };
+          const _mine = _panelShown(el);
+          if (_mine === true && _sibs.some((t) => _panelShown(t) === false)) return 'selected';
+          if (_mine === false) return '';
+          if (el.getAttribute('tabindex') === '0' &&
+              _sibs.some((t) => t.getAttribute('tabindex') === '-1')) return 'selected';
+        } catch (err) {}
+        // LAST RESORT, kept until measured dead: an exact active/selected/current
+        // class token. It only ADDS a flag, it is scoped to tabs and options, and
+        // it runs after everything the document declares — but it is still a word
+        // list, so it is instrumented and will be deleted on the evidence rather
+        // than on the argument.
         const cn = typeof el.className === 'string' ? el.className : '';
-        if (/(^|\s)(active|selected|current)($|\s)/.test(cn)) return 'selected';
+        if (/(^|\s)(active|selected|current)($|\s)/.test(cn)) {
+          try { window.__abClassActiveHits = (window.__abClassActiveHits || 0) + 1; } catch (err) {}
+          return 'selected';
+        }
       }
       if (el.getAttribute('data-active') === 'true') return 'active';
       if (el.getAttribute('data-current') === 'true') return 'current';
@@ -4479,13 +4529,52 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   // Only ELEMENT children get the separator. A pure text node is left alone, so
   // <button>Save</button> is untouched and only nodes with multiple element
   // children change at all.
+  // COMPOSED-TREE TEXT. `innerText` and `textContent` both stop at a shadow
+  // boundary, so a custom element that renders all of its text inside its own
+  // shadow root reads as EMPTY — while the user plainly sees it. The collection
+  // walk has always recursed into open shadow roots; text extraction never did,
+  // so the two disagreed about the same element. That asymmetry is why GitHub's
+  // <relative-time> timestamps and Reddit's vote counts were unreachable by every
+  // text tool: "opened <relative-time>3 days ago</relative-time>" came back as
+  // "opened", a silently amputated string rather than a missing one.
+  //
+  // Walks the COMPOSED tree, which is what the user sees: a host with a shadow
+  // root renders its shadow content ONLY (light children appear through <slot>),
+  // so descending into both would print slotted text twice. Depth-bounded, and it
+  // honours checkVisibility so a hidden subtree contributes nothing, matching
+  // innerText. Used only as a fallback where innerText came back empty — it does
+  // not reproduce innerText's CSS-aware line breaking and must not replace it.
+  const _deepText = (node, depth) => {
+    const d = depth || 0;
+    if (d > 6) return '';
+    try {
+      if (node.nodeType === 3) return node.nodeValue || '';
+      if (node.nodeType !== 1) return '';
+      if (node.tagName === 'SLOT' && node.assignedNodes) {
+        const an = node.assignedNodes({ flatten: true }) || [];
+        let s = '';
+        for (const n of an) s += _deepText(n, d + 1);
+        if (s) return s;
+      }
+      try { if (node.checkVisibility && !node.checkVisibility()) return ''; } catch (e) {}
+      let s = '';
+      const sr = node.shadowRoot;
+      if (sr) {
+        for (const c of sr.childNodes) s += _deepText(c, d + 1);
+        return s;
+      }
+      for (const c of node.childNodes) s += _deepText(c, d + 1);
+      return s;
+    } catch (e) { return ''; }
+  };
   const _contentName = (node) => {
     try {
       const parts = [];
       for (const n of node.childNodes) {
         if (n.nodeType === 3) parts.push(n.nodeValue || '');
         else if (n.nodeType === 1) {
-          const t = (n.innerText != null ? n.innerText : n.textContent) || '';
+          let t = (n.innerText != null ? n.innerText : n.textContent) || '';
+          if (!t.trim()) t = _deepText(n);
           if (t.trim()) parts.push(' ' + t + ' ');
         }
       }
@@ -7724,6 +7813,12 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       // generic, which explicitly declare the absence of semantics.
       if (ks.size >= 2 || LAND[n.tagName] || LANDROLE[role]) keep.add(n);
     }
+    // Nodes this function adds because the DOCUMENT declares them structure, as
+    // opposed to nodes that earned a line by branching. The pruning below skips
+    // them: it once removed the <table> it had just added and left the
+    // parser-inserted <tbody> standing in for it, which names an implementation
+    // detail where the document names a table.
+    const declared = new Set();
     // A <table> holds no interactive elements on most pages, so it never appears
     // on an entry's ancestor path. It is structure the document declares, and in a
     // tree it belongs where it sits rather than in an out-of-band legend line.
@@ -7733,17 +7828,9 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
         const rs = Array.from(t.querySelectorAll('tr')).filter((r) => {
           try { return r.closest('table') === t; } catch (err) { return true; }
         }).length;
-        if (rs >= 2 && (!scopeMmid || ent.size)) keep.add(t);
+        if (rs >= 2 && (!scopeMmid || ent.size)) { keep.add(t); declared.add(t); }
       }
     } catch (err) {}
-    const kids = new Map();
-    const roots = [];
-    for (const el of keep) {
-      let par = null;
-      for (let n = el.parentElement; n; n = n.parentElement) { if (keep.has(n)) { par = n; break; } }
-      if (par) { if (!kids.has(par)) kids.set(par, []); kids.get(par).push(el); }
-      else roots.push(el);
-    }
     // A NODE THAT DOES NOT DIVIDE ANYTHING EARNS NO LINE. In a chain A > B > C
     // where each has the same kept descendants, the page splits once and the chain
     // merely carries it -- yet every link counted as a "branch point" and got its
@@ -7757,7 +7844,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     while (pruned) {
       pruned = false;
       for (const el of Array.from(keep)) {
-        if (ent.has(el) || LAND[el.tagName]) continue;
+        if (ent.has(el) || LAND[el.tagName] || declared.has(el)) continue;
         let role = '';
         try { role = (el.getAttribute && el.getAttribute('role')) || ''; } catch (err) {}
         if (LANDROLE[role]) continue;
@@ -7770,8 +7857,109 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
           }
           if (kc > 1) break;
         }
-        if (kc <= 1) { keep.delete(el); pruned = true; }
+        if (kc <= 1) { keep.delete(el); pruned = true; continue; }
+        // SECOND CLAUSE, same principle from the other end: a node whose nearest
+        // kept ANCESTOR has it as that ancestor's only kept child expresses the
+        // same division the ancestor already expressed, so it earns no line
+        // either. "Exactly one kept child" alone misses this, which is how a
+        // parser-inserted <tbody> came to be indented under its own <table> —
+        // both branch, but the page divides once. The OUTER one survives, because
+        // that is the node the author wrote.
+        let anc = null;
+        for (let n = el.parentElement; n; n = n.parentElement) { if (keep.has(n)) { anc = n; break; } }
+        if (anc) {
+          let sib = 0;
+          for (const other of keep) {
+            if (other === el || other === anc) continue;
+            for (let n = other.parentElement; n; n = n.parentElement) {
+              if (n === anc) { sib++; break; }
+              if (keep.has(n)) break;
+            }
+            if (sib) break;
+          }
+          if (!sib) { keep.delete(el); pruned = true; }
+        }
       }
+    }
+    // IDENTICAL NESTED ENTRIES SHARE ONE ROW. Once the container heuristics
+    // stopped deleting (#28) a single nav item printed as a chain — span
+    // "Elements" > div "Elements" > div "Elements" > span > svg, five lines for
+    // one thing. The elements must exist: `find` and a scoped read reach them,
+    // and one of them carries the handler. But printing a row whose every
+    // PRINTED FIELD already appeared on the row above is not information, and
+    // suppressing an exact duplicate is not a guess about what matters — it is
+    // the one thing about these chains the DOM does state.
+    //
+    // Collapse requires EXACT equality of every identity and geometry field and
+    // that BOTH ends be undeclared generics: an <a>, <button>, <input> or an
+    // element with an interactive ARIA role always keeps its own row, because
+    // there the tag IS the information. No tolerance, no size threshold — if the
+    // boxes differ by a pixel the rows differ in layout and both print.
+    const _GENERIC = { DIV: 1, SPAN: 1, LI: 1, SECTION: 1, P: 1, LABEL: 1 };
+    const _plainWrapper = (el) => {
+      if (!_GENERIC[el.tagName]) return false;
+      try {
+        const r = el.getAttribute && el.getAttribute('role');
+        if (r && INTERACTIVE_ROLES.has(r)) return false;
+      } catch (err) { return false; }
+      return true;
+    };
+    const _sameRow = (a, b) => (
+      (a.label || '') === (b.label || '') && (a.name || '') === (b.name || '') &&
+      (a.value || '') === (b.value || '') && (a.placeholder || '') === (b.placeholder || '') &&
+      a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
+    // ref -> the refs folded into it, so nothing becomes unreachable from the
+    // listing. All of them name the same box and the same label, so they are
+    // printed side by side rather than one being called the real one.
+    const alsoRefs = new Map();
+    let folded = true;
+    while (folded) {
+      folded = false;
+      for (const el of Array.from(keep)) {
+        const pe = ent.get(el);
+        if (!pe || !_plainWrapper(el)) continue;
+        const ks = (function () {
+          const acc = [];
+          for (const other of keep) {
+            if (other === el) continue;
+            for (let n = other.parentElement; n; n = n.parentElement) {
+              if (n === el) { acc.push(other); break; }
+              if (keep.has(n)) break;
+            }
+            if (acc.length > 1) break;
+          }
+          return acc;
+        })();
+        if (ks.length !== 1) continue;
+        const kid = ks[0];
+        const ke = ent.get(kid);
+        if (!ke || !_plainWrapper(kid) || !_sameRow(pe, ke)) continue;
+        // The PARENT is the one spliced out: its ref moves onto the child's row,
+        // which keeps the tree's indentation anchored to the deepest node and so
+        // preserves the nesting of everything below.
+        // ELEMENTS, not mmids: `keep` iterates in insertion order, which is the
+        // order the ancestor walk happened to add nodes, so a chain can fold
+        // inner-first. The refs are sorted into DOCUMENT order at emit time —
+        // outermost first — because that is the order the reader is scanning.
+        alsoRefs.set(kid, (alsoRefs.get(el) || []).concat([el], alsoRefs.get(kid) || []));
+        alsoRefs.delete(el);
+        keep.delete(el);
+        folded = true;
+      }
+    }
+    // BUILT AFTER BOTH REDUCTION LOOPS, not before. It used to be built first,
+    // so anything the loops removed from `keep` still had a parent->children edge
+    // and was still walked by `emit` — the removal only took effect for nodes the
+    // branch rule had never admitted in the first place. That made the
+    // cascade fixpoint above a no-op in exactly the cases it exists for, and it
+    // silently swallowed the identical-row fold below.
+    const kids = new Map();
+    const roots = [];
+    for (const el of keep) {
+      let par = null;
+      for (let n = el.parentElement; n; n = n.parentElement) { if (keep.has(n)) { par = n; break; } }
+      if (par) { if (!kids.has(par)) kids.set(par, []); kids.get(par).push(el); }
+      else roots.push(el);
     }
     const docOrder = (x, y) => {
       try { return (x.compareDocumentPosition(y) & 4) ? -1 : 1; } catch (err) { return 0; }
@@ -7792,7 +7980,21 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       if (e) {
         // `section=` is exactly what the tree replaces: an ancestor's label,
         // repeated on every row, when the ancestor is now one line above.
-        out.push(pad + _fmtLine(e).replace(/ section=[a-z-]+/g, ''));
+        let _row = _fmtLine(e).replace(/ section=[a-z-]+/g, '');
+        const _also = alsoRefs.get(el);
+        if (_also && _also.length) {
+          // Prepended, not appended: the refs are alternatives for the SAME
+          // spot, so they belong in the slot the reader already scans for a ref
+          // rather than in a trailing note that reads like a different element.
+          const _ids = _also.slice().sort(docOrder)
+            .map((n) => (ent.get(n) || {}).mmid).filter((m) => m != null);
+          if (_ids.length) {
+            _row = _row.replace(/^ref_\d+(?::\d+)? \| /,
+              (m) => _ids.map((r) => 'ref_' + r).join(' ') + ' ' + m);
+            _sawAlso = true;
+          }
+        }
+        out.push(pad + _row);
       } else {
         const tag = (el.tagName || '').toLowerCase();
         let role = '', nm = '', extra = '';
@@ -7959,6 +8161,9 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
   // chars (median page +1.8%) against a 3.3% drift floor — while the constant
   // legend block, which buys nothing on any accuracy metric, costs 24.4%.
   const _demoted = [];
+  // Set by _treeLines when it puts more than one ref on a row, so the legend
+  // line explaining that notation appears only when the notation does (#13).
+  let _sawAlso = false;
   if (TREEFMT) {
     for (const l of _treeLines()) lines.push(l);
   } else
@@ -8332,6 +8537,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
            + ` already shown here as backed-by=), not withheld page content. If you expected`
            + ` something here, read_page(ledger=true) names them.`);
     }
+    if (_sawAlso)                L.push(`  - ref_A ref_B | ... — one row, several refs: nested elements with the SAME label and the SAME box. Any of them acts on that spot; they are listed together instead of as identical rows.`);
     if (has(e => e.name))        L.push(`  - name="..." — IDENTITY (label / accessible name).`);
     if (has(e => e.near))        L.push(`  - near="..." — nearest visible text: a HINT for unnamed fields, never the real name.`);
     if (has(e => e.value))       L.push(`  - value="..." — CURRENT CONTENTS; empty/absent means blank.`);
