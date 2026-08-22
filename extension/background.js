@@ -4464,16 +4464,19 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // decorations) are filtered later by size; a viewport-dominating canvas is
     // the APP (Excalidraw/Figma-style) even with zero markup.
     if (tag === 'canvas') return true;
-    // Canvas-LIKE drawing surfaces: whiteboard apps (tldraw, others) render on
-    // a div/svg whose class advertises it as the canvas (.tl-canvas). Same
-    // treatment as <canvas>: surfaced only when viewport-dominating (filtered
-    // by size later), with the analyze_screen hint.
-    try {
-      if (tag === 'div' || tag === 'svg') {
-        const cn = typeof el.className === 'string' ? el.className : (el.className && el.className.baseVal) || '';
-        if (/(^|[\s-])canvas($|[\s_-])/i.test(cn)) return true;
-      }
-    } catch (e) {}
+    // REMOVED: a class-name regex, /(^|[\s-])canvas($|[\s_-])/i, that admitted any
+    // div or svg whose class contained the word "canvas" -- added for tldraw's
+    // .tl-canvas. It was the last hardcoded pattern left in the EXISTENCE path, and
+    // it is the shape this project has been burned by repeatedly: it recognises the
+    // word one library happened to choose, silently misses every library that chose
+    // another, and reads as general while measuring narrow.
+    //
+    // Nothing replaces it because nothing needs to. A real drawing surface is
+    // declared interactive by the platform in ways already tested below: a
+    // whiteboard binds pointer handlers (__abClickBound), sets cursor to something
+    // other than the default, or carries tabindex/role. If a div declares NONE of
+    // those, the page is not telling anyone it is interactive, and guessing from its
+    // class name is not evidence.
     // Code-editor hosts (a styled view over a hidden input — neither looks
     // interactive on its own, but the host IS the editor the user sees and types
     // into). Resolved above by library class OR by structure, so an unknown
