@@ -46,6 +46,9 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _extract import code_mask  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 FILES = ["extension/background.js", "extension/listener_tag.js",
          "extension/sidepanel.js", "mcp_server.py"]
@@ -108,15 +111,37 @@ def scan() -> list[dict]:
         src = p.read_text(encoding="utf-8")
         lines = src.split("\n")
         rx = PY_RE if rel.endswith(".py") else JS_RE
+        # A CODE MASK, not "does the line start with //". That approximation left two
+        # standing false positives in the MED/LOW categories a human is meant to
+        # read: a TRAILING comment (`codeEditor, // CodeMirror/Monaco/Ace host`,
+        # reported as a framework-name regex) and a user-facing legend string
+        # (`- role=combobox / <select> ...`, reported as an html-regex). Two of nine
+        # risky hits being noise is how a real finding gets skimmed past. The mask is
+        # `_extract.code_mask` — the same scanner that slices functions for every
+        # browser suite, so there is ONE implementation of "is this code".
+        mask = None if rel.endswith(".py") else code_mask(src)
+        base = 0
         for i, line in enumerate(lines, 1):
             stripped = line.strip()
+            start = base
+            base += len(line) + 1
             if stripped.startswith("//") or stripped.startswith("#") or stripped.startswith("*"):
                 continue
             for m in rx.finditer(line):
                 pat = m.group(1)
                 if len(pat) < 2:
                     continue
-                out.append({"file": rel, "line": i, "pat": pat,
+                if mask is not None:
+                    at = start + m.start()
+                    if at < len(mask) and not mask[at]:
+                        continue
+                # `col` is recorded so a consumer can re-check the exact match
+                # position instead of searching for the pattern TEXT — which finds
+                # the first occurrence on the line and can land inside a CSS
+                # selector string (`[class*="placeholder"]`) while the real match is
+                # the regex further along. That mislocation made P5 flag a genuine
+                # finding as noise.
+                out.append({"file": rel, "line": i, "pat": pat, "col": m.start(),
                             "cats": classify(pat, line), "src": stripped})
     return out
 

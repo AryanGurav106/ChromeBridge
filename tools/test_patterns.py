@@ -143,6 +143,54 @@ def main() -> int:
           not ascii_text,
           "; ".join(f"{f['file']}:{f['line']} /{f['pat'][:30]}/" for f in ascii_text[:4]))
 
+    # ---- P5: the auditor's risky categories must not be part noise -------------
+    # It used to decide "is this code" by asking whether the LINE STARTS with //,
+    # which left two permanent false positives in the categories a human is meant
+    # to read: a TRAILING comment (`codeEditor, // CodeMirror/Monaco/Ace host`
+    # reported as a framework-name regex) and a user-facing legend string
+    # (`- role=combobox / <select> ...` reported as an html-regex). Two of nine
+    # risky hits being noise is how a real finding gets skimmed past — the same
+    # failure mode as an always-on warning (#15). It shares `_extract.code_mask`
+    # with every browser suite now, so there is one definition of "is this code".
+    from _extract import code_mask  # noqa: PLC0415
+
+    src = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
+    mask = code_mask(src)
+    offs, base = [], 0
+    for line in src.split("\n"):
+        offs.append(base)
+        base += len(line) + 1
+    inert = []
+    for f in findings:
+        if f["file"] != "extension/background.js":
+            continue
+        ln = f["line"] - 1
+        if ln >= len(offs):
+            continue
+        # The auditor's RECORDED column, not a search for the pattern text: a
+        # search finds the first occurrence on the line, which can land inside a
+        # CSS selector string (`[class*="placeholder"]`) while the real match is
+        # the regex further along. That mislocation made this check report a
+        # genuine finding as noise.
+        at = f.get("col")
+        if at is None:
+            continue
+        if not mask[offs[ln] + at]:
+            inert.append(f)
+    check("P5 no reported pattern lies inside a comment or a string",
+          not inert,
+          "; ".join(f"{f['file']}:{f['line']} /{f['pat'][:34]}/" for f in inert[:4])
+          or f"{len(findings)} findings, all in code")
+    # NEGATIVE CONTROL, because P1's first version could not fire at all: the mask
+    # must actually mark a known comment and a known legend string as non-code.
+    _c = src.find("// CodeMirror/Monaco/Ace host")
+    _s = src.find("- role=combobox / <select>")
+    check("P5* ...and the mask provably marks a trailing comment and a legend"
+          " string as non-code",
+          _c > 0 and _s > 0 and not mask[_c + 4] and not mask[_s + 4],
+          f"comment@{_c} code={bool(mask[_c + 4]) if _c > 0 else '?'}"
+          f"  string@{_s} code={bool(mask[_s + 4]) if _s > 0 else '?'}")
+
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} pattern-lint checks passed.")
     return 0 if passed == len(results) else 1

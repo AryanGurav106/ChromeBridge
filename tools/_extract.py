@@ -129,3 +129,78 @@ def check_parses(code: str, name: str = "") -> None:
         pass          # node not installed — skip verification rather than fail the suite
     finally:
         Path(path).unlink(missing_ok=True)
+
+
+def code_mask(src: str) -> bytearray:
+    """One byte per character: 1 where it is real JS CODE, 0 in a comment or string.
+
+    Lifted out of `extract`'s scanner so `audit_patterns.py` can share it instead of
+    approximating with "does the line START with //". That approximation produced two
+    standing false positives every run — a TRAILING comment (`codeEditor, //
+    CodeMirror/Monaco/Ace host` was reported as a framework-name regex `/ CodeMirror/`)
+    and a user-facing legend string (`L.push(`... / <select> — a DROPDOWN ...`)` was
+    reported as an html-regex). A pattern auditor whose risky categories are a third
+    noise costs review attention on every run, which is how a real finding gets
+    skimmed past.
+
+    Regex LITERALS count as code, because they are exactly what the auditor is
+    looking for. Template-literal `${...}` interpolations are treated as string,
+    matching `extract`'s own simplification (nothing here nests braces in one).
+    """
+    n = len(src)
+    mask = bytearray(b"\x01") * n
+    j = 0
+    while j < n:
+        c = src[j]
+        two = src[j:j + 2]
+        if two == "//":
+            end = src.find("\n", j)
+            if end < 0:
+                end = n
+            for k in range(j, end):
+                mask[k] = 0
+            j = end
+            continue
+        if two == "/*":
+            end = src.find("*/", j)
+            end = n if end < 0 else end + 2
+            for k in range(j, end):
+                mask[k] = 0
+            j = end
+            continue
+        if c in "'\"`":
+            q = c
+            k = j + 1
+            while k < n:
+                if src[k] == "\\":
+                    k += 2
+                    continue
+                if src[k] == q:
+                    k += 1
+                    break
+                k += 1
+            for x in range(j, min(k, n)):
+                mask[x] = 0
+            j = k
+            continue
+        if c == "/" and _regex_allowed(src, j):
+            k = j + 1
+            in_class = False
+            while k < n:
+                if src[k] == "\\":
+                    k += 2
+                    continue
+                if src[k] == "[":
+                    in_class = True
+                elif src[k] == "]":
+                    in_class = False
+                elif src[k] == "/" and not in_class:
+                    k += 1
+                    break
+                elif src[k] == "\n":
+                    break
+                k += 1
+            j = k          # regex literals stay marked as code
+            continue
+        j += 1
+    return mask
