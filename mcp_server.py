@@ -587,6 +587,16 @@ def _row_elements(text: str) -> int:
     return n
 
 
+# Words that name a KIND of control rather than a particular one. They are
+# deliberately still scored (a role word is how "search box" reaches a control
+# whose only label is Chinese) but they never count as CONTENT coverage.
+_ROLE_TOKENS = frozenset((
+    "button", "link", "input", "field", "box", "bar", "search", "textarea",
+    "checkbox", "dropdown", "select", "tab", "radio", "toggle", "switch",
+    "slider", "option", "combobox", "menu",
+))
+
+
 def _truncate(text: str, max_chars: int, hint: str = "") -> str:
     """Truncate with advice the caller has not already taken.
 
@@ -1353,7 +1363,18 @@ async def find(
             # STATE field (near="Select State"). Including it also recovers the
             # opposite case — Naver's 구독 button, whose outlet name lives only in
             # near=, is now confident for "매일경제 구독 버튼" instead of demoted.
-            if max(_hl, _hn, _hp) >= 0.5 or _hit(t, near) >= 0.5:
+            # A ROLE WORD IS NOT CONTENT, even when it appears in the element's own
+            # text. The rule three blocks down already says a role word "inflates
+            # every candidate's coverage equally and explains nothing about WHICH
+            # one was asked for" — but a role word that happens to occur in a label
+            # was still counted as content, which let a generic token carry a wrong
+            # element into the confident list. Measured live: the query
+            # "Select State" returned `near="Select City"` under a bare
+            # `Found 1 element(s) matching` header, because "select" is a role word
+            # AND appears in that label, so it covered the query on its own while
+            # the one distinguishing token, "state", matched nothing. An agent
+            # trusting that header sets City believing it set State.
+            if (max(_hl, _hn, _hp) >= 0.5 or _hit(t, near) >= 0.5) and t not in _ROLE_TOKENS:
                 _covText.add(t)
             if t == role or t == tag:
                 s += 1.0
@@ -1499,6 +1520,18 @@ async def find(
     # one or two words are ungated on purpose: there, matching one word IS the
     # query, and F1/F8/F14 depend on a lone role word reaching a control whose
     # label is in another script.
+    # WHICH TOKENS COULD IDENTIFY AN ELEMENT, versus which only name a type. This
+    # replaces a two-branch rule that keyed on whether ANY element matched by text,
+    # and that branch chose wrong in both directions once role words stopped
+    # counting as content: "Select City dropdown" on a page with no City field found
+    # nothing by text, fell through to the role-word fallback, and every combobox
+    # satisfied `select` + `dropdown` — two covered tokens, confidently wrong (F25).
+    # The distinction that actually matters is a property of the QUERY: if it
+    # contains words that could name a particular element, those words have to be
+    # the ones that match. Only a query made ENTIRELY of role words may be answered
+    # by type alone, which is the case F8/F14/F24 protect — "search box" reaching a
+    # control whose only label is Chinese.
+    _content_tokens = [t for t in tokens if t not in _ROLE_TOKENS]
     _need = 2 if len(tokens) >= 3 else 1
     # ROLE WORDS FILTER A TYPE; CONTENT WORDS IDENTIFY AN ELEMENT. The query
     # "classList documentation link" reported 792 confident matches on MDN,
@@ -1511,7 +1544,7 @@ async def find(
     # that of every confident match. When NOTHING matches by text — a Chinese-only
     # page where "search box" can only land via the role word — fall back, which
     # is the case F8/F14 protect.
-    _text_possible = any(_COVTEXT.get(id(el), 0) > 0 for _sc, el in scored)
+    _text_possible = bool(_content_tokens)
     def _ok(el):
         # COUNT CONTENT COVERAGE, NOT TYPE COVERAGE. A role word ("link", "button",
         # "dropdown") is satisfied by every element of that type, so it inflates
@@ -1522,7 +1555,8 @@ async def find(
         # API" (each covering exactly one CONTENT word) alongside the real answer
         # (covering two). Role coverage still decides the fallback below.
         if _text_possible:
-            return _COVTEXT.get(id(el), 0) >= _need
+            # Never demand more content words than the query actually has.
+            return _COVTEXT.get(id(el), 0) >= min(_need, len(_content_tokens))
         # NOTHING on the page matched by text — a Chinese-only page where "search
         # box" can land only via the role word. Then type coverage is all there is,
         # and refusing it would make find useless on those pages (F8/F14/F24).

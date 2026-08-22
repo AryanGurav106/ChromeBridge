@@ -7099,9 +7099,12 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     : "";
   const truncNote = hiddenCount > 0
     ? `\n... +${hiddenCount} more interactive element(s) not shown (listing capped at ${LISTING_CAP}; ` +
-      `dialog/required/dropdown/input fields are prioritized, but some hidden items may be ordinary ` +
-      `visible content further down the page). If your target isn't listed, scroll it into view or ` +
-      `act on a more specific region, then re-observe.`
+      `dialog/required/dropdown/input fields are prioritized). SCROLLING WILL NOT HELP and neither ` +
+      `will a larger max_chars: this cap counts ENTRIES and slices in document order, so a scroll ` +
+      `plus a re-read returns byte-identical output. Recover by narrowing instead — read_page(ref_id=…) ` +
+      `on a smaller region, find (it searches the whole page), or read_page(ref_id=…, filter="all") if ` +
+      `the rows you want are in a list or table. A question about the LARGEST or FIRST of something is ` +
+      `not answerable from a capped listing: the omitted entries may hold the answer.`
     : "";
   // The listing is viewport-only. If real controls (form fields, links, buttons)
   // sit below the fold, the agent otherwise has NO signal they exist and gives up
@@ -7684,7 +7687,16 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         if (!groups.has(g)) groups.set(g, []);
         groups.get(g).push(c);
       }
-      for (const [, members] of groups) {
+      // EMIT GROUPS IN DOCUMENT ORDER. Map iteration follows insertion order, so
+      // a sibling list mixing collapsible groups with loose rows came out
+      // reordered: on arXiv the loose author rows for papers 1, 7 and 11 printed
+      // ABOVE the folded groups for papers 2, 3 and 4, and a reader taking the
+      // tree top-to-bottom would attribute the wrong authors to the wrong paper.
+      // A tree whose reading order is not the page's order is worse than a flat
+      // list, because the indentation invites exactly that reading.
+      const _ordered = Array.from(groups.values())
+        .sort((x, y) => docOrder(x[0], y[0]));
+      for (const members of _ordered) {
         // IDENTICAL SIBLING CONTAINERS COLLAPSE POSITIONALLY.
         //
         // Grouping only leaves left the compression gap that made the tree cost
@@ -7709,8 +7721,8 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           for (const a of perMember) if (a.length !== n0 || !n0) ok = false;
           if (ok) {
             const tag0 = (members[0].tagName || '').toLowerCase();
-            out.push(`${pad}${members.length}× ${tag0}, identical siblings — one line per POSITION`
-                   + ` inside them; act on any ref:`);
+            out.push(`${pad}${members.length}× ${tag0}, identical siblings, in document order`
+                   + ` — one line per POSITION inside them; act on any ref:`);
             for (let i = 0; i < n0; i++) {
               const rep = perMember[0][i];
               const re = ent.get(rep);
@@ -7752,7 +7764,8 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
             const bx = geometry ? `@(${me.x},${me.y})` : '';
             return `${me.mmid}:${JSON.stringify(lab)}${bx}${me.href ? '→' + me.href : ''}${fl}`;
           }).join(' ');
-          out.push(`${pad}${members.length}× ${e0.role || e0.tag}, identical siblings`
+          const _t0 = members.every((m) => ent.get(m).type === e0.type) && e0.type ? `[${e0.type}]` : '';
+          out.push(`${pad}${members.length}× ${e0.role || e0.tag}${_t0}, identical siblings, in document order`
             + `${e0.href ? ' — each a link, ref:"label"→href' : ' — ref:"label"'}`
             + ` (act on any via its ref): ${items}`);
         } else {

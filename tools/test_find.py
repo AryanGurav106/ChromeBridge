@@ -263,6 +263,19 @@ async def main():
     page(el(mmid="312", tag="input", role="combobox", near="Select State"),
          el(mmid="275", tag="input", role="combobox"))
     out = await run("Select City dropdown")
+    # F29: the live case F25's fixture did not cover. "Select State" is TWO tokens,
+    # one of which ("select") is a role word that also appears in the wrong element's
+    # label -- so it covered the query on its own and a bare "Found 1 element(s)
+    # matching" header returned near="Select City". An agent trusting that sets City
+    # believing it set State. A role word names a TYPE and can never identify a
+    # particular element, so it no longer counts as content coverage.
+    page(el(mmid="325", tag="input", role="combobox", near="Select City"),
+         el(mmid="400", tag="button", label="Submit", name="Submit"))
+    out = await run("Select State")
+    check("F29 a role word in the wrong element's label is not content coverage",
+          "NO CONFIDENT MATCH" in out or "No elements matched" in out,
+          out.splitlines()[0][:96])
+
     check("F25 a dropdown that is not the one asked for is not confident",
           "NO CONFIDENT MATCH" in out, out.splitlines()[0][:96])
 
