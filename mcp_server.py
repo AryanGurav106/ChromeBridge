@@ -565,6 +565,9 @@ def _split_banner(text: str) -> tuple[str, str]:
 # What counts as an element ROW in a listing: an individual `mmid=` line, or a
 # folded group line (`26x a in section=main - shown as ref:"label" ...`), which
 # stands for its whole group.
+# A fold row, and the members inside one. Used to trim a slice back to a member
+# boundary so a cut never leaves half an href or half a label.
+_FOLD_ROW = re.compile(r"^\d+(?:×|x)\s")
 _ROW_LINE = re.compile(r"^(?:ref_|mmid=|\s*\d+(?:×|x)\s)")   # mmid= tolerated: older extension
 
 
@@ -597,6 +600,38 @@ def _truncate(text: str, max_chars: int, hint: str = "") -> str:
         # Reserve the banner's room, truncate the rest, then put it back.
         inner = _truncate(text, max(200, max_chars - len(banner)), hint)
         return banner + inner
+    # NEVER LEAVE HALF A FOLD MEMBER. A fold is one very long line, so a slice
+    # almost always lands inside it -- and a live agent got
+    # `→/2026/08/21/business/are-you-cuttin`, a URL cut mid-path where the fragment
+    # is a plausible slug and nothing marked it. The residual note counts missing
+    # ELEMENTS, so it says nothing about a mangled href. This is the unmarked-cut
+    # class #22 and #24 removed everywhere else, reappearing through the one line
+    # long enough to be sliced through the middle.
+    def _whole_members(full: str, cut: int) -> str:
+        s = full[:cut]
+        out_lines = s.split("\n")
+        last = out_lines[-1]
+        if not _FOLD_ROW.match(last.lstrip()):
+            return s
+        # WHETHER THE CUT LANDED MID-TOKEN IS KNOWN EXACTLY, not guessed: if the
+        # next character in the original is not whitespace, the final token is a
+        # fragment. Pattern-matching the member shape instead let a truncated href
+        # pass as complete, because `→\S+` matches half a URL just as happily.
+        # Two ways a member can be left half-written, and the whitespace test alone
+        # only catches one. A cut inside a QUOTED LABEL can land on a space —
+        # `21:"Headline number` — which passes that test while leaving the quote
+        # unterminated. An odd number of quotes on the line is the exact tell.
+        mid_token = cut < len(full) and not full[cut].isspace()
+        unbalanced = last.count('"') % 2 == 1
+        if not mid_token and not unbalanced:
+            return s
+        # Trim back to just before the last member start, so what remains is whole.
+        starts = [m.start() for m in re.finditer(r'\s\d+(?::"|@\()', last)]
+        keep_to = starts[-1] if starts else last.rfind(" ")
+        if keep_to <= 0:
+            return s
+        out_lines[-1] = last[:keep_to] + " …(fold cut here — raise max_chars for the rest)"
+        return "\n".join(out_lines)
     if max_chars and len(text) > max_chars:
         # NEVER TRUNCATE AWAY THE PAYLOAD. A blind head-slice cuts the tail, and the
         # element rows ARE the tail — the legend explaining the notation comes first.
@@ -645,7 +680,7 @@ def _truncate(text: str, max_chars: int, hint: str = "") -> str:
         # no clause whatsoever. That is the same silence the field markers exist to
         # end, one level up. Counted in ELEMENTS, not lines, because a folded row
         # stands for its whole group.
-        _slice = text[:max_chars]
+        _slice = _whole_members(text, max_chars)
         # A PARTIALLY SLICED FOLD ROW IS NOT A SHOWN ROW. `26× a … refs: 40:"x" 41:"y" …`
         # cut after its 7th ref still matches _ROW_LINE, so _row_elements credited all
         # 26 as shown while 19 refs were never printed. Measured on arXiv: claimed

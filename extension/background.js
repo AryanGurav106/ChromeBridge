@@ -3726,10 +3726,29 @@ function _domTextPage(scopeMmid) {
         }
         if (grid.length < 2) continue;   // not a data grid worth re-rendering
         const wide = grid.reduce((m, r) => Math.max(m, r.vals.length), 0);
+        // THE GRID KEPT THE COLUMNS AND DROPPED THE TREE. Three independent live
+        // agents called this the highest-risk thing they hit. The Fed's H.15 page
+        // has TWO rows labelled `1-year` — 3.82 under "Treasury bills (secondary
+        // market)" and 3.99 under "Treasury constant maturities" — and the source
+        // conveys that parentage by indentation, which the render discarded. Section
+        // headers arrived as ordinary rows with empty cells, so nothing distinguished
+        // a group header from a data row with missing values, and picking the wrong
+        // `1-year` gives a confidently wrong number that looks perfectly defensible.
+        //
+        // The rule is structural, not a class or style read: a row with exactly ONE
+        // non-empty cell in a table that has three or more columns is not a data row,
+        // it is a heading for the rows beneath it. Marked as such, and its followers
+        // indented, so row grouping survives alongside column association.
+        let _sect = 0;
         const out = grid.map((r) => {
           const v = r.vals.slice();
           for (let i = 0; i < wide; i++) if (v[i] === undefined) v[i] = '';
-          return '  ' + v.join(' | ');
+          const filled = v.filter((x) => x !== '').length;
+          if (wide >= 3 && filled === 1 && !r.head) {
+            _sect = 1;
+            return '  [section] ' + v.find((x) => x !== '');
+          }
+          return '  ' + (_sect ? '  ' : '') + v.join(' | ');
         });
         const hi = grid.findIndex((r) => r.head);
         if (hi >= 0) out.splice(hi + 1, 0, '  ' + Array(wide).fill('---').join(' | '));
@@ -7473,8 +7492,9 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       // wrapped two-line title next to a one-line one — and repeating the first
       // member's box as the group's shape would be a false statement about the
       // other N-1. "Same structure" is what is actually being asserted.
+      const _ty = members.every((m) => m.type === m0.type) && m0.type ? `[${m0.type}]` : '';
       compactBlocks.set('rec:' + k,
-        `${members.length}× ${kind}${where}, same structure` +
+        `${members.length}× ${kind}${_ty}${where}, same structure, in document order` +
         `${m0.href ? ' — each is a link, shown as ref:"label"→href' : ' — shown as ref:"label"'}` +
         ` (act on any via its ref): ${items}`);
       members.forEach((m) => { m.groupKey = 'rec:' + k; inCompact.add(m.mmid); });
@@ -8075,7 +8095,12 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       // class as #11's page-level facts leaking into scoped reads (Main heading,
       // below-fold counts), and the same fix.
       if (document.visibilityState === 'hidden' && !scopeMmid) {
-        const _domCtl = document.querySelectorAll('a[href],button,input,select,textarea').length;
+        let _domCtl = 0;
+        try {
+          for (const _c of document.querySelectorAll('a[href],button,input,select,textarea')) {
+            if (_c.offsetParent !== null || (_c.getClientRects && _c.getClientRects().length)) _domCtl++;
+          }
+        } catch (e2) { _domCtl = document.querySelectorAll('a[href],button,input,select,textarea').length; }
         if (_domCtl >= 20 && out.length * 3 <= _domCtl) {
           L.push(`  - NOTE: the DOM holds ${_domCtl} controls but only ${out.length} were collectable.`
                + ` This tab is in the BACKGROUND (visibilityState="hidden"), and some sites defer`

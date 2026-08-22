@@ -189,6 +189,33 @@ async def main_async():
     check("T15 text with no banner is unchanged by the banner path",
           not out.startswith("***"), repr(out[:60]))
 
+    # T18: A FOLD IS ONE VERY LONG LINE, so a slice almost always lands inside it.
+    # Found live: `->/2026/08/21/business/are-you-cuttin`, a URL cut mid-path where
+    # the fragment is a plausible slug and nothing marked it -- the residual note
+    # counts missing ELEMENTS, so it says nothing about a mangled href. Swept across
+    # every budget because the two failure shapes appear at different offsets: a cut
+    # mid-token, and a cut on a SPACE INSIDE a quoted label, which leaves the quote
+    # unterminated while looking clean.
+    _fold = ("45× a, same structure, in document order - shown as ref:\"label\"->href: "
+             + " ".join(f'{10+i}:"Headline number {i}"->/2026/08/21/business/story-slug-{i}'
+                        for i in range(12)))
+    _txt = "\n".join(["Current URL: /",
+                      "Visible interactive elements (46 on screen).", _fold])
+    _bad = []
+    for _cap in range(250, 1000):
+        _o = ms._truncate(_txt, _cap, "h")
+        _b = _o.split("[output truncated")[0].rstrip()
+        if _b.endswith("rest)"):
+            continue
+        if _b.count('"') % 2:
+            _bad.append(f"cap={_cap} unterminated quote")
+            continue
+        _tail = _b.split(" ")[-1]
+        if not (_tail[:1].isdigit() and '"' in _tail):
+            _bad.append(f"cap={_cap} partial member {_tail[-24:]!r}")
+    check("T18 a truncated fold never leaves half a member, at any budget",
+          not _bad, f"{len(_bad)} bad of 750 budgets; first: {(_bad or ['-'])[0]}")
+
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} truncation checks passed.")
     return 0 if passed == len(results) else 1
