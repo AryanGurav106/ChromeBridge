@@ -16,6 +16,11 @@ Run:  python tools/test_shadow.py     (exit code 0 = all pass)
 
 import asyncio
 import sys
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 from pathlib import Path
 
 from playwright.async_api import async_playwright

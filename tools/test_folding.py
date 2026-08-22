@@ -141,12 +141,19 @@ async def main():
         # reader gets only the group's shared description, so a front-page story vanished
         # into a metadata pile. Reported by an agent doing a real task ("find the
         # highest-scoring story") that the fold structurally prevented.
+        # MODELLED ON REAL HACKER NEWS MARKUP, because the class-less version of
+        # this fixture was an abstraction the site does not match, and it drove the
+        # wrong fix. HN gives its three link types three different classes
+        # (span.pagetop>a, span.titleline>a, span.subline>a.hnuser); an earlier
+        # class-less fixture could only be separated by a sibling ordinal, and that
+        # ordinal then shattered arXiv's 276 identically-classed author links by
+        # author position. Class is what discriminates on the real page.
         hp = await browser.new_page(viewport={"width": 1200, "height": 900})
         _rows = "".join(
             f"<div style='height:20px'>"
-            f"<a href=/s{i} style='display:inline-block;width:98px'>Qwen 3.8 27B v{i}</a>"
-            f"<a href=/d{i} style='display:inline-block;width:98px'>huggingface{i}.co</a>"
-            f"<a href=/t{i} style='display:inline-block;width:98px'>{i+2} hours ago</a></div>"
+            f"<span class=titleline><a href=/s{i} style='display:inline-block;width:98px'>Qwen 3.8 27B v{i}</a></span>"
+            f"<span class=sitebit><a href=/d{i} style='display:inline-block;width:98px'>huggingface{i}.co</a></span>"
+            f"<span class=subline><a href=/t{i} style='display:inline-block;width:98px'>{i+2} hours ago</a></span></div>"
             for i in range(10))
         await hp.set_content(f"<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>{_rows}</body>")
         await hp.wait_for_timeout(140)

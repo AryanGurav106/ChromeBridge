@@ -21,6 +21,11 @@ import asyncio
 import importlib.util
 import io
 import sys
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 from pathlib import Path
 
 from PIL import Image

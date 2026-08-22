@@ -3661,30 +3661,79 @@ function _domTextPage(scopeMmid) {
       }
     } catch (e) {}
     try {
-      const _cell = (c) => ((c.innerText || c.textContent || '').replace(/\s+/g, ' ').trim());
+      // A CELL'S TEXT MUST NOT BE ABLE TO INVENT COLUMNS. Hacker News' subtext row
+      // holds two cells, the second reading "47 points by x 1 hour ago | hide |
+      // 5 comments" with literal pipes, and it rendered as five fields in a table
+      // declared to have three columns. Escaped, markdown-style.
+      const _cell = (c) => ((c.innerText || c.textContent || '')
+        .replace(/\s+/g, ' ').trim().replace(/\|/g, '\\|'));
       const _grids = [];
       for (const t of _tbls.slice(0, 5)) {
-        const rows = [];
         let trs = [];
-        try { trs = Array.from(t.querySelectorAll('tr')); } catch (e) {}
+        try {
+          // ONLY THIS TABLE'S OWN ROWS. querySelectorAll('tr') descends into nested
+          // tables, which is how a Wikipedia "multiple issues" banner with one real
+          // row but three nested tables was counted as 4 rows and promoted to a
+          // data table, and how the hint's row count came to disagree with the
+          // rendered one on four of five sites.
+          trs = Array.from(t.querySelectorAll('tr')).filter((r) => {
+            try { return r.closest('table') === t; } catch (e) { return true; }
+          });
+        } catch (e) {}
+        // SPAN EXPANSION. colspan/rowspan were previously ignored and the row
+        // right-padded instead, which is not "slightly off" — it silently
+        // fabricates records. Measured on Wikipedia's Comparison_of_web_browsers:
+        // `Latest release` carries colspan=2, so the header was offset from column
+        // 6 for all 207 rows (asking Amaya's License returned its release DATE),
+        // and 144 rows of rowspan continuations shifted left, yielding a browser
+        // named "iOS" whose Developer was "4.9.0[5]". Tidy, plausible, false —
+        // and certified by a `--- | --- |` separator. This is the standard grid
+        // algorithm: a cell claims colspan columns on this row, and reserves them
+        // on the next rowspan-1 rows.
+        const grid = [];
+        const carry = [];        // column -> { text, left }
         for (const tr of trs) {
           let cells = [];
           try { cells = Array.from(tr.children).filter((c) => /^(TD|TH)$/.test(c.tagName)); } catch (e) {}
           if (!cells.length) continue;
-          rows.push({ head: cells.every((c) => c.tagName === 'TH'), vals: cells.map(_cell) });
+          const row = [];
+          const place = (col, text) => { while (row.length < col) row.push(''); row[col] = text; };
+          let col = 0;
+          const nextFree = () => { while (carry[col] && carry[col].left > 0) { place(col, carry[col].text); col++; } return col; };
+          let allTh = true;
+          for (const c of cells) {
+            if (c.tagName !== 'TH') allTh = false;
+            col = nextFree();
+            let cs = 1, rs = 1;
+            try { cs = Math.min(50, Math.max(1, parseInt(c.getAttribute('colspan') || '1', 10) || 1)); } catch (e) {}
+            try { rs = Math.min(200, Math.max(1, parseInt(c.getAttribute('rowspan') || '1', 10) || 1)); } catch (e) {}
+            const txt = _cell(c);
+            for (let k = 0; k < cs; k++) {
+              place(col + k, txt);
+              if (rs > 1) carry[col + k] = { text: txt, left: rs - 1 };
+            }
+            col += cs;
+          }
+          nextFree();            // trailing carried columns
+          for (let i = 0; i < carry.length; i++) if (carry[i] && carry[i].left > 0) carry[i].left--;
+          // A HEADER ROW IS NOT "CONTAINS A TH". A navbox title bar is a single
+          // <th colspan=2>, and calling it a header printed `--- | ---` over a
+          // title padded with an empty column — a separator promising column
+          // semantics that the row does not have.
+          let inHead = false;
+          try { inHead = !!(tr.closest && tr.closest('thead')); } catch (e) {}
+          grid.push({ head: (inHead || allTh) && cells.length >= 2, vals: row });
         }
-        if (rows.length < 2) continue;   // not a data grid worth re-rendering
-        const wide = rows.reduce((m, r) => Math.max(m, r.vals.length), 0);
-        const out = rows.map((r) => {
+        if (grid.length < 2) continue;   // not a data grid worth re-rendering
+        const wide = grid.reduce((m, r) => Math.max(m, r.vals.length), 0);
+        const out = grid.map((r) => {
           const v = r.vals.slice();
-          while (v.length < wide) v.push('');
-          return (r.head ? '  ' : '  ') + v.join(' | ');
+          for (let i = 0; i < wide; i++) if (v[i] === undefined) v[i] = '';
+          return '  ' + v.join(' | ');
         });
-        // A separator under the header row is what makes the alignment readable as
-        // a table rather than as pipe-separated prose.
-        const hi = rows.findIndex((r) => r.head);
+        const hi = grid.findIndex((r) => r.head);
         if (hi >= 0) out.splice(hi + 1, 0, '  ' + Array(wide).fill('---').join(' | '));
-        _grids.push(`--- TABLE (${rows.length} row(s) x ${wide} column(s)) ---\n` + out.join('\n'));
+        _grids.push(`--- TABLE (${grid.length} row(s) x ${wide} column(s)) ---\n` + out.join('\n'));
       }
       if (_grids.length) _st = (_st ? _st + '\n\n' : '') + _grids.join('\n\n');
       // Skipping the prose read is only correct when a grid REPLACES it. A table
@@ -3858,13 +3907,36 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   // (2 on screen)" for a page holding 39 buttons — same wording, same
   // confidence, as a true count of 2. Reproduced in a fixture: 7 dropped, 2
   // reported, no signal. The collector already knew; it just never said.
-  const _stateDrops = { 'aria-hidden': 0, inert: 0 };
+  const _stateDrops = { 'aria-hidden': 0, inert: 0, 'aria-hidden-named': 0 };
   // Record what a heuristic WOULD have removed, without removing it. Keeps the
   // drop-ledger's explanatory power while making membership spec-decided only.
   // A heuristic's verdict becomes a PROMINENCE mark, not a delete. The element
   // keeps its ref and stays actionable; the serializer sends it last, compacted.
+  // element -> the FIRST rule that judged it decoration, this run only.
+  const _demotedRun = new Map();
   const _note = (el, rule) => {
-    try { el.__abDemoted = rule; } catch (e) {}
+    // FIRST REASON WINS, AND IT IS RECORDED ONCE.
+    //
+    // This used to overwrite `__abDemoted` and append a ledger entry every time,
+    // so an element judged decoration by two rules produced TWO ledger entries
+    // and ONE listing row carrying the LAST rule's name. Measured live on
+    // react-select.com: the ledger header said "55 element(s) kept (42 of them
+    // DEMOTED)" while the decoration tier named exactly 30 refs, and 12 of those
+    // 30 were labelled `generic-no-label` when the ledger's own count attributed
+    // them to `decorative-svg`. 42 - 30 = 12, the elements demoted twice. The two
+    // halves of the same diagnostic were wrong in opposite directions.
+    //
+    // Keeping the FIRST reason also keeps the more specific one: `decorative-svg`
+    // fires before the generic no-label sweep, and "it is a decorative svg" tells
+    // the reader more than "it has no label".
+    // PER RUN, not per element lifetime. `__abDemoted` was an expando on the DOM
+    // node, so it survived between collector runs: a second read of the same page
+    // hit this guard, recorded nothing in the ledger, and reported a reason decided
+    // by an EARLIER read even if this one would not have demoted the element at
+    // all. A Map scoped to this call is the correct lifetime, and it removes the
+    // cross-run leak that existed before the guard did.
+    if (_demotedRun.has(el)) return;
+    try { _demotedRun.set(el, rule); } catch (e) { return; }
     if (LEDGER) { try { _drop(el, rule); } catch (e) {} }
   };
   const _drop = (el, rule) => {
@@ -4814,8 +4886,32 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // called _drop with it — so a bare inert region (a disabled wizard step, a
     // panel behind a non-dialog overlay) was listed as fully live and clickable.
     try { if (el.closest && el.closest('[inert]')) return _drop(el, 'inert'); } catch (e) {}
-    try { if (el.closest && el.closest('[aria-hidden="true"]')) return _drop(el, 'aria-hidden'); }
-    catch (e) { if (el.getAttribute('aria-hidden') === 'true') return _drop(el, 'aria-hidden'); }
+    // IS THE HIDDEN THING PLAUSIBLY CONTENT? Recorded alongside the drop, because
+    // the banner downstream asserts a CAUSE ("a library marked the page inert
+    // behind an open menu — close it and they come back") that is false on every
+    // react-select or MUI page. Measured: react-select.com has 43 aria-hidden
+    // nodes, all of them the library's own indicator/arrow wrappers, ZERO holding
+    // a control; MUI has 216 whose only interactive descendants are 19
+    // `MuiSelect-nativeInput` mirrors that are aria-hidden BY DESIGN and already
+    // listed via `backed-by=`. A control with no name and no text is scaffolding;
+    // one with either is page content the agent might actually be looking for.
+    const _ahNamed = () => {
+      try {
+        return !!((el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title')))
+                  || (el.textContent || '').trim() || (el.value || ''));
+      } catch (e) { return false; }
+    };
+    try {
+      if (el.closest && el.closest('[aria-hidden="true"]')) {
+        if (_ahNamed()) _stateDrops['aria-hidden-named']++;
+        return _drop(el, 'aria-hidden');
+      }
+    } catch (e) {
+      if (el.getAttribute('aria-hidden') === 'true') {
+        if (_ahNamed()) _stateDrops['aria-hidden-named']++;
+        return _drop(el, 'aria-hidden');
+      }
+    }
     // closest() stops at the shadow boundary, so a control inside a web
     // component whose HOST is aria-hidden stayed listed — the same W3C
     // whole-subtree rule the line above enforces, just unenforceable with
@@ -5074,22 +5170,43 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       // words and lets it scope straight to one with read_page(ref_id=…), which is
       // now possible because a scoped read is no longer viewport-limited.
       if (_real) {
+        // GROUP BY THE CONTAINER ELEMENT, NOT BY ITS LABEL.
+        //
+        // This bucketed on `section(el)` — a LABEL — and then took the ref from
+        // `closest()` on whichever element happened to arrive first in that bucket.
+        // Both halves of that are wrong, and three live audits caught it:
+        //   - One label spans many containers. Al Jazeera has 20 <footer> elements,
+        //     so 34 elements labelled `footer` were counted together while the ref
+        //     came from a 1-link card footer. The hint promised `footer(ref_813): 34`
+        //     and the scoped read returned ONE row, under a header stating that
+        //     elements outside the scope are omitted. The real 33-link footer was
+        //     never named at all.
+        //   - Many labels resolve to one container. Naver printed
+        //     `tabpanel(ref_265): 50, main(ref_265): 20, tablist(ref_265): 12` —
+        //     one <div id=container role=main> named three times with three counts.
+        //   - And BBC's `main(ref_410): 34` pointed at a card container inside main,
+        //     not at main.
+        //
+        // Keying on the container's own mmid makes the count and the ref describe
+        // the same element by construction, and labelling it from THAT element
+        // stops the label naming something the ref is not.
         try {
-          const _s = section(el) || 'page';
-          if (!_offRegions[_s]) _offRegions[_s] = { n: 0, mmid: null };
-          _offRegions[_s].n++;
-          // AND ITS REF, or the advice is unperformable. The first version named
-          // the regions and told the agent to "read one directly with
-          // read_page(ref_id=<that region's ref>)" — while giving it no way to
-          // learn that ref, because a landmark container is not interactive and so
-          // has no row of its own. The measurement assumed a recovery the agent
-          // could not actually carry out. Landmarks DO carry mmids (verified:
-          // main=5, footer=11 on a probe page), so the ref is emitted; when one is
-          // missing the label is still named and the ref simply omitted.
-          if (_offRegions[_s].mmid === null) {
-            const _host = el.closest && el.closest('main, nav, header, footer, aside, form, section, [role=main], [role=navigation], [role=banner], [role=contentinfo], [role=complementary], [role=search]');
-            const _hm = _host && _host.getAttribute && _host.getAttribute('mmid');
-            if (_hm) _offRegions[_s].mmid = _hm;
+          const _host = el.closest && el.closest('main, nav, header, footer, aside, form, section, article, [role=main], [role=navigation], [role=banner], [role=contentinfo], [role=complementary], [role=search]');
+          const _hm = (_host && _host.getAttribute && _host.getAttribute('mmid')) || null;
+          if (_hm) {
+            const k = 'r' + _hm;
+            if (!_offRegions[k]) {
+              let _lb = (_host.tagName || '').toLowerCase();
+              try { _lb = _host.getAttribute('role') || _lb; } catch (e2) {}
+              _offRegions[k] = { n: 0, mmid: String(_hm), label: _lb };
+            }
+            _offRegions[k].n++;
+          } else {
+            // No enclosing landmark with a ref. Counted so the totals still add up,
+            // but never named with a ref it does not have — the previous version
+            // printed `page: 1` inside a sentence that says "using the ref shown".
+            if (!_offRegions.__noref) _offRegions.__noref = { n: 0, mmid: null, label: '' };
+            _offRegions.__noref.n++;
           }
         } catch (e) {}
       }
@@ -6253,7 +6370,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       unselected,
       disabled,
       synth: (function () { try { return el.__abSynthAttr || ''; } catch (e) { return ''; } })(),
-      demoted: (function () { try { return el.__abDemoted || ''; } catch (e) { return ''; } })(),
+      demoted: (function () { try { return _demotedRun.get(el) || ''; } catch (e) { return ''; } })(),
       newTab: tagL === 'a' && el.getAttribute('target') === '_blank',
       // Only meaningful for an element INSIDE a frame: in the top document a
       // target=_top link is an ordinary same-tab navigation and needs no flag.
@@ -6986,18 +7103,37 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       // landmarks does not turn one hint into a paragraph.
       (() => {
         try {
-          const ks = Object.keys(_offRegions).sort((a, b) => _offRegions[b].n - _offRegions[a].n);
-          if (!ks.length) return '';
-          const shown = ks.slice(0, 4).map((k) => {
-            const r = _offRegions[k];
-            return `${k}${r.mmid ? `(ref_${r.mmid})` : ''}: ${r.n}`;
-          }).join(', ');
-          const anyRef = ks.slice(0, 4).some((k) => _offRegions[k].mmid);
-          return ` They are in — ${shown}${ks.length > 4 ? ', …' : ''};` +
-                 (anyRef ? ` read one directly with read_page(ref_id=…) using the ref shown — a scoped`
-                         + ` read is NOT limited to the viewport, so it returns that whole region.`
-                         : ``) +
-                 ` find also reaches all of them by ref, without scrolling first.`;
+          const ks = Object.keys(_offRegions)
+            .filter((k) => _offRegions[k].mmid)
+            .sort((a, b) => _offRegions[b].n - _offRegions[a].n);
+          const _bare = _offRegions.__noref ? _offRegions.__noref.n : 0;
+          if (!ks.length) {
+            return _bare ? ` find reaches them by ref, without scrolling first.` : '';
+          }
+          // A REGION BIGGER THAN THE CAP IS NOT A RECOVERY. Scoping to one returns
+          // a capped listing, not the region: measured live at 150 of 380 on eBay
+          // and 150 of 199 on Reddit, and on craigslist the biggest region is 740.
+          // Sorting by count put that useless one FIRST. Say which are readable in
+          // full, and mark the rest rather than recommending them.
+          const shown = ks.slice(0, 4)
+            .map((k) => `${_offRegions[k].label}(ref_${_offRegions[k].mmid}): ${_offRegions[k].n}`
+                        + (_offRegions[k].n > LISTING_CAP ? ' — too big to return in full' : ''))
+            .join(', ');
+          // COUNT AND SCOPED READ MEASURE DIFFERENT POPULATIONS, so do not imply
+          // otherwise. The count is off-viewport controls whose NEAREST enclosing
+          // region is this one; a scoped read of it returns everything inside,
+          // on-screen rows and nested regions included. Two audits followed the
+          // number as a promise (`footer: 9` -> 37 rows, `footer: 4` -> 12) and
+          // reported the difference as a defect, which it was — of the wording.
+          // find LEADS, because it measured cheapest on every site tried: 527 chars
+          // against 19,053 for the scoped read on Reddit (36x), and it was the only
+          // recovery that worked on a page whose region exceeded the cap.
+          return ` They are in — ${shown}${ks.length > 4 ? `, and ${ks.length - 4} more region(s)` : ''}` +
+                 `${_bare ? `, plus ${_bare} outside any region` : ''}.` +
+                 ` CHEAPEST recovery: find — it searches the whole page and its refs are clickable` +
+                 ` without scrolling. Or read a region with read_page(ref_id=…), which is not` +
+                 ` viewport-limited and returns that region in full (its on-screen rows and any` +
+                 ` nested region included, so expect more than the count above).`;
         } catch (e) { return ''; }
       })() + `]`
     : "";
@@ -7174,6 +7310,31 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // discriminates within a page without becoming a whole-document fingerprint
     // (which would make every element unique and fold nothing).
     const _STOP = /^(main|nav|header|footer|aside|form|section|article|ul|ol|table|tbody|thead|tr|dl)$/;
+    // CLASS IS PART OF THE PATH. A tag-only path was wrong in the worst possible
+    // way — too COARSE — and a live audit of Hacker News proved it: header nav
+    // (`span.pagetop > a`), story headlines (`span.titleline > a`) and submitter
+    // profiles (`span.subline > a.hnuser`) all reduce to `span<a`, so one fold
+    // announced `42× a, same structure` over nav links, headlines and usernames
+    // together, with `28:"login"` among them and the header inviting the agent to
+    // "act on any via its ref". A fold's shared description has to be true of every
+    // member; that one was true of none.
+    //
+    // Author templates put the same classes on every repeated instance, so classes
+    // discriminate KIND without breaking grouping. Sorted, because class order in
+    // the attribute is not meaningful. Where classes differ per item (a `selected`
+    // or `is-active` state) the group splits — a compression loss, never a
+    // correctness one, and splitting is the safe direction: merging two kinds
+    // makes the listing lie, while splitting one kind only makes it longer.
+    const _clsSig = (n) => {
+      try {
+        const c = n.getAttribute && n.getAttribute('class');
+        if (!c) return '';
+        // Bounded: utility-CSS pages carry dozens of classes per node, and the
+        // whole string would dominate the signature without adding discrimination.
+        const toks = String(c).trim().split(/\s+/).filter(Boolean).sort().slice(0, 4);
+        return toks.length ? '.' + toks.join('.') : '';
+      } catch (err) { return ''; }
+    };
     const _structSig = (el) => {
       const parts = [];
       let n = el;
@@ -7182,7 +7343,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         if (!t) break;
         let rl = '';
         try { rl = (n.getAttribute && n.getAttribute('role')) || ''; } catch (err) {}
-        parts.push(rl ? t + '[' + rl + ']' : t);
+        parts.push((rl ? t + '[' + rl + ']' : t) + _clsSig(n));
         if (_STOP.test(t)) break;
         n = n.parentElement;
       }
@@ -7222,37 +7383,27 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       try { el = mmidReg.get(String(e.mmid)) || null; } catch (err) {}
       _cand.push({ e, el, path: el ? _structSig(el) : '', par: (el && el.parentElement) || null });
     }
-    // parent tag path -> the distinct parent elements carrying it.
-    const _parGroups = new Map();
-    for (const c of _cand) {
-      if (!c.par) continue;
-      const pp = _structSig(c.par);
-      if (!_parGroups.has(pp)) _parGroups.set(pp, new Set());
-      _parGroups.get(pp).add(c.par);
-    }
     const recSig = new Map();
     for (const c of _cand) {
-      const { e, el, par } = c;
+      const { e } = c;
       let sig = c.path;
       // No element (cross-frame entries live in another document) — fall back to
       // the old geometry bucket rather than folding everything together.
       if (!sig) sig = 'geo:' + Math.round((e.w || 0) / 40) + 'x' + Math.round((e.h || 0) / 20);
-      else if (par) {
-        try {
-          const pp = _structSig(par);
-          const reps = _parGroups.get(pp);
-          if (reps && reps.size > 1) {
-            // Ordinal among same-tag siblings: within a repeated record this
-            // identifies the FIELD, which is also the column W1b aligns on.
-            let ord = 0;
-            for (const sib of par.children) {
-              if (sib === el) break;
-              if (sib.tagName === el.tagName) ord++;
-            }
-            sig += '#' + ord;
-          }
-        } catch (err) {}
-      }
+      // NO SIBLING ORDINAL. It was added so a no-class fixture modelling Hacker
+      // News (title/domain/age as bare sibling <a>s) would separate its three
+      // columns, and on real pages it is the same shattering disease the pixel-size
+      // key had. Measured live on arXiv: 276 author links, every one
+      // `div.list-authors > a`, split into 5 folds plus 12 loose rows by AUTHOR
+      // POSITION WITHIN THE PAPER — first authors in one group, second authors in
+      // another. Position within a record is not a kind of thing.
+      //
+      // Class (above) discriminates kind on the real pages the ordinal was
+      // standing in for — HN's own markup gives its three link types three
+      // different classes. Where a page genuinely offers no class and no structural
+      // difference between adjacent fields, the heterogeneity guard refuses the fold
+      // and the rows print individually. That is the correct outcome: not folding
+      // costs tokens, folding unlike things costs correctness.
       const k = [e.tag, e.role || '', e.section || '', e.href ? 'L' : '', sig].join('|');
       if (!recSig.has(k)) recSig.set(k, []);
       recSig.get(k).push(e);
@@ -7291,9 +7442,29 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         // bound cuts the MARKER in half: '…(+1' is valid syntax and reads as one
         // missing character when sixteen are missing. Never re-clip a marked string.
         const lab = (m.name || m.label || m.text || '').trim();
+        // FOLDING MUST NOT DELETE STATE. The member format carried only
+        // disabled/required/active, so every other flag vanished the moment an
+        // element was folded — and its ABSENCE reads as "normal". Live: a
+        // `(collapsed)` disclosure button disappeared into an 8-member fold; 61 of
+        // 100 rows in one scoped read were below the fold with no marker while the
+        // header said "(100 on screen)"; and a fold mixed an in-viewport author
+        // link with an off-screen one under identical labels. These are exactly the
+        // flags that change what an agent does next, so they travel with the member.
         const flags = (m.disabled ? '(disabled)' : '') + (m.required ? '(required)' : '')
-                    + (m.active ? `(${m.active})` : '');
-        return `${m.mmid}:${JSON.stringify(lab)}${m.href ? '→' + m.href : ''}${flags}`;
+                    + (m.active ? `(${m.active})` : '')
+                    + (m.collapsed ? '(collapsed)' : '')
+                    + (m.hasPopup ? '(opens menu)' : '')
+                    + (m.newTab ? '(new tab)' : '')
+                    + (m.clickable === false ? '(occluded)' : '')
+                    + (m.offscreen ? ((m.y || 0) < 0 ? '(above-fold)' : '(below-fold)') : '');
+        // GEOMETRY REACHES FOLDED MEMBERS TOO. With geometry=true the loose rows
+        // gained box() and the folded ones silently did not, so on OpenStreetMap
+        // "Zoom In" — which exists ONLY inside a fold — had no coordinate at either
+        // detail level, and the only way to get one was a second scoped read per
+        // element. The unlabelled-icon fold already carried `@(x,y)`; this is the
+        // same notation, so one fold format does not contradict the other.
+        const _mb = geometry ? `@(${m.x},${m.y})` : '';
+        return `${m.mmid}:${JSON.stringify(lab)}${_mb}${m.href ? '→' + m.href : ''}${flags}`;
       }).join(' ');
       const kind = m0.role || m0.tag;
       const where = m0.section ? ` in section=${m0.section}` : '';
@@ -7655,12 +7826,35 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         }
       }
     } catch (e) {}
-    if (_stateDrops['aria-hidden'] >= 3) {
-      L.push(`  - NOTE: ${_stateDrops['aria-hidden']} interactive element(s) are NOT listed because an`
-           + ` ancestor is aria-hidden="true". That is usually a library marking the page`
+    // DO NOT ASSERT A CAUSE THIS CANNOT KNOW. The single wording below used to
+    // claim a library had marked the page inert behind an OPEN menu and that
+    // closing it brings the elements back. Measured live, that is false on every
+    // react-select and MUI page: react-select.com raised it for 27 elements when
+    // all 43 aria-hidden nodes were the library's own indicator wrappers holding
+    // zero controls, and MUI raised it for 195 when its only hidden controls were
+    // 19 native-input mirrors that are aria-hidden by design AND already listed
+    // as `backed-by=`. A permanent banner naming an impossible recovery is the
+    // "always-on warning trains the reader to ignore it" failure #15 fixed for
+    // loading images, and it sat at the top of every observation.
+    //
+    // Split on evidence: an actually-open dialog, or hidden elements that carry a
+    // name/text of their own, means content really is being withheld. Otherwise
+    // report the fact without the story, and only when the count is large enough
+    // to be worth a line at all.
+    const _ah = _stateDrops['aria-hidden'], _ahN = _stateDrops['aria-hidden-named'];
+    if (_ah >= 3 && (dialogOpen || _ahN >= 3)) {
+      L.push(`  - NOTE: ${_ah} interactive element(s) are NOT listed because an`
+           + ` ancestor is aria-hidden="true"${_ahN ? ` (${_ahN} of them carry their own label or text)` : ''}.`
+           + ` That is usually a library marking the page`
            + ` inert behind an OPEN menu, dropdown or dialog — close it (Escape, or click`
            + ` the trigger again) and re-read, and they come back. This is page STATE, not`
            + ` the page's contents.`);
+    } else if (_ah >= 25) {
+      L.push(`  - NOTE: ${_ah} interactive element(s) sit under aria-hidden="true" ancestors and are`
+           + ` not listed, and NONE of them carry a label or text of their own — on component`
+           + ` libraries that is the library's own scaffolding (indicator wrappers, mirror inputs`
+           + ` already shown here as backed-by=), not withheld page content. If you expected`
+           + ` something here, read_page(ledger=true) names them.`);
     }
     if (has(e => e.name))        L.push(`  - name="..." — IDENTITY (label / accessible name).`);
     if (has(e => e.near))        L.push(`  - near="..." — nearest visible text: a HINT for unnamed fields, never the real name.`);
@@ -7681,7 +7875,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     if (has(e => e.offscreen))
       L.push(`  - (below-fold) — outside the viewport; clicking auto-scrolls to it.`);
     if (has(e => e.canvasLike || e.tag === 'canvas'))
-      L.push(`  - (canvas) — pixel-drawn; contents are NOT listed. Screenshot, then click by coordinate.`);
+      L.push(`  - (canvas) — pixel-drawn; contents are NOT listed. Screenshot, then click by coordinate — re-read with geometry=true for the box() to convert screenshot pixels against.`);
     if (has(e => e.crossFrame))
       L.push(`  - (cross-origin-iframe) — contents not listed; screenshot + coordinate clicks.`);
     if (has(e => e.editable || e.codeEditor))
@@ -8494,6 +8688,18 @@ async function handleOp({ id, op, params }) {
         // whose suggested remedy ("open a fresh tab") could not possibly help. CDP
         // Page.captureScreenshot targets THIS tab specifically and works while it is in the
         // background, which is the normal condition for this agent.
+        // DO NOT CHANGE THE USER'S BROWSER SETTINGS TO TAKE A PICTURE.
+        // Page.captureScreenshot resets page zoom in headful Chrome, and nothing
+        // put it back. Measured live on openstreetmap.org, where the user had saved
+        // 110%: one screenshot took devicePixelRatio 1.1 -> 1.0 and innerWidth 2327
+        // -> 2560, the change PERSISTED across navigating away and back, and every
+        // box() read before it was then wrong by x1.1 — up to 233px — while both the
+        // old and new numbers looked equally plausible. Zoom is per-origin in
+        // Chrome's default scope, so this silently overwrote a preference in the
+        // user's everyday browser. That is a worse failure than a bad coordinate:
+        // an observation tool must not mutate what it observes.
+        let _z0 = null;
+        try { _z0 = await chrome.tabs.getZoom(t.id); } catch (e) {}
         try {
           await attachDebugger(t.id);
           await ensureInputReady(t.id);   // lifecycle-active: a frozen tab renders stale pixels
@@ -8501,6 +8707,12 @@ async function handleOp({ id, op, params }) {
             { format: "png", captureBeyondViewport: false });
           if (r && r.data) dataUrl = "data:image/png;base64," + r.data;
         } catch (e) { /* fall through to the tabs API */ }
+        try {
+          if (_z0 != null) {
+            const _z1 = await chrome.tabs.getZoom(t.id);
+            if (Math.abs(_z1 - _z0) > 0.001) await chrome.tabs.setZoom(t.id, _z0);
+          }
+        } catch (e) {}
         if (!dataUrl) {
           try {
             dataUrl = await chrome.tabs.captureVisibleTab(t.windowId, { format: "png" });

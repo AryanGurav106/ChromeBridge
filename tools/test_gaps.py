@@ -9,7 +9,13 @@ Run:  python tools/test_gaps.py
 
 import asyncio
 import json
+import re
 import sys
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 from pathlib import Path
 
 from playwright.async_api import async_playwright
@@ -66,6 +72,28 @@ async def main():
 
         def named(substr):
             return [e for e in raw if substr in (e.get("name") or "") or substr in (e.get("label") or "") or substr in (e.get("text") or "")]
+
+        def member_flags(label):
+            """Flags attached to `label` specifically — as a row OR a fold member.
+
+            Probes that grepped a whole LINE broke the moment folding grouped more
+            elements together: G24 asserted "(occluded" was absent from the Add
+            Investor line and failed because a DIFFERENT member of the same fold
+            carried it. Flags belong to a member, so they have to be read per member.
+            """
+            m = re.search(r'\d+:"' + re.escape(label) + r'"((?:\([^)]*\))*)', listing)
+            if m:
+                return m.group(1)
+            for ln in listing.split("\n"):
+                if label in ln and ln.startswith("ref_"):
+                    return ln
+            return None
+
+        def listed_once(label):
+            """How many times `label` appears, counting rows and fold members."""
+            return (len(re.findall(r'\d+:"' + re.escape(label) + r'"', listing))
+                    + len([1 for ln in listing.split("\n")
+                           if ln.startswith("ref_") and label in ln]))
 
         # --- G1 bare handler div (via document_start listener tagging) ---
         report("G1 handler-div (JS listener, no role/cursor)",
@@ -245,11 +273,15 @@ async def main():
                "CAPTURED" if any("Advanced settings" in ln and "(collapsed)" in ln for ln in listing.split("\n")) else "MISSED")
 
         # --- G17 same-box twin collapse ---
-        ap_lines = [ln for ln in listing.split("\n") if "Apply filters" in ln]
-        merged = len(ap_lines) == 1 and "input[submit]" in ap_lines[0]
+        # The substance is that the overlaying span and the unnamed submit collapse
+        # into ONE entry which IS the submit, carrying the span's text. Asserted on
+        # the structured entry for the type and on the listing for the single
+        # occurrence, so it holds whether that entry prints as a row or folds.
+        _ap = named("Apply filters")
+        _apn = listed_once("Apply filters")
         report("G17 label-overlay span merged into unnamed submit",
-               "CAPTURED" if merged else "MISSED",
-               " / ".join(ap_lines) if ap_lines else "no Apply filters entry at all")
+               "CAPTURED" if _apn == 1 and _ap and _ap[0].get("type") == "submit" else "MISSED",
+               f"occurrences={_apn} type={(_ap[0].get('type') if _ap else None)!r}")
 
         # --- G18 ARIA widget roles without tabindex/cursor ---
         report("G18 role=slider div (no tabindex) listed", "CAPTURED" if named("Price range") else "MISSED")
@@ -285,10 +317,12 @@ async def main():
         report("G23b checked radio flagged", "CAPTURED" if checked else "MISSED")
 
         # --- G24 pointer-events:none disabled submit stays listed ---
-        g24 = [ln for ln in listing.split("\n") if "Add Investor" in ln]
+        _g24 = member_flags("Add Investor")
         report("G24 pointer-events:none disabled submit listed + flagged",
-               "CAPTURED" if g24 and "(disabled)" in g24[0] and "(occluded" not in g24[0] else "MISSED",
-               g24[0] if g24 else "shadcn-style disabled submit vanished from listing")
+               "CAPTURED" if _g24 is not None and "(disabled)" in _g24 and "(occluded" not in _g24
+               else "MISSED",
+               f"flags={_g24!r}" if _g24 is not None
+               else "shadcn-style disabled submit vanished from listing")
 
         # --- G22 shadow-slotted label on a text-less anchor ---
         tile = [ln for ln in listing.split("\n") if "How to search the archive" in ln and "| a " in ln]

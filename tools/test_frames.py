@@ -21,6 +21,11 @@ import asyncio
 import http.server
 import socket
 import sys
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 import threading
 from pathlib import Path
 

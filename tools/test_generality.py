@@ -854,6 +854,43 @@ async def main():
               f"{len([l for l in full.splitlines() if l.startswith('ref_')])} rows unscoped")
         await rg.close()
 
+        # ---- RG8/RG9: MANY containers sharing one tag ----------------------------
+        # The shape that broke live and that no fixture modelled. Al Jazeera has 20
+        # <footer> elements: bucketing by the LABEL `footer` counted 34 off-screen
+        # links together while taking the ref from whichever element arrived first —
+        # a 1-link card footer — so the hint promised `footer(ref_813): 34` and the
+        # scoped read returned ONE row under a header saying everything outside the
+        # scope is omitted. The real 33-link footer was never named.
+        rg2 = await browser.new_page(viewport={"width": 900, "height": 600})
+        await rg2.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await rg2.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<header><a href=/h>Home</a></header>"
+            "<div style='height:1200px'></div>"
+            # A decoy card footer with one link, FIRST in document order.
+            "<footer id=card><a href=/card>Card note</a></footer>"
+            # The real site footer, later, with many.
+            "<footer id=site>" + "".join(f"<a href=/f{i}>Foot {i}</a>" for i in range(9)) + "</footer>"
+            "</body>")
+        await rg2.wait_for_timeout(140)
+        f2 = await rg2.evaluate("(function(){ " + COLLECT
+                                + "; return _collectInteractivePage(false,null,'compact',false,false); })()")
+        n2 = next((l for l in f2.splitlines() if l.startswith("[")), "")
+        ids = await rg2.evaluate(
+            "()=>({card:document.getElementById('card').getAttribute('mmid'),"
+            "site:document.getElementById('site').getAttribute('mmid')})")
+        # Each container is its own bucket, so the 9-link footer is named with a
+        # count of 9 — not merged with the decoy under one label.
+        check("RG8 many containers sharing a tag are separate buckets, each with its own ref",
+              f"footer(ref_{ids['site']}): 9" in n2,
+              n2[:150])
+        sub2 = await rg2.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(false,'"
+                                  + str(ids["site"]) + "','compact',false,false); })()")
+        check("RG9 ...and scoping to the named ref returns that container's links",
+              sub2.count("Foot ") >= 9 and "Card note" not in sub2,
+              f"{sub2.count('Foot ')} Foot rows, decoy present={'Card note' in sub2}")
+        await rg2.close()
+
         await browser.close()
 
     passed = sum(1 for _, ok, _ in results if ok)
