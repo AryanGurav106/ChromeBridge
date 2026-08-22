@@ -372,6 +372,46 @@ async def main():
               f"containers listed={[e.get('tag') for e in _forms]}")
         await dp.close()
 
+        # ---- W17: rc-select / Ant Design -- a DECOY declared listbox ----------
+        # The worst dropdown failure on record (CLAUDE.md #25): the picker found
+        # zero options and then offered the site's own NAV BAR as the field's
+        # options. Two causes, both here:
+        #   (a) the trigger's aria-controls points at a HIDDEN listbox while the
+        #       real, role-less rows are painted in a separate portal. Honouring a
+        #       declaration that names something the user cannot see found nothing.
+        #   (b) with no scope, the role scan ran DOCUMENT-WIDE, and anything on the
+        #       page carrying [aria-selected] or li[data-value] qualified -- here,
+        #       three nav items.
+        # The portal carries none of the three popover-library attribute names the
+        # candidate list used to be built from, which is why a framework-name list
+        # could never have reached it. rc-select powers antd, so this is a
+        # framework FAMILY, not one site.
+        ap = await browser.new_page(viewport={"width": 900, "height": 700})
+        await ap.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await ap.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<nav><div aria-selected=true style='width:80px;height:24px;cursor:pointer'>Products</div>"
+            "<div aria-selected=false style='width:80px;height:24px;cursor:pointer'>Pricing</div>"
+            "<div aria-selected=false style='width:80px;height:24px;cursor:pointer'>Docs</div></nav>"
+            "<div id=trig role=combobox aria-controls=decoy aria-expanded=true tabindex=0"
+            " style='width:200px;height:32px;border:1px solid #999'>Select a size</div>"
+            "<div id=decoy role=listbox aria-hidden=true style='display:none'></div>"
+            "<div id=portal style='position:absolute;top:40px;left:0;width:200px;z-index:1050'><div>"
+            "<div style='width:200px;height:26px;cursor:pointer'>Small</div>"
+            "<div style='width:200px;height:26px;cursor:pointer'>Medium</div>"
+            "<div style='width:200px;height:26px;cursor:pointer'>Large</div>"
+            "</div></div></body>")
+        await ap.wait_for_timeout(160)
+        _ar = await ap.evaluate(
+            "(function(){ " + PICK + "; return _pickOptionPage('Medium', '#trig'); })()")
+        check("W17 a hidden declared listbox is a DECOY; the visible portal is the popup",
+              bool(_ar.get("ok")) and _ar.get("actual") == "Medium",
+              f"ok={_ar.get('ok')} actual={_ar.get('actual')!r} scope={_ar.get('dbg', {}).get('scope')!r}")
+        check("W17b ...and the page's nav is never offered as the field's options",
+              not any(w in (_ar.get("msg") or "") for w in ("Products", "Pricing", "Docs")),
+              f"msg={(_ar.get('msg') or '')[:110]!r}")
+        await ap.close()
+
         # ---- W16: which tab is selected, decided by DECLARATIONS -------------
         # `(current)/(selected)` tells the agent "already active; don't re-click",
         # so a wrong one suppresses a real action. It used to be answered, after

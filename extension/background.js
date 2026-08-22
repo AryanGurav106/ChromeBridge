@@ -1878,6 +1878,24 @@ function _pickOptionPage(text, triggerSel) {
         // own selection box. select2-style multi-selects point aria-controls at it, and
         // harvesting there clicks a chosen tag (deselecting it) instead of an option.
         try { if (scopeRoot && trig && scopeRoot.contains(trig)) scopeRoot = null; } catch (e) {}
+        // dup:decoyscope — A DECLARED SCOPE THAT IS NOT RENDERED IS A DECOY. rc-select
+        // (which powers Ant Design, so this is a framework FAMILY not one site) ships a
+        // hidden listbox as the aria-controls target and paints the real, role-less
+        // options in a separate portal. Honouring the declaration then found zero
+        // options and the picker gave up on a dropdown that was plainly open. The test
+        // is what the user can see: an element with no box, display:none,
+        // visibility:hidden or aria-hidden is not the popup being shown, whatever it
+        // claims. Clearing it lets the topmost-visible-popover fallback below run.
+        try {
+          if (scopeRoot) {
+            const _sr = scopeRoot.getBoundingClientRect();
+            const _sc = getComputedStyle(scopeRoot);
+            if (!(_sr.width > 0 && _sr.height > 0) || _sc.display === 'none' ||
+                _sc.visibility === 'hidden' || scopeRoot.getAttribute('aria-hidden') === 'true') {
+              scopeRoot = null;
+            }
+          }
+        } catch (e) {}
       }
     } catch (e) {}
   }
@@ -1888,9 +1906,71 @@ function _pickOptionPage(text, triggerSel) {
   // "available options" for a widget they have nothing to do with.
   if (!scopeRoot) {
     try {
-      const cands = Array.from(document.querySelectorAll(
-        '[data-radix-popper-content-wrapper], [data-popper-placement], [data-floating-ui-portal], [role="listbox"], [role="menu"]'
-      )).filter(c => {
+      // TWO SOURCES OF CANDIDATES: what the document DECLARES, and what the layout
+      // SHOWS. The declared half is `role=listbox`/`role=menu`. The rest of the old
+      // selector list was three library-specific attribute names
+      // (data-radix-popper-content-wrapper, data-popper-placement,
+      // data-floating-ui-portal) — a list of the popover libraries someone thought
+      // of, which is the shape this project keeps getting burned by. rc-select
+      // (Ant Design, and every antd-derived UI) portals to a plain positioned div
+      // with none of those attributes and role-less rows, so there was no
+      // candidate at all, the scope stayed null, and the role scan below went
+      // DOCUMENT-WIDE and offered the site's own nav bar as the field's options.
+      //
+      // The structural half asks what a popup IS: rendered, out of normal flow or
+      // carrying its own stacking level, not containing the trigger, and holding at
+      // least two sibling clickable rows. Bounded — portal targets are body
+      // children, in-place popups are within a few ancestors of the trigger — so
+      // there is no document-wide element sweep.
+      const _qtrig = (x) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(x || ''); const r2 = window.__mmidReg; if (m && r2) { const n = r2.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(x); };
+      const _tg0 = triggerSel ? _qtrig(triggerSel) : null;
+      const _structural = [];
+      try {
+        const _pool = [];
+        for (const c of Array.from(document.body.children)) _pool.push(c);
+        let _w = _tg0, _hops = 0;
+        while (_w && _hops < 5) {
+          for (const c of Array.from(_w.children || [])) _pool.push(c);
+          _w = _w.parentElement; _hops++;
+        }
+        for (const c of _pool) {
+          if (!c.getBoundingClientRect) continue;
+          let cs; try { cs = getComputedStyle(c); } catch (e) { continue; }
+          const stacked = /^(fixed|absolute|sticky)$/.test(cs.position) ||
+                          !isNaN(parseInt(cs.zIndex, 10));
+          if (!stacked) continue;
+          let rows = 0;
+          try {
+            for (const r of c.querySelectorAll('div, li, span, button, a')) {
+              let rc; try { rc = getComputedStyle(r); } catch (e) { continue; }
+              const tag = r.tagName.toLowerCase();
+              if (!(rc.cursor === 'pointer' || tag === 'button' || tag === 'a' ||
+                    r.hasAttribute('onclick') || r.hasAttribute('data-value'))) continue;
+              const rr = r.getBoundingClientRect();
+              if (rr.width >= 8 && rr.height >= 8 && (r.innerText || '').trim()) rows++;
+              if (rows >= 2) break;
+            }
+          } catch (e) {}
+          if (rows >= 2) _structural.push(c);
+        }
+      } catch (e) {}
+      const _declared = Array.from(document.querySelectorAll('[role="listbox"], [role="menu"]'));
+      const _named = Array.from(document.querySelectorAll(
+        '[data-radix-popper-content-wrapper], [data-popper-placement], [data-floating-ui-portal]'
+      ));
+      // Instrumented: if the library-name list is never the SOLE source of the
+      // chosen scope, it is carrying nothing and can go on the evidence.
+      try {
+        if (_named.length && !_declared.length && !_structural.length) {
+          window.__abNamedPopoverOnly = (window.__abNamedPopoverOnly || 0) + 1;
+        }
+      } catch (e) {}
+      const _seen = new Set();
+      const cands = _declared.concat(_structural, _named).filter(c => {
+        if (_seen.has(c)) return false;
+        _seen.add(c);
+        return true;
+      }).filter(c => {
         try {
           const r = c.getBoundingClientRect();
           if (!(r.width > 0 && r.height > 0)) return false;
@@ -3018,6 +3098,21 @@ async function fillDropdown(tabId, selector, text) {
       if (ref) {
         const idRoot = (trig.getRootNode && trig.getRootNode().getElementById) ? trig.getRootNode() : document;
         scopeRoot = ref.split(/\s+/).map(id => idRoot.getElementById(id)).find(Boolean) || null;
+        // Both of _pickOptionPage's rejections, which this probe was missing despite
+        // the KEEP IN SYNC note: a container holding the trigger is the widget's own
+        // selection box, and a container that is not rendered is a decoy.
+        try { if (scopeRoot && trig && scopeRoot.contains(trig)) scopeRoot = null; } catch (e) {}
+        // dup:decoyscope
+        try {
+          if (scopeRoot) {
+            const _sr = scopeRoot.getBoundingClientRect();
+            const _sc = getComputedStyle(scopeRoot);
+            if (!(_sr.width > 0 && _sr.height > 0) || _sc.display === 'none' ||
+                _sc.visibility === 'hidden' || scopeRoot.getAttribute('aria-hidden') === 'true') {
+              scopeRoot = null;
+            }
+          }
+        } catch (e) {}
       }
     } catch (e) {}
     const OPTION_SEL = '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="treeitem"], li[data-value], [aria-selected]';
@@ -3028,7 +3123,15 @@ async function fillDropdown(tabId, selector, text) {
     };
     let els = [];
     if (scopeRoot) { try { els = Array.from(scopeRoot.querySelectorAll(OPTION_SEL)).filter(roleOk); } catch (e) {} }
-    if (!els.length) els = Array.from(document.querySelectorAll(OPTION_SEL)).filter(roleOk);
+    // NEVER WIDEN PAST A DECLARATION. This line scanned the WHOLE DOCUMENT whenever
+    // the declared container held no role-bearing options — which is how a site's own
+    // nav bar was reported to the model as "other options available" for a select.
+    // Anything on the page carrying [aria-selected] or li[data-value] qualified.
+    // _pickOptionPage has never scanned the document; this probe is the half that
+    // drifted, and the two are supposed to agree about what a dropdown contains.
+    if (!els.length && !scopeRoot) {
+      els = Array.from(document.querySelectorAll(OPTION_SEL)).filter(roleOk);
+    }
     if (!els.length) {
       const containers = (scopeRoot ? [scopeRoot] : Array.from(document.querySelectorAll(
         '[data-radix-popper-content-wrapper], [data-popper-placement], [data-floating-ui-portal], [role="listbox"], [role="menu"], [role="dialog"]'
