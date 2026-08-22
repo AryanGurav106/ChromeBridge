@@ -98,16 +98,15 @@ PROBE = bm.PROBE
 # away from the shipped path — the same class of gap as CLAUDE.md #19's untested
 # router, where `detail="brief"` never reached the collector.
 POLICIES: dict[str, dict] = {
-    # The shipped default, whatever it currently is.
-    "current": {"args": "false, null, 'compact', false", "reads": 1},
+    # The shipped default, whatever it currently is -- now the tree.
+    "current": {"args": "false, null, 'compact', false, false, 'tree'", "reads": 1},
     # TREE: the same entries, re-shaped. Serialization only — it consumes the
     # structured array the collector already returns, so refs, AccName, visibility
     # and every flag are identical and the ONLY variable is the shape. That is the
     # comparison worth making; adding text nodes at the same time would confound it.
-    # Same 6th positional the op router will send. Identical population to
-    # `current` -- post viewport-filter, post entry-cap -- so the only variable is
-    # the shape.
-    "tree": {"args": "false, null, 'compact', false, false, 'tree'", "reads": 1},
+    # The older one-row-per-control listing, kept measurable so the trade stays
+    # visible: it is ~8% cheaper and cannot express a repeated record's fields.
+    "flat": {"args": "false, null, 'compact', false, false, 'flat'", "reads": 1},
 }
 
 

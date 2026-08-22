@@ -921,19 +921,22 @@ const FIELDS3 = () => ([
     callLog.length = 0;
     await callOp("get_interactive_elements", { tabId: 1 });
     a = argsOf();
-    check("read_page: format defaults to flat", !!a && a[5] === "flat", JSON.stringify(a));
+    check("read_page: format defaults to tree", !!a && a[5] === "tree", JSON.stringify(a));
 
     callLog.length = 0;
-    await callOp("get_interactive_elements", { tabId: 1, format: "tree" });
+    await callOp("get_interactive_elements", { tabId: 1, format: "flat" });
     a = argsOf();
-    check("read_page: format='tree' is forwarded to the collector",
-      !!a && a[5] === "tree", JSON.stringify(a));
+    check("read_page: format='flat' is forwarded to the collector",
+      !!a && a[5] === "flat", JSON.stringify(a));
 
+    // An unknown value now falls back to the DEFAULT, which is tree. Same
+    // fail-safe rule as detail="nonsense" -> compact: an unrecognised value gets
+    // the documented default, never a silently different surface.
     callLog.length = 0;
     await callOp("get_interactive_elements", { tabId: 1, format: "nonsense" });
     a = argsOf();
-    check("read_page: an unknown format fails safe to flat",
-      !!a && a[5] === "flat", JSON.stringify(a));
+    check("read_page: an unknown format fails safe to the default (tree)",
+      !!a && a[5] === "tree", JSON.stringify(a));
   });
 
   await test("read_network_requests", async () => {

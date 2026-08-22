@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 17 suites, 451 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 17 suites, 468 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -147,7 +147,7 @@ names/schemas, plus two ChromeBridge power-tools and three diagnostics:
 | `get_url(tabId)` | `get_url` | Ungated (the user can read it off their own tab strip) |
 | `tabs_create_mcp()` / `tabs_close_mcp(tabId)` | `tabs_create` / `tabs_close` | Only group tabs are closable |
 | `navigate(url, tabId)` | `navigate` | `url="back"`/`"forward"` for history |
-| `read_page(tabId, filter, max_chars, ref_id, detail, delta, ledger, geometry)` | `get_interactive_elements` (+`get_dom_text` for `all`) | refs == mmids; `ref_id` scopes to a subtree **and is NOT viewport-limited**; `detail="full"` adds `href=`/`src=` and lists non-clickable images; **`geometry=true` adds `box(x,y,w,h)`, off by default (#26)** |
+| `read_page(tabId, filter, max_chars, ref_id, detail, delta, ledger, geometry, format)` | `get_interactive_elements` (+`get_dom_text` for `all`) | refs == mmids; `ref_id` scopes to a subtree **and is NOT viewport-limited**; `detail="full"` adds `href=`/`src=` and lists non-clickable images; **`geometry=true` adds `box(x,y,w,h)`, off by default (#26)**; **`format` defaults to `"tree"` — indented under the page's own structure, identical sibling groups collapsed POSITIONALLY. `format="flat"` is the older one-row-per-control listing, ~8% cheaper (#27)** |
 | `get_page_text(tabId)` | `get_dom_text` | `ref_id`-scoped reads render `<table>` as aligned columns (header from `<th>`) |
 | `page_tools(tabId)` | `page_tools` | **WebMCP**: tools the PAGE declares (`document.modelContext.getTools()`), with parsed JSON Schemas. `readOnlyHint:false` = CHANGES STATE |
 | `call_page_tool(tabId, name, args)` | `call_page_tool` | **WebMCP**: run one declared tool. Reports `navigated` (refs stale) rather than an empty success |
@@ -485,7 +485,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 451 checks, ~40s
+.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 468 checks, ~40s
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -1358,6 +1358,152 @@ granted in the side panel is refused with the same message the agent gets.
     `detail="brief"` ship inert.
 
 
+
+27. **THE TREE IS THE DEFAULT — presentation over classification.** `read_page` now
+    returns an indented tree by default; `format="flat"` keeps the old
+    one-row-per-control listing. The reason is not tokens (the tree costs **+8.7%**)
+    but that a flat list **cannot express a row**, and every attempt to work around
+    that was a classifier that kept being wrong.
+
+    **The fold signature was rewritten four times in one day**, and each version was
+    right on the sites checked and wrong on the next: pixel buckets shattered one
+    class across folds (lite.cnn printed ~26 headline links individually beside folds
+    of 7 and 6); a tag path merged three classes (Hacker News' nav links, story
+    headlines and submitter usernames under one `42× a, same structure`, with
+    `28:"login"` among them); tag path + sibling ordinal shattered arXiv's 276
+    identically-classed author links **by author position within the paper**; tag path
+    + class is what shipped. "Are these the same kind of thing?" has no heuristic
+    answer — and it does not need one, because **the DOM already states it.**
+
+    A node earns a line for an intrinsic reason only: it is actionable, the DOCUMENT
+    declares it structure (a sectioning element or a landmark role), or it BRANCHES —
+    two or more kept child paths pass through it. Repetition is decided by **exact
+    equality of sibling subtree shape**, not a weighted feature set, and identical
+    sibling CONTAINERS collapse positionally (MDR/DEPTA's data-record rule). On the
+    two shapes four signatures got wrong, one fixture side by side: flat 1,710 chars
+    with twelve loose rows for HN's user/comment links and all 24 arXiv authors in one
+    line; tree 1,575 chars with `#1 a: stories` / `#2 a: domains` and `#1/#2/#3` =
+    first/second/third author per paper. Smaller *and* correct, with zero
+    classification.
+
+    **THE A/B WAS A NULL RESULT ON ITS OWN METRIC, and the decision was made anyway.**
+    Six agents, five identical tasks, three per arm, `filter="interactive"` pinned so
+    the listing was the thing under test: **15/15 correct in both arms, 3 content
+    escapes in both arms, zero `javascript_tool` in either.** The escapes tie because
+    they are not caused by flatness — arXiv titles are non-interactive text with no
+    container ref to scope to, HN's record spans two sibling `<tr>`s so the tree
+    groups them separately, and the Fed's cells are non-interactive by design. Tree
+    won only where the formats differ: flat gave arXiv's 61 authors as one
+    undifferentiated run (an agent inferred paper boundaries from gaps in ref numbers
+    and noted that "if ref numbering were denser the grouping would have been
+    unrecoverable"), and gave HN's titles and comment counts as **two folds of unequal
+    length — 20 and 19 — both claiming "in document order"**, which invites zipping
+    them and silently mispairs everything after the gap. Shipped on that, with the
+    token cost accepted explicitly, because no metric here reads a listing the way an
+    agent does.
+
+    **Three of my own defects, all caught by measuring rather than reading:** the first
+    version was a standalone over the whole structured array (96.6% first-read
+    reachability at **+1810%** tokens — comparing shape AND population at once, the
+    exact confound I had said to avoid); leaves-only sibling collapse barely moved it
+    (+197% → +193%), because the flat fold groups ACROSS parents and cross-parent
+    grouping is precisely what needs the failing signature; and it was still +192%
+    until I stopped guessing and measured where the characters went — **indentation
+    was 36,576 of 45,868 on one car-rental page**, single lines running to 245
+    characters of whitespace, because `role` on any ancestor kept every ARIA wrapper
+    (including `role=presentation/none/generic`, which declare the ABSENCE of
+    semantics) and a chain A>B>C with the same kept descendants counted as three
+    branch points where the page divides once. Landmark roles only, plus pruning every
+    non-landmark non-actionable node with a single kept child: **+192% → +28%**.
+    One-space indent and dropping the word from bare `div`/`span`/`li` wrappers took
+    it to +8.7%. A live agent then found the tree emitted groups **out of document
+    order** (arXiv papers 1, 7, 11 above 2, 3, 4 — mis-attributing authors), because
+    Map iteration follows insertion order; groups now sort by their first member's
+    document position. A tree whose reading order is not the page's order is worse
+    than a flat list, because the indentation invites exactly that reading.
+
+    **EXISTENCE IS NOW DECIDED ONLY BY DECLARATIONS.** The last hardcoded pattern in
+    that path was a class-name regex admitting any `div`/`svg` whose class contained
+    the word "canvas" (added for tldraw's `.tl-canvas`). Removed; recall unchanged at
+    96.0%, so it was carrying nothing. What remains: HTML interactive tags,
+    `audio/video[controls]`, `canvas`, an ARIA interactive role, `onclick`/`tabindex`/
+    `contenteditable`, a registered listener (`__abClickBound`), `cursor:pointer` (the
+    page telling the USER it is clickable), and editor hosts — where the font-name
+    list `/mono|consol|courier|menlo|monaco|code/` was replaced by **measuring glyph
+    advance width**, so "Iosevka" and a self-hosted `--font-editor` work as well as
+    the six names someone thought of. The prompt-option sentinel test lost its English
+    (`choose|select`); its conventional-value half already carried Amazon DE and JP.
+    **No class name, font name, framework name, pixel size or wordlist gates whether
+    an element exists.**
+
+    **THREE FALSE NEGATIVES FIXED, all found live:**
+    - **The cap stopped deleting.** It was the one filter still exempt from
+      prominence-not-existence: on Hacker News it removed 10 of 30 front-page stories
+      including the second-most-commented thread, and an agent **proved the advertised
+      recovery impossible** — `computer scroll_to` reported success and the re-read
+      came back byte-identical, because the cap slices in document order. Two agents
+      answered a "which has the most" question correctly and wrote that it was luck.
+      The overflow keeps its refs (`OMITTED BUT ACTIONABLE`), and the notice no longer
+      recommends scrolling or a larger `max_chars` — neither can lift an ENTRY cap —
+      and states that a largest/first question is not answerable from the rows alone.
+    - **A disabled control exists.** The most-reported false negative in the project
+      (~6 agents, two fan-outs): demoqa's City field, a react-select disabled until
+      State is chosen — a `pointer-events:none` wrapper around a `disabled` 4×24
+      `<input>`. `isInteractive` asks "can this be operated", which is the wrong
+      question for existence, so "this form has no City field" and "City unlocks after
+      State" were the same output — which is also what let `find` answer a city query
+      with the State field. **My first fix was too broad** and the suites caught it: it
+      also kept anything CONTAINING a form control, promoting `<html>`, `<body>`,
+      `<form>` and every wrapper to controls, so a click hit a container for zero
+      effect. Turning containers into controls is the same defect pointed the other
+      way (W15/W15b/W15c).
+    - **`ledger=true` respects `ref_id`.** A scoped ledger reported 319
+      whole-document drops for a region that kept 0 elements, so the one diagnostic
+      that exists to answer "why is THIS element missing" could not — which is how six
+      agents ran it and still could not say what dropped City.
+
+    **`find` returned the wrong field under a confident header.** Query "Select State"
+    → `near="Select City"` under a bare `Found 1 element(s) matching`, with the
+    contradicting text visible in the row. `select` is a role word AND appeared in that
+    label, so it counted as CONTENT coverage and satisfied the query alone while
+    "state", the one distinguishing token, matched nothing — violating a rule the code
+    already stated three blocks away. Fixing it regressed F25 the other way (the query
+    fell into the role-only fallback, where every combobox satisfies `select` +
+    `dropdown`), which exposed that the gate keyed on the wrong thing entirely:
+    whether anything matched by text, rather than whether the QUERY contains words
+    that could identify a particular element. Only an all-role-words query may be
+    answered by type — the F8/F14/F24 case. F29 pins it.
+
+    **A stale client schema is undetectable from inside.** The first A/B ran six agents
+    and measured nothing, because `format` had been added to `read_page` after the last
+    `/mcp` connect: the client's cached schema had no such parameter, both arms ran
+    flat, and it was **accepted in silence** by all six. My own over-the-wire check had
+    passed because it spawns a FRESH server — it verified the file, not the session.
+    After adding a tool parameter, reconnect before testing; nothing server-side can
+    warn you.
+
+    Also fixed from these runs: a truncated fold no longer leaves half a member
+    (`→/2026/08/21/business/are-you-cuttin`, an unmarked mid-path URL — two failure
+    shapes, and the obvious whitespace test catches only one, since a cut on a space
+    INSIDE a quoted label leaves the quote open; T18 sweeps 750 budgets); folds state
+    their document order and their input `type` (a radio group and a checkbox group
+    were merging into `6× input`, dropping the one property that decides how you
+    interact with them); the hidden-tab note counts only RENDERED controls, so
+    "466 controls but only 50 collectable" stopped firing on pages whose extra
+    "controls" are closed menu items; table `[section]` markers separate the Fed's two
+    rows both labelled `1-year` (3.82 T-bills vs 3.99 constant maturities) — **marked,
+    not indented**, because the indent flag cannot know where a section ends and put
+    "Bank prime loan" under "Financial"; and the ledger's `was:` records no longer
+    double-count (`55 kept (42 DEMOTED)` against 30 actual refs, because `_note`
+    overwrote a DOM expando that **survived between collector runs**, so a second read
+    recorded nothing and reported a reason decided by an earlier one).
+
+    Suites: 468 checks. New series — TR1–TR7 (tree), W15–W15c (disabled control),
+    RG7–RG9 (scoped-read leaks, many-containers-one-tag), F29 (role-word coverage),
+    T18 (fold truncation), plus 3 `format` router checks, because #19 is explicit that
+    the op router is the untested link.
+
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -1379,6 +1525,8 @@ granted in the side panel is refused with the same message the agent gets.
 | `read_page` says "(N on screen)" and N looks far too small | A menu/dialog elsewhere is marking the page `aria-hidden`. The listing now says so and names the recovery; if it does not, check `_stateDrops` in `_collectInteractivePage`. Also check the hidden-tab note — some sites defer layout while the tab is in the background (limitation #23) |
 | A scoped read returns zero rows | It now tells you which of the four causes applies (off-viewport, aria-hidden, inert, genuinely empty). If it just says "0 elements" with no reason, the explanation branch was skipped — it lives before the legend's early return |
 | `form_input` says the write did NOT land | It compared the readback to what you sent and they disagree. Rich editors keep a read-only mirror textarea; use `computer` (click, ctrl+a, type). This replaced a false "Success" |
+| The listing is indented / rows are grouped under `main`, `nav`, `form` | By design since #27 — `format` defaults to `"tree"`. Pass `read_page(format="flat")` for the older one-row-per-control listing |
+| A repeated record prints as `N× …, identical siblings — one line per POSITION` | That IS the record: `#1`/`#2`/`#3` are its fields, in document order, every member keeping its own ref |
 | Rows have no `box(...)` any more | By design since #26 — geometry is opt-in. Pass `read_page(geometry=true)`. Spatial STATE (`(below-fold)`, `(off to the side)`, `(occluded/blocked)`) still prints unconditionally |
 | A scoped read returns below-fold rows but the unscoped one does not | By design since #26 — `ref_id` scoping is not viewport-limited, the whole-page listing is. The off-viewport hint names the region refs to scope to |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |

@@ -8806,7 +8806,7 @@ async function handleOp({ id, op, params }) {
         result = await runInTab(t.id, _collectInteractivePage,
           [!!params?.structured, _scopeMmid, (params?.detail === 'full' || params?.detail === 'brief') ? params.detail : 'compact',
            !!params?.ledger, !!params?.geometry,
-           params?.format === 'tree' ? 'tree' : 'flat']);
+           params?.format === 'flat' ? 'flat' : 'tree']);
         // Ledger mode returns an object, not a listing: skip the cross-frame
         // append and the readiness banner, both of which assume a string.
         if (params?.ledger) break;
