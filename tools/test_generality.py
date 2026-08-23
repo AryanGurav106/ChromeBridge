@@ -290,6 +290,30 @@ async def main():
               "188530 users starred" in _ovl,
               next((l.strip()[:80] for l in _ovl.splitlines() if "188530" in l),
                    "IDENTITY LOST — the only row says aria-label 'Star'"))
+        # CU5: THE SHAPE WIKIPEDIA ACTUALLY SHIPS, found live after CU1 shipped. The
+        # <a> wraps ONE span that is its entire content, so the span's text is
+        # non-empty and the no-identity rule keeps it -- each citation still printed
+        # two rows. The tree's identical-nested-row collapse could not merge them
+        # either: it needs exact label equality, and the two names come from different
+        # AccName paths ("[4]" from a text node vs "[ 4 ]" separator-joined, #28).
+        # So the rule also drops a descendant whose identity EQUALS its owner's --
+        # equality, never containment, because containment against innerText is
+        # trivially true for any descendant and is the wide version that lost 93.
+        await cu.evaluate(
+            "()=>{const s=document.createElement('sup');s.className='reference';"
+            "const a=document.createElement('a');a.setAttribute('href','#n4');"
+            "const w=document.createElement('span');w.textContent='[4]';"
+            "a.appendChild(w);s.appendChild(a);"
+            "document.body.appendChild(s);return 1;}")
+        await cu.wait_for_timeout(90)
+        _cu5 = await cu.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'tree'); })()")
+        _c5rows = [l for l in _cu5.splitlines() if '"[4]"' in l]
+        check("CU5 a wrapper span whose identity EQUALS its owner's does not get a"
+              " second row for the same citation",
+              len(_c5rows) == 1 and " a " in _c5rows[0],
+              " / ".join(r.strip()[:44] for r in _c5rows) or "NO ROW AT ALL")
         check("CU3 ...and the removal is RECORDED, so the ledger can answer why a"
               " bracket span has no row",
               any(str(d.get("rule")) == "cursor-inherited-non-root"

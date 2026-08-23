@@ -5455,7 +5455,36 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
                      || (dn.tagName || '').toLowerCase() === 'img' ? 'icon' : '');
           }
         } catch (e2) {}
-        if (_mine || _desc) return true;
+        // OR ITS IDENTITY IS EXACTLY ITS OWNER'S. Verified live on Wikipedia after
+        // the no-identity rule shipped: each citation STILL produced two rows, the
+        // <a> `[28]` and a span `[ 28 ]` that is its only content, same 21x15 box.
+        // The span's normalized text is non-empty, so the identity test keeps it,
+        // and the tree's identical-nested-row collapse cannot merge them either
+        // because it needs EXACT label equality and the two names come from two
+        // different AccName paths -- a bare text node versus the separator-joined
+        // form #28 introduced, which is where the spaces come from.
+        //
+        // EQUALITY, never containment. Containment against the owner's innerText is
+        // trivially true for any descendant, which is the wide version that lost 93
+        // identities. Equality says something much narrower and provable from the two
+        // strings: this row states exactly what its owner's row already states, so
+        // removing it removes no information. span "Baseline Check" inside a longer
+        // link label is NOT equal and stays; span "Day" inside "Day Week Month" is
+        // not equal either (and that owner is not single-activation regardless).
+        let _ownId = '';
+        try {
+          // AccName PRECEDENCE, not innerText first. The comparison has to be
+          // against what the owner's ROW will actually show, and an aria-label
+          // beats content. Getting this backwards was a real regression and CU4
+          // caught it in one run: `<a aria-label="Star"><span>188530 users starred
+          // </span></a>` has innerText EQUAL to the span, so the span was dropped
+          // while the surviving row said only name="Star" -- the exact identity
+          // loss this clause is bounded to avoid. On the corpus it cost 69 labels.
+          _ownId = _nrm(owner.getAttribute('aria-label')) || _nrm(owner.getAttribute('title'))
+                || _nrm((owner.innerText != null ? owner.innerText : owner.textContent) || '');
+        } catch (e2) {}
+        const _same = _mine && _ownId && _mine === _ownId;
+        if ((_mine || _desc) && !_same) return true;
         return _drop(el, 'cursor-inherited-non-root');
       }
     } catch (e) {}

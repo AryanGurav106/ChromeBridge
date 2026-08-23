@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 17 suites, 600 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 17 suites, 601 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -487,7 +487,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 600 checks, ~57s
+.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 601 checks, ~57s
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -2008,9 +2008,26 @@ granted in the side panel is refused with the same message the agent gets.
       that can name it, and a wrapped `<svg>`/`<img>`, since an element wrapping an
       icon carries content even when nothing is named. Each was added because the
       corpus still reported losses without it: 93 → 19 → **0 of 362 labelled
-      removals across 22 sites, still removing 1,030 elements**. It fixes the whole
-      reported defect anyway, because `[` and `]` strip to empty: five citations go
-      from 15 rows / 952 chars to 5 / 556 (CU1–CU4).
+      removals across 22 sites, still removing 1,030 elements** (CU1–CU4).
+    - **AND THE LIVE PAGE SHOWED THE RULE UNDER-REACHED.** Verified on the article
+      that motivated it, each citation STILL printed two rows — the `<a>` `[28]` and
+      a span `[ 28 ]` that is its entire content, same 21x15 box. The span's text is
+      non-empty so the no-identity rule keeps it, and the tree's identical-nested-row
+      collapse cannot merge them either, because that needs EXACT label equality and
+      the two names come from different AccName paths: a bare text node versus the
+      separator-joined form #28 introduced, which is where the spaces come from. So
+      the rule also drops a descendant whose identity EQUALS its owner's. **Equality,
+      never containment** — containment against the owner's innerText is trivially
+      true for any descendant, which is the wide version that lost 93. Equality says
+      only "this row states exactly what its owner's row already states".
+      **My first attempt compared against innerText FIRST and CU4 caught it in one
+      run:** `<a aria-label="Star"><span>188530 users starred</span></a>` has
+      innerText equal to the span, so the span went while the surviving row said only
+      `name="Star"` — 69 labels lost on the corpus. AccName precedence (aria-label,
+      then title, then content) fixes it. Live result on the same page and viewport:
+      **173 elements → 101**. Residual: **1 loss in 1,493 labelled removals (0.07%)**,
+      a Guardian pull-quote `<h4>`, stated rather than claimed as zero — a different
+      thing from the 93 across five sites that included rankings and plan names (CU5).
 
     **A table's declared UNITS.** `<caption>` was already rendered (Wikipedia's
     "million US$"); ARIA's way is aria-labelledby/aria-describedby pointing at a
@@ -2031,10 +2048,10 @@ granted in the side panel is refused with the same message the agent gets.
     the memory note already says to do after a bulk edit; every edit after it was
     byte-precise with that scan as its gate.
 
-    Suites: 600 checks. New series — T21 (reader-side residual), TR17–TR20b (hoisting,
+    Suites: 601 checks. New series — T21 (reader-side residual), TR17–TR20b (hoisting,
     top-level folds, flat interleave), MH1/MH2 (declared heading rank), W21–W21c
     (writability), X18–X18c (scroll reporting), 4 cross-origin-frame text checks,
-    RG15 (self-scoped advice), CU1–CU4 (inherited cursor), TB13/TB13b (declared units).
+    RG15 (self-scoped advice), CU1–CU5 (inherited cursor), TB13/TB13b (declared units).
 
 ## Debugging starting points
 
