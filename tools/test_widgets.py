@@ -594,6 +594,13 @@ async def main():
             "<div><span style='display:none'>HIDDEN_LABEL_QRS</span>"
             "<input id=nh style='width:200px;height:24px'></div>"
             "<div>Visible Label<input id=nv style='width:200px;height:24px'></div>"
+            # THE ZERO-AREA HOLE. checkVisibility() returns TRUE for a 0x0 box, so
+            # this shape passed every filter and landed in near=. An audit injected
+            # exactly it and then steered find() with the injected words under a
+            # confident header — attacker-controlled text choosing the agent's target.
+            "<div><span style='display:inline-block;width:0;height:0;overflow:hidden'>"
+            "NIMBUS_DOCKET_ZZZ</span>"
+            "<input id=nz style='width:200px;height:24px'></div>"
             "</body>")
         await np.wait_for_timeout(150)
         _nst = await np.evaluate("(function(){ " + COLLECT
@@ -601,6 +608,7 @@ async def main():
         _nm = await np.evaluate(
             "()=>({c:document.getElementById('nc').getAttribute('mmid'),"
             "h:document.getElementById('nh').getAttribute('mmid'),"
+            "z:document.getElementById('nz').getAttribute('mmid'),"
             "v:document.getElementById('nv').getAttribute('mmid')})")
 
         def _near(key):
@@ -611,7 +619,10 @@ async def main():
               "promo" not in _near("c").lower(), f"near={_near('c')!r}")
         check("W19b ...nor display:none text",
               "HIDDEN_LABEL_QRS" not in _near("h"), f"near={_near('h')!r}")
-        check("W19c ...while a genuinely visible preceding label still works"
+        check("W19c ...nor ZERO-AREA text — checkVisibility() returns true for a 0x0"
+              " box, which is the shape an audit used to steer find()",
+              "NIMBUS_DOCKET_ZZZ" not in _near("z"), f"near={_near('z')!r}")
+        check("W19d ...while a genuinely visible preceding label still works"
               " (the over-correction guard)",
               _near("v") == "Visible Label", f"near={_near('v')!r}")
         await np.close()

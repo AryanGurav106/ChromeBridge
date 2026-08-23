@@ -1589,7 +1589,40 @@ async def find(
     # by type alone, which is the case F8/F14/F24 protect — "search box" reaching a
     # control whose only label is Chinese.
     _content_tokens = [t for t in tokens if t not in _ROLE_TOKENS]
-    _need = 2 if len(tokens) >= 3 else 1
+    # COVERAGE MUST SCALE WITH THE QUERY, AND A TWO-WORD QUERY IS NOT UNGATED.
+    # `2 if len(tokens) >= 3 else 1` is a step function with a cliff at three, and
+    # a live audit walked straight off it. Every one of these came back under a
+    # confident `Found N element(s) matching`:
+    #     "Passport Number"       -> the field whose placeholder is "Mobile Number"
+    #     "Other Currency"        -> a gender radio named "Other"
+    #     "Reading Room"          -> a hobby checkbox named "Reading"
+    #     "Sports Illustrated"    -> a hobby checkbox named "Sports"
+    #     "The Free Encyclopedia" -> 11 footer taglines, none containing "encyclopedia"
+    #                                ("the" is a stopword, dropping it to two)
+    #     "First Name"            -> First Name, and ALSO Last Name and the email field
+    # One covered word out of two earned full confidence, and an agent told to enter
+    # a passport number types it into the phone field. The cliff also meant coverage
+    # never scaled the other way: 2 covered tokens satisfied a SEVEN-token query.
+    #
+    # The curve: 1->1, 2->2, 3..5->2, 6..7->3, 10->4. Two effects, both measured.
+    # A TWO-WORD QUERY NOW NEEDS BOTH WORDS, which is the whole cliff above — and it
+    # is also what makes "First Name" reach First Name while demoting Last Name and
+    # the email field, which cover one word each. And coverage now SCALES, so the
+    # seven-token query answered confidently on 2 covered tokens is demoted.
+    #
+    # A FLAT 60% WAS TOO STRICT IN THE MIDDLE and F22 caught it: for "the link about
+    # browser compatibility data for this API" the correct element is named "Browser
+    # compatibility", covering 2 of 5 content tokens. Natural-language queries carry
+    # filler an element's name cannot contain, so demanding a proportion of a long
+    # query rejects the right answer. Hence the floor of 2 up to five tokens, rising
+    # only after that.
+    #
+    # Queries made ENTIRELY of role words are unaffected: no content tokens means
+    # `_text_possible` is false and the type-only fallback still runs, which is the
+    # F8/F14/F24 case where "search box" must reach a control labelled only in
+    # Chinese.
+    _n_content = len(_content_tokens)
+    _need = 1 if _n_content <= 1 else min(_n_content, max(2, -(-_n_content * 35 // 100)))
     # ROLE WORDS FILTER A TYPE; CONTENT WORDS IDENTIFY AN ELEMENT. The query
     # "classList documentation link" reported 792 confident matches on MDN,
     # because "link" is a role word that matches every <a> and one matched token

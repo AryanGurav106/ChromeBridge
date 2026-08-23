@@ -1639,10 +1639,29 @@ async function computerOp(t, params) {
     // longer applies. Failure here must never block the click — the echo is an
     // observation, and #12 means the whole CDP channel can be unavailable on
     // exactly the login pages where an agent needs it most.
-    let _hh = null;
-    try { _hh = await runInTab(t.id, _hitTestPage, [pt.x, pt.y]); } catch (e) {}
+    // AFTER OUR OWN mouseMoved, BEFORE THE PRESS. The hit test used to run before
+    // the move, which makes it blind to the commonest way a target escapes: THIS
+    // CALL'S OWN HOVER fires a handler that moves the element. Hover-expanding
+    // menus, reveal-on-hover toolbars and tooltips that reflow all do it.
+    //
+    // Reproduced live, twice, including on a fresh page load. A one-shot mouseover
+    // handler moved a checkbox 200px down; the tool reported plain success naming
+    // the checkbox, and the page recorded every button event landing on the FORM:
+    //     mouseover  target=input#hobbies-checkbox-3 @box(797,491,16,16)
+    //     Music box after move=                      @box(797,691,16,16)
+    //     pointerdown/mousedown/mouseup/click target=form#userForm
+    //     Music click count = 0, .checked = false
+    // The same experiment on another site WAS caught, because that page also
+    // scrolled and the scroll forced a fresh hit test — so the detector was real
+    // but its timing made it fire on one page and not another for the same
+    // mutation. Moving it after the move makes it deterministic: this is the last
+    // instant before the press, which is the only instant that predicts the press.
+    //
+    // Same reasoning as fix #10's attach-then-settle-then-measure, one step later.
     await cdpSend(t.id, "Input.dispatchMouseEvent",
       { type: "mouseMoved", x: pt.x, y: pt.y, button: "none", modifiers: bits });
+    let _hh = null;
+    try { _hh = await runInTab(t.id, _hitTestPage, [pt.x, pt.y]); } catch (e) {}
     for (let c = 1; c <= count; c++) {
       await cdpSend(t.id, "Input.dispatchMouseEvent",
         { type: "mousePressed", x: pt.x, y: pt.y, button, clickCount: c, buttons: button === "left" ? 1 : 2, modifiers: bits });
@@ -7059,6 +7078,20 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
                 _vis = p.checkVisibility
                   ? p.checkVisibility({ checkVisibilityCSS: true })
                   : !!p.offsetParent;
+                // ZERO AREA IS NOT VISIBLE, and checkVisibility says nothing about
+                // it — a 0x0 box with overflow:hidden returns TRUE. That is the hole
+                // an audit walked through: injecting
+                //   <span style="display:inline-block;width:0;height:0;overflow:hidden">
+                //     Nimbus Docket</span>
+                // beside an unlabelled input produced `near="Nimbus Docket"`, and
+                // find() then returned that input for a query on those words under a
+                // confident header. Comments and display:none/visibility:hidden were
+                // already rejected; this was the one shape that got through, and it
+                // is attacker-controllable text steering the agent's aim.
+                if (_vis) {
+                  const _pr = p.getBoundingClientRect();
+                  if (!(_pr.width > 0 && _pr.height > 0)) _vis = false;
+                }
               } catch (e) { _vis = true; }
               if (!_vis) { p = p.previousSibling; hops++; continue; }
             }
@@ -8110,9 +8143,15 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       // set and therefore the survivors. Telling the agent not to try a recovery
       // that works is the #23 cross-extension defect again: a tool asserting an
       // impossibility a live agent had just performed.
+      // THE SCROLL CLAUSE IS ABOUT A VIEWPORT-SCOPED LISTING, so it is false inside a
+      // SCOPED read, which returns the region in full. It leaked there and told the
+      // agent to scroll for entries that scrolling cannot change — while the same
+      // output's own footer said the listing was already scoped.
       `dialog/required/dropdown/input fields are prioritized). A larger max_chars will NOT help: ` +
-      `this cap counts ENTRIES, not characters. Scrolling changes WHICH entries are collected ` +
-      `(this listing is viewport-scoped), so it shifts the window rather than lifting the cap. ` +
+      `this cap counts ENTRIES, not characters. ` +
+      (scopeMmid
+        ? `This read is scoped, so it already returns the whole region — scrolling changes nothing here. `
+        : `Scrolling changes WHICH entries are collected (this listing is viewport-scoped), so it shifts the window rather than lifting the cap. `) +
       `Prefer narrowing — read_page(ref_id=…) ` +
       `on a smaller region, find (it searches the whole page), or read_page(ref_id=…, filter="all") if ` +
       `the rows you want are in a list or table. A question about the LARGEST or FIRST of something is ` +
@@ -9477,7 +9516,17 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
              `Act on one by its ref — pass ref_<N> for the mmid=<N> below.
 `;
     }
-    const L = [`Visible interactive elements (${out.length} on screen).`];
+    // A SCOPED READ IS NOT VIEWPORT-LIMITED, so "on screen" is the wrong noun for it.
+    // Since #26 a scoped read deliberately returns the whole subtree, and this header
+    // kept the whole-page wording — so it counted rows it then flagged (below-fold)
+    // in the same output. Three live confirmations, one self-contradicting inside a
+    // single response: `(17 on screen)` with 10 of those 17 rows marked
+    // `(below-fold)`, and craigslist reporting `(978 on screen)` for a 6082px section
+    // in an 855px viewport where 334 were actually visible. The count is right; only
+    // the claim about it was wrong.
+    const L = [scopeMmid
+      ? `Interactive elements in this subtree (${out.length}; a scoped read is NOT limited to the viewport, so some may be off-screen — those are flagged).`
+      : `Visible interactive elements (${out.length} on screen).`];
     // A COUNT IS ONLY HONEST IF IT SAYS WHAT IT EXCLUDED. aria-hidden is set by
     // libraries on everything BEHIND an open menu or dialog and cleared when it
     // closes, so a large count here does not mean the page is small — it means

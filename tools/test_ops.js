@@ -876,12 +876,21 @@ const FIELDS3 = () => ([
     check("computer: a bare coordinate click reports the ref the renderer hit-tests",
       /ref_42/.test(String(r.result)) && /button/.test(String(r.result)),
       String(r.result).slice(0, 150));
+    // THE ORDER IS attach -> settle -> our mouseMoved -> HIT TEST -> press.
+    // Before-the-move was wrong: this call's own hover can fire a handler that moves
+    // the target, and a check taken earlier cannot see it -- measured live as a plain
+    // success on a click the element never received. The last instant before the
+    // press is the only instant that predicts the press.
     const iAttach = idxOf((e) => e.kind === "cdp.attach");
     const iHit = idxOf((e) => e.kind === "exec" && e.name === "_hitTestPage");
-    const iDispatch = idxOf((e) => e.kind === "cdp" && e.method === "Input.dispatchMouseEvent");
-    check("computer: the hit test runs AFTER attach and BEFORE dispatch (fix #10 ordering)",
-      iAttach !== -1 && iHit !== -1 && iDispatch !== -1 && iAttach < iHit && iHit < iDispatch,
-      `attach@${iAttach} hit@${iHit} dispatch@${iDispatch}`);
+    const iMove = idxOf((e) => e.kind === "cdp" && e.method === "Input.dispatchMouseEvent"
+                               && e.params && e.params.type === "mouseMoved");
+    const iPress = idxOf((e) => e.kind === "cdp" && e.method === "Input.dispatchMouseEvent"
+                                && e.params && e.params.type === "mousePressed");
+    check("computer: the hit test runs after attach and our own hover, and before the press",
+      iAttach !== -1 && iMove !== -1 && iHit !== -1 && iPress !== -1
+        && iAttach < iMove && iMove < iHit && iHit < iPress,
+      `attach@${iAttach} move@${iMove} hit@${iHit} press@${iPress}`);
   });
 
   await test("computer hit-test echo mismatch + failure tolerance", async () => {

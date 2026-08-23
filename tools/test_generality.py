@@ -1054,6 +1054,21 @@ async def main():
               "aria-hidden" not in sub,
               next((l.strip()[:100] for l in sub.splitlines() if "aria-hidden" in l), "clean"))
         # The over-correction guard: unscoped, both facts must still be reported.
+        # RG13/RG14: A SCOPED READ IS NOT VIEWPORT-LIMITED, so it must not claim to be.
+        # The header kept the whole-page wording and counted rows it then flagged
+        # (below-fold) in the same output — three live confirmations, one
+        # self-contradicting inside a single response: `(17 on screen)` with 10 of
+        # those 17 marked `(below-fold)`, and `(978 on screen)` for a 6082px section
+        # in an 855px viewport. The cap notice leaked the same assumption, advising a
+        # scroll that cannot change a scoped result.
+        check("RG13 a scoped read does not claim its rows are 'on screen'",
+              "on screen" not in sub and "in this subtree" in sub,
+              next((l.strip()[:95] for l in sub.splitlines()
+                    if "on screen" in l or "in this subtree" in l), "NO HEADER"))
+        check("RG14 ...and the UNSCOPED read still says 'on screen', which is true of it",
+              "on screen" in full,
+              next((l.strip()[:70] for l in full.splitlines() if "on screen" in l), "MISSING"))
+
         check("RG12 ...while the UNSCOPED read still reports both",
               ("rows, read with" in full or "data table(s)" in full) and "aria-hidden" in full,
               f"table_hint={'rows, read with' in full or 'data table(s)' in full} "

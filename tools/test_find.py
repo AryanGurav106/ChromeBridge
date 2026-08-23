@@ -308,6 +308,46 @@ async def main():
     check("F31 ...while that element is still findable by what IS its own (role, near=)",
           "ref_4" in out, out.splitlines()[0][:100])
 
+    # F32-F35: THE CONFIDENCE GATE HAD A CLIFF AT THREE TOKENS, so every TWO-word
+    # query was effectively ungated — one covered word out of two earned a confident
+    # header. Each of these came back under `Found N element(s) matching` in a live
+    # audit, and the first is the one that does real damage: an agent told to enter a
+    # passport number types it into the phone field.
+    page(el(mmid="256", tag="input", placeholder="Mobile Number", near="Mobile(10 Digits)"),
+         el(mmid="249", tag="input", type="radio", name="Other", value="Other"),
+         el(mmid="286", tag="input", type="checkbox", name="Reading", value="2"))
+    _pn = await run("Passport Number")
+    check("F32 a 2-token query covering ONE word is not confident",
+          "NO CONFIDENT MATCH" in _pn or "No elements matched" in _pn,
+          _pn.splitlines()[0][:96])
+    _oc = await run("Other Currency")
+    check("F32b ...nor 'Other Currency' answered by a radio named Other",
+          "NO CONFIDENT MATCH" in _oc or "No elements matched" in _oc,
+          _oc.splitlines()[0][:96])
+
+    # The positive control, and the reason the fix is a curve rather than a bar:
+    # BOTH words match one element, so it must still be confident — and the
+    # neighbours that cover only "name" must not be.
+    page(el(mmid="230", tag="input", placeholder="First Name", near="Name"),
+         el(mmid="233", tag="input", placeholder="Last Name", near="Name"),
+         el(mmid="238", tag="input", placeholder="name@example.com", near="Email"))
+    _fn = await run("First Name")
+    _fn_rows = [l for l in _fn.split("NO CONFIDENT MATCH")[0].splitlines()
+                if l.strip().startswith("ref_")]
+    check("F33 a 2-token query where BOTH words match one element IS confident,"
+          " and its one-word neighbours are not",
+          "Found" in _fn.splitlines()[0] and any("ref_230" in l for l in _fn_rows)
+          and not any(("ref_233" in l or "ref_238" in l) for l in _fn_rows),
+          _fn.splitlines()[0][:70] + " | " + " ".join(l.strip()[:22] for l in _fn_rows))
+
+    # And coverage now scales: 2 covered tokens no longer satisfy a long query.
+    page(el(mmid="3553", tag="a", label="Support", name="Support"),
+         el(mmid="3554", tag="a", label="Roadmap", name="Roadmap"))
+    _long = await run("Introduction Why Vuetify Long-term support Roadmap Sponsors")
+    check("F34 a 7-token query is not confident on 2 covered tokens",
+          "NO CONFIDENT MATCH" in _long or "No elements matched" in _long,
+          _long.splitlines()[0][:96])
+
     page(el(mmid="2229", tag="button", label="구독", name="구독",
             near="매일경제 08월 10일 05:52 구독"),
          el(mmid="528", tag="button", label="구독", name="구독"),
