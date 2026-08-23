@@ -9016,7 +9016,14 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       // through rather than printed — otherwise every line pays two spaces for a
       // node carrying no information.
       if (el.tagName === 'BODY' || el.tagName === 'HTML') {
-        for (const c of (kids.get(el) || [])) emit(c, depth);
+        // THROUGH `_emitChildren`, not a bare emit loop. Walking these children
+        // directly skipped grouping entirely, so twelve identical links directly
+        // under <body> printed as twelve rows while the same twelve inside a <div>,
+        // a <ul> or a <main> folded into one line. The pass-through exists to
+        // suppress a ROW for a node that says nothing, not to suppress folding
+        // beneath it — and a page whose records sit at the top level is exactly the
+        // page that most needs them folded (TR19).
+        _emitChildren(kids.get(el) || [], depth);
         return;
       }
       const pad = ' '.repeat(depth);

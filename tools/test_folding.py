@@ -137,6 +137,21 @@ async def main():
               f"{len(st)} structured entries")
 
         small = await listing(page, PAGE_SMALL)
+        # TR19: THE TREE MUST FOLD AT THE TOP LEVEL TOO. `emit` walks <body>/<html>
+        # without printing a row for them — they are on every page and say nothing —
+        # and it did that with a direct `emit(child)` loop, which skips
+        # `_emitChildren` and therefore skips ALL grouping. The pass-through was
+        # written to suppress a ROW, not to suppress folding, so twelve identical
+        # links directly under <body> printed as twelve rows while the same twelve
+        # inside a <div>, a <ul> or a <main> folded into one. Measured across all
+        # four containers: only the bare-body case failed.
+        _tf = await listing(page, PAGE_FOLD, fmt="tree")
+        check("TR19 a repeated group directly under <body> folds in the tree, like"
+              " the same group inside any container",
+              "12×" in _tf,
+              f"{len([l for l in _tf.splitlines() if 'identical siblings' in l])} fold(s),"
+              f" {len(_tf)} chars")
+
         check("D7 a group below the threshold is NOT folded",
               "4×" not in small and "Product number 1" in small,
               small.splitlines()[-1][:80])
