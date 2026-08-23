@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 17 suites, 502 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 17 suites, 532 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -487,7 +487,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 502 checks, ~40s
+.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 532 checks, ~40s
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -1743,12 +1743,118 @@ granted in the side panel is refused with the same message the agent gets.
     surface declares itself).
 
 
+30. **AN OUTSIDE AUDIT FOUND TWO FEATURES DEAD IN THE SHIPPED CODE, BOTH BEHIND
+    GREEN SUITES.** An independent auditor was given the project's goal and
+    deliberately none of this log's findings. It confirmed the headline number
+    reproduces (Mind2Web 96.0%, 166/173) and rated the collector itself strong —
+    then found three defects, two of which had never worked in production.
+
+    **THE COMMON CAUSE IS THE ONE THING WORTH REMEMBERING:** the suites validate
+    helpers in isolation and never cross the two boundaries that decide whether
+    the code runs at all — the `chrome.scripting` injection boundary, and the
+    string contract between `mcp_server.py` and the listing the extension emits.
+    #19 already said "the op router is STILL the untested link" and #16 already
+    said "test stubs that share your assumptions test nothing". Saying it twice
+    did not stop it happening twice more.
+
+    - **The readiness probe's three DECLARATIVE signals were dead.**
+      `_readinessPage` is injected via `runInTab` → `executeScript({func})`, which
+      stringifies THAT FUNCTION AND NOTHING ELSE. It called `_deepAll` and
+      `_topRectFor`, both top-level siblings, so in the page they were free
+      identifiers: every call threw `ReferenceError`, each swallowed by the
+      `try/catch` written around it, and `imgs`/`busy`/`prog` stayed 0. Confirmed
+      in the page — `deepAll_type: "undefined"`, `busy_error: "ReferenceError"` —
+      on a page holding one `aria-busy` region and one visible progressbar, where
+      `read_page` emitted NO banner. Only `readyState` and the worker-side network
+      count still fired, so exactly the signals where the PAGE STATES it is busy
+      were gone, and a false "settled" is the worst direction this probe can fail
+      in. **The regression was #29-era, from the frame-blindness fix, and the same
+      commit made the test complicit**: `test_readiness.py` PREPENDED both helpers
+      before injecting. #25 documents this trap in words, and the codebase already
+      carried the correct pattern at the `dup:deepall` site. Fixed by inlining
+      both as inner closures; the suite now injects the function ALONE, and against
+      the old collector it reports 4/10 with R8 — the negative control #25 wrote
+      for precisely this — among the failures.
+    - **`read_page(delta=true)` had never once produced a delta.** `_content_rows`
+      split the listing on `"Act on an element"`; the extension emits `"Act on a
+      row by its ref_N:"`. So it returned `[]` for every real listing, the
+      `if _rows:` guard never stored a baseline, and every call answered "first
+      read of this tab". #16b's `~6,300 → 220 chars (−96%)` has never applied to a
+      real call. It failed SAFE — honest notice, full listing, no phantom `GONE`
+      rows — which is exactly why nothing surfaced it. One `_ACT_LINE` constant now,
+      and `_content_rows` is hoisted to module level **so a test can reach it at
+      all**: being nested inside the tool is why `test_delta` could only ever
+      exercise `_delta_listing` with hand-built rows (T12–T14).
+    - **`near=` reported text nobody can see, and it reached `find`'s confident
+      tier.** The legend calls it "nearest visible text"; the sibling walk called
+      `.textContent` with no node-type or visibility filter. On a COMMENT node that
+      returns the comment body — unlike `element.textContent`, which excludes
+      comment descendants — and an element sibling's `textContent` includes
+      `display:none` text. End to end: `<!-- promo code discount coupon --><input>`
+      made `find("promo code coupon field")` return that input under `Found 1
+      element(s) matching`, so an agent types a promo code into a field whose only
+      match is a developer's comment. `near=` counts as CONTENT coverage in the
+      scorer since #27, which is the path that carries an invisible string into the
+      confident results. `_deepText` already handles both cases; this was an
+      un-migrated older path (W19–W19c).
+
+    **TWO MECHANICAL TRIPWIRES, because the prose warnings demonstrably were not
+    enough.** `C11` parses `background.js`, finds all 25 `runInTab` targets,
+    extracts each, and fails on any call to a top-level sibling not declared
+    locally — it names both free references against the old collector. `C12`
+    requires the server's listing-boundary marker to be a prefix of a line the
+    extension really emits.
+
+    **MY OWN C11 WAS WRONG ON ITS FIRST RUN, IN THE BUG CLASS IT TESTS FOR:**
+    `_code_only` closed over a mask computed for the WHOLE FILE and applied it to
+    each extracted slice, so the indices addressed unrelated offsets and it
+    reported a free reference in a function that had none. Caught by reproducing
+    the check standalone, not by reading it.
+
+    **THE RESIDUE, and what each decision was:**
+    - **Positional fold alignment, hardened but NOT demonstrated.** `shapeOf`
+      returns `'~'` below depth 3 while `walkKept` collects kept descendants at
+      every depth, and the only guard was matching COUNTS — so two records
+      identical to depth 3, differing below it, with the same number of kept nodes
+      could be aligned index-by-index under a header that says "one line per
+      POSITION inside them". Now guarded by EXACT equality of the aligned sequence
+      (tag + role + entry-ness), which is the rule #27 already uses to decide
+      repetition, with no depth bound and no threshold. **Three attempts failed to
+      construct a fixture that reaches the positional path with a deep divergence**
+      — wrapper chains get spliced out by the single-kept-child pruning first — so
+      this is verified only as "does not regress the working case" (TR2 still
+      folds). Recorded as unproven rather than claimed as fixed.
+    - **The `aria-hidden` asymmetry is deliberate and now SAID.** `read_page` drops
+      elements under `aria-hidden="true"` (the page declaring them absent from the
+      accessibility tree, in practice usually mirror inputs and indicator
+      wrappers); `get_page_text` keeps their text, because that tool answers "what
+      does the screen say" and the text is painted. Both are right for their own
+      question, but the difference means a string can appear in one with no
+      actionable row in the other, and an agent had no way to learn why. The
+      trailer now states it.
+    - **Suite-count drift is self-detecting.** CLAUDE.md stated the total in two
+      places and it had gone stale three times over (502 against 475, then 498,
+      then 532). This file's own advice — "quote counts from `--list` and a real
+      run, not from memory" — is a thing a human must remember, and an attempt to
+      fix it by hand SILENTLY NO-OPPED because the pattern matched nothing and said
+      so to nobody. `run_tests.py` now compares the stated count with its own total
+      and prints an advisory note; the per-section `Suites: N checks` figures are
+      history and are left alone. **Its own gate was wrong first** — `--group`
+      defaults to `"all"`, which is truthy, so `not args.group` never ran; found by
+      planting 999 in the doc and watching nothing happen.
+
+    Suites: 532 checks. New — C11, C12 (contract tripwires), T12–T14 (delta over
+    real listing text), W19–W19c (`near=` visibility).
+
+
 ## Debugging starting points
 
 | Symptom | Where to look |
 |---------|---------------|
 | Listing has 0 elements after a click | `_collectInteractivePage` — check `isInteractive`, visibility filter, and `aria-hidden` / `inert` exclusion |
 | An element you can see is missing from every listing | Since #28 no heuristic deletes, so it is one of ten rules — run `read_page(ledger=true)` scoped to its container and read the name. If the name is not in `L10c`'s `SPEC_DELETES` set, a rule started deleting again and that test should have caught it |
+| A page-injected function returns zeros/empties on every page, and no error anywhere | It calls a top-level sibling. `runInTab` → `executeScript({func})` stringifies ONE function, so the sibling is a free identifier, the `ReferenceError` lands in the nearest `try/catch`, and you get a plausible zero. `C11` in `test_contracts.py` enumerates all 25 injection targets and fails on this — run it first. Inline the helper as an inner closure (see the `dup:deepall` sites). #30 |
+| A feature reports "nothing to compare" or an empty result forever, and its tests pass | Suspect a string contract with the extension's output, not the logic. `delta` was dead for its whole life because the server split on `"Act on an element"` while the extension emits `"Act on a row by its ref_N:"`. `C12` pins that one; if you add another such marker, add a check beside it. #30 |
 | A row starts with several refs (`ref_4 ref_5 ref_6 \| div "…"`) | By design since #29 — nested elements with the SAME label and the SAME box share one row, in document order, outermost first. Any of them acts on that spot; they are not ranked, because #28 measured those rules deleting 2.8pp of ground truth |
 | A container row has no text of its own | By design since #29 — its label was every label indented beneath it, so it is not repeated. A container with prose of its own keeps its label, and a declared control NEVER loses its name (TR8d) |
 | A dropdown reports options belonging to something else | Fixed in #29 and pinned by W17/W17b. A declared `aria-controls` scope that is not RENDERED is a decoy (rc-select/antd), and nothing widens past a declaration any more. If it recurs, check that `sampleOptions` and `_pickOptionPage` still agree — they are marked KEEP IN SYNC and have drifted twice |

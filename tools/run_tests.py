@@ -557,6 +557,33 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  {len(passed)} passed, {len(failures)} failed, {len(skips)} skipped "
           f"of {len(results)} suite(s); {checks} checks; {total_time:.1f}s")
 
+    # DOC DRIFT IS SELF-DETECTING NOW, because this is the only thing that knows
+    # the true count. CLAUDE.md states the total in two places and it had gone
+    # stale three times over (502 in the docs against 475, 498 and then 532 in
+    # reality) — the file's own guidance says "quote counts from --list and a real
+    # run, not from memory", which is advice a human has to remember to follow. An
+    # attempt to fix it by hand also silently no-opped, because the sed pattern
+    # matched nothing and said so to nobody. A whole-suite run is the moment the
+    # answer is known, so it is the right moment to notice. Advisory, never a
+    # failure: the count is documentation, not behaviour, and a wrong number in a
+    # comment must not break someone's build.
+    # `--group` DEFAULTS TO "all", which is truthy — so the first version of this
+    # gate (`not args.group`) never ran, and the notice stayed silent against a
+    # deliberately wrong count. Caught by planting 999 in the doc and watching
+    # nothing happen, not by reading the condition.
+    if args.group in (None, "all") and not getattr(args, "only", None) \
+            and not getattr(args, "skip", None) and not args.skip_browser:
+        try:
+            _md = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+            _stated = {int(m) for m in re.findall(r"17 suites, (\d+) checks", _md)}
+            if _stated and checks and _stated != {checks}:
+                print(f"  note: CLAUDE.md says {'/'.join(str(s) for s in sorted(_stated))}"
+                      f" checks, this run counted {checks} — update the two"
+                      f" current-state lines (the per-section 'Suites: N checks'"
+                      f" figures are history and stay as they are)")
+        except Exception:
+            pass
+
     if skips:
         print(f"  skipped: {', '.join(r.suite.name for r in skips)}")
         if args.strict:
