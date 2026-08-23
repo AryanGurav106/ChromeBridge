@@ -63,10 +63,13 @@ _HIT_PAGE = """<!doctype html><meta charset=utf-8><body style="margin:0">
 <div id=veil mmid="9" style="position:absolute;left:0;top:0;width:400px;height:200px;background:transparent"></div>
 <button id=clear mmid="11" style="position:absolute;left:40px;top:300px;width:120px;height:30px">Clear target</button>
 <div id=host mmid="13" style="position:absolute;left:40px;top:400px;width:120px;height:30px"></div>
+<button id=outer mmid="21" style="position:absolute;left:40px;top:480px;width:160px;height:34px">
+  <span id=inner mmid="23">Save changes</span></button>
 <script>
 window.__mmidReg = new Map([["7",document.getElementById('want')],
   ["9",document.getElementById('veil')],["11",document.getElementById('clear')],
-  ["13",document.getElementById('host')]]);
+  ["13",document.getElementById('host')],["21",document.getElementById('outer')],
+  ["23",document.getElementById('inner')]]);
 document.getElementById('host').attachShadow({mode:'open'}).innerHTML =
   '<button style="width:120px;height:30px">Inside shadow</button>';
 </script></body>"""
@@ -116,6 +119,27 @@ async def _hit_echo_checks(browser, check):
     check("X12 the hit test pierces a shadow root, as a real click does",
           h["ref"] == "13" and h["deep"] >= 1,
           "ref=" + repr(h["ref"]) + " deep=" + repr(h["deep"]))
+
+    # X15/X15b: YOUR OWN SUBTREE IS NOT AN OCCLUDER. Reported live an hour after the
+    # echo shipped: naming ref_115 produced
+    #   "MISMATCH: you named ref_115, but the renderer hit-tests ref_117 <slot>
+    #    (inside a shadow root) — something is on top, or the layout moved"
+    # while ref_117 was ref_115's OWN CHILD, indented under it in the same listing.
+    # Nothing was on top, nothing had moved, and the click worked. A false MISMATCH
+    # is worse than no echo at all: it tells the agent its aim is wrong when it is
+    # right, and the natural response is to go hunting coordinates. Any control with
+    # inner markup — a <slot>, an icon <span>, a label — hits its own inside.
+    h = await hit(120, 497)
+    check("X15 clicking the inside of a control resolves to the INNERMOST ref",
+          h["ref"] == "23", "ref=" + repr(h["ref"]) + " (23 is the inner span of button 21)")
+    _own = await echo(120, 497, "[mmid='21']")
+    check("X15b ...and naming the OUTER control is NOT a mismatch — the event bubbles"
+          " to it, which is what clicking it means",
+          _own.strip() == "" and "MISMATCH" not in _own, repr(_own[:110]))
+    _real = await echo(100, 55, "[mmid='11']")
+    check("X15c ...while a ref that is genuinely NOT in the chain still mismatches"
+          " (the guard did not blanket-silence the echo)",
+          "MISMATCH" in _real, _real.strip()[:110])
 
     h = await hit(700, 550)
     check("X13 a point over no control names what IS there rather than shrugging",

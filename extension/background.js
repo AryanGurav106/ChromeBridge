@@ -1391,6 +1391,28 @@ function _hitTestPage(x, y) {
       out.deep++;
     }
     if (!el) return out;
+    // RECORD THE WHOLE ANCESTOR CHAIN OF REFS, not just the nearest one. Clicking a
+    // CHILD of the element you named is not a mismatch — the event starts there and
+    // bubbles to it, which is what clicking that element means. Reported live an
+    // hour after this feature shipped: `computer(left_click, ref=115)` answered
+    //   MISMATCH: you named ref_115, but the renderer hit-tests ref_117 <slot>
+    //   (inside a shadow root) at that point — something is on top, or the layout
+    //   moved since the coordinate was produced.
+    // ref_117 is ref_115's OWN CHILD SLOT, indented under it in the same listing.
+    // Nothing was on top, nothing had moved, and the click worked (the dialog
+    // closed). A false MISMATCH is worse than no echo: it tells the agent its aim
+    // is wrong when it is right, and the natural response is to hunt coordinates.
+    // The chain is what distinguishes "something else is on top" from "you hit the
+    // inside of your own target".
+    out.chain = [];
+    try {
+      let w = el;
+      for (let i = 0; i < 40 && w; i++) {
+        const m2 = w.getAttribute && w.getAttribute('mmid');
+        if (m2) out.chain.push(String(m2));
+        w = w.parentElement || (w.getRootNode && w.getRootNode().host) || null;
+      }
+    } catch (e) {}
     // Walk up to the nearest element the agent has a handle for. An mmid on an
     // ancestor is the honest answer: acting on it is what clicking here does.
     let n = el, hops = 0;
@@ -1434,10 +1456,18 @@ function _hitEcho(h, sel) {
   // the echo — say it plainly rather than burying it in a match/no-match token.
   if (sel) {
     const want = (/mmid=['"]?([^'"\]]+)/.exec(sel) || [])[1];
-    if (want && h.ref && String(want) !== String(h.ref)) {
+    // YOUR OWN SUBTREE IS NOT AN OCCLUDER. If the named ref is anywhere on the hit
+    // element's ancestor chain, the event starts inside it and bubbles to it — that
+    // is what clicking that element means, and it is the normal case for any control
+    // with inner markup (a <slot>, an icon <span>, a label). Only a ref that is NOT
+    // on the chain means something else is genuinely in the way.
+    const _inChain = !!(want && Array.isArray(h.chain)
+                        && h.chain.indexOf(String(want)) !== -1);
+    if (want && h.ref && String(want) !== String(h.ref) && !_inChain) {
       return ` MISMATCH: you named ref_${want}, but the renderer hit-tests ${what}${deep} at that point`
         + ` — something is on top, or the layout moved since the coordinate was produced.`;
     }
+    if (_inChain) return '';   // hit inside your own target: silent, like any agreement
     if (want && !h.ref) {
       return ` WARNING: you named ref_${want}, but the renderer finds ${what}${deep} at that point.`;
     }
@@ -8893,6 +8923,72 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       // list, because the indentation invites exactly that reading.
       const _ordered = Array.from(groups.values())
         .sort((x, y) => docOrder(x[0], y[0]));
+      // ONE ORDERED SEQUENCE MUST NOT BE PRESENTED AS SEVERAL. Sorting groups by
+      // their FIRST member fixes the printing order but says nothing about their
+      // SPANS, and a group's span can enclose another's. Measured on Wikipedia's
+      // "list of countries by GDP": the ranked country column split into a 10-member
+      // fold and an 88-member fold plus loose rows, BOTH headed "in document order",
+      // whose members interleave by ref (784, 796, 813, 825, 837, 849, ...).
+      //   position 5 of the first fold  -> "Spain"  (actually 15th)
+      //   position 5 of the second fold -> "Russia" (actually 9th)
+      // The true 5th is the United Kingdom, recoverable only by merging both folds
+      // and the loose rows by ref number. So the header invited counting, counting
+      // was wrong, and nothing in the output said so — a confident wrong answer
+      // with no symptom, which is the worst class this project has.
+      //
+      // The existing cross-group warning does not cover it: that one is about
+      // PAIRING two different kinds of thing (titles against comment counts). Here
+      // the agent is not pairing, it is COUNTING one sequence that has been cut in
+      // pieces. Detected exactly, no threshold: refs are assigned in document order,
+      // so if another group's members fall strictly inside this group's ref span,
+      // the two are interleaved and position is not rank.
+      const _mmNum = (n) => {
+        try { const v = parseInt(n.getAttribute('mmid'), 10); return isNaN(v) ? null : v; }
+        catch (e) { return null; }
+      };
+      const _spans = _ordered.map((ms) => {
+        let lo = Infinity, hi = -Infinity;
+        for (const m of ms) {
+          const v = _mmNum(m);
+          if (v === null) continue;
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
+        }
+        return [lo, hi];
+      });
+      // TEST MEMBERS, NOT ENDPOINTS. The first version compared the other group's
+      // [lo,hi] against this one's, which misses the commonest arrangement: when
+      // group A's span ENCLOSES group B's, neither of B's endpoints falls strictly
+      // inside A's, so B was reported as un-interleaved while A was marked. TR16
+      // caught it as "1 of 2 group(s) marked" on a fixture where the two runs plainly
+      // alternate. Asking whether any MEMBER of another group lands inside this
+      // group's span is the question that was meant, and it is exact.
+      const _crossers = (members) => {
+        const i = _ordered.indexOf(members);
+        if (i < 0) return 0;
+        const [lo, hi] = _spans[i];
+        if (!(lo < hi)) return 0;
+        let n = 0;
+        for (let j = 0; j < _ordered.length; j++) {
+          if (j === i) continue;
+          for (const m of _ordered[j]) {
+            const v = _mmNum(m);
+            if (v !== null && v > lo && v < hi) { n++; break; }
+          }
+        }
+        return n;
+      };
+      // The order phrase, told the truth in both cases.
+      const _ordPhrase = (members) => {
+        const n = _crossers(members);
+        // Short on purpose: the first wording ran ~190 chars per interleaved fold
+        // and pushed the tree past the flat listing, failing TR7's budget guard.
+        // The load-bearing facts are that it interleaves and that position is not
+        // page order; the rest was explanation.
+        return n
+          ? `NOT page order — interleaved with ${n} other group(s); merge by ref`
+          : 'in document order';
+      };
       for (const members of _ordered) {
         // IDENTICAL SIBLING CONTAINERS COLLAPSE POSITIONALLY.
         //
@@ -8940,7 +9036,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
           if (ok) {
             const tag0 = (members[0].tagName || '').toLowerCase();
             _foldGroups++;
-            out.push(`${pad}${members.length}× ${tag0}, identical siblings, in document order`
+            out.push(`${pad}${members.length}× ${tag0}, identical siblings, ${_ordPhrase(members)}`
                    + ` — one line per POSITION inside them; act on any ref:`);
             for (let i = 0; i < n0; i++) {
               const rep = perMember[0][i];
@@ -8985,7 +9081,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
           }).join(' ');
           const _t0 = members.every((m) => ent.get(m).type === e0.type) && e0.type ? `[${e0.type}]` : '';
           _foldGroups++;
-          out.push(`${pad}${members.length}× ${e0.role || e0.tag}${_t0}, identical siblings, in document order`
+          out.push(`${pad}${members.length}× ${e0.role || e0.tag}${_t0}, identical siblings, ${_ordPhrase(members)}`
             + `${e0.href ? ' — each a link, ref:"label"→href' : ' — ref:"label"'}`
             + ` (act on any via its ref): ${items}`);
         } else {
@@ -9464,24 +9560,16 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     }
     if (_sawAlso)                L.push(`  - ref_A ref_B | ... — one row, several refs: nested elements with the SAME label and the SAME box. Any of them acts on that spot; they are listed together instead of as identical rows.`);
     if (_sawRolled)              L.push(`  - a container row with no text of its own — its label was every label indented beneath it, so it is not repeated here.`);
-    // TWO FOLDS ARE NOT TWO COLUMNS OF ONE TABLE. Each group's "in document order"
-    // is true OF THAT GROUP, and printing two of them invites reading position N of
-    // one against position N of the other. Measured live on Hacker News: a 17-member
-    // group of comment counts printed ABOVE a 16-member group of story titles, both
-    // claiming document order, and zipping them paired every title with the previous
-    // story's count — "The Art and Beauty of Blade Runner" against 50 comments when
-    // its real count was 21, all 16 pairs shifted by one, with nothing stating the
-    // length mismatch or the offset. #27 cited this as a reason the tree beats a
-    // flat list and left it unsaid in the output.
-    // The join key is already on every member: refs are assigned in document order,
-    // so a title at ref_218 belongs with the count at ref_232, not with the first
-    // number in the other line. Saying so costs one line and only when it applies.
-    // Kept SHORT deliberately: the first wording ran 277 chars and pushed the tree
-    // past the flat listing on TR7's fixture, which is a standing budget guard. The
-    // load-bearing facts are that positions do not correspond across groups and that
-    // refs do; everything else was explanation.
-    if (_foldGroups >= 2)
-      L.push(`  - member POSITIONS do not correspond BETWEEN folded groups (one may lack a member another has) — pair by nearby ref number, not by position.`);
+    // THE BLANKET CROSS-GROUP LEGEND LINE IS GONE, replaced by a per-fold marker at
+    // the fold header itself (`_ordPhrase`). The legend fired whenever TWO folds
+    // existed, which is both too broad and too weak: two folds with DISJOINT ref
+    // spans are different regions and pairing them positionally was never on the
+    // cards, while the case that actually produces a wrong answer is two folds whose
+    // spans INTERLEAVE — Wikipedia's ranked GDP column split into a 10-member and an
+    // 88-member fold, where counting to position 5 gives Spain (15th) or Russia
+    // (9th) instead of the United Kingdom. The marker now appears on exactly the
+    // folds that interleave and says position is not page order, which is cheaper
+    // and true where it fires.
     if (has(e => e.name))        L.push(`  - name="..." — IDENTITY (label / accessible name).`);
     if (has(e => e.near))        L.push(`  - near="..." — nearest visible text: a HINT for unnamed fields, never the real name.`);
     if (has(e => e.value))       L.push(`  - value="..." — CURRENT CONTENTS; empty/absent means blank.`);

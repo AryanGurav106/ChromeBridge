@@ -464,12 +464,22 @@ async def main():
         # passes without exercising anything — which is what two earlier drafts did.
         fp2 = await browser.new_page(viewport={"width": 900, "height": 900})
         await fp2.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
-        _t = "".join(f'<li><a class=t href=/s{i} style="display:block;width:300px;'
-                     f'height:20px">Story {i}</a></li>' for i in range(8))
-        _c = "".join(f'<li><a class=c href=/c{i} style="display:block;width:120px;'
-                     f'height:18px">{10 * i} comments</a></li>' for i in range(7))
+        # THE TWO RUNS MUST INTERLEAVE, which is the real shape and the dangerous one.
+        # Two folds with DISJOINT ref spans are separate regions and counting inside
+        # one is fine; the wrong-answer case is one ordered sequence cut into pieces
+        # whose members alternate. Measured on Wikipedia's ranked GDP column: a
+        # 10-member and an 88-member fold, both headed "in document order", where
+        # position 5 gives Spain (15th) or Russia (9th) instead of the UK. An earlier
+        # draft of this fixture put all titles then all counts -- disjoint spans, so
+        # the marker correctly did not fire and the check tested nothing.
+        _rows = "".join(
+            f'<li><a class=t href=/s{i} style="display:block;width:300px;height:20px">'
+            f'Story {i}</a></li>'
+            + (f'<li><a class=c href=/c{i} style="display:block;width:120px;height:18px">'
+               f'{10 * i} comments</a></li>' if i < 7 else "")
+            for i in range(8))
         await fp2.set_content("<!doctype html><meta charset=utf-8><body style='margin:0'>"
-                              f"<ul>{_t}</ul><ul>{_c}</ul></body>")
+                              f"<ul>{_rows}</ul></body>")
         await fp2.wait_for_timeout(150)
         _ft = await fp2.evaluate(
             "(function(){ " + COLLECT
@@ -478,11 +488,19 @@ async def main():
         check("TR15 two folded groups of UNEQUAL length are both emitted",
               len(_groups) == 2,
               f"{len(_groups)} group(s): {[g.strip()[:24] for g in _groups]}")
-        check("TR16 ...and the listing says their positions are NOT aligned, so"
-              " zipping them is not invited",
-              any("do not correspond BETWEEN folded groups" in l for l in _ft.splitlines()),
-              next((l.strip()[:90] for l in _ft.splitlines() if "do not correspond" in l),
-                   "NO WARNING — an agent zipping these mispairs every record"))
+        # The marker must sit ON the fold header, not in a legend: it is true of the
+        # folds that interleave and false of folds that do not, so it cannot be a
+        # blanket statement. TR16b is the negative control -- without it, a marker
+        # printed on every fold would pass TR16 while telling agents to distrust
+        # perfectly countable groups.
+        _marked = [l for l in _ft.splitlines()
+                   if "identical siblings" in l and "interleaved with" in l]
+        check("TR16 an interleaved fold says so ON ITS HEADER, and that position is"
+              " not page order",
+              len(_marked) == len(_groups) and all("NOT page order" in l for l in _marked),
+              f"{len(_marked)} of {len(_groups)} group(s) marked: "
+              + (_marked[0].strip()[:100] if _marked
+                 else "NO MARKER — an agent counting positions here gets the wrong rank"))
         await fp2.close()
 
         check("TR10d ...while its children and their labels all survive",
