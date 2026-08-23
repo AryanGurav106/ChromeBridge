@@ -131,8 +131,30 @@ def check_parses(code: str, name: str = "") -> None:
         Path(path).unlink(missing_ok=True)
 
 
-def code_mask(src: str) -> bytearray:
+def live_mask(src: str) -> bytearray:
+    """One byte per character: 1 where the character is LIVE, 0 only inside a comment.
+
+    `code_mask` answers "is this executable syntax", which is the right question
+    for the pattern auditor (a legend sentence must not be reported as a regex).
+    It is the WRONG question for asking whether a signature still exists, because
+    a hardcoded CSS selector — `'.CodeMirror, .cm-editor, .monaco-editor'` — lives
+    in a string literal and IS the signature. Masking strings out reported eight
+    of ten ablation entries as deleted when only two were.
+
+    So: strings and regex literals count, comments do not. The distinction that
+    matters here is live-vs-dead, not code-vs-data.
+    """
+    mask = bytearray(b"\x01") * len(src)
+    for j, live in enumerate(code_mask(src, strings_are_code=True)):
+        mask[j] = live
+    return mask
+
+
+def code_mask(src: str, strings_are_code: bool = False) -> bytearray:
     """One byte per character: 1 where it is real JS CODE, 0 in a comment or string.
+
+    With `strings_are_code=True` only comments are masked out — see `live_mask`,
+    which is the caller that wants that and explains why.
 
     Lifted out of `extract`'s scanner so `audit_patterns.py` can share it instead of
     approximating with "does the line START with //". That approximation produced two
@@ -179,8 +201,9 @@ def code_mask(src: str) -> bytearray:
                     k += 1
                     break
                 k += 1
-            for x in range(j, min(k, n)):
-                mask[x] = 0
+            if not strings_are_code:
+                for x in range(j, min(k, n)):
+                    mask[x] = 0
             j = k
             continue
         if c == "/" and _regex_allowed(src, j):

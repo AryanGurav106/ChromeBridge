@@ -1,11 +1,18 @@
 """Signature-ablation test: how much weight is the site-specific code carrying?
 
 The collector contains a handful of hard-coded LIBRARY SIGNATURES — CodeMirror/
-Monaco/Ace class names, FontAwesome/Bootstrap icon-font prefixes, a `canvas`
-class regex, Radix's data-state/data-placeholder, and an English
-select|choose|pick wordlist. Each is documented as "a booster beside a general
-path, never a sole gate". This test checks that claim empirically instead of by
-assertion:
+Monaco/Ace class names, FontAwesome/Bootstrap icon-font prefixes, Radix's
+data-state, the placeholder class-token convention with its Tailwind exclusion
+list, and an active/selected/current class token. Each is documented as "a
+booster beside a general path, never a sole gate". This test checks that claim
+empirically instead of by assertion:
+
+Entries for the `canvas` class regex, the English select|choose|pick wordlist and
+the old placeholder class-token literal were removed once `live_mask` showed they
+matched only REMOVAL COMMENTS or nothing at all — see `_code_sites`. Before that
+fix a plain `.count()` matched the comment quoting a deleted regex, the ablation
+rewrote prose, and the run reported a signature that does not exist as a
+harmless booster. Eight of ten entries were in that state.
 
   For every site in the corpus, run the REAL collector, then run it again with
   ONE signature neutered to a never-matching token, and diff the structured
@@ -33,6 +40,7 @@ from playwright.async_api import async_playwright
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 from audit_dom_quality import extract, load_sites  # noqa: E402
+from _extract import live_mask  # noqa: E402
 
 OUT = ROOT / "temp" / "dom_quality"
 NEVER = ".__ablated_never_matches__"
@@ -56,9 +64,6 @@ ABLATIONS = [
     ("icon-library-prefixes",
      r"/(?:^|\s)(?:fa|far|fas|fab|fal|bi|icon|lucide|ph|ri|ti|mdi|bx|bxs|gg|la|las|octicon|tabler)-([a-z][a-z0-9-]{2,})/",
      "/(?!)/"),
-    ("canvas-class-regex",
-     r"/(^|[\s-])canvas($|[\s_-])/i",
-     "/(?!)/"),
     ("radix-data-state",
      "if (ds === 'active' || ds === 'open' || ds === 'on' || ds === 'checked') return ds;",
      "if (false) return ds;"),
@@ -66,15 +71,18 @@ ABLATIONS = [
     #     placeholder story has two independent structural signals (attribute
     #     name vs class token) plus the wordlist; ablating each in turn shows
     #     whether any single one is carrying the answer alone.
-    ("english-select-wordlist",
-     r"/^(select|choose|pick)\b/i",
-     "/(?!)/"),
     ("placeholder-attr-name",
      "if (a.name.indexOf('placeholder') !== -1) {",
      "if (false) {"),
     ("placeholder-class-token",
-     r"return /(^|[\s_-])placeholder([\s_-]|$)/.test(cn);",
-     "return false;"),
+     r"if (!/(^|[_-])placeholder$|^placeholder([_-]|$)/.test(tok)) continue;",
+     "if (true) continue;"),
+    # The NEGATIVE half of the same signal: a hardcoded list of Tailwind-style
+    # CSS-property prefixes that must not count as placeholder state. It is a
+    # list of the utilities someone thought of, so it gets measured like the rest.
+    ("tailwind-utility-exclusion",
+     r"if (/^(text|bg|border|fill|stroke|ring|shadow|from|via|to|decoration|outline|caret|accent)-placeholder$/.test(tok)) continue;",
+     "if (false) continue;"),
     ("active-selected-class",
      r"/(^|\s)(active|selected|current)($|\s)/",
      "/(?!)/"),
@@ -85,16 +93,49 @@ WATCH = ["label", "name", "value", "placeholder", "role", "iconOnly", "canvasLik
          "codeEditor", "editable", "unselected", "active", "orphanWidget", "near"]
 
 
+def _code_sites(base, needle):
+    """Occurrences of `needle` in real CODE, ignoring comments and strings.
+
+    A signature that has been DELETED usually leaves a comment behind saying so
+    and quoting the literal — this file's own removal notes do exactly that. A
+    plain `.count()` finds those, the ablation then rewrites comment text,
+    nothing changes, and the run reports the signature as a harmless booster.
+    That is a measurement of nothing dressed as a clean result, and it is the
+    same vacuity that green-for-the-wrong-reason fixtures produce. Counting
+    against `live_mask` (comments masked, string literals kept — a hardcoded CSS
+    selector IS the signature) makes a deleted one fail loudly instead.
+    """
+    mask = live_mask(base)
+    hits, at = [], base.find(needle)
+    while at != -1:
+        if all(mask[at:at + len(needle)]):
+            hits.append(at)
+        at = base.find(needle, at + 1)
+    return hits
+
+
 def build_variants(src_path=None):
     src = Path(src_path or (ROOT / "extension" / "background.js")).read_text(encoding="utf-8")
     base = extract("_collectInteractivePage", src)
     variants = {"__base__": base}
     for name, needle, repl in ABLATIONS:
-        n = base.count(needle)
-        if n == 0:
-            raise SystemExit(f"ablation '{name}' pattern not found in collector — update the literal:\n  {needle}")
-        variants[name] = base.replace(needle, repl)
-        print(f"  ablation {name:<24} {n} site(s) in source")
+        hits = _code_sites(base, needle)
+        if not hits:
+            total = base.count(needle)
+            raise SystemExit(
+                f"ablation '{name}' pattern not found in collector CODE"
+                + (f" ({total} occurrence(s) in comments/strings only — the signature was"
+                   " deleted and only its removal note survives; drop this entry)" if total
+                   else " — update the literal")
+                + f":\n  {needle}")
+        out, prev = [], 0
+        for at in hits:
+            out.append(base[prev:at])
+            out.append(repl)
+            prev = at + len(needle)
+        out.append(base[prev:])
+        variants[name] = "".join(out)
+        print(f"  ablation {name:<24} {len(hits)} code site(s)")
     return variants
 
 

@@ -14,34 +14,50 @@ Run:  python tools/capture_listings.py
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 
 from playwright.async_api import async_playwright
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _extract import extract as _shared_extract  # noqa: E402
+
 
 def _extract_collector() -> str:
-    """Pull the REAL `_collectInteractivePage` source out of background.js (brace-
-    balanced) so the capture reflects exactly what the extension ships — no
-    probe-divergence risk. The function is self-contained (no outer refs)."""
+    """Pull the REAL `_collectInteractivePage` source out of background.js so the
+    capture reflects exactly what the extension ships — no probe-divergence risk.
+
+    This used to find the function with `src.index("function _collectInteractivePage(structured) {")`
+    — a literal that names the parameter list. The signature has since grown to
+    six positionals, so the index() raised and THE WHOLE MODULE FAILED TO IMPORT:
+    the file CLAUDE.md calls the corpus's source of truth could not be run at all.
+    It stayed unnoticed because every consumer reads this file as TEXT to parse
+    SITES and none of them import it.
+
+    `tools/_extract.py` is the shared, comment/string/regex-aware slicer that
+    exists for exactly this and survives a signature change (it also keeps a
+    leading `async`, which a hand-rolled brace walk dropped). `verify=True` parses
+    the result, so a bad slice fails here rather than as a mystery inside a page.
+    """
     src = (Path(__file__).resolve().parent.parent / "extension" / "background.js").read_text(encoding="utf-8")
-    marker = "function _collectInteractivePage(structured) {"
-    i = src.index(marker)
-    j = i + len(marker)
-    depth = 1
-    while depth and j < len(src):
-        c = src[j]
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-        j += 1
-    return src[i:j]
+    return _shared_extract("_collectInteractivePage", src, verify=True)
 
 
 COLLECTOR = _extract_collector()
 # Wrapper expression: define the real collector, return both the agent-facing
 # listing (structured=false) and the full pre-cap element count (structured=true).
-WRAP = "(function(){ " + COLLECTOR + "\n; var a=_collectInteractivePage(true); var s=_collectInteractivePage(false); return { count: a.length, listing: s }; })()"
+#
+# `format` IS PASSED EXPLICITLY. Calling with one positional leaves it undefined,
+# which the collector reads as not-'tree' and silently serves the FLAT listing —
+# so a capture taken that way describes a format the extension has not shipped by
+# default since CLAUDE.md #27. An omitted argument that changes the output is the
+# same defect class as the marker above: it does not fail, it just measures
+# something else.
+_FORMAT = "tree"
+WRAP = ("(function(){ " + COLLECTOR
+        + "\n; var a=_collectInteractivePage(true, null, 'compact', false, false, '" + _FORMAT + "');"
+        + " var s=_collectInteractivePage(false, null, 'compact', false, false, '" + _FORMAT + "');"
+        + " return { count: a.length, listing: s }; })()")
 
 # Diverse, deliberately hard targets. Public (Playwright runs a fresh, logged-out
 # Chromium), each stressing a different code path.

@@ -176,6 +176,32 @@ async def main():
                         ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
                         and not e.get("demoted"))))
 
+        # H4: the zoo has carried an aria-hidden HOST with a button inside its
+        # shadow root since the shadow fixtures were written, and nothing ever
+        # asserted on it — a fixture with no check, which is how CLAUDE.md #25
+        # came to list "aria-hidden shadow subtrees" among three drop rules
+        # "proven invisible even to ledger:true". `closest()` genuinely does not
+        # cross a shadow boundary, so the concern was reasonable; the drop is
+        # handled elsewhere and IS recorded. Both halves are asserted, because a
+        # correct-but-silent drop is exactly what left this unfalsifiable.
+        _led = await page.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(true, null, 'compact', true); })()")
+        _gi = await page.evaluate("""() => {
+            const h = document.getElementById('gi-host');
+            const b = h && h.shadowRoot && h.shadowRoot.querySelector('button');
+            return { btn: b && b.getAttribute('mmid'),
+                     closestCrosses: !!(b && b.closest && b.closest('[aria-hidden="true"]')) };
+        }""")
+        _rows = [d for d in (_led.get("dropped") or []) if str(d["mmid"]) == str(_gi["btn"])]
+        check("H4 a control in the shadow root of an aria-hidden HOST is excluded AND"
+              " recorded, even though closest() cannot see across the boundary",
+              not any(str(e["mmid"]) == str(_gi["btn"]) for e in _led["elements"])
+              and [d["rule"] for d in _rows] == ["aria-hidden"]
+              and _gi["closestCrosses"] is False,
+              f"listed={any(str(e['mmid']) == str(_gi['btn']) for e in _led['elements'])}"
+              f" rules={[d['rule'] for d in _rows]} closest_crosses={_gi['closestCrosses']}")
+
         # ---- C: combobox state without English ----------------------------------
         e = ent.get("gk-empty")
         check("C1 class-marked placeholder ('Bitte wählen') reads as unselected, not a value",

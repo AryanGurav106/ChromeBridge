@@ -60,6 +60,13 @@ PAGE = """<!doctype html><meta charset=utf-8><body style="margin:0">
   <div id=inert style="width:200px;height:20px">Product Category</div>
   <!-- explicitly hidden -->
   <button id=hidden style="width:100px;height:24px;display:none">Hidden</button>
+  <!-- A BARE [inert] REGION. `inert` renders normally and passes every
+       visibility test, so nothing but the attribute says its contents cannot be
+       operated. CLAUDE.md #25 recorded this as dead code ("no _drop(el,'inert')
+       call exists, so a bare inert region presents as fully actionable"); the
+       call is there, and the note was stale. This check is what makes that
+       verifiable instead of re-derivable from reading. -->
+  <div inert><button id=inertkid style="width:120px;height:26px">Inert Child</button></div>
   <!-- aria-hidden subtree -->
   <div aria-hidden="true"><button id=ah style="width:100px;height:24px">Aria Hidden</button></div>
   <!-- DEMOTED but KEPT: a heuristic judged it non-content, which under the
@@ -140,6 +147,11 @@ async def main():
               and await rule_for("below") is None,
               f"kept={below_entry is not None} offscreen={(below_entry or {}).get('offscreen')} "
               f"rule={await rule_for('below')}")
+        _inert_rule = await rule_for("inertkid")
+        check("L4e a control inside a bare [inert] region is dropped as inert",
+              _inert_rule == "inert",
+              f"rule={_inert_rule!r} (CLAUDE.md #25 called this dead code; the call "
+              f"is at the aria-hidden/inert guard and this proves it fires)")
 
         by = led.get("byRule") or {}
         check("L5 the rule breakdown accounts for every reported drop",

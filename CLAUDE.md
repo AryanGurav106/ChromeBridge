@@ -1189,11 +1189,17 @@ granted in the side panel is refused with the same message the agent gets.
     powers antd); page-level scans never cross an iframe boundary (an open dialog inside a frame gets
     no banner and no `section=dialog`); coordinate-space trust on canvas-dominated pages (on
     OpenStreetMap the same ref reported clicks 1097px apart, and a missed click hits the map, so there
-    is no symptom); three UNINSTRUMENTED drop rules proven invisible even to `ledger:true`
+    is no symptom); ~~three UNINSTRUMENTED drop rules proven invisible even to `ledger:true`
     (aria-hidden shadow subtrees, thin unlabelled controls like seek bars, and a handler-bound `<svg>`
-    classified decorative); `_stateDrops.inert` is dead code — no `_drop(el,'inert')` call exists, so
-    a bare inert region presents as fully actionable; and container-suppression thresholds count
-    UTF-16 units, which encodes Latin information density (12 units of Chinese is ~12 words).
+    classified decorative)~~ **— STALE on all three: the aria-hidden shadow case is dropped AND
+    recorded (H4 — `closest()` really does not cross the boundary, but the drop is handled elsewhere),
+    and the other two are `was:sliver-decoration` / `was:decorative-svg` demotions, so since #28 they
+    do not delete at all**; ~~`_stateDrops.inert` is dead code~~ **— STALE, see #28: the call is at
+    the aria-hidden/inert guard and a bare `[inert]` region does drop its contents, now pinned by
+    L4e. It was listed here from reading rather than running, which is the same failure #28's
+    delete-rule audit made**; and container-suppression thresholds count
+    UTF-16 units, which encodes Latin information density (12 units of Chinese is ~12 words) —
+    less consequential since #28, where that pass demotes rather than deletes.
     **Two of my own fixes broke first and both were caught by RUNNING them:** `_deepAll` extracted
     alone throws, every `try/catch` swallows it, and the readiness probe silently reports "settled" —
     the exact swallowed-ReferenceError shape R8 exists for; and the fold-slice fix double-counted
