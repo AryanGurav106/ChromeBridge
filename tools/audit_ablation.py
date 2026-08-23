@@ -219,13 +219,35 @@ async def one(ctx, name, url, extra, wraps):
             floor = len(fa) + len(fr) + len(fc)
             for f in ("added", "removed", "changed"):
                 rec["drift"][f] = max(rec["drift"][f], {"added": len(fa), "removed": len(fr), "changed": len(fc)}[f])
-            if len(add) + len(rem) + len(chg) > floor:
-                rec["ablations"][k] = {
-                    "added": len(add), "removed": len(rem), "changed": len(chg), "floor": floor,
-                    "sample": ([{"kind": "removed", **{f: r.get(f) for f in ("tag", "role", "label")}} for r in rem[:3]] +
-                               [{"kind": "added", **{f: r.get(f) for f in ("tag", "role", "label")}} for r in add[:3]] +
-                               [{"kind": "changed", "tag": c["tag"], "label": c["label"], "d": c["d"]} for c in chg[:4]]),
-                }
+            # RECORDED UNGATED. The verdict moves to a second pass below, because
+            # ONE base-to-base sample is not a floor. Measured: premierleague
+            # (n=2481, live scores and a clock) reported floor 0 for every
+            # bracket while the page's own churn across brackets was 22, and then
+            # named FIVE signatures load-bearing at 22+/8- and 8+/22- — the same
+            # 30 elements alternating by evaluation order. One of them was
+            # `active-selected-class`, which writes a single field and cannot
+            # change the element set at all, so the verdict was provably an
+            # artefact. This is CLAUDE.md #19's lesson in a second tool: the floor
+            # has to be the WORST spread among replicates, not one of them.
+            rec["ablations"][k] = {
+                "added": len(add), "removed": len(rem), "changed": len(chg), "floor": floor,
+                "sample": ([{"kind": "removed", **{f: r.get(f) for f in ("tag", "role", "label")}} for r in rem[:3]] +
+                           [{"kind": "added", **{f: r.get(f) for f in ("tag", "role", "label")}} for r in add[:3]] +
+                           [{"kind": "changed", "tag": c["tag"], "label": c["label"], "d": c["d"]} for c in chg[:4]]),
+            }
+        # SECOND PASS: the page's floor is the worst bracket seen anywhere on it.
+        # Every bracket measured the SAME page's churn, so the largest is the best
+        # estimate of how much this page moves on its own — and a signature has to
+        # clear that, not just the one bracket that happened to be quiet.
+        _pf = max([a.get("floor", 0) for a in rec["ablations"].values()
+                   if isinstance(a, dict) and "error" not in a] or [0])
+        rec["page_floor"] = _pf
+        for k, a in list(rec["ablations"].items()):
+            if not isinstance(a, dict) or "error" in a:
+                continue
+            a["page_floor"] = _pf
+            if a["added"] + a["removed"] + a["changed"] <= _pf:
+                del rec["ablations"][k]
     except Exception as e:
         rec["error"] = f"{type(e).__name__}: {str(e).splitlines()[0][:80]}"
     finally:
@@ -260,8 +282,13 @@ async def main(limit, concurrency, only, src_path=None, tag='ablation'):
                     print(f"  {r['name']:<18} SKIP {r['error'][:50]}", flush=True)
                 else:
                     churn = max(r.get("drift", {}).values() or [0])
+                    # Report the PAGE floor, not the one bracket. Printing the
+                    # bracket read "vs floor 0" on a page whose own churn line
+                    # said 22 in the same row — the two halves of one diagnostic
+                    # disagreeing, which is how five artefacts on premierleague
+                    # got read as findings.
                     hits = ", ".join(f"{k}({v.get('added',0)}+/{v.get('removed',0)}-/{v.get('changed',0)}~"
-                                     f" vs floor {v.get('floor',0)})"
+                                     f" vs floor {v.get('page_floor', v.get('floor',0))})"
                                      for k, v in r["ablations"].items())
                     print(f"  {r['name']:<18} n={r['n']:<4} churn={churn:<4} {hits or 'no effect above drift'}", flush=True)
                 return r

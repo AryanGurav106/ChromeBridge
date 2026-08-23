@@ -135,6 +135,13 @@ int delta(int x) { return x * 5; }</div>
     <label for="gs-cb" style="cursor:pointer">Accept terms and conditions</label></div>
   <!-- Control: opacity:0 with NO visible label is a mirror/decoy — stays dropped. -->
   <input type="text" id="gs-decoy" style="width:120px;height:20px;opacity:0">
+  <!-- ...but the SAME shape that DECLARES itself a control is not a decoy. This is
+       react-select after a value is committed: it drops its <input> to opacity:0
+       and paints the value into a sibling, so the field vanished from every
+       listing the instant it was successfully filled. The only thing separating
+       it from the decoy above is the declaration, which is the whole test. -->
+  <input type="text" id="gs-live" role="combobox" aria-expanded="false"
+         style="width:120px;height:20px;opacity:0">
   <!-- A clickable news card: handler on the card, heading + prose + 3 inner links. -->
   <div id="gs-card" style="width:340px;height:150px;border:1px solid #ccc">
     <h3>Quarterly results beat expectations</h3><p>Revenue rose 12% on strong demand.</p>

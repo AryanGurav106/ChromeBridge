@@ -5460,8 +5460,44 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // The evidence that such a control is OPERABLE rather than a discarded mirror
     // is that the page gave it a visible label to click. No label -> still dropped.
     const _selfOpaque = parseFloat(cs.opacity || '1') > 0;
+    // A TRANSPARENT CONTROL THE PLATFORM STILL LETS YOU OPERATE IS NOT ABSENT.
+    // `opacity` is presentational. `display:none`, `visibility:hidden` and
+    // aria-hidden are the declarations of absence, and Chrome keeps an opacity:0
+    // focusable control in its accessibility tree — so dropping one is a
+    // deviation from the platform's own statement, not a reading of it. The
+    // comment just below already argues exactly this for ANCESTOR opacity (the
+    // opacity-0 input[file] under a styled upload button, MUI DateField's
+    // sections); SELF opacity was gated on `ownLabel` instead, which deletes any
+    // transparent control whose name comes from a neighbouring <label>.
+    //
+    // Measured live on demoqa: react-select drops its <input> to opacity:0 once a
+    // value is committed, so the State field VANISHED from every listing the
+    // moment it was successfully filled — "there is no State field" and "State
+    // holds NCR" became the same output, the verification read as a failure, and
+    // the retry hit City, which had shifted into its slot. Six container
+    // heuristics were converted to demotions before this, and none of them was
+    // the cause; read_page(ledger=true) named it in one call.
+    //
+    // FOCUSABILITY IS NOT THE TEST, and P2 is why. A transparent focusable input
+    // is equally the shape of a MIRROR or scratch buffer — Monaco's read-only
+    // `ime-text-area`, which #24 recorded `form_input` reporting Success into
+    // while the editor never changed, and the native `<select>` mirrors MUI ships
+    // behind its custom ones. Keeping every focusable one trades this false
+    // negative for that false positive, so the test is what the page DECLARES:
+    // an interactive ARIA role, or ARIA wiring into a widget. react-select's
+    // committed input says `role=combobox` and carries aria-expanded; a decoy
+    // mirror declares nothing and stays dropped (P2), which is the same
+    // declaration-over-inference rule the rest of the collector runs on.
+    let _declaredCtl = false;
+    try {
+      const _dr = el.getAttribute('role');
+      _declaredCtl = !!(_dr && INTERACTIVE_ROLES.has(_dr))
+                     || el.hasAttribute('aria-expanded')
+                     || el.hasAttribute('aria-autocomplete')
+                     || el.hasAttribute('aria-controls');
+    } catch (e) {}
     let visible = r.width > 1 && r.height > 1 && cs.visibility !== 'hidden' &&
-                    cs.display !== 'none' && (_selfOpaque || !!ownLabel);
+                    cs.display !== 'none' && (_selfOpaque || !!ownLabel || _declaredCtl);
     // Modern Chromium hides closed-<details> content (and hidden=until-found)
     // via content-visibility, NOT display:none — rects stay non-zero, computed
     // display stays visible, and the old checks leaked those invisible controls

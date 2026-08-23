@@ -263,7 +263,7 @@ async def main():
         # ---- D: detail levels ---------------------------------------------------
         # compact is what every observation pays for; full is the escape hatch.
         dm = await page.evaluate('''() => { const o = {};
-            for (const id of ['gd-link','gd-plain','gd-imglink','gd-data','gd-tracker','gp-submit','gp-leaf','gq-bg','gq-grad','gs-cb','gs-decoy','gs-card','gt-day','gt-sec','gt-alink','gt-longalt'])
+            for (const id of ['gd-link','gd-plain','gd-imglink','gd-data','gd-tracker','gp-submit','gp-leaf','gq-bg','gq-grad','gs-cb','gs-decoy','gs-live','gs-card','gt-day','gt-sec','gt-alink','gt-longalt'])
               { const n = document.getElementById(id); o[id] = n && n.getAttribute('mmid'); }
             return o; }''')
         comp = await page.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(false, null, 'compact'); })()")
@@ -431,6 +431,20 @@ async def main():
               f"listed={bool(e)} type={(e or {}).get('type')} name={(e or {}).get('name')!r}")
         check("P2 ...but an opacity:0 input with NO visible label stays dropped",
               dm["gs-decoy"] not in by, f"entry={by.get(dm['gs-decoy'])}")
+        # P2b is P2's twin, differing ONLY by the declaration. Live on demoqa:
+        # react-select drops its <input> to opacity:0 on commit and paints the
+        # value into a sibling, so the State field disappeared from every listing
+        # the moment it was filled — "no State field" and "State holds NCR" were
+        # the same output, the verification read as failure, and the retry hit
+        # City, which had shifted into its slot. Focusability cannot separate the
+        # two (both are focusable, and Monaco's read-only ime-text-area is too,
+        # which #24 recorded form_input reporting Success into). The declaration
+        # can. Keep these two side by side: they are one rule seen from both ends.
+        check("P2b ...while the same shape DECLARING role=combobox is kept — the"
+              " react-select-after-commit field",
+              dm["gs-live"] in by,
+              "kept" if dm["gs-live"] in by
+              else "DELETED — a filled combobox vanishes the moment it succeeds")
         check("P3 a clickable card with a heading and 3 inner links is not deleted as a wrapper",
               dm["gs-card"] in by, "kept" if dm["gs-card"] in by else "DELETED — unreachable by listing AND find")
         txt3 = await page.evaluate("(function(){ " + DOMTEXT + "; return _domTextPage(); })()")
