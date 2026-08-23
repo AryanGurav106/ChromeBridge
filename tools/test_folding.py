@@ -65,13 +65,27 @@ PAGE_FOLD = f'<!doctype html><meta charset=utf-8><body style="margin:0">{cards(1
 PAGE_SMALL = f'<!doctype html><meta charset=utf-8><body style="margin:0">{cards(4)}</body>'
 
 
-async def listing(page, html, detail="brief", nofold=False):
+async def listing(page, html, detail="brief", nofold=False, fmt="flat"):
+    """The D-series tests the FLAT fold, so it asks for flat EXPLICITLY.
+
+    These checks predate the tree and describe the cross-parent shape fold that only
+    the flat listing does — `12x a, same structure` grouped by shape regardless of
+    where the members sit. That mechanism still exists and is still reachable, and
+    the tests are the right tests for it.
+
+    What they must not do is get it BY OMISSION. The collector's default is now the
+    product's default (tree), because a parameter whose omission silently changes the
+    output and cannot fail is a trap: it is why #29's corpus token figures all
+    described a format the product had stopped shipping, and why RG10 and TB12 passed
+    against empty sets this session. Stating the format is the whole point.
+    """
     await page.set_content(html, wait_until="domcontentloaded")
     await page.wait_for_timeout(120)
     if nofold:
         await page.evaluate("()=>{window.__abNoFold=true;}")
     return await page.evaluate(
-        "(function(){ " + COLLECT + "; return _collectInteractivePage(false, null, '" + detail + "'); })()")
+        "(function(){ " + COLLECT + "; return _collectInteractivePage(false, null, '"
+        + detail + "', false, false, '" + fmt + "'); })()")
 
 
 async def structured(page, html, detail="brief"):
@@ -105,7 +119,8 @@ async def main():
         st = await page.evaluate(
             "(function(){ " + COLLECT + "; return _collectInteractivePage(true, null, 'brief'); })()")
         folded = await page.evaluate(
-            "(function(){ " + COLLECT + "; return _collectInteractivePage(false, null, 'brief'); })()")
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false, null, 'brief', false, false, 'flat'); })()")
         mmids = [str(e["mmid"]) for e in st if (e.get("href") or "").find("/item/") >= 0]
         missing = [m for m in mmids if not re.search(rf"\b{m}:", folded)]
         check("D3 every folded row keeps its own ref", not missing,
@@ -157,7 +172,13 @@ async def main():
             for i in range(10))
         await hp.set_content(f"<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>{_rows}</body>")
         await hp.wait_for_timeout(140)
-        hout = await hp.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()")
+        # FLAT, EXPLICITLY: D8/D8b are about the flat listing's cross-parent shape
+        # fold — the mechanism that once put Hacker News' story titles, domains and
+        # comment links in one bucket. Omitting the format used to give flat by
+        # accident; it now gives the product default, so the format has to be named.
+        hout = await hp.evaluate("(function(){ " + COLLECT
+                                 + "; return _collectInteractivePage(false, null, 'compact',"
+                                 + " false, false, 'flat'); })()")
         # MATCH THE ROW'S SHAPE, NOT ITS PROSE. This selected on the literal
         # phrase "same shape", so renaming the group header to "same structure"
         # (when the fold key moved from pixel size to tag path) emptied this list

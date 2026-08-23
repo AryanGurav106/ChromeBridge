@@ -85,7 +85,7 @@ async def main():
             if m:
                 return m.group(1)
             for ln in listing.split("\n"):
-                if label in ln and ln.startswith("ref_"):
+                if label in ln and ln.strip().startswith("ref_"):
                     return ln
             return None
 
@@ -93,7 +93,7 @@ async def main():
             """How many times `label` appears, counting rows and fold members."""
             return (len(re.findall(r'\d+:"' + re.escape(label) + r'"', listing))
                     + len([1 for ln in listing.split("\n")
-                           if ln.startswith("ref_") and label in ln]))
+                           if ln.strip().startswith("ref_") and label in ln]))
 
         # --- G1 bare handler div (via document_start listener tagging) ---
         report("G1 handler-div (JS listener, no role/cursor)",
@@ -303,11 +303,21 @@ async def main():
         # into ONE entry which IS the submit, carrying the span's text. Asserted on
         # the structured entry for the type and on the listing for the single
         # occurrence, so it holds whether that entry prints as a row or folds.
+        # THE "EXACTLY ONCE" CLAUSE ENCODED PRE-#28 BEHAVIOUR. Since #28 the same-box
+        # twin collapse DEMOTES instead of deleting, so both the overlaying span and
+        # the submit exist — and the tree prints both, nested, by design (the flat
+        # format is what moves one into the PROBABLY DECORATION line). Two rows with
+        # the same label, one under the other, is the documented outcome, so counting
+        # listing occurrences tests a flat-format artefact rather than the substance.
+        # The substance is that the entry which carries the span's TEXT is the SUBMIT:
+        # that is what makes the control reachable and correctly typed, and it is
+        # asserted on the structured entry, which no format can change.
         _ap = named("Apply filters")
         _apn = listed_once("Apply filters")
         report("G17 label-overlay span merged into unnamed submit",
-               "CAPTURED" if _apn == 1 and _ap and _ap[0].get("type") == "submit" else "MISSED",
-               f"occurrences={_apn} type={(_ap[0].get('type') if _ap else None)!r}")
+               "CAPTURED" if _ap and _ap[0].get("type") == "submit" and _apn >= 1 else "MISSED",
+               f"type={(_ap[0].get('type') if _ap else None)!r} listing occurrences={_apn}"
+               f" (>=1; two is correct when the demoted twin also prints)")
 
         # --- G18 ARIA widget roles without tabindex/cursor ---
         report("G18 role=slider div (no tabindex) listed", "CAPTURED" if named("Price range") else "MISSED")

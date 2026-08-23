@@ -8593,7 +8593,20 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       members.forEach((m) => { m.groupKey = 'rec:' + k; inCompact.add(m.mmid); });
     }
   }
-  const TREEFMT = format === 'tree';
+  // THE DEFAULT MUST BE THE PRODUCT'S DEFAULT. `format === 'tree'` means an OMITTED
+  // format silently produces the FLAT listing — a format read_page has not shipped by
+  // default since #27. That is not a harmless default, it is a trap that has now cost
+  // four separate measurements and fixtures:
+  //   * #29: measure_retention called with three positionals, so EVERY corpus token
+  //     figure this project had published described the flat listing while the tree
+  //     was shipping;
+  //   * RG10 twice, and TB12 once, this session: checks written to catch a leak in the
+  //     TREE read a flat listing, compared empty sets, and passed whatever the code did.
+  // A parameter whose omission changes the output and cannot fail is the same shape as
+  // the injection boundary C11 guards. Omission now means "the default", which is what
+  // every caller that omits it plainly intends; `'flat'` is the thing you must ask for.
+  // C13 pins this against mcp_server's own default so the two cannot drift.
+  const TREEFMT = format !== 'flat';
   // TREE SERIALIZATION. Lives here, inside the collector, for two reasons: an
   // injected function loses its closure so a standalone could never be called in
   // production, and it has to see the SAME `shown` set the flat rows get — post

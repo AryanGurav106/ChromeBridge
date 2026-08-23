@@ -208,6 +208,24 @@ def main() -> int:
                       else "_ACT_LINE not found in mcp_server.py"))(
               re.search(r'^_ACT_LINE\s*=\s*"([^"]+)"', _srv, re.M)))
 
+    # C13: THE COLLECTOR'S DEFAULT FORMAT MUST BE THE PRODUCT'S DEFAULT FORMAT.
+    # `read_page(format="tree")` is the shipped default, but the collector read
+    # `format === 'tree'`, so an OMITTED format silently produced the FLAT listing —
+    # a parameter whose omission changes the output and cannot fail. It has cost four
+    # measurements and fixtures so far: #29's corpus token figures all described the
+    # flat listing while the tree was shipping, and RG10 (twice) plus TB12 passed
+    # against empty sets this session because they read a flat listing while checking
+    # a tree-only property. Same shape as the injection boundary C11 guards: silent,
+    # unfailable, and only findable by noticing the output was about something else.
+    # Omission now means the default; `'flat'` is the thing a caller must ask for.
+    _srv_fmt = re.search(r'\]\s*=\s*"(tree|flat)",\s*geometry', _srv)
+    _coll_default_is_tree = "const TREEFMT = format !== 'flat';" in _bg
+    check("C13 an omitted format gives the collector the same default the tool "
+          "advertises, so a caller that omits it cannot get the other format",
+          bool(_srv_fmt) and _srv_fmt.group(1) == "tree" and _coll_default_is_tree,
+          f"server default={_srv_fmt.group(1) if _srv_fmt else 'NOT FOUND'!r}, "
+          f"collector treats omitted as tree={_coll_default_is_tree}")
+
     check("C11 every function injected via runInTab is self-contained "
           "(executeScript stringifies only that function)",
           not _bad,
