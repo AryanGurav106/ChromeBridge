@@ -46,6 +46,8 @@ def extract(name: str) -> str:
 
 COLLECT = extract("_collectInteractivePage")
 PICK = extract("_pickOptionPage")
+CLICKP = extract("_clickPage")
+EFFECT = extract("_clickEffectPage")
 TYPESEARCH = extract("_typeIntoOpenPopoverSearchPage")
 COUNTOPTS = extract("_countVisibleOptionsPage")
 DETECTSUBMIT = extract("_detectSubmitPage")
@@ -523,6 +525,54 @@ async def main():
               and not any(w in (_ae.get("msg") or "") for w in ("Products", "Pricing", "Docs")),
               f"ok={_ae.get('ok')} msg={(_ae.get('msg') or '')[:130]!r}")
         await ap.close()
+
+        # ---- W20: A DECLARED STATE CHANGE IS AN EFFECT ----------------------
+        # The click op decided "did anything happen?" from {url, element count, text
+        # length}, all blind to a control whose entire job is to flip a state flag.
+        # That was not merely a missed report, it was a DESTRUCTIVE DOUBLE ACTION: no
+        # detectable effect auto-escalates to a trusted retry, so the second click
+        # undid the first and the op then reported failure — an odd number of
+        # attempts works, an even number does not, indistinguishably. Demonstrated
+        # before the fix on both shapes, fingerprint byte-identical either side of a
+        # click that plainly worked.
+        # The negative control is the point: a genuinely inert button must still read
+        # as no-effect, or the escalation that exists for Radix/HeadlessUI triggers
+        # (fix #1) stops firing where it is needed.
+        cp = await browser.new_page(viewport={"width": 800, "height": 600})
+        await cp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await cp.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<label><input type=checkbox id=cb style='width:16px;height:16px'> Email me</label>"
+            "<button id=tg aria-pressed=false style='width:120px;height:28px'>Mute</button>"
+            "<button id=inert style='width:120px;height:28px'>Does nothing</button>"
+            "<script>document.getElementById('tg').addEventListener('click',function(){"
+            "const p=this.getAttribute('aria-pressed')==='true';"
+            "this.setAttribute('aria-pressed',p?'false':'true');});</script></body>")
+        await cp.wait_for_timeout(130)
+        await cp.evaluate("()=>{document.querySelectorAll('input,button')"
+                         ".forEach((e,i)=>e.setAttribute('mmid',String(i+1)));}")
+
+        async def _eff(sel):
+            fb = await cp.evaluate("(function(){ " + EFFECT
+                                   + "; return _clickEffectPage(\"" + sel + "\"); })()")
+            await cp.evaluate("(function(){ " + CLICKP
+                              + "; return _clickPage(\"" + sel + "\"); })()")
+            await cp.wait_for_timeout(140)
+            fa = await cp.evaluate("(function(){ " + EFFECT
+                                   + "; return _clickEffectPage(\"" + sel + "\"); })()")
+            return fb, fa, (fa.get("st") or "") != (fb.get("st") or "")
+
+        _b1, _a1, _c1 = await _eff("[mmid='1']")
+        check("W20 a checkbox click registers as an effect, so it is not clicked twice",
+              _c1, f"st {_b1.get('st')!r} -> {_a1.get('st')!r}")
+        _b2, _a2, _c2 = await _eff("[mmid='2']")
+        check("W20b ...and so does an aria-pressed toggle",
+              _c2, f"st {_b2.get('st')!r} -> {_a2.get('st')!r}")
+        _b3, _a3, _c3 = await _eff("[mmid='3']")
+        check("W20c ...while a genuinely inert button still reads as NO effect,"
+              " so trusted escalation keeps working where fix #1 needs it",
+              not _c3, f"st {_b3.get('st')!r} -> {_a3.get('st')!r}")
+        await cp.close()
 
         # ---- W19: `near=` must be text a HUMAN CAN SEE -----------------------
         # The legend calls it "nearest visible text", and the sibling walk read

@@ -9619,6 +9619,74 @@ function _pressKeysPage(combo) {
   return { ok: true, msg: `Dispatched ${combo}.` };
 }
 
+// CLICK-EFFECT FINGERPRINT, INCLUDING THE TARGET'S DECLARED STATE.
+//
+// The click op decided "did anything happen?" from {url, element count, text
+// length} alone, which is blind to the whole class of controls whose entire job is
+// to flip a state flag. And the consequence was not a missed report, it was a
+// DESTRUCTIVE DOUBLE ACTION: no detectable effect auto-escalates to a trusted
+// retry, so the second click undid the first. Demonstrated on both shapes:
+//
+//   checkbox              checked false -> true, fingerprint IDENTICAL {n:8,txt:22}
+//                         -> escalates -> clicks again -> back to false
+//   button[aria-pressed]  'false' -> 'true', fingerprint IDENTICAL
+//                         -> escalates -> clicks again -> back to 'false'
+//
+// The agent asked for one click, got two, the control ended where it started, and
+// the tool reported failure — so the obvious retry does it again. An odd number of
+// attempts works and an even number does not, indistinguishably. `fill_field`'s
+// checkbox path has always been state-aware and idempotent; the generic click op
+// was not.
+//
+// The fix is a DECLARATION, not a heuristic and not pixels: the ARIA state
+// attributes plus the native `checked`/`value` are the page stating what this
+// control's state IS. Same family as `activeHint` reading aria-selected. Surfaced
+// by an independent design review of a screenshot/DOM hybrid, whose conclusion was
+// that this particular blind spot wants declarations rather than pixels.
+//
+// SELF-CONTAINED: injected via runInTab, so it may not call a top-level sibling.
+// C11 in tools/test_contracts.py enforces that mechanically.
+function _clickEffectPage(sel) {
+  const deepCount = () => {
+    let c = 0;
+    const visit = (r, d) => {
+      if (d > 6) return;
+      try {
+        const all = r.querySelectorAll('*');
+        c += all.length;
+        all.forEach((e) => { if (e.shadowRoot) visit(e.shadowRoot, d + 1); });
+      } catch (e) {}
+    };
+    visit(document, 0);
+    return c;
+  };
+  let st = '';
+  try {
+    let el = null;
+    try {
+      const m = /mmid=['"]?([^'"\]]+)/.exec(sel || '');
+      const reg = window.__mmidReg;
+      if (m && reg) { const n = reg.get(m[1]); if (n && n.isConnected) el = n; }
+    } catch (e) {}
+    if (!el && sel) { try { el = document.querySelector(sel); } catch (e) {} }
+    if (el) {
+      const parts = [];
+      try { if (typeof el.checked === 'boolean') parts.push('c:' + el.checked); } catch (e) {}
+      try { if (el.value != null && typeof el.value === 'string') parts.push('v:' + el.value.length + ':' + el.value.slice(0, 24)); } catch (e) {}
+      for (const a of ['aria-checked', 'aria-pressed', 'aria-expanded',
+                       'aria-selected', 'aria-current', 'aria-disabled']) {
+        try { const v = el.getAttribute(a); if (v != null) parts.push(a + ':' + v); } catch (e) {}
+      }
+      st = parts.join('|');
+    }
+  } catch (e) {}
+  return {
+    n: deepCount(),
+    txt: (document.body && document.body.innerText) ? document.body.innerText.length : 0,
+    st,
+  };
+}
+
 function _pageFingerprintPage() {
   return {
     url: location.href,
@@ -9959,23 +10027,7 @@ async function handleOp({ id, op, params }) {
         // Snapshot a quick page fingerprint (element count + text length) so
         // we can tell whether the click had any DOM effect at all — not just
         // URL navigation. Modals add elements; we want to detect that too.
-        const fpBefore = await runInTab(t.id, () => ({
-          // dup:deepall — a click that renders into a shadow root moves the light-DOM
-          // node count by ZERO, so "click had no detectable effect" fired on clicks
-          // that worked. Proven: 6 -> 6 nodes and 0 -> 0 dialogs for a Lit modal.
-          n: (function () {
-            let c = 0;
-            const visit = (r, d) => {
-              if (d > 6) return;
-              try { const all = r.querySelectorAll('*'); c += all.length;
-                    all.forEach((e) => { if (e.shadowRoot) visit(e.shadowRoot, d + 1); }); }
-              catch (e) {}
-            };
-            visit(document, 0);
-            return c;
-          })(),
-          txt: (document.body && document.body.innerText) ? document.body.innerText.length : 0,
-        }));
+        const fpBefore = await runInTab(t.id, _clickEffectPage, [params.selector]);
 
         const doClick = async (trusted) => {
           try {
@@ -10004,32 +10056,19 @@ async function handleOp({ id, op, params }) {
         // means "couldn't measure", so fall back to the before-snapshot; the URL
         // comparison below still detects the navigation.
         const fpRead = async () => {
-          try {
-            return await runInTab(t.id, () => ({
-              // dup:deepall — a click that renders into a shadow root moves the light-DOM
-              // node count by ZERO, so "click had no detectable effect" fired on clicks
-              // that worked. Proven: 6 -> 6 nodes and 0 -> 0 dialogs for a Lit modal.
-              n: (function () {
-                let c = 0;
-                const visit = (r, d) => {
-                  if (d > 6) return;
-                  try { const all = r.querySelectorAll('*'); c += all.length;
-                        all.forEach((e) => { if (e.shadowRoot) visit(e.shadowRoot, d + 1); }); }
-                  catch (e) {}
-                };
-                visit(document, 0);
-                return c;
-              })(),
-              txt: (document.body && document.body.innerText) ? document.body.innerText.length : 0,
-            }));
-          } catch (e) { return null; }
+          try { return await runInTab(t.id, _clickEffectPage, [params.selector]); }
+          catch (e) { return null; }   // a navigating document cannot be read; the URL check still sees it
         };
         let fpAfter = (await fpRead()) || fpBefore;
 
         const urlChanged = urlAfter !== urlBefore;
         const elCountChanged = Math.abs((fpAfter.n||0) - (fpBefore.n||0)) >= 2;
         const txtChanged = Math.abs((fpAfter.txt||0) - (fpBefore.txt||0)) > Math.max(20, 0.01 * (fpBefore.txt||0));
-        const hadEffect = urlChanged || elCountChanged || txtChanged;
+        // A DECLARED STATE CHANGE IS AN EFFECT. Without this the toggle class
+        // reads as inert and the escalation below clicks a second time, undoing
+        // the first click and then reporting failure. See _clickEffectPage.
+        const stateChanged = (fpAfter.st || '') !== (fpBefore.st || '');
+        const hadEffect = urlChanged || elCountChanged || txtChanged || stateChanged;
 
         // Auto-escalate: if an untrusted click had ZERO effect, retry with
         // trusted input. Radix UI / shadcn / Headless UI dialog triggers
@@ -10061,13 +10100,25 @@ async function handleOp({ id, op, params }) {
         const urlChanged2 = urlAfter !== urlBefore;
         const elCountChanged2 = Math.abs((fpAfter.n||0) - (fpBefore.n||0)) >= 2;
         const txtChanged2 = Math.abs((fpAfter.txt||0) - (fpBefore.txt||0)) > Math.max(20, 0.01 * (fpBefore.txt||0));
-        const hadEffect2 = urlChanged2 || elCountChanged2 || txtChanged2;
+        // The REPORT has its own copy of the verdict, and updating only the
+        // escalation gate left it saying "click had NO detectable effect (URL, DOM,
+        // and text are all unchanged)" about a checkbox that had just flipped —
+        // true of the three things it lists, false about the click. Caught by the
+        // op-router suite, which #19 keeps pointing at as the untested link.
+        const stateChanged2 = (fpAfter.st || '') !== (fpBefore.st || '');
+        const hadEffect2 = urlChanged2 || elCountChanged2 || txtChanged2 || stateChanged2;
 
         let nav;
         if (r.ok && urlChanged2) {
           nav = `Navigated: ${urlBefore} -> ${urlAfter}`;
         } else if (r.ok && (elCountChanged2 || txtChanged2)) {
           nav = `URL unchanged but page DOM changed (modal/dropdown likely opened — re-observe with get_dom_fields). elements:${fpBefore.n}->${fpAfter.n}`;
+        } else if (r.ok && stateChanged2) {
+          // Say WHAT changed. A toggle reports its own new state, which is the only
+          // thing the agent needs to decide whether the click did what it wanted —
+          // and re-clicking a control that is already in the desired state turns it
+          // back off, which is the failure this whole path exists to stop.
+          nav = `State changed on the clicked element (${fpBefore.st || 'none'} -> ${fpAfter.st || 'none'}). URL and page structure unchanged, which is normal for a checkbox/toggle — do NOT click again to "make it work".`;
         } else if (r.ok) {
           nav = `WARNING: click had NO detectable effect (URL, DOM, and text are all unchanged). The element may be disabled, hidden behind an overlay, or wired to handlers that don't fire on synthetic events. Already retried with trusted=${escalated ? 'true' : 'false'}.${escalateBlocked}`;
         } else {

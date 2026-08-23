@@ -810,7 +810,12 @@ const FIELDS3 = () => ([
     resetState();
     setStubs({
       _highlightPage: () => true,
-      "inline:fingerprint": () => ({ n: 100, txt: 1000 }),   // never changes -> zero effect
+      // The click-effect snapshot is now a NAMED function (_clickEffectPage) rather
+      // than two inline copies, because the verdict needs the target's DECLARED
+      // state and an inline arrow cannot be given the selector. This stub is what
+      // caught the rename: keyed to the old inline name it silently stopped
+      // matching, the real function ran under node:vm and returned undefined.
+      _clickEffectPage: () => ({ n: 100, txt: 1000, st: "" }),   // never changes -> zero effect
       _clickPage: () => ({ ok: true, msg: "clicked" }),
       _rectForPage: () => ({ x: 60, y: 40, w: 20, h: 20, visible: true }),
       _refDocCheckPage: () => null,
@@ -824,6 +829,34 @@ const FIELDS3 = () => ([
       String(r.result).slice(0, 200));
     check("click: still warns when even the trusted retry had no effect",
       /NO detectable effect/.test(String(r.result)));
+  });
+
+  // A DECLARED STATE CHANGE MUST STOP THE ESCALATION. The router half of W20:
+  // {url, element count, text length} is blind to a checkbox or aria-pressed flip,
+  // so a click that worked read as inert, escalated, and the second click undid the
+  // first -- then reported failure. Proven live before the fix on both shapes with a
+  // byte-identical fingerprint either side. This is the op-router check, which
+  // CLAUDE.md #19 is explicit is the link that keeps going untested.
+  await test("click state-only effect", async () => {
+    resetState();
+    let i = 0;
+    setStubs({
+      _highlightPage: () => true,
+      // Same counts and text both times; only the target's declared state moves.
+      _clickEffectPage: () => (i++ === 0
+        ? { n: 100, txt: 1000, st: "c:false" }
+        : { n: 100, txt: 1000, st: "c:true" }),
+      _clickPage: () => ({ ok: true, msg: "clicked" }),
+      _rectForPage: () => ({ x: 60, y: 40, w: 20, h: 20, visible: true }),
+      _refDocCheckPage: () => null,
+    });
+    const r = await callOp("click", { tabId: 1, selector: "[mmid='5']" });
+    const synth = allOf((e) => e.kind === "exec" && e.name === "_clickPage").length;
+    const cdp = allOf((e) => e.kind === "cdp" && e.method === "Input.dispatchMouseEvent").length;
+    check("click: a checkbox/toggle flip counts as an effect, so the click is NOT repeated",
+      synth === 1 && cdp === 0, `synthetic=${synth} cdp=${cdp}`);
+    check("click: ...and it is not reported as having had no effect",
+      !/NO detectable effect/.test(String(r.result)), String(r.result).slice(0, 160));
   });
 
   // ---- navigate
