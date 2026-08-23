@@ -692,7 +692,15 @@ def _truncate(text: str, max_chars: int, hint: str = "") -> str:
             # below accounts for it — a row that cannot be printed whole is not a
             # shown row.
             _l = last.lstrip()
-            if (_ROW_LINE.match(_l) or _l.startswith("ref_")) and len(out_lines) > 1:
+            # `startswith("ref_")` HAS A HOLE, and a live agent landed in it: a cut
+            # three characters into a row leaves the bare token `ref`, which does not
+            # start with "ref_" and so was returned as if it were a finished line:
+            #     ref_239 | a "upvote"
+            #      ref
+            #     [output truncated at 3000 chars — ...]
+            # `ref` reads as a row. Any prefix of "ref_" is the same hazard, so match
+            # what the cut can actually leave behind rather than the complete token.
+            if (_ROW_LINE.match(_l) or "ref_".startswith(_l[:4]) and _l[:1] == "r")                     and len(out_lines) > 1:
                 # WHOLENESS IS EXACT, NOT INFERRED FROM THE TEXT. The first version
                 # asked whether the cut landed mid-token or left an odd quote count,
                 # which is the FOLD test — and it missed every cut that lands before

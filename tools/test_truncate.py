@@ -247,6 +247,24 @@ async def main_async():
           " at any budget",
           not _bad2, f"{len(_bad2)} bad of 700 budgets; first: {(_bad2 or ['-'])[0]}")
 
+    # T20: T19's guard tested `startswith("ref_")`, which has a hole a live agent
+    # landed in — a cut three characters into a row leaves the bare token `ref`,
+    # which does not start with "ref_" and so was returned as a finished line:
+    #     ref_239 | a "upvote"
+    #      ref
+    #     [output truncated at 3000 chars — ...]
+    # `ref` reads as a row. Any PREFIX of the token is the same hazard, so this
+    # sweeps every budget for a trailing fragment of one.
+    _bad3 = []
+    for _cap in range(150, 900):
+        _o = ms._truncate(_txt2, _cap, "h")
+        _b = _o.split("[output truncated")[0].rstrip()
+        _tail = (_b.splitlines() or [""])[-1].strip()
+        if _tail and _tail != "Current URL: /releases/h15" and not _tail.startswith("Visible")                 and "ref_".startswith(_tail[:4]) and not _tail.startswith("ref_"):
+            _bad3.append(f"cap={_cap} left the fragment {_tail!r}")
+    check("T20 ...and never leaves a fragment of the ref token itself",
+          not _bad3, f"{len(_bad3)} bad of 750 budgets; first: {(_bad3 or ['-'])[0]}")
+
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} truncation checks passed.")
     return 0 if passed == len(results) else 1
