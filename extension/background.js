@@ -4647,16 +4647,33 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           if (el.getAttribute('tabindex') === '0' &&
               _sibs.some((t) => t.getAttribute('tabindex') === '-1')) return 'selected';
         } catch (err) {}
-        // LAST RESORT, kept until measured dead: an exact active/selected/current
-        // class token. It only ADDS a flag, it is scoped to tabs and options, and
-        // it runs after everything the document declares — but it is still a word
-        // list, so it is instrumented and will be deleted on the evidence rather
-        // than on the argument.
-        const cn = typeof el.className === 'string' ? el.className : '';
-        if (/(^|\s)(active|selected|current)($|\s)/.test(cn)) {
-          try { window.__abClassActiveHits = (window.__abClassActiveHits || 0) + 1; } catch (err) {}
-          return 'selected';
-        }
+        // DELETED: an exact `active|selected|current` class token, kept here as a
+        // last resort "until measured dead" and instrumented for exactly this
+        // decision. It is now measured dead: ablated across 99 live pages with a
+        // per-page drift floor, its total effect on the `active` field was ZERO.
+        // The corpus includes shadcn_select, chakra, antd, vuetify, ng_material,
+        // bootstrap, headlessui, openui5 and react_aria, so the shape it targets —
+        // a tab or option carrying a state class — is abundantly present; it simply
+        // never decided anything the two declared signals above had not already
+        // decided (the selected tab's aria-controls panel being the rendered one,
+        // and ARIA's roving tabindex).
+        //
+        // The first ablation run reported it LOAD-BEARING on premierleague at
+        // 8+/22-, which was an artefact: that page has 2,467 entries and live
+        // scores, one bracket's drift floor read 0 while the page's own churn was
+        // 22, and FIVE unrelated signatures reported the same two numbers
+        // alternating. `activeHint` writes a single field and cannot add or remove
+        // entries at all, which is what proved the verdict impossible rather than
+        // merely surprising. The floor is now the worst bracket on the page.
+        //
+        // Cost of deletion, stated: a hand-rolled tabset that declares NOTHING —
+        // no aria-selected, no aria-controls, no roving tabindex — loses its
+        // `(selected)` marker. That is the honest output, because a class name is
+        // not a declaration: `active` is equally an animation state or a
+        // "current-user" marker, and a WRONG (current) tells the agent not to click
+        // the thing it needs. The fan-out measured that failure class directly with
+        // `(disabled)`, where 18 Bootstrap rows were flagged inert and one was
+        // clicked to prove otherwise. W16c is now the deletion gate.
       }
       if (el.getAttribute('data-active') === 'true') return 'active';
       if (el.getAttribute('data-current') === 'true') return 'current';
@@ -8398,18 +8415,68 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
         try {
           const _own = (e.name || e.label || e.text || '');
           if (_own && !_declaredControl(el) && (kids.get(el) || []).length) {
-            let _res = _own;
-            const _sub = (n, d) => {
-              if (d > 8) return;
-              for (const c of (kids.get(n) || [])) {
-                const ce = ent.get(c);
-                const cl = ce && (ce.name || ce.label || ce.text || '');
-                if (cl && cl.length > 1) _res = _res.split(cl).join(' ');
-                _sub(c, d + 1);
+            // THE SUBTRACTION TEST WAS WRONG ABOUT WHERE THE NAME COMES FROM. It
+            // removed each kept DESCENDANT ENTRY's label and required nothing to
+            // remain — but an accessible name is built from ALL descendant text
+            // (AccName step 2F), and non-interactive text has no entry to subtract.
+            // So one ordinary text node anywhere in the subtree defeated the whole
+            // rule. Measured live: Dzen printed TWO rows of ~4,000 chars each,
+            // consuming ~8,000 of a 12,000-char budget and evicting real rows
+            // ("16 more element(s) not shown"), and demoqa's outermost div was the
+            // FIRST row at 390 chars — every nav item, field label and the
+            // copyright notice — each of which also printed on its own row below.
+            // The same blob is why find("State dropdown") answered with the page
+            // container under a confident `Found 1 element(s) matching`: a
+            // whole-page label matches any query about page text.
+            //
+            // The rule is now the spec's own: name-from-content is ROLE-GATED.
+            // A generic container is not in that role set, so per AccName it has no
+            // accessible name from its contents — the string was ours, not the
+            // page's. Using content as a label stays where it is the ONLY identity
+            // available (a leaf clickable card, an icon control); it goes where the
+            // tree already prints the same text one line below, which is decided by
+            // whether this node has kept children, not by a threshold.
+            //
+            // An explicitly DECLARED name is never touched: aria-label,
+            // aria-labelledby, title and an associated <label> are the page saying
+            // what this thing is called, and they survive regardless of nesting.
+            // THE TEST IS THE CONTAINER'S OWN DIRECT TEXT. Two rules were tried and
+            // both were wrong in one direction:
+            //   - subtract kept descendants' labels and require nothing to remain:
+            //     defeated by ONE non-interactive text node anywhere in the subtree,
+            //     which is what let Dzen and demoqa print whole-page labels;
+            //   - drop any content-derived label on a container: that deleted the
+            //     prose in TR10b's card, which the tree prints nowhere else.
+            // Both cases are identical under subtraction, so subtraction cannot
+            // separate them. What does, with no threshold: does this element have
+            // text OF ITS OWN — a direct child text node — as opposed to a name
+            // assembled entirely from descendants it does not own?
+            //   demoqa/Dzen shell: no direct text (the copyright sits in a nested
+            //     div, every other word belongs to a child) -> pure concatenation,
+            //     and the tree prints every part of it one line below. Dropped.
+            //   TR10b's card: "A quarterly summary…" IS a direct text node -> its
+            //     own prose, kept in full.
+            //   "Buy the <a>Pro plan</a>": direct text "Buy the " -> kept in full,
+            //     so #29's objection to printing a residual ("Buy the") does not
+            //     arise; this drops the label or keeps it whole, never a fragment.
+            // A DECLARED name (aria-label / aria-labelledby / title / a real
+            // <label>) is the page stating what this is called and is never touched.
+            let _keepName = false;
+            try {
+              _keepName = !!(el.getAttribute('aria-label')
+                             || el.getAttribute('aria-labelledby')
+                             || (el.getAttribute('title') || '').trim()
+                             || (el.labels && el.labels.length));
+              if (!_keepName) {
+                for (const n of el.childNodes) {
+                  if (n.nodeType === 3 && /[\p{L}\p{N}]/u.test(n.nodeValue || '')) {
+                    _keepName = true;
+                    break;
+                  }
+                }
               }
-            };
-            _sub(el, 0);
-            if (!_res.replace(/[^\p{L}\p{N}]/gu, '')) {
+            } catch (e2) {}
+            if (!_keepName) {
               _e = Object.assign({}, e, { name: '', label: '', text: '' });
               _sawRolled = true;
             }

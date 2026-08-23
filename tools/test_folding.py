@@ -410,6 +410,20 @@ async def main():
             "<div id=card onclick='void 0' style='width:400px'>"
             "A quarterly summary of regional performance."
             "<a href=#d style='display:block;width:200px;height:24px'>Read more</a>"
+            "</div>"
+            # TR10c's shape: the shell above has NO text but its own children's, so
+            # the old subtraction rule caught it. This one adds ONE non-interactive
+            # text node in a NESTED div — a copyright line, the commonest thing on
+            # the web — which no child entry accounts for, so the subtraction never
+            # came out empty and the whole concatenation printed. That is what made
+            # Dzen emit two ~4,000-char rows (evicting real rows from a 12,000-char
+            # budget) and demoqa a 390-char first row. Keep the copyright NESTED:
+            # as a direct text node it would be the container's own prose, which is
+            # TR10b's case and must be kept.
+            "<div id=shell2 onclick='void 0' style='width:400px'>"
+            "<a href=#e style='display:block;width:200px;height:24px'>Widgets</a>"
+            "<a href=#f style='display:block;width:200px;height:24px'>Alerts</a>"
+            "<div>&copy; 2013-2026 EXAMPLE.COM | ALL RIGHTS RESERVED.</div>"
             "</div></body>")
         await rp.wait_for_timeout(150)
         r_tree = await rp.evaluate(
@@ -425,6 +439,23 @@ async def main():
               any("A quarterly summary" in l for l in r_tree.splitlines()),
               next((l.strip()[:70] for l in r_tree.splitlines()
                     if "quarterly" in l), "LABEL LOST"))
+        # TR10c: ONE non-interactive text node in the subtree used to defeat the
+        # rollup entirely, because the subtraction only removed kept descendant
+        # ENTRIES' labels and a text node has no entry. The container's own DIRECT
+        # text is the test that separates this from TR10b — both are identical under
+        # subtraction, which is why subtraction could not decide between them.
+        _shell2 = [l for l in r_tree.splitlines()
+                   if l.strip().startswith("ref_") and " div" in l and "Widgets" in l]
+        check("TR10c ...and one non-interactive text node in the subtree no longer"
+              " defeats the rollup (the whole-page-label defect)",
+              not _shell2,
+              f"shell row still carries the concatenation: {(_shell2 or ['none'])[0].strip()[:90]}")
+        check("TR10d ...while its children and their labels all survive",
+              all(any(f'"{t}"' in l for l in r_tree.splitlines())
+                  for t in ("Widgets", "Alerts", "Read more")),
+              "children present" if all(any(f'"{t}"' in l for l in r_tree.splitlines())
+                                        for t in ("Widgets", "Alerts", "Read more"))
+              else "A CHILD LABEL WAS LOST WITH THE CONTAINER'S")
         await rp.close()
 
         _link = [l for l in c_tree.splitlines() if '"Real Link"' in l]

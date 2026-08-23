@@ -543,11 +543,26 @@ async def main():
         check("W16b roving tabindex (0 here, -1 on a sibling) decides it too",
               _act.get("B-one") == "selected" and _act.get("B-two") == "",
               f"B-one={_act.get('B-one')!r} B-two={_act.get('B-two')!r}")
-        _hits = await tp2.evaluate("()=>window.__abClassActiveHits||0")
-        check("W16c the class-token fallback is reached ONLY where the document"
-              " declares nothing",
-              _act.get("C-one") == "selected" and _act.get("C-two") == "" and _hits == 1,
-              f"C-one={_act.get('C-one')!r} class-fallback fired {_hits}x (expected 1)")
+        # W16c WAS the instrumentation gate and is now the DELETION gate, the same
+        # role W1 took when #24 deleted the placeholder wordlist. The tabset "C"
+        # declares nothing — no aria-selected, no aria-controls, no roving tabindex,
+        # only `class="tab active"` — and the honest output is therefore NO state
+        # marker at all. Measured before deleting: ablated across 99 live pages with
+        # a per-page drift floor, the class token's total effect on the `active`
+        # field was ZERO, on a corpus containing shadcn, chakra, antd, vuetify,
+        # ng_material, bootstrap, headlessui, openui5 and react_aria — so the shape
+        # is abundantly present and the two declared signals above were already
+        # deciding every real case.
+        # A class name is not a declaration: `active` is equally an animation state
+        # or a "current-user" marker, and a WRONG (current) tells the agent not to
+        # click the thing it needs — the failure class the fan-out measured directly
+        # on `(disabled)`, where 18 Bootstrap rows were flagged inert and one was
+        # clicked to prove otherwise.
+        check("W16c a tabset that declares NOTHING gets no state marker — a class"
+              " name is not a declaration",
+              _act.get("C-one") == "" and _act.get("C-two") == "",
+              f"C-one={_act.get('C-one')!r} C-two={_act.get('C-two')!r}"
+              f" (both must be empty; the declared tabsets A and B are W16/W16b)")
         await tp2.close()
 
         await browser.close()
