@@ -265,6 +265,53 @@ async def main_async():
     check("T20 ...and never leaves a fragment of the ref token itself",
           not _bad3, f"{len(_bad3)} bad of 750 budgets; first: {(_bad3 or ['-'])[0]}")
 
+    # T21: COUNT WHAT THE READER CAN ACT ON, which T16 cannot. T16 compares
+    # `_row_elements` on both sides of the cut, and that function returns a FOLD'S
+    # GROUP SIZE — so a partially-printed fold is credited at full membership on both
+    # sides and the error cancels. It cannot detect a partial-fold miscount at all,
+    # which is exactly the defect #25 recorded ("claimed 17 more when ~41 were
+    # missing"). Counting DISTINCT REFS present in the body is the reader's own
+    # arithmetic: a ref that printed is actionable, one that did not is not, whatever
+    # shape its row had.
+    #
+    # This check also corrected my own measurement. Investigating a live report of a
+    # wrong residual, my first probe used `_row_elements` for the "shown" side and
+    # made the tool look wrong by 6 elements at one budget — the inflation was the
+    # probe's, not the tool's. Shape modelled on Hacker News: a nav fold, twenty
+    # plain rows, then two large folds, so budgets land inside folds and between them.
+    _lg = chr(10).join(f"  - legend line {i} explaining notation at some length"
+                       for i in range(6))
+    _rws = ['8x a, identical siblings, in document order - ref:"label": '
+            + " ".join(f'{10 + i}:"nav {i}"' for i in range(8))]
+    _rws += [f'ref_{100 + i} | a "Story headline number {i} which is fairly long"'
+             for i in range(20)]
+    _rws.append('15x span, identical siblings, in document order - ref:"label": '
+                + " ".join(f'{200 + i}:"{i * 7} comments"' for i in range(15)))
+    _rws.append('16x tr, identical siblings, in document order - ref:"label": '
+                + " ".join(f'{300 + i}:"domain{i}.com"' for i in range(16)))
+    _lst = ("Current URL: /" + chr(10) + "Visible interactive elements (59 on screen)."
+            + chr(10) + _lg + chr(10) + chr(10).join(_rws))
+
+    def _actionable(body):
+        refs = set(re.findall(r"\bref_(\d+)\b", body))
+        refs |= set(re.findall(r'(?:^|\s)(\d+):"', body))
+        return len(refs)
+
+    _true = _actionable(chr(10).join(_rws))
+    _bad4 = []
+    for _cap in range(600, 2600, 20):
+        _o = ms._truncate(_lst, _cap, "h")
+        _body = _o.split("[output truncated")[0]
+        _m = re.search(r"(\d+) more element\(s\) not shown", _o)
+        _claimed = int(_m.group(1)) if _m else 0
+        _shown = _actionable(_body)
+        if _shown + _claimed != _true:
+            _bad4.append(f"cap={_cap}: printed {_shown} + claimed {_claimed} != {_true}")
+    check("T21 printed refs + 'N more not shown' equals the true total, counted the"
+          " way the reader counts it (folds included)",
+          not _bad4, f"{len(_bad4)} bad of 100 budgets; first: {(_bad4 or ['-'])[0]}"
+                     f" (true total {_true})")
+
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} truncation checks passed.")
     return 0 if passed == len(results) else 1

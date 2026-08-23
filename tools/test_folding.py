@@ -524,6 +524,49 @@ async def main():
                  else "NO MARKER — an agent counting positions here gets the wrong rank"))
         await fp2.close()
 
+        # TR17: A GROUP THAT DOES NOT FOLD MUST NOT BE HOISTED. Sibling grouping
+        # pools members by shape wherever they sit, and a pooled group can only be
+        # PRINTED in one place — so it is emitted at its FIRST member's position.
+        # For a group that folds that is sound (one line, every member's ref on it,
+        # and `_ordPhrase` says so when the spans interleave). For a group BELOW the
+        # fold threshold it is not: the members print as ordinary rows, in a place
+        # the page does not put them, with no header and therefore no marker.
+        #
+        # Measured live on ant.design's own select demo: three options where the
+        # chosen one carries an extra state class, so `shapeOf` — which includes the
+        # full class list — split them into runs of 2 and 1, and the tree printed
+        # Jack, yiminghe, Lucy for a document reading Jack, Lucy, yiminghe. The
+        # SELECTED option was the displaced one, which is the worst member to move.
+        #
+        # Asserted as the general property, not the antd shape: refs are assigned in
+        # document order, so when nothing folds the printed refs must ascend. (With a
+        # fold present they legitimately do not — that is TR15/TR16's case, and it is
+        # marked.) FIVE members with ONE odd class keeps both runs under the
+        # threshold of 6, which is what makes this the silent path rather than TR16's.
+        fp3 = await browser.new_page(viewport={"width": 900, "height": 900})
+        await fp3.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        _opts = "".join(
+            f'<a class="o{" sel" if i == 1 else ""}" href=/o{i}'
+            f' style="display:block;width:200px;height:22px">Opt {i}</a>'
+            for i in range(5))
+        await fp3.set_content("<!doctype html><meta charset=utf-8><body style='margin:0'>"
+                              f"<nav>{_opts}</nav></body>")
+        await fp3.wait_for_timeout(150)
+        _ot = await fp3.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'tree'); })()")
+        _folded = [l for l in _ot.splitlines() if "identical siblings" in l]
+        _refs = [int(m) for m in re.findall(r"\bref_(\d+)\b", _ot)]
+        _labs = re.findall(r'"(Opt \d)"', _ot)
+        check("TR17 with no fold, printed rows ascend by ref — a group below the fold"
+              " threshold is not hoisted to its first member's position",
+              not _folded and _refs == sorted(_refs) and len(_labs) == 5
+              and _labs == sorted(_labs),
+              (f"{len(_folded)} fold(s); refs {_refs}; order {_labs}"
+               if _folded or _refs != sorted(_refs) or _labs != sorted(_labs)
+               else f"ascending: {_labs}"))
+        await fp3.close()
+
         # TR10e: THE OTHER SIDE OF THE SAME RULE, and a false negative I caused with
         # it. react-select's control is a div with TWO element children, only ONE of
         # which carries text — so its name is that one thing's name restated, not a

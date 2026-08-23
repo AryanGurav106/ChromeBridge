@@ -9192,6 +9192,25 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
           ? `NOT page order — interleaved with ${n} other group(s); merge by ref`
           : 'in document order';
       };
+      // A GROUP THAT DOES NOT FOLD IS NOT HOISTED. Grouping pools members by shape
+      // wherever they sit, and a pooled group can only be PRINTED in one place — so
+      // it goes at its FIRST member's position. That is sound for a fold: one line
+      // carrying every member's ref, with `_ordPhrase` stating it when the spans
+      // interleave. It is not sound for a group BELOW the threshold, whose members
+      // print as ordinary rows in a position the page does not give them, with no
+      // header and therefore no marker. Measured on ant.design's own select demo:
+      // `shapeOf` includes the full class list, so the chosen option's extra state
+      // class split three siblings into runs of 2 and 1, and the tree printed Jack,
+      // yiminghe, Lucy for a document reading Jack, Lucy, yiminghe — displacing the
+      // SELECTED option, the one member whose position an agent is most likely to
+      // trust. Silent, because only fold headers can carry the interleave marker.
+      //
+      // So build UNITS anchored where they belong and emit in document order: a
+      // folded group is ONE unit at its first member, an unfolded group contributes
+      // each member as its own unit. Contiguous-run grouping was the other candidate
+      // and costs far more — it would have unfolded TR15/TR16's alternating story and
+      // comment rows into 15 loose rows, which is the compression the tree exists for.
+      const _units = [];
       for (const members of _ordered) {
         // IDENTICAL SIBLING CONTAINERS COLLAPSE POSITIONALLY.
         //
@@ -9239,8 +9258,8 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
           if (ok) {
             const tag0 = (members[0].tagName || '').toLowerCase();
             _foldGroups++;
-            out.push(`${pad}${members.length}× ${tag0}, identical siblings, ${_ordPhrase(members)}`
-                   + ` — one line per POSITION inside them; act on any ref:`);
+            const _hdr = `${pad}${members.length}× ${tag0}, identical siblings, ${_ordPhrase(members)}`
+                       + ` — one line per POSITION inside them; act on any ref:`;
             for (let i = 0; i < n0; i++) {
               const rep = perMember[0][i];
               const re = ent.get(rep);
@@ -9264,13 +9283,13 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
               }).join(' ');
               cols.push(`${pad}  #${i + 1} ${head}: ${cells}`);
             }
-            for (const c of cols) out.push(c);
+            _units.push({ at: members[0], lines: [_hdr].concat(cols) });
             continue;
           }
         }
         if (members.length >= 6) {
           const e0 = ent.get(members[0]);
-          if (!e0) { for (const m of members) emit(m, depth); continue; }
+          if (!e0) { for (const m of members) _units.push({ at: m, node: m }); continue; }
           const items = members.map((m) => {
             const me = ent.get(m);
             const lab = (me.name || me.label || me.text || '').trim();
@@ -9284,12 +9303,18 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
           }).join(' ');
           const _t0 = members.every((m) => ent.get(m).type === e0.type) && e0.type ? `[${e0.type}]` : '';
           _foldGroups++;
-          out.push(`${pad}${members.length}× ${e0.role || e0.tag}${_t0}, identical siblings, ${_ordPhrase(members)}`
+          _units.push({ at: members[0], lines: [
+            `${pad}${members.length}× ${e0.role || e0.tag}${_t0}, identical siblings, ${_ordPhrase(members)}`
             + `${e0.href ? ' — each a link, ref:"label"→href' : ' — ref:"label"'}`
-            + ` (act on any via its ref): ${items}`);
+            + ` (act on any via its ref): ${items}`] });
         } else {
-          for (const m of members) emit(m, depth);
+          for (const m of members) _units.push({ at: m, node: m });
         }
+      }
+      _units.sort((a, b) => docOrder(a.at, b.at));
+      for (const u of _units) {
+        if (u.node) emit(u.node, depth);
+        else for (const l of u.lines) out.push(l);
       }
     }
     _emitChildren(roots, 0);
