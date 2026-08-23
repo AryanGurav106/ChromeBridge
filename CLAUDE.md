@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 17 suites, 574 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 17 suites, 600 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -487,7 +487,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 574 checks, ~40s
+.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 600 checks, ~57s
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -1846,6 +1846,195 @@ granted in the side panel is refused with the same message the agent gets.
     Suites: 532 checks. New — C11, C12 (contract tripwires), T12–T14 (delta over
     real listing text), W19–W19c (`near=` visibility).
 
+
+30. **THE FAN-OUT LIST, WORKED DOWN — and two rules that priced out the opposite
+    way to how they read.** Twelve items from the live fan-out. Three were not
+    defects, one was a rejection with a number, and the two changes that looked
+    biggest were the two that had to be narrowed.
+
+    **`max_chars` residual: NOT a defect, and my probe was the thing that was
+    wrong.** Two live reports said the count lies. My first reproduction agreed —
+    4 of 7 budgets bad, one claiming `shown 43 + 22 = 65` against a true 59 — until
+    I noticed the over-count was mine: it measured "shown" with `_row_elements`,
+    which deliberately returns a fold's FULL GROUP SIZE (pinned by T17), so a
+    partially-printed fold was credited at full membership. Counting DISTINCT REFS
+    in the body — the reader's own arithmetic, since a ref that printed is
+    actionable and one that did not is not — gives `printed + claimed == 59` at
+    every budget from 600 to 2600. **T21 pins that, and it is strictly stronger
+    than T16**, which compares `_row_elements` on both sides of the cut so a
+    partial-fold miscount cancels and it cannot detect the one defect #25 actually
+    recorded ("claimed 17 more when ~41 were missing"). The live shape is not
+    reproduced by anything I can construct; if it recurs it needs a live
+    re-measure, not another fixture.
+
+    **POSITION IS NOT RANK, and the flat listing never said so.** Every flat fold
+    header read "in document order" unconditionally. That is true — members are
+    sorted by ref — and the inference it invites is that position N is the Nth such
+    thing on the page, which is false whenever another element OF THE SAME KIND
+    sits between two members without being in the fold. The tree has warned since
+    #27; flat is where it matters more, because flat folds group ACROSS parents so
+    interleaving is the norm rather than the exception. Measured live on Hacker
+    News (17 comment counts above 16 story titles, both headed "in document
+    order"; pairing them shifted every pair) and on Wikipedia's ranked GDP column
+    (position 5 gives Spain, 15th, or Russia, 9th, where the true 5th is the UK).
+    Keyed on SAME KIND because that is what makes it a rank claim — a `<button>`
+    between two story links does not break the story sequence — and kind is the
+    declared tag and role, so no threshold and no vocabulary. Priced on 34 frozen
+    sites: **flat 26/67 folds marked (39%), tree 8/33 (24%), for 1.081% and 0.235%
+    of listing characters**; it fires on Hacker News (3 of 4 folds) and not at all
+    on github or youtube, so it discriminates rather than warning always. The
+    tree's own phrase changed with it: "NOT page order" was inaccurate in a way
+    that matters, since the members ARE in document order and saying otherwise
+    invites distrust of the sequence itself. Both formats now say "position is not
+    rank, merge by ref" verbatim. TR18/TR18b, TR20/TR20b — the last being the arXiv
+    citation fold that "silently skipped [8]": it was not skipping it, `[8]` carried
+    one extra class and printed as its own row while the fold invited reading the
+    remaining eleven as the complete run.
+
+    **A GROUP THAT DOES NOT FOLD MUST NOT BE HOISTED.** Grouping pools siblings by
+    shape wherever they sit, and a pooled group can only be printed in one place, so
+    it goes at its first member's position. Sound for a fold — one line, every
+    member's ref on it, and `_ordPhrase` says so when the spans interleave. Unsound
+    below the threshold, where the members print as ordinary rows in a position the
+    page does not give them, with no header and therefore no marker. Measured on
+    ant.design's select demo: `shapeOf` includes the full class list, so the chosen
+    option's extra state class split three siblings into runs of 2 and 1 and the
+    tree printed Jack, yiminghe, Lucy for a document reading Jack, Lucy, yiminghe —
+    displacing the SELECTED option, the one member whose position an agent is most
+    likely to trust. Fix: build UNITS anchored where they belong and emit in
+    document order. Contiguous-run grouping was the other candidate and costs far
+    more — it would unfold TR15/TR16's alternating story and comment rows into 15
+    loose rows, which is the compression the tree exists for (TR17).
+
+    **THE TREE FOLDED EVERYWHERE EXCEPT THE TOP LEVEL.** `emit` walks
+    `<body>`/`<html>` without printing a row for them and did it with a direct
+    `emit(child)` loop, bypassing `_emitChildren` and therefore all grouping. The
+    pass-through exists to suppress a ROW, not to suppress folding beneath it.
+    Measured across four containers with the same twelve links: bare `<body>`
+    printed twelve rows at 1,103 chars while `<div>`, `<ul>` and `<main>` each
+    folded into one at ~720 — so the one case that failed was the worst one to
+    fail, since a page whose records sit at the top level is the page that most
+    needs them folded. Now 717 chars (TR19).
+
+    **RANK IS DECLARED — `Main heading` was reading document order.** HTML states
+    rank with h1..h6 and ARIA with aria-level; position states nothing. Measured on
+    Wikipedia: the Vector-2022 skin emits the table-of-contents heading BEFORE the
+    article's own `<h1>`, so the line reported the page's furniture instead of its
+    subject — the single fact it exists to give. Reading the declared level also let
+    the selector widen to every heading level safely: an `<h3>` can supply the line
+    when h1/h2 are off-screen and can never beat a present h1 (MH1/MH2).
+
+    **A `<div>` IS NOT A TEXT FIELD, and `form_input` said "Typed into" anyway** —
+    as a false SUCCESS in two different ways. On a `<div>` nothing is written and
+    the #23 readback verdict INVERTS: `actual` falls back to innerText, so
+    `actual.includes(text)` is satisfied by the element's own label, and typing
+    "Search" at `<div>Search products</div>` returned ok:true. On a `<button>` the
+    write lands on the value property and reads back exactly, while typing into a
+    button does nothing at all. Writability is declared — contenteditable for an
+    editing host, tag plus the HTML type enum for a form control, the same
+    declaration #24's submit picker reads — so anything else is refused and named,
+    including a `role=textbox` that is not an editing host, since script cannot
+    write to one and only trusted keystrokes can reach it (W21–W21c).
+
+    **ACTING ON A REF SCROLLS THE PAGE, and nothing said so.** `_rectForPage` calls
+    scrollIntoView before measuring (fix #11), which is why a below-fold ref is
+    clickable at all — and it moves the page under the agent, invalidating every
+    viewport-relative annotation and printed coordinate in the listing it is
+    holding. Measured live at 2,520px with no mention of scrolling in the reply.
+    `_scrollNote(rect)` is ONE helper because four call sites scroll and every one
+    reported nothing: scroll_to, the trusted click, the coordinate resolver, and
+    the untrusted click's rect pass. It separates what is stale (viewport flags,
+    printed coordinates) from what is not (refs, which re-measure) — the
+    distinction agents needed rather than a blanket "things may have changed"
+    (X18–X18c; X18 must run FIRST or measuring the below-fold element scrolls the
+    page and the negative control stops being one).
+
+    **`get_page_text` SKIPPED EVERY CROSS-ORIGIN FRAME IN SILENCE.** It runs in the
+    top document, so `contentDocument` throws and the harvest's catch swallowed it.
+    Consent dialogs, embedded checkouts, comment widgets and video descriptions all
+    live behind that boundary, and read_page DOES reach them — so the two tools
+    disagreed about the same frame with no way to tell which was blind. **My first
+    threshold was wrong and the fixture caught it:** I used the 4px sr-only bound,
+    which announced a 10x10 tracking frame that read_page's shell pass had
+    correctly skipped — the tools disagreeing about frames, the exact defect the
+    notice exists to end. It is `_frameShellsPage`'s own 30px now, reused so the
+    two cross-origin passes agree, and frames are named by host AND path because
+    several frames from one host is normal (Stripe ships three js.stripe.com
+    iframes) and three repetitions of one hostname name nothing.
+
+    **THE STRICT OCCLUSION RULE IS CORRECT ON PAPER AND FLAGS 98% OF A REAL PAGE.**
+    The listing's `(occluded/blocked)` flag passes THROUGH layers that paint no
+    pixels; `_rectForPage`'s pre-flight refuses whenever a foreign layer is first,
+    painted or not. So on a transparent pointer-events:auto veil the listing says
+    clickable and the click refuses naming the div — reproduced exactly. The strict
+    rule looks unarguable: elementsFromPoint already excludes pointer-events:none,
+    so anything in the stack can receive the click. Priced across 30 frozen sites
+    before changing anything: **7,204 elements sampled, permissive flags 15.0%,
+    strict flags 24.1% — 651 (9.0%) NEWLY flagged**, concentrated where it hurts
+    most (131 of 139 sampled on theguardian, `div under iframe`; +146 of 920 on
+    gh_issues). Flagging 98% of a page is the #23 defect at scale, and a false flag
+    makes an agent skip a control it could have used — strictly worse than one
+    refused click that names its blocker. **So the asymmetry IS the design**, now
+    stated where the idea occurs: the listing is optimistic about reachability, the
+    action path is strict and refuses rather than clicking the wrong thing. What was
+    actually wrong was the legend letting ABSENCE of the flag read as a guarantee.
+
+    **A POINTER CURSOR IS INHERITED, so on a descendant it is the control's
+    declaration** — the same error `contenteditable-non-root` corrects (#28).
+    Wikipedia's citation markup printed THREE rows per citation. Two things had to
+    be right, and I got each wrong once:
+    - **The owner must be a SINGLE-ACTIVATION control.** A segmented control written
+      as `<div onclick><span>Day</span><span>Week</span></div>` has the identical
+      shape, and there the spans really are distinct targets because a delegated
+      handler dispatches on event.target. My first version dropped them, leaving one
+      row labelled "Day Week Month" and no way to pick Week. HTML settles it:
+      activating an `<a>`, `<button>`, `<summary>` or form control does ONE thing, so
+      its descendants cannot be separate targets; a generic element with a handler
+      makes no such promise. The owner test admits declared single-activation tags
+      and roles only, and deliberately NOT onclick/tabindex/`__abClickBound` (CU2).
+    - **NOTHING MAY LOSE AN IDENTITY, and the wide version lost 93.** The natural
+      argument is that when the owner declares no name override its accessible name
+      comes from its CONTENT (AccName 2F) and already contains the descendant's text.
+      Across 20 frozen sites that removed 3,379 entries — a third of some listings —
+      and **93 of the 2,463 labelled removals (3.78%) had their text on NO kept
+      row**: span "Baseline Check" on MDN, span "issue opened" on GitHub issues,
+      span "1位" on Yahoo Japan, span "Pro plan" on the MUI datepicker. So the
+      argument is not true in practice and I could not establish why in reasonable
+      time. An unexplained 3.78% identity loss is not shippable where the worst
+      failure is a false negative, and "I could not reproduce the cause" is not
+      evidence there is none. The rule now removes only an element carrying NO
+      identity at all, checked against every source an entry's name can come from —
+      own text, alt, aria-label, title, the presence of aria-labelledby, a descendant
+      that can name it, and a wrapped `<svg>`/`<img>`, since an element wrapping an
+      icon carries content even when nothing is named. Each was added because the
+      corpus still reported losses without it: 93 → 19 → **0 of 362 labelled
+      removals across 22 sites, still removing 1,030 elements**. It fixes the whole
+      reported defect anyway, because `[` and `]` strip to empty: five citations go
+      from 15 rows / 952 chars to 5 / 556 (CU1–CU4).
+
+    **A table's declared UNITS.** `<caption>` was already rendered (Wikipedia's
+    "million US$"); ARIA's way is aria-labelledby/aria-describedby pointing at a
+    heading or note elsewhere, and the Federal Reserve's H.15 does exactly that — the
+    grid rendered clean aligned numbers while "percent per annum" sat beside it, so a
+    scoped read handed an agent 3.82 and 3.99 with nothing saying what either
+    measured. Same declaration #29 used to replace the English class-substring
+    guesses for form help text. **The fixture first failed for the wrong reason:** the
+    aligned-grid renderer runs only for a SCOPED read, so a whole-page read never
+    exercised it (TB13/TB13b). And the entry-cap notice told an ALREADY-scoped caller
+    to "narrow with read_page(ref_id=…)" — restating the parameter just used and
+    naming nothing to narrow to, since region hints are page-level and correctly
+    suppressed under a scope (RG15).
+
+    **A NUL BYTE reached `background.js`** — `'\u0000elsewhere'` inside a string
+    literal, which `node --check` accepts as valid JS and which turned grep's own
+    output into "Binary file matches". Caught by scanning for control bytes, which
+    the memory note already says to do after a bulk edit; every edit after it was
+    byte-precise with that scan as its gate.
+
+    Suites: 600 checks. New series — T21 (reader-side residual), TR17–TR20b (hoisting,
+    top-level folds, flat interleave), MH1/MH2 (declared heading rank), W21–W21c
+    (writability), X18–X18c (scroll reporting), 4 cross-origin-frame text checks,
+    RG15 (self-scoped advice), CU1–CU4 (inherited cursor), TB13/TB13b (declared units).
 
 ## Debugging starting points
 
