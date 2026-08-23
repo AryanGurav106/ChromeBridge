@@ -524,6 +524,37 @@ async def main():
                  else "NO MARKER — an agent counting positions here gets the wrong rank"))
         await fp2.close()
 
+        # TR10e: THE OTHER SIDE OF THE SAME RULE, and a false negative I caused with
+        # it. react-select's control is a div with TWO element children, only ONE of
+        # which carries text — so its name is that one thing's name restated, not a
+        # summary of unrelated things. Flagged as a borrowed subtree name, `find`
+        # dropped the label and demoqa's City field became unreachable by search
+        # while read_page listed it as `div "Select City" (disabled)`: #27's
+        # most-reported false negative, reappearing through my own fix for the
+        # whole-page-label defect. Reproduced live before this check was written.
+        # KEEP THE SECOND CHILD EMPTY — with text in it there are two contributors,
+        # which is TR10's case, and this check would pass for the wrong reason.
+        await rp.evaluate(
+            "()=>{const w=document.createElement('div');"
+            "w.id='rsctl'; w.setAttribute('onclick','void 0');"
+            "w.style.cssText='width:300px;height:38px';"
+            "w.innerHTML='<div style=\"width:200px;height:20px\">Select City</div>"
+            "<div style=\"width:20px;height:20px\"></div>';"
+            "document.body.appendChild(w);}")
+        await rp.wait_for_timeout(80)
+        _rs = await rp.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(true,null,'compact',false,false,'tree'); })()")
+        _rsm = await rp.evaluate("()=>document.getElementById('rsctl').getAttribute('mmid')")
+        _rse = next((e for e in _rs if str(e.get("mmid")) == str(_rsm)), None)
+        check("TR10e a container whose label comes from ONE child keeps it — nothing"
+              " was concatenated, so it is still that control's identity",
+              _rse is not None
+              and "Select City" in ((_rse.get("label") or "") + (_rse.get("name") or ""))
+              and not _rse.get("subtreeName"),
+              f"label={(_rse or {}).get('label')!r} "
+              f"subtreeName={(_rse or {}).get('subtreeName')}")
+
         check("TR10d ...while its children and their labels all survive",
               all(any(f'"{t}"' in l for l in r_tree.splitlines())
                   for t in ("Widgets", "Alerts", "Read more")),

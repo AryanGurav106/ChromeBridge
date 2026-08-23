@@ -7380,7 +7380,29 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           for (const n of el.childNodes) {
             if (n.nodeType === 3 && /[\p{L}\p{N}]/u.test(n.nodeValue || '')) return false;
           }
-          return el.children && el.children.length > 0;
+          // MORE THAN ONE CONTRIBUTOR, or nothing was CONCATENATED. "Has element
+          // children" was too broad and I caused a false negative with it: demoqa's
+          // City field is react-select's control div with two element children, only
+          // ONE of which carries text ("Select City") — so its name is that one
+          // thing's name restated, not a summary of unrelated things. Flagged
+          // subtreeName, `find` dropped the label, and the control became unreachable
+          // by search while read_page listed it as `div "Select City" (disabled)`. That
+          // is the most-reported false negative in the project (#27) reappearing
+          // through my own fix for the whole-page-label defect.
+          //
+          // Counting text-contributing children separates the two cases without a
+          // magnitude: one contributor means no concatenation happened at all, while
+          // demoqa's page shell and Dzen's 4,000-char rows have dozens. "More than
+          // one" is a structural fact; "more than N characters" would be a guess.
+          let _contrib = 0;
+          try {
+            for (const c of el.children) {
+              const _ct = (c.innerText != null ? c.innerText : c.textContent) || '';
+              if (/[\p{L}\p{N}]/u.test(_ct)) _contrib++;
+              if (_contrib > 1) break;
+            }
+          } catch (e2) { return false; }
+          return _contrib > 1;
         } catch (e) { return false; }
       })(),
       active: activeHint(el),
