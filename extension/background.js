@@ -9762,6 +9762,16 @@ function _pressKeysPage(combo) {
 
 // CLICK-EFFECT FINGERPRINT, INCLUDING THE TARGET'S DECLARED STATE.
 //
+// SCOPE CORRECTION, because the commit that fixed this overstated it. The `click`
+// op is NOT on the MCP tool path: the only sender is `ExtensionDriver.click` in
+// core/bridge/driver.py, used by the tools/diag_*.py probes. An agent driving
+// through MCP clicks via `computer` (CDP coordinate/ref), which has no fingerprint
+// and no escalation, so it was never exposed to the double-click. The commit
+// message said "the agent asks for one click, gets two" — true of the driver path,
+// not of any agent. The bug and the fix are real; the blast radius was the live
+// debugging harness, which is how several of this project's hardest findings were
+// made (#12's four burned theories among them), so it is still worth having right.
+//
 // The click op decided "did anything happen?" from {url, element count, text
 // length} alone, which is blind to the whole class of controls whose entire job is
 // to flip a state flag. And the consequence was not a missed report, it was a
