@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 17 suites, 601 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 17 suites, 603 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -487,7 +487,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 601 checks, ~57s
+.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 603 checks, ~57s
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -2018,16 +2018,39 @@ granted in the side panel is refused with the same message the agent gets.
       separator-joined form #28 introduced, which is where the spaces come from. So
       the rule also drops a descendant whose identity EQUALS its owner's. **Equality,
       never containment** — containment against the owner's innerText is trivially
-      true for any descendant, which is the wide version that lost 93. Equality says
-      only "this row states exactly what its owner's row already states".
-      **My first attempt compared against innerText FIRST and CU4 caught it in one
-      run:** `<a aria-label="Star"><span>188530 users starred</span></a>` has
-      innerText equal to the span, so the span went while the surviving row said only
-      `name="Star"` — 69 labels lost on the corpus. AccName precedence (aria-label,
-      then title, then content) fixes it. Live result on the same page and viewport:
-      **173 elements → 101**. Residual: **1 loss in 1,493 labelled removals (0.07%)**,
-      a Guardian pull-quote `<h4>`, stated rather than claimed as zero — a different
-      thing from the 93 across five sites that included rankings and plan names (CU5).
+      true for any descendant, which is the wide version that lost 93. Live result on
+      the same page and viewport: **173 elements → 101**.
+    - **AND THAT CLAUSE WAS THEN REVERTED, because it has to predict what the
+      owner's ROW will show and I got that precedence wrong twice in opposite
+      directions.** innerText-first lost 69 labels — `<a aria-label="Star"><span>188530
+      users starred</span></a>` has innerText equal to the span, so the span went while
+      the surviving row said only `name="Star"`, and **CU4 caught it in one run**.
+      Content-before-title (which is AccName's real order, and fixes Wikipedia's
+      `[citation needed]`, whose `<a>` carries `title="Wikipedia:Citation needed"`
+      while its row correctly shows "citation needed" from content) lost 65. Two
+      attempts, two corpus disagreements: the lesson is that **"two rows say the same
+      thing" is a PRESENTATION question, and answering it by DELETING one of them
+      means a wrong answer costs an identity.**
+      It is answered in the tree's identical-nested-row collapse instead, which merges
+      the refs onto one row and therefore cannot lose anything. Two changes there, both
+      provable from the strings rather than judged: the identity comparison is
+      **whitespace-insensitive**, because AccName 2F space-delimits each element
+      child's contribution (#28) so `<a><span>[</span>28<span>]</span></a>` resolves to
+      `"[ 28 ]"` where a bare text node gives `"[28]"` — two names for the same text
+      that are not `===`; and the collapse now runs in **either direction**, so a
+      DECLARED CONTROL absorbs a generic child saying the same thing instead of only a
+      generic wrapper deferring to a deeper node. Geometry stays exact. Existence is
+      back to the measured-lossless rule: **0 of 355 labelled removals lost across 22
+      sites, still removing 1,019 elements** (CU1–CU6, TR8d/TR8d2).
+      **TR8d had to be rewritten, and that is the honest kind:** it asserted
+      `len(rows) == 2`, which encoded the implementation (at the time neither row could
+      collapse, because both ends had to be plain wrappers). Its invariant — a declared
+      control is the SURVIVOR, keeping its tag, its name and its own ref — is unchanged
+      and is what it asserts now, with TR8d2 pinning that the absorbed wrapper is still
+      actionable and printed outermost-first. That last part was a real defect: the
+      absorbed refs were prepended before the survivor's own, which is outermost-first
+      only when the survivor is the deeper node, so an `<a>` at 17 wrapping a span at 18
+      printed `ref_18 ref_17` — contradicting the legend's own promise.
 
     **A table's declared UNITS.** `<caption>` was already rendered (Wikipedia's
     "million US$"); ARIA's way is aria-labelledby/aria-describedby pointing at a
@@ -2048,10 +2071,11 @@ granted in the side panel is refused with the same message the agent gets.
     the memory note already says to do after a bulk edit; every edit after it was
     byte-precise with that scan as its gate.
 
-    Suites: 601 checks. New series — T21 (reader-side residual), TR17–TR20b (hoisting,
+    Suites: 603 checks. New series — T21 (reader-side residual), TR17–TR20b (hoisting,
     top-level folds, flat interleave), MH1/MH2 (declared heading rank), W21–W21c
     (writability), X18–X18c (scroll reporting), 4 cross-origin-frame text checks,
-    RG15 (self-scoped advice), CU1–CU5 (inherited cursor), TB13/TB13b (declared units).
+    RG15 (self-scoped advice), CU1–CU6 (inherited cursor), TR8d/TR8d2 (collapse direction), TB13/TB13b
+    (declared units).
 
 ## Debugging starting points
 

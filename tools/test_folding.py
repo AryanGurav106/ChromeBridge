@@ -674,10 +674,30 @@ async def main():
               else "A CHILD LABEL WAS LOST WITH THE CONTAINER'S")
         await rp.close()
 
+        # TR8d USED TO ASSERT len == 2, which encoded the implementation rather than
+        # the invariant: at the time neither row could collapse, because the rule
+        # required BOTH ends to be plain wrappers and one end here is an <a>. The
+        # collapse now runs in the other direction too, so the <a> absorbs the
+        # wrapper and one row remains. The invariant it exists to protect is
+        # unchanged and is what is asserted now -- a declared control is the
+        # SURVIVOR, keeping its tag, its own name and its own ref. The defect it
+        # caught was the <a>'s name being deleted because a child wrapper repeated
+        # it, leaving `ref_7 | a`; that is still a failure here.
         _link = [l for l in c_tree.splitlines() if '"Real Link"' in l]
-        check("TR8d a declared control (<a>) is NEVER merged into its child wrapper",
-              len(_link) == 2,
+        _realm = await cp.evaluate("()=>document.getElementById('real').getAttribute('mmid')")
+        _wrapm = await cp.evaluate("()=>document.getElementById('rk').getAttribute('mmid')")
+        _lr = _link[0].strip() if _link else ""
+        check("TR8d a declared control (<a>) keeps its own name and ref — it is the"
+              " survivor, never merged INTO its child wrapper",
+              len(_link) == 1 and _lr.split("|")[1].strip().startswith("a ")
+              and f"ref_{_realm}" in _lr,
               f"{len(_link)} row(s): {[l.strip()[:60] for l in _link]}")
+        # And the wrapper's ref rides along rather than becoming unreachable, in
+        # document order with the outermost first -- the legend's own promise.
+        check("TR8d2 ...and the absorbed wrapper is still actionable, outermost first",
+              f"ref_{_wrapm}" in _lr
+              and _lr.index(f"ref_{_realm}") < _lr.index(f"ref_{_wrapm}"),
+              f"a=ref_{_realm} wrapper=ref_{_wrapm} row={_lr[:60]!r}")
         await cp.close()
 
         await browser.close()

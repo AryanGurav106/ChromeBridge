@@ -314,6 +314,33 @@ async def main():
               " second row for the same citation",
               len(_c5rows) == 1 and " a " in _c5rows[0],
               " / ".join(r.strip()[:44] for r in _c5rows) or "NO ROW AT ALL")
+        # CU6: THE OWNER'S title IS NOT ITS NAME. Found live on Wikipedia's
+        # [citation needed], where the <a> carries title="Wikipedia:Citation needed"
+        # while its ROW correctly displays "citation needed" from content -- so the
+        # inner span, compared against the title, looked different and got a second
+        # row saying the identical thing. AccName's order is aria-labelledby,
+        # aria-label, native markup, NAME FROM CONTENT, and title only as a last
+        # resort; comparing against the title put this rule out of step with the
+        # collector's own name resolution for the very same element.
+        # THE TITLE MUST DIFFER FROM THE TEXT or the comparison succeeds either way
+        # and this passes without exercising the precedence.
+        await cu.evaluate(
+            "()=>{const sup=document.createElement('sup');"
+            "const a=document.createElement('a');a.setAttribute('href','/wiki/CN');"
+            "a.setAttribute('title','Wikipedia:Citation needed');"
+            "const sp=document.createElement('span');"
+            "sp.setAttribute('title','This claim needs references to reliable sources.');"
+            "sp.textContent='citation needed';"
+            "a.appendChild(sp);sup.appendChild(a);document.body.appendChild(sup);return 1;}")
+        await cu.wait_for_timeout(90)
+        _cu6 = await cu.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'tree'); })()")
+        _c6 = [l for l in _cu6.splitlines() if "citation needed" in l]
+        check("CU6 an owner's title does not stand in for its name, so a span"
+              " repeating the link's own text gets no second row",
+              len(_c6) == 1 and " a " in _c6[0],
+              " / ".join(r.strip()[:52] for r in _c6) or "NO ROW AT ALL")
         check("CU3 ...and the removal is RECORDED, so the ledger can answer why a"
               " bracket span has no row",
               any(str(d.get("rule")) == "cursor-inherited-non-root"

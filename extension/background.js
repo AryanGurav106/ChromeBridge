@@ -5455,36 +5455,15 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
                      || (dn.tagName || '').toLowerCase() === 'img' ? 'icon' : '');
           }
         } catch (e2) {}
-        // OR ITS IDENTITY IS EXACTLY ITS OWNER'S. Verified live on Wikipedia after
-        // the no-identity rule shipped: each citation STILL produced two rows, the
-        // <a> `[28]` and a span `[ 28 ]` that is its only content, same 21x15 box.
-        // The span's normalized text is non-empty, so the identity test keeps it,
-        // and the tree's identical-nested-row collapse cannot merge them either
-        // because it needs EXACT label equality and the two names come from two
-        // different AccName paths -- a bare text node versus the separator-joined
-        // form #28 introduced, which is where the spaces come from.
-        //
-        // EQUALITY, never containment. Containment against the owner's innerText is
-        // trivially true for any descendant, which is the wide version that lost 93
-        // identities. Equality says something much narrower and provable from the two
-        // strings: this row states exactly what its owner's row already states, so
-        // removing it removes no information. span "Baseline Check" inside a longer
-        // link label is NOT equal and stays; span "Day" inside "Day Week Month" is
-        // not equal either (and that owner is not single-activation regardless).
-        let _ownId = '';
-        try {
-          // AccName PRECEDENCE, not innerText first. The comparison has to be
-          // against what the owner's ROW will actually show, and an aria-label
-          // beats content. Getting this backwards was a real regression and CU4
-          // caught it in one run: `<a aria-label="Star"><span>188530 users starred
-          // </span></a>` has innerText EQUAL to the span, so the span was dropped
-          // while the surviving row said only name="Star" -- the exact identity
-          // loss this clause is bounded to avoid. On the corpus it cost 69 labels.
-          _ownId = _nrm(owner.getAttribute('aria-label')) || _nrm(owner.getAttribute('title'))
-                || _nrm((owner.innerText != null ? owner.innerText : owner.textContent) || '');
-        } catch (e2) {}
-        const _same = _mine && _ownId && _mine === _ownId;
-        if ((_mine || _desc) && !_same) return true;
+        // NOT ALSO "...or its identity equals its owner's". That clause was tried
+        // here and REVERTED: it has to predict what the owner's ROW will show, and two
+        // attempts at that precedence disagreed with the corpus in opposite directions
+        // -- innerText-first lost 69 labels (CU4 caught it), content-before-title lost
+        // 65. "Two rows say the same thing" is a PRESENTATION question, and answering
+        // it by DELETING one of them means a wrong answer costs an identity. It is now
+        // answered in the tree's identical-nested-row collapse instead, which merges
+        // the refs onto one row and so cannot lose anything (CU5/CU6).
+        if (_mine || _desc) return true;
         return _drop(el, 'cursor-inherited-non-root');
       }
     } catch (e) {}
@@ -9211,9 +9190,19 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       } catch (err) {}
       return false;
     };
+    // WHITESPACE-INSENSITIVE on the identity fields, because two names for the same
+    // text can differ by exactly that. AccName step 2F space-delimits each element
+    // child's contribution (#28), so `<a><span>[</span>28<span>]</span></a>` resolves
+    // to "[ 28 ]" while a bare text node gives "[28]" -- and Wikipedia's citations
+    // printed two rows per citation because those two strings are not `===`. Removing
+    // whitespace is provable from the two strings rather than a similarity judgement,
+    // and the surviving row prints its own label unchanged. GEOMETRY stays exact: if
+    // the boxes differ by a pixel the rows differ in layout and both print.
+    const _wsLess = (v) => String(v || '').replace(/\s+/g, '');
     const _sameRow = (a, b) => (
-      (a.label || '') === (b.label || '') && (a.name || '') === (b.name || '') &&
-      (a.value || '') === (b.value || '') && (a.placeholder || '') === (b.placeholder || '') &&
+      _wsLess(a.label) === _wsLess(b.label) && _wsLess(a.name) === _wsLess(b.name) &&
+      _wsLess(a.value) === _wsLess(b.value) &&
+      _wsLess(a.placeholder) === _wsLess(b.placeholder) &&
       a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
     // ref -> the refs folded into it, so nothing becomes unreachable from the
     // listing. All of them name the same box and the same label, so they are
@@ -9224,7 +9213,15 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       folded = false;
       for (const el of Array.from(keep)) {
         const pe = ent.get(el);
-        if (!pe || !_plainWrapper(el)) continue;
+        if (!pe) continue;
+        // EITHER DIRECTION. A generic wrapper is spliced out in favour of the deeper
+        // node (below), and a DECLARED CONTROL absorbs a generic child that says the
+        // same thing -- which is the direction Wikipedia needs: `<a><span>[28]</span>
+        // </a>` is one citation and printed as two rows. The declared control has to
+        // be the SURVIVOR either way, which is TR8d's rule: a control's name is its
+        // identity, so it can gain the child's ref but never lose its own row.
+        const _elPlain = _plainWrapper(el);
+        if (!_elPlain && !_declaredControl(el)) continue;
         const ks = (function () {
           const acc = [];
           for (const other of keep) {
@@ -9248,9 +9245,18 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
         // order the ancestor walk happened to add nodes, so a chain can fold
         // inner-first. The refs are sorted into DOCUMENT order at emit time —
         // outermost first — because that is the order the reader is scanning.
-        alsoRefs.set(kid, (alsoRefs.get(el) || []).concat([el], alsoRefs.get(kid) || []));
-        alsoRefs.delete(el);
-        keep.delete(el);
+        if (_elPlain) {
+          alsoRefs.set(kid, (alsoRefs.get(el) || []).concat([el], alsoRefs.get(kid) || []));
+          alsoRefs.delete(el);
+          keep.delete(el);
+        } else {
+          // The control survives and takes the child's ref. Anything kept BENEATH the
+          // child reattaches to the control, so the subtree is not lost -- only the
+          // duplicate row is.
+          alsoRefs.set(el, (alsoRefs.get(el) || []).concat([kid], alsoRefs.get(kid) || []));
+          alsoRefs.delete(kid);
+          keep.delete(kid);
+        }
         folded = true;
       }
     }
@@ -9375,11 +9381,18 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
           // Prepended, not appended: the refs are alternatives for the SAME
           // spot, so they belong in the slot the reader already scans for a ref
           // rather than in a trailing note that reads like a different element.
-          const _ids = _also.slice().sort(docOrder)
+          // THE SURVIVOR IS IN THE SORT, not always last. Prepending the absorbed
+          // refs before the survivor's own is outermost-first only when the survivor
+          // is the DEEPER node, which is one of the two collapse directions. When a
+          // declared control absorbs a generic child the survivor is the OUTER
+          // element, and leaving it last printed `ref_18 ref_17` for an <a> at 17
+          // wrapping a span at 18 -- contradicting the legend's own "outermost
+          // first". Sorting all of them together is correct in both directions.
+          const _ids = [el].concat(_also).sort(docOrder)
             .map((n) => (ent.get(n) || {}).mmid).filter((m) => m != null);
-          if (_ids.length) {
+          if (_ids.length > 1) {
             _row = _row.replace(/^ref_\d+(?::\d+)? \| /,
-              (m) => _ids.map((r) => 'ref_' + r).join(' ') + ' ' + m);
+              () => _ids.map((r) => 'ref_' + r).join(' ') + ' | ');
             _sawAlso = true;
           }
         }
