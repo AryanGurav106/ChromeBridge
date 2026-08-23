@@ -215,6 +215,12 @@ async def main():
             # SILENT -- one of the uninstrumented removals this test cannot see, so
             # the ledger had no answer for "why does the iframe have no row".
             "iframe-contents-listed-instead",
+            # `cursor` is an INHERITED CSS property, so a pointer cursor on a
+            # descendant of a control is the control's declaration and not the
+            # descendant's -- the same inheritance error as contenteditable-non-root
+            # just above. Wikipedia's citation markup printed three rows per citation
+            # (the anchor plus its two bracket spans) before this.
+            "cursor-inherited-non-root",
         }
         _rogue = sorted({str(d["rule"]) for d in dropped} - SPEC_DELETES)
         check("L10c nothing outside the spec-decided set deletes an element",

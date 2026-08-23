@@ -152,6 +152,34 @@ async def main():
               f"{len([l for l in _tf.splitlines() if 'identical siblings' in l])} fold(s),"
               f" {len(_tf)} chars")
 
+        # TR20: ONE MEMBER SPLIT OUT OF A SEQUENCE — the arXiv citation shape, where a
+        # fold of reference links ran [1]..[12] and silently omitted [8]. It was not
+        # omitted: it carried one extra class, so it grouped separately and printed as
+        # its own row, and the fold's "in document order" header invited reading the
+        # remaining eleven as the complete run. The interleave marker covers it, and
+        # the interesting part is the boundary — exactly ONE element inside the span,
+        # the smallest count that must still fire.
+        _cs = "".join(
+            f'<a class="c{" hi" if i == 8 else ""}" href=/r{i}'
+            f' style="display:block;width:60px;height:18px">[{i}]</a>' for i in range(12))
+        _cpg = await browser.new_page(viewport={"width": 900, "height": 900})
+        await _cpg.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await _cpg.set_content("<!doctype html><meta charset=utf-8>"
+                               f"<body style='margin:0'><div>{_cs}</div></body>")
+        await _cpg.wait_for_timeout(150)
+        _cl = await _cpg.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'flat'); })()")
+        _cf = [l for l in _cl.splitlines() if "same structure" in l]
+        check("TR20 a sequence with one member split out says so — the fold no longer"
+              " reads as the complete run",
+              len(_cf) == 1 and "INTERLEAVED with 1 other a" in _cf[0],
+              (_cf[0][:110] if _cf else "NO FOLD"))
+        check("TR20b ...and the split-out member is still present and actionable",
+              '"[8]"' in _cl, next((l[:70] for l in _cl.splitlines() if "[8]" in l),
+                                   "MEMBER LOST"))
+        await _cpg.close()
+
         check("D7 a group below the threshold is NOT folded",
               "4×" not in small and "Product number 1" in small,
               small.splitlines()[-1][:80])

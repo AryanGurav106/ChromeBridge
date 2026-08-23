@@ -5328,7 +5328,57 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // signal no static DOM walk can see. (Delegation roots excluded both at
     // the tagger and here — defense in depth.)
     if (el.__abClickBound && tag !== 'body' && tag !== 'html' && tag !== 'main') return true;
-    try { if (getComputedStyle(el).cursor === 'pointer') return true; } catch (e) {}
+    // `cursor` IS AN INHERITED CSS PROPERTY, so a pointer cursor on a descendant of
+    // a control is the CONTROL'S declaration, not the descendant's. Exactly the error
+    // `contenteditable-non-root` corrects (#28): isContentEditable is inherited too,
+    // every descendant of an editor reports true, and only the root is the control.
+    //
+    // Measured on Wikipedia's citation markup — `<sup><a><span class=cite-bracket>[`
+    // — where the tree printed THREE rows per citation: the anchor plus its two
+    // bracket spans, each carrying the anchor's pointer cursor and declaring nothing
+    // of its own. Clicking either span activates the anchor, which is already listed
+    // with the whole label, so they are PARTS of a control rather than controls.
+    //
+    // This is an inheritance correction, not a judgement about importance, which is
+    // why it is allowed to remove rather than demote (#28's permitted-delete set, and
+    // L10c enforces membership). The walk runs only while the pointer cursor is
+    // UNBROKEN, because if an ancestor's cursor differs then this element's pointer
+    // cursor cannot have come from it.
+    //
+    // THE OWNER MUST BE A SINGLE-ACTIVATION CONTROL, and that restriction is the
+    // whole safety of the rule. A segmented control written as
+    // `<div onclick><span>Day</span><span>Week</span></div>` has the IDENTICAL shape
+    // to Wikipedia's citation — spans whose only signal is the parent's inherited
+    // cursor — but there the spans really are distinct targets, because a delegated
+    // handler dispatches on event.target. Dropping them would leave one row labelled
+    // "Day Week" and no way to pick Week: a false negative of exactly the kind this
+    // project treats as the worst outcome.
+    //
+    // HTML settles it without a heuristic. Activating an <a>, <button>, <summary> or
+    // form control does ONE thing, so its descendants cannot be separate targets. A
+    // generic element with a handler makes no such promise, so its children are kept
+    // — the owner test admits declared single-activation tags and roles only, and
+    // deliberately NOT onclick/tabindex/__abClickBound.
+    const SINGLE_ACT = new Set(['link', 'button', 'checkbox', 'radio', 'menuitem',
+      'menuitemcheckbox', 'menuitemradio', 'option', 'tab', 'switch', 'treeitem']);
+    try {
+      if (getComputedStyle(el).cursor === 'pointer') {
+        let owner = null;
+        let n = el.parentElement, hops = 0;
+        while (n && hops++ < 6) {
+          let pc = '';
+          try { pc = getComputedStyle(n).cursor; } catch (e2) { break; }
+          if (pc !== 'pointer') break;            // run ended: the cursor is our own
+          const nt = (n.tagName || '').toLowerCase();
+          const nr = n.getAttribute('role');
+          if (nt === 'a' || nt === 'button' || nt === 'summary' || formyTags.has(nt)
+              || (nr && SINGLE_ACT.has(nr))) { owner = n; break; }
+          n = n.parentElement;
+        }
+        if (!owner) return true;
+        return _drop(el, 'cursor-inherited-non-root');
+      }
+    } catch (e) {}
     // REJECTED CANDIDATE — do not re-add without new evidence. A `collapsed`/
     // `expanded` class token was proposed as an accordion-header signal (same
     // cross-library shape as the `placeholder` token rule) to recover three

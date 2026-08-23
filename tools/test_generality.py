@@ -224,6 +224,55 @@ async def main():
               " | ".join(l.strip()[:70] for l in _blank.splitlines()) or "EMPTY OUTPUT")
         await bp.close()
 
+        # ---- CU: a pointer cursor is INHERITED, so it is not always a declaration --
+        # `cursor` is an inherited CSS property, so a pointer cursor on a descendant
+        # of a control belongs to the CONTROL — the same error contenteditable-non-root
+        # corrects, where isContentEditable is inherited and only the root is the
+        # control. Measured on Wikipedia's citation markup
+        # (`<sup><a><span class=cite-bracket>[`): three rows per citation, the anchor
+        # plus its two bracket spans, each declaring nothing of its own.
+        #
+        # CU2 IS THE LOAD-BEARING HALF. A segmented control written as
+        # `<div onclick><span>Day</span><span>Week</span></div>` has the IDENTICAL
+        # shape, and there the spans really are distinct targets because a delegated
+        # handler dispatches on event.target — dropping them would leave one row
+        # labelled "Day Week Month" and no way to pick Week. HTML settles it: an <a>
+        # or <button> does ONE thing when activated, so its descendants cannot be
+        # separate targets, while a generic element with a handler makes no such
+        # promise. Both fixtures on ONE page, so neither can pass by configuration.
+        cu = await browser.new_page(viewport={"width": 900, "height": 700})
+        await cu.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await cu.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<p>Cited<sup class=reference><a href='#c1'>"
+            "<span class=b>[</span>1<span class=b>]</span></a></sup>.</p>"
+            "<div id=seg onclick='void 0' style='cursor:pointer;width:300px;height:30px'>"
+            "<span style='display:inline-block;width:90px'>Day</span>"
+            "<span style='display:inline-block;width:90px'>Week</span>"
+            "<span style='display:inline-block;width:90px'>Month</span></div></body>")
+        await cu.wait_for_timeout(140)
+        _cul = await cu.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'tree'); })()")
+        _curows = [l for l in _cul.splitlines() if "ref_" in l and "|" in l]
+        check("CU1 a citation's bracket spans are parts of the link, not three rows",
+              len([l for l in _curows if '"["' in l or '"]"' in l]) == 0
+              and any('[ 1 ]' in l for l in _curows),
+              " / ".join(r.strip()[:38] for r in _curows[:4]))
+        check("CU2 ...while a delegating container's children stay distinct targets,"
+              " because activating a <div> promises nothing",
+              all(any(f'"{w}"' in l for l in _curows) for w in ("Day", "Week", "Month")),
+              " / ".join(r.strip()[:30] for r in _curows))
+        _cled = await cu.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',true,false,'tree'); })()")
+        check("CU3 ...and the removal is RECORDED, so the ledger can answer why a"
+              " bracket span has no row",
+              any(str(d.get("rule")) == "cursor-inherited-non-root"
+                  for d in (_cled.get("dropped") or [])),
+              str(sorted({str(d.get("rule")) for d in (_cled.get("dropped") or [])})[:6]))
+        await cu.close()
+
         # ---- C: combobox state without English ----------------------------------
         e = ent.get("gk-empty")
         check("C1 class-marked placeholder ('Bitte wählen') reads as unselected, not a value",
