@@ -981,9 +981,22 @@ function _rectForPage(selector) {
   // entirely. Observed live: a button at y=2365 in a 1301px viewport stayed at
   // y=2365 (scrollY never left 0) and the click hit nothing.
   // "instant" overrides the CSS and scrolls synchronously.
+  //
+  // AND IT MOVES THE PAGE UNDER THE AGENT, which nothing used to report. Every
+  // viewport-relative fact in the listing the agent is holding — `(below-fold)`,
+  // `(above-fold)`, `(off to the side)`, and every `box()` coordinate — is measured
+  // against the viewport, so a scroll silently invalidates all of them. Measured
+  // live: a single scroll_to moved the page 2,520px and the tool's reply mentioned
+  // no scrolling at all, so the agent kept reasoning from a listing describing a
+  // screen that no longer existed. Refs are unaffected (they re-measure at action
+  // time), which is exactly the distinction worth stating.
+  let _sx0 = 0, _sy0 = 0;
+  try { _sx0 = window.scrollX || 0; _sy0 = window.scrollY || 0; } catch (e) {}
   try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {
     try { el.scrollIntoView({ block: "center", inline: "center" }); } catch (e2) {}
   }
+  let _dsx = 0, _dsy = 0;
+  try { _dsx = (window.scrollX || 0) - _sx0; _dsy = (window.scrollY || 0) - _sy0; } catch (e) {}
   const r = el.getBoundingClientRect();
   // Same-origin iframe content: the rect is relative to the FRAME's viewport,
   // but CDP Input.dispatchMouseEvent takes TOP-document CSS pixels — add the
@@ -1045,7 +1058,26 @@ function _rectForPage(selector) {
     w: r.width * kx, h: r.height * ky,
     visible: r.width > 0 && r.height > 0,
     blockedBy,
+    dsx: Math.round(_dsx), dsy: Math.round(_dsy),
   };
+}
+
+// The one sentence every caller of `_rectForPage` owes the agent when the page
+// moved. Kept as a helper because four call sites scroll and each used to report
+// nothing: scroll_to, the trusted click, the coordinate resolver, and the untrusted
+// click's own rect pass. States the fact and the consequence, and separates what is
+// stale (viewport-relative annotations, printed coordinates) from what is not (refs,
+// which re-measure). Empty when nothing moved, so it costs nothing on the common case.
+function _scrollNote(rect) {
+  if (!rect) return "";
+  const dy = rect.dsy || 0, dx = rect.dsx || 0;
+  if (!dy && !dx) return "";
+  const parts = [];
+  if (dy) parts.push(`${Math.abs(dy)}px ${dy > 0 ? "down" : "up"}`);
+  if (dx) parts.push(`${Math.abs(dx)}px ${dx > 0 ? "right" : "left"}`);
+  return ` NOTE: this scrolled the page ${parts.join(" and ")}, so (below-fold)/`
+       + `(above-fold) flags and any box() coordinates from your last read no longer`
+       + ` describe the screen. Refs are unaffected — they re-measure when used.`;
 }
 
 // Current top-document offset of a cross-origin frame, re-measured at ACTION time.
@@ -1211,7 +1243,8 @@ async function clickTrusted(tabId, selector, frameIdOverride = null) {
     { type: "mousePressed", x, y, button: "left", clickCount: 1, buttons: 1 });
   await cdpSend(tabId, "Input.dispatchMouseEvent",
     { type: "mouseReleased", x, y, button: "left", clickCount: 1, buttons: 0 });
-  return { ok: true, msg: `Clicked ${selector} via TRUSTED input at (${Math.round(x)},${Math.round(y)}).` };
+  return { ok: true, msg: `Clicked ${selector} via TRUSTED input at (${Math.round(x)},${Math.round(y)}).`
+                          + _scrollNote(rect) };
 }
 
 // --------------------- MCP `computer` op (CDP mouse/keyboard) ---------------
@@ -1335,7 +1368,10 @@ async function _computerPoint(tabId, params) {
       const off = await frameOffsetNow(tabId, rt.frameId);
       if (off) { x += off.x; y += off.y; }
     }
-    return { x, y };
+    // The selector path SCROLLS (scrollIntoView inside `_rectForPage`), so it owes
+    // the caller the same note scroll_to does. The coordinate path below does not
+    // scroll and carries nothing.
+    return { x, y, note: _scrollNote(rect) };
   }
   // default: viewport center (used by scroll without coordinates)
   const vp = await runInTab(tabId, () => ({ w: innerWidth, h: innerHeight }));
@@ -1510,7 +1546,8 @@ async function computerOp(t, params) {
     const rt = resolveFrameSelector(params.selector);
     const rect = await runInTab(t.id, _rectForPage, [rt.selector], rt.frameId); // scrollIntoViews
     if (!rect) throw new Error(`element ${params.selector} not found`);
-    return `Scrolled ${params.selector} into view (center at ${Math.round(rect.x)},${Math.round(rect.y)}).`;
+    return `Scrolled ${params.selector} into view (center at ${Math.round(rect.x)},${Math.round(rect.y)}).`
+         + _scrollNote(rect);
   }
 
   // Everything below is trusted CDP input. Fix #10: attach FIRST, settle, then measure.
@@ -1589,7 +1626,7 @@ async function computerOp(t, params) {
       type: "mouseWheel", x: pt.x, y: pt.y,
       deltaX: d[0] * ticks * 120, deltaY: d[1] * ticks * 120,
     });
-    return `Scrolled ${params.scroll_direction || "down"} ${ticks} tick(s) at (${Math.round(pt.x)},${Math.round(pt.y)}).${_shiftWarn}`;
+    return `Scrolled ${params.scroll_direction || "down"} ${ticks} tick(s) at (${Math.round(pt.x)},${Math.round(pt.y)}).${_shiftWarn}${pt.note || ""}`;
   }
 
   if (action === "hover") {
@@ -1604,7 +1641,7 @@ async function computerOp(t, params) {
     let _hh = null;
     try { _hh = await runInTab(t.id, _hitTestPage, [pt.x, pt.y]); } catch (e) {}
     return `Hovering at (${Math.round(pt.x)},${Math.round(pt.y)}).`
-      + `${_hitEcho(_hh, params.selector)}${_shiftWarn}`;
+      + `${_hitEcho(_hh, params.selector)}${_shiftWarn}${pt.note || ""}`;
   }
 
   if (action === "left_click_drag") {
@@ -1669,7 +1706,7 @@ async function computerOp(t, params) {
         { type: "mouseReleased", x: pt.x, y: pt.y, button, clickCount: c, buttons: 0, modifiers: bits });
     }
     return `${action} at (${Math.round(pt.x)},${Math.round(pt.y)})${params.selector ? ` on ${params.selector}` : ""}.`
-      + `${_hitEcho(_hh, params.selector)}${_actNote}${_shiftWarn}`;
+      + `${_hitEcho(_hh, params.selector)}${_actNote}${_shiftWarn}${pt.note || ""}`;
   }
 
   throw new Error(`computer: unknown action ${action}`);

@@ -20,6 +20,7 @@ Run:  python tools/test_pixels.py
 import asyncio
 import importlib.util
 import io
+import json
 import sys
 
 try:
@@ -52,6 +53,8 @@ from _extract import extract as _shared_extract  # noqa: E402
 _BG = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
 HIT = _shared_extract("_hitTestPage", _BG, verify=True)
 ECHO = _shared_extract("_hitEcho", _BG, verify=True)
+RECT = _shared_extract("_rectForPage", _BG, verify=True)
+SNOTE = _shared_extract("_scrollNote", _BG, verify=True)
 
 # The page a coordinate click can get wrong in every way that matters. The veil is
 # TRANSPARENT on purpose: it paints nothing, so a pixel comparison asking "is the
@@ -79,6 +82,56 @@ window.__mmidReg = new Map([["7",document.getElementById('want')],
 document.getElementById('host').attachShadow({mode:'open'}).innerHTML =
   '<button style="width:120px;height:30px">Inside shadow</button>';
 </script></body>"""
+
+
+async def _scroll_note_checks(browser, check):
+    """Acting on a ref SCROLLS the page, and nothing used to say so.
+
+    `_rectForPage` calls scrollIntoView before measuring — that is fix #11, and it is
+    why a below-fold ref is clickable at all. What it also does is move the page under
+    the agent: every viewport-relative annotation in the listing it is holding
+    ((below-fold), (above-fold), (off to the side)) and every printed box() coordinate
+    is measured against the viewport, so one scroll invalidates all of them at once.
+    Measured live: a single scroll_to moved the page 2,520px and the reply mentioned no
+    scrolling at all, so the agent went on reasoning from a description of a screen
+    that no longer existed.
+
+    Refs are unaffected because they re-measure, which is the distinction the note has
+    to draw rather than a blanket "things may have changed".
+    """
+    pg = await browser.new_page(viewport={"width": 800, "height": 600})
+    await pg.set_content(
+        "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+        "<button id=top style='width:100px;height:30px'>Top</button>"
+        "<div style='height:3000px'></div>"
+        "<button id=deep style='width:100px;height:30px'>Deep</button></body>")
+    await pg.wait_for_timeout(120)
+
+    async def rect(sel):
+        return await pg.evaluate("(function(){ " + RECT + "; return _rectForPage("
+                                 + json.dumps(sel) + "); })()")
+
+    async def note(sel):
+        return await pg.evaluate("(function(){ " + RECT + ";" + SNOTE
+                                 + "; return _scrollNote(_rectForPage("
+                                 + json.dumps(sel) + ")); })()")
+
+    # The in-viewport element FIRST: measuring `deep` scrolls the page and would
+    # leave `top` off-screen, so the negative control has to be taken before the
+    # positive one or it stops being a control.
+    _n0 = await note("#top")
+    check("X18 an element already on screen reports no scroll",
+          _n0 == "", f"note={_n0[:70]!r}")
+    _r1 = await rect("#deep")
+    check("X18b ...and reaching a below-fold ref reports how far the page moved",
+          _r1 and _r1.get("dsy", 0) > 1000, f"dsy={(_r1 or {}).get('dsy')}")
+    _n1 = await pg.evaluate("(function(){ " + SNOTE + "; return _scrollNote("
+                            + json.dumps(_r1) + "); })()")
+    check("X18c ...naming what is stale (viewport flags, box coords) and what is"
+          " not (refs)",
+          "down" in _n1 and "below-fold" in _n1 and "re-measure" in _n1,
+          _n1[:120])
+    await pg.close()
 
 
 async def _hit_echo_checks(browser, check):
@@ -248,6 +301,7 @@ async def main():
         # The hit-echo checks reuse this browser: they need no display scaling, only
         # a page whose layout is known, so they run once rather than per DPR.
         await _hit_echo_checks(browser, check)
+        await _scroll_note_checks(browser, check)
         await browser.close()
 
     passed = sum(1 for r in results if r)
