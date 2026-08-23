@@ -28,6 +28,10 @@ import json
 import os
 import re
 import sys
+from pathlib import Path as _Path
+
+sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from _extract import code_mask, extract as _shared_extract  # noqa: E402
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -135,6 +139,80 @@ def main() -> int:
           "Optional[Union[str, dict]]" in _srv
           and "json.dumps(args, ensure_ascii=False)" in _srv,
           "args annotation is Optional[Union[str, dict]] with a json.dumps fallback")
+
+    # ------------------------------------------------------------------
+    # C11: THE INJECTION BOUNDARY. `runInTab(tabId, fn)` hands `fn` to
+    # chrome.scripting.executeScript({func}), which stringifies THAT FUNCTION AND
+    # NOTHING ELSE. So any identifier in `fn` that resolves to a top-level sibling
+    # is a free variable that does not exist in the page: the call throws
+    # ReferenceError, and because these functions are written defensively the throw
+    # lands in a try/catch and the result is a plausible-looking zero.
+    #
+    # This is the most expensive failure shape in the project, because it is silent
+    # in BOTH directions. `_readinessPage` called two top-level helpers, so its
+    # three DOM signals (images-loading, aria-busy, progressbar) returned 0 on every
+    # page for as long as they existed, and read_page emitted no readiness banner on
+    # a page that plainly held an aria-busy region and a visible progressbar — while
+    # tools/test_readiness.py reported 10/10, because it PREPENDED the helpers before
+    # injecting and so tested an environment production never has.
+    #
+    # Checked mechanically rather than by reading: the same class was documented in
+    # CLAUDE.md #25, a page-context copy was already in the codebase at the
+    # `dup:deepall` site, and it still recurred. A comment is not a guard.
+    _bg = read("extension/background.js")
+
+    def _code_only(s):
+        # THE MASK MUST BE COMPUTED FOR THE STRING BEING MASKED. The first version
+        # closed over one mask built from the whole file and applied it to each
+        # extracted slice, so the indices referred to unrelated offsets: comments
+        # were treated as code and code as comment, and the check reported a free
+        # reference in a function that had none. Which is this very bug class — a
+        # helper reading state that is not in scope for its input — caught by
+        # reproducing the check standalone rather than by reading it.
+        m = code_mask(s)
+        return "".join(c if m[i] else " " for i, c in enumerate(s))
+
+    _bg_code = _code_only(_bg)
+    _toplevel = set(re.findall(r"^function\s+([A-Za-z_$][\w$]*)", _bg_code, re.M))
+    _injected = set(re.findall(r"runInTab\(\s*[^,]+,\s*([A-Za-z_$][\w$]*)", _bg_code))
+    _bad = []
+    for _fn in sorted(_injected):
+        if _fn not in _toplevel:
+            continue                      # a parameter or local; nothing to check
+        try:
+            _src = _shared_extract(_fn, _bg, verify=False)
+        except Exception as e:
+            _bad.append(f"{_fn}: could not extract ({type(e).__name__})")
+            continue
+        _body = _code_only(_src)
+        # Names DECLARED inside the function are fine however they are spelled.
+        _local = set(re.findall(r"(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)", _body))
+        for _ref in sorted(set(re.findall(r"\b([A-Za-z_$][\w$]*)\s*\(", _body))):
+            if _ref in _toplevel and _ref != _fn and _ref not in _local:
+                _bad.append(f"{_fn} calls top-level {_ref}()")
+    # C12: THE LISTING'S BOUNDARY LINE IS A CROSS-PROCESS STRING CONTRACT. The
+    # server splits a listing into preamble and rows by looking for the line that
+    # introduces the actionable rows. It searched for "Act on an element" while the
+    # extension emits "Act on a row by its ref_N:", so `_content_rows` never started
+    # collecting, returned [], and the guard that stores a baseline never ran —
+    # read_page(delta=true) reported "first read of this tab" forever and the whole
+    # feature was dead. It failed SAFE (honest notice, full listing), which is
+    # exactly why no test and no agent caught it.
+    check("C12 the server's listing-boundary marker is a prefix of the line the "
+          "extension actually emits",
+          (lambda m: bool(m) and m.group(1) in _bg)(
+              re.search(r'^_ACT_LINE\s*=\s*"([^"]+)"', _srv, re.M)),
+          (lambda m: (f"server={m.group(1)!r} present in background.js"
+                      if m and m.group(1) in _bg else
+                      f"server={m.group(1)!r} NOT emitted by the extension" if m
+                      else "_ACT_LINE not found in mcp_server.py"))(
+              re.search(r'^_ACT_LINE\s*=\s*"([^"]+)"', _srv, re.M)))
+
+    check("C11 every function injected via runInTab is self-contained "
+          "(executeScript stringifies only that function)",
+          not _bad,
+          f"{len(_injected)} injected function(s) checked"
+          + (f" — FREE REFERENCES: {'; '.join(_bad[:6])}" if _bad else ", all self-contained"))
 
     print(f"\n{passed} passed, {failed} failed, {passed + failed} total checks")
     if failures:

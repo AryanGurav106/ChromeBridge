@@ -524,6 +524,48 @@ async def main():
               f"ok={_ae.get('ok')} msg={(_ae.get('msg') or '')[:130]!r}")
         await ap.close()
 
+        # ---- W19: `near=` must be text a HUMAN CAN SEE -----------------------
+        # The legend calls it "nearest visible text", and the sibling walk read
+        # things nobody can see. `.textContent` on a COMMENT node returns the comment
+        # body — unlike element.textContent, which excludes comment descendants — and
+        # an element sibling's textContent includes display:none text. Found by an
+        # independent audit, demonstrated live end to end: with
+        # `<!-- promo code discount coupon --><input>`, find("promo code coupon
+        # field") returned that input under `Found 1 element(s) matching`, so an
+        # agent would type a promo code into a field whose only match is a
+        # developer's comment. `near=` counts as CONTENT coverage in find's scorer,
+        # which is what carries an invisible string into the confident results.
+        np = await browser.new_page(viewport={"width": 900, "height": 700})
+        await np.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await np.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<div><!-- promo code discount coupon -->"
+            "<input id=nc style='width:200px;height:24px'></div>"
+            "<div><span style='display:none'>HIDDEN_LABEL_QRS</span>"
+            "<input id=nh style='width:200px;height:24px'></div>"
+            "<div>Visible Label<input id=nv style='width:200px;height:24px'></div>"
+            "</body>")
+        await np.wait_for_timeout(150)
+        _nst = await np.evaluate("(function(){ " + COLLECT
+                                 + "; return _collectInteractivePage(true); })()")
+        _nm = await np.evaluate(
+            "()=>({c:document.getElementById('nc').getAttribute('mmid'),"
+            "h:document.getElementById('nh').getAttribute('mmid'),"
+            "v:document.getElementById('nv').getAttribute('mmid')})")
+
+        def _near(key):
+            e = next((x for x in _nst if str(x.get("mmid")) == str(_nm[key])), None)
+            return (e or {}).get("near") or ""
+
+        check("W19 near= does not report an HTML COMMENT as visible text",
+              "promo" not in _near("c").lower(), f"near={_near('c')!r}")
+        check("W19b ...nor display:none text",
+              "HIDDEN_LABEL_QRS" not in _near("h"), f"near={_near('h')!r}")
+        check("W19c ...while a genuinely visible preceding label still works"
+              " (the over-correction guard)",
+              _near("v") == "Visible Label", f"near={_near('v')!r}")
+        await np.close()
+
         # ---- W16: which tab is selected, decided by DECLARATIONS -------------
         # `(current)/(selected)` tells the agent "already active; don't re-click",
         # so a wrong one suppresses a real action. It used to be answered, after

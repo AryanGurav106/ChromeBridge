@@ -122,6 +122,44 @@ def main():
           out8 is not None and "NEW OR CHANGED (2)" in out8 and n_new == 2,
           f"{n_new} '+' lines")
 
+    # T12-T14: FEED IT WHAT THE EXTENSION ACTUALLY EMITS. Every check above builds
+    # row lists by hand and calls `_delta_listing` directly, so none of them ever
+    # ran `_content_rows` — and `_content_rows` split the listing on a boundary
+    # string the extension does not emit ("Act on an element" vs "Act on a row by
+    # its ref_N:"). It therefore returned [] for every real listing, the baseline
+    # was never stored, and read_page(delta=true) answered "first read of this tab"
+    # forever. The feature was dead for as long as that mismatch existed, behind a
+    # green suite, because the suite tested the half that could not fail.
+    #
+    # The boundary line here is copied from background.js's own legend. If the
+    # extension changes it, C12 in test_contracts.py fails; if the parsing changes,
+    # these do.
+    _ACT = ("Act on a row by its ref_N: form_input (one field), fill_form (a whole "
+            "form incl. dropdowns/checkboxes, with optional submit), computer "
+            "(left_click / hover / scroll_to by ref, or screenshot to look at pixels).")
+
+    def _listing(*rowlines):
+        return "\n".join([
+            "Current URL: /x",
+            f"Visible interactive elements ({len(rowlines)} on screen).",
+            '  - name="..." — IDENTITY (label / accessible name).',
+            _ACT, *rowlines])
+
+    _before = _listing('ref_1 | button "Alpha"', 'ref_2 | a "Beta"',
+                       'ref_3 | input[text] name="Gamma"')
+    _r1 = ms._content_rows(_before)
+    check("T12 rows are extracted from a REAL listing, past the real boundary line",
+          len(_r1) == 3 and _r1[0].startswith("ref_1"),
+          f"{len(_r1)} rows: {_r1[:2]}")
+    check("T13 ...and the preamble and legend are not mistaken for elements",
+          not any("Current URL" in r or "IDENTITY" in r or r.startswith("Act on") for r in _r1),
+          f"rows={_r1}")
+    _after = ms._content_rows(_before.replace('ref_2 | a "Beta"', 'ref_2 | a "Beta Updated"'))
+    _d = delta(_r1, _after)
+    check("T14 ...so a one-row change over real listings produces a real delta",
+          _d is not None and "NEW OR CHANGED (1)" in _d and "Beta Updated" in _d,
+          (_d or "NO DELTA — the feature is inert on real input").splitlines()[0][:80])
+
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} delta checks passed.")
     return 0 if passed == len(results) else 1

@@ -1599,6 +1599,65 @@ function _topRectFor(el) {
 }
 
 function _readinessPage() {
+  // PAGE-CONTEXT COPIES. THIS FUNCTION IS INJECTED ALONE. `runInTab` hands it to
+  // `chrome.scripting.executeScript({func})`, which stringifies THIS FUNCTION AND
+  // NOTHING ELSE — so a call to a top-level sibling like `_deepAll` or
+  // `_topRectFor` is a free identifier that does not exist in the page. Every such
+  // call threw ReferenceError, each one swallowed by the try/catch around it, and
+  // `imgs`/`busy`/`prog` stayed 0 forever. Confirmed in the page context:
+  //     deepAll_type: "undefined"   topRectFor_type: "undefined"
+  //     busy_error: "ReferenceError: _deepAll is not defined"  -> busy_result: 0
+  // while the page plainly held one aria-busy region and one visible progressbar.
+  // A read_page on that page emitted NO readiness banner.
+  //
+  // So the three DECLARATIVE signals — the page stating it is busy — were dead,
+  // leaving only document.readyState and the service-worker-side network count.
+  // A false "settled" is the worst direction this probe can fail in: the agent
+  // reads mid-render and concludes something is absent.
+  //
+  // CLAUDE.md #25 documents this exact trap ("_deepAll extracted alone throws,
+  // every try/catch swallows it, and the readiness probe silently reports
+  // settled"), and the codebase already carries the correct pattern at the
+  // `dup:deepall` site — a page-context copy. The readiness probe never got one.
+  // Worse, tools/test_readiness.py PREPENDED both helpers before injecting, so the
+  // suite tested an environment production never has and stayed green at 100%. It
+  // now injects this function alone, exactly as runInTab does.
+  //
+  // Keep these as INNER CLOSURES. Anything this function needs must live inside it.
+  const _deepAll = (sel, root, depth) => {
+    const acc = [];
+    const visit = (r, d) => {
+      if (d > 6) return;
+      try { r.querySelectorAll(sel).forEach((e) => acc.push(e)); } catch (e) {}
+      try { r.querySelectorAll('*').forEach((e) => { if (e.shadowRoot) visit(e.shadowRoot, d + 1); }); }
+      catch (e) {}
+      try {
+        r.querySelectorAll('iframe,frame').forEach((f) => {
+          let fd = null;
+          try { fd = f.contentDocument; } catch (e) { return; }
+          if (fd) visit(fd, d + 1);
+        });
+      } catch (e) {}
+    };
+    visit(root || document, depth || 0);
+    return acc;
+  };
+  const _topRectFor = (el) => {
+    const r = el.getBoundingClientRect();
+    let x = r.left, y = r.top;
+    try {
+      let w = el.ownerDocument && el.ownerDocument.defaultView;
+      while (w && w !== window && w.frameElement) {
+        const fe = w.frameElement;
+        const fr = fe.getBoundingClientRect();
+        x += fr.left + (fe.clientLeft || 0);
+        y += fr.top + (fe.clientTop || 0);
+        w = w.parent;
+      }
+    } catch (e) {}
+    return { left: x, top: y, right: x + r.width, bottom: y + r.height,
+             width: r.width, height: r.height };
+  };
   const o = { ready: document.readyState, imgs: 0, busy: 0, prog: 0 };
   try {
     // NEAR THE VIEWPORT ONLY. A lazy image below the fold has complete === false
@@ -6802,6 +6861,31 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         for (let d = 0; d < 2 && !nearLabel && cur; d++) {
           let p = cur.previousSibling, hops = 0;
           while (p && hops < 3) {
+            // `near=` IS DOCUMENTED AS "nearest VISIBLE text", and this walk read
+            // things the user cannot see. `.textContent` on a COMMENT node returns
+            // the comment body (unlike element.textContent, which excludes comment
+            // descendants), and an element sibling's textContent includes
+            // display:none text. Demonstrated live:
+            //   <!-- SENTINEL --><select>            -> near="SENTINEL"
+            //   <span style="display:none">X</span><input>  -> near="X"
+            // and end to end, `<!-- promo code discount coupon --><input>` made
+            // find("promo code coupon field") return that input under the confident
+            // header `Found 1 element(s) matching` — an agent types its promo code
+            // into a field whose only match is a developer's comment. `near=` now
+            // counts as CONTENT coverage in find's scorer, so an invisible string
+            // can carry a wrong element into the confident results.
+            // The newer `_deepText` helper already handles both cases; this is an
+            // un-migrated older path.
+            if (p.nodeType === 8) { p = p.previousSibling; hops++; continue; }  // comment
+            if (p.nodeType === 1) {
+              let _vis = true;
+              try {
+                _vis = p.checkVisibility
+                  ? p.checkVisibility({ checkVisibilityCSS: true })
+                  : !!p.offsetParent;
+              } catch (e) { _vis = true; }
+              if (!_vis) { p = p.previousSibling; hops++; continue; }
+            }
             const t = short(p.textContent);
             if (labelish(t)) { nearLabel = t; break; }
             if (t) break;   // there WAS preceding text but it's code — try headings

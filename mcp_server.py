@@ -302,6 +302,19 @@ def _q(v: Any, limit: int) -> str:
     return json.dumps(t if len(t) <= limit else _cut(t, limit), ensure_ascii=False)
 
 
+# THE BOUNDARY LINE BETWEEN THE LISTING'S PREAMBLE AND ITS ROWS, as the extension
+# actually emits it. This was hardcoded as "Act on an element" in two places while
+# background.js emits "Act on a row by its ref_N:" — so `_content_rows` never began
+# collecting, returned [], and the `if _rows:` guard therefore NEVER STORED A
+# BASELINE. Every read_page(delta=true) reported "first read of this tab" and
+# returned the full listing: the feature was completely dead, and its headline
+# measurement (~6,300 chars -> 220, -96%) had never applied to a real call.
+#
+# It failed SAFE — an honest notice and a full listing, no phantom GONE rows — which
+# is why nothing surfaced it. Pinned by C12 in tools/test_contracts.py, because this
+# is a string contract across a process boundary and a comment is not a guard.
+_ACT_LINE = "Act on a row by its ref"
+
 # Lines the listing writes ABOUT itself. Never elements, so never diffable.
 _META_ROW = re.compile(
     r"more interactive element\(s\)|interactive element\(s\) are (BELOW|ABOVE)"
@@ -355,6 +368,51 @@ def _line_ident(line: str) -> str:
     # both wrong and barely smaller than a full read on any scrolling page.
     return re.sub(r"\s*\|\s*box\([^)]*\)", "", line).strip()
 
+
+# HOISTED TO MODULE LEVEL SO IT CAN BE TESTED. This lived inside the read_page tool,
+# which is why tools/test_delta.py could only ever exercise `_delta_listing` with
+# hand-built row lists — and so the boundary-marker bug that made this function
+# return [] for every real listing (see _ACT_LINE) sat undetected behind a green
+# suite. A function on the critical path of a feature needs to be reachable by a
+# test that feeds it what the extension actually emits.
+def _content_rows(text: str) -> list[str]:
+    """Every line that carries elements, however it is formatted.
+
+    Selecting only `mmid=`-prefixed lines missed folded group lines entirely —
+    on Hacker News that meant 36 links lived in ONE line the extractor did not
+    see, so a page with 185 elements looked like a 1-row page and the delta
+    correctly refused. Compaction blocks (grids, icon palettes) have the same
+    shape and the same problem.
+    """
+    rows, started = [], False
+    for ln in text.split("\n"):
+        if not started:
+            if ln.startswith(_ACT_LINE):
+                started = True
+            continue
+        t = ln.strip()
+        if not t or t.startswith("- ") or t.startswith("["):
+            continue
+        # ...and skip the listing's own scaffolding. These lines describe the
+        # listing, not the page, so diffing them reports a meta-message as an
+        # element that appeared or vanished — measured live, where a previous
+        # read's truncation notice was counted among four elements that had
+        # "left the listing".
+        if _META_ROW.search(t):
+            continue
+        # EXPLODE FOLDED GROUPS. A group line packs dozens of elements into one
+        # string, so ONE changed label rewrites the whole line and the delta
+        # sees a wholesale change. Measured live on Hacker News, where
+        # "13 hours ago" ticking to "14 hours ago" and comment counts moving
+        # made three group lines cover most of the page and every delta refuse.
+        # Comparing per element restores the property folding was hiding.
+        toks = re.findall(r"(?:^|\s)(\d+:\"[^\"]*\"\S*)", ln)
+        if len(toks) >= 3:
+            head = ln[:22]          # short, distinctive group tag; identity only
+            rows.extend(f"{head}~ {tk}" for tk in toks)
+        else:
+            rows.append(ln)
+    return rows
 
 def _delta_listing(prev: list[str], cur: list[str]) -> Optional[str]:
     """Render cur as a change-set against prev, or None if that is a bad trade.
@@ -987,45 +1045,6 @@ async def read_page(
                 _cur_url = str(_u)
     except Exception:
         pass
-    def _content_rows(text: str) -> list[str]:
-        """Every line that carries elements, however it is formatted.
-
-        Selecting only `mmid=`-prefixed lines missed folded group lines entirely —
-        on Hacker News that meant 36 links lived in ONE line the extractor did not
-        see, so a page with 185 elements looked like a 1-row page and the delta
-        correctly refused. Compaction blocks (grids, icon palettes) have the same
-        shape and the same problem.
-        """
-        rows, started = [], False
-        for ln in text.split("\n"):
-            if not started:
-                if ln.startswith("Act on an element"):
-                    started = True
-                continue
-            t = ln.strip()
-            if not t or t.startswith("- ") or t.startswith("["):
-                continue
-            # ...and skip the listing's own scaffolding. These lines describe the
-            # listing, not the page, so diffing them reports a meta-message as an
-            # element that appeared or vanished — measured live, where a previous
-            # read's truncation notice was counted among four elements that had
-            # "left the listing".
-            if _META_ROW.search(t):
-                continue
-            # EXPLODE FOLDED GROUPS. A group line packs dozens of elements into one
-            # string, so ONE changed label rewrites the whole line and the delta
-            # sees a wholesale change. Measured live on Hacker News, where
-            # "13 hours ago" ticking to "14 hours ago" and comment counts moving
-            # made three group lines cover most of the page and every delta refuse.
-            # Comparing per element restores the property folding was hiding.
-            toks = re.findall(r"(?:^|\s)(\d+:\"[^\"]*\"\S*)", ln)
-            if len(toks) >= 3:
-                head = ln[:22]          # short, distinctive group tag; identity only
-                rows.extend(f"{head}~ {tk}" for tk in toks)
-            else:
-                rows.append(ln)
-        return rows
-
     _rows = _content_rows(out)
     _prev = LAST_READ.get(tabId) or {}
     if delta and not scope_mmid and _prev.get("url") == _cur_url and _prev.get("rows"):
@@ -1040,7 +1059,7 @@ async def read_page(
             # row extractor see a 185-element page as one row.
             _all = out.split("\n")
             try:
-                _cut = next(i for i, ln in enumerate(_all) if ln.startswith("Act on an element"))
+                _cut = next(i for i, ln in enumerate(_all) if ln.startswith(_ACT_LINE))
             except StopIteration:
                 _cut = min(3, len(_all))
             _pre = [ln for ln in _all[:_cut] if ln and not ln.strip().startswith("- ")]

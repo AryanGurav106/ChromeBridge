@@ -37,9 +37,23 @@ BG = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
 # one scope; extracted alone the reference throws, every try/catch swallows it, and
 # the probe reports a settled page — invisibly. Same swallowed-ReferenceError shape
 # as the vh/vw bug that R8 exists for; caught by the suite this time.
-READY = (_shared_extract("_deepAll", BG, verify=True) + ";\n"
-         + _shared_extract("_topRectFor", BG, verify=True) + ";\n"
-         + _shared_extract("_readinessPage", BG, verify=True))
+# INJECT _readinessPage ALONE, BECAUSE THAT IS THE PRODUCTION CONTRACT.
+# `runInTab` passes it to chrome.scripting.executeScript({func}), which stringifies
+# ONLY that function — a call to a top-level sibling is a free identifier that does
+# not exist in the page.
+#
+# This file used to PREPEND `_deepAll` and `_topRectFor` before injecting, which
+# built an environment production never has. The suite then reported 10/10 while
+# the three DOM signals (images-loading, aria-busy, progressbar) were dead in the
+# shipped extension: every helper call threw ReferenceError, each swallowed by its
+# own try/catch, leaving imgs/busy/prog at 0 and emitting no banner on a page that
+# plainly held an aria-busy region and a visible progressbar.
+#
+# The helpers are now inner closures of _readinessPage. Extracting them here would
+# hide a regression of exactly the kind this suite exists to catch, so do not add
+# them back — if the extraction fails, the function has grown a dependency it
+# cannot have.
+READY = _shared_extract("_readinessPage", BG, verify=True)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
