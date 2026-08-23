@@ -9510,6 +9510,30 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       // (JupyterLite's WASM takes seconds) or content behind an inaccessible
       // frame. Either way the agent must not conclude "nothing to do here".
       : "\n[NO interactive elements found (page has text but zero controls). The app may still be loading or its UI may live in an inaccessible frame — wait and re-observe, or take a computer screenshot.]";
+    // AND NAME THE COMMONEST CAUSE WHEN IT APPLIES. A hidden tab plus controls that
+    // exist in the DOM with ZERO-AREA boxes is deferred layout (#23), and the
+    // recovery is known to work — a live agent measured a listing go from 42 rows to
+    // 74 after one screenshot, because capturing activates rendering without focusing
+    // the tab. Saying "may still be loading" when the real answer is "this tab has
+    // never been rendered" sends the agent to wait instead of to the one call that
+    // fixes it.
+    try {
+      if (document.visibilityState === 'hidden') {
+        let _bn = 0, _bz = 0;
+        for (const _c of document.querySelectorAll('a[href],button,input,select,textarea')) {
+          _bn++;
+          if (!(_c.getClientRects && _c.getClientRects().length)) _bz++;
+        }
+        if (_bn >= 20 && _bz * 2 >= _bn) {
+          blankNote = `\n[NO interactive elements collected, but the DOM holds ${_bn} controls`
+            + ` and ${_bz} of them have NO BOX AT ALL. This tab is in the BACKGROUND`
+            + ` (visibilityState="hidden") and this site defers layout until a tab is`
+            + ` visible, so nothing has been laid out yet — the page is NOT empty. Take a`
+            + ` computer screenshot (that activates rendering without focusing the tab or`
+            + ` disturbing the user) and read again.]`;
+        }
+      }
+    } catch (e) {}
   }
   // LEGEND — flag-driven, not fixed. The old block emitted ~1.5 KB of legend on
   // EVERY observation (even on pages with zero elements), and an agent calls this
@@ -9868,6 +9892,19 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     banner +
     dialogText +
     legend +
+    // `blankNote` WAS COMPUTED AND NEVER USED — assigned, then dropped on the floor,
+    // so the one case where the agent most needs an explanation produced the LEAST
+    // output. Observed live on ant.design in a background tab, where the entire
+    // response was one line:
+    //     Current URL: /components/select
+    // No count, no "0 elements", no readiness banner, and no hidden-tab note either
+    // (the legend returns early when nothing was collected, and that note lives in
+    // the legend). An agent reads that as "this page has no controls" — and antd's
+    // docs page has 557. The site defers layout while the tab is hidden (#23's
+    // class), so every box is 0x0 and everything is correctly dropped as not-visible;
+    // what was missing was any word about it. The note existed and said the right
+    // thing. It simply was never printed.
+    blankNote +
     lines.join('\n') +
     truncNote +
     (modalHiddenCount > 0

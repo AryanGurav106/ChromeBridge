@@ -202,6 +202,28 @@ async def main():
               f"listed={any(str(e['mmid']) == str(_gi['btn']) for e in _led['elements'])}"
               f" rules={[d['rule'] for d in _rows]} closest_crosses={_gi['closestCrosses']}")
 
+        # ---- H5: A BLANK RESULT MUST STILL EXPLAIN ITSELF --------------------
+        # `blankNote` was computed and never used — assigned, then dropped, so the one
+        # case where the agent most needs an explanation produced the LEAST output.
+        # Observed live on ant.design in a background tab, where the whole response
+        # was one line: `Current URL: /components/select`. No count, no "0 elements",
+        # no readiness banner, and no hidden-tab note either (the legend returns early
+        # when nothing was collected, and that note lives in the legend). An agent
+        # reads that as "this page has no controls" — and the page has 557.
+        bp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await bp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await bp.set_content("<!doctype html><meta charset=utf-8><body style='margin:0'>"
+                             "<p>" + ("Plenty of prose. " * 20) + "</p></body>")
+        await bp.wait_for_timeout(120)
+        _blank = await bp.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'tree'); })()")
+        check("H5 a page with text and zero controls says so, instead of returning"
+              " only the URL line",
+              "NO interactive elements" in _blank,
+              " | ".join(l.strip()[:70] for l in _blank.splitlines()) or "EMPTY OUTPUT")
+        await bp.close()
+
         # ---- C: combobox state without English ----------------------------------
         e = ent.get("gk-empty")
         check("C1 class-marked placeholder ('Bitte wählen') reads as unselected, not a value",
