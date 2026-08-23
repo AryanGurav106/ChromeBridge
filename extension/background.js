@@ -7953,17 +7953,38 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   // MAIN HEADING: the page's prominent visible heading is the cheapest
   // "what am I looking at" state signal — after clicking "Next month" the
   // agent can confirm the calendar now says "July 2026" without vision.
+  //
+  // RANK IS DECLARED — read it instead of taking the first heading in DOM order.
+  // HTML states rank with h1..h6 and ARIA states it with aria-level; document
+  // position states nothing about rank. Measured live on Wikipedia: the Vector-2022
+  // skin emits the table-of-contents heading BEFORE the article's own <h1>, so this
+  // line reported the page's furniture instead of its subject — the single fact it
+  // exists to give, wrong with no symptom.
+  //
+  // Ranking also let the selector widen to every heading level safely: an <h3> can
+  // now supply the line on a page whose h1/h2 are off-screen, and it can never beat
+  // an h1 that is present, because the comparison is on the declared level rather
+  // than on which one the walk reached first.
   let mainHeading = '';
   try {
-    const hs = _allComposed('h1, h2, [role="heading"]');
+    const hs = _allComposed('h1, h2, h3, h4, h5, h6, [role="heading"]');
+    let bestLv = 99;
     for (const h of hs) {
       const hr = h.getBoundingClientRect();
       // >4px, not >0: the standard .visually-hidden/.sr-only pattern is a 1x1 clip
       // box, and an sr-only "Utility navigation" h2 was beating the visible <h1>.
-      if (hr.width > 4 && hr.height > 4 && hr.top < vh && hr.bottom > 0) {
-        const t = (h.innerText || '').replace(/\s+/g, ' ').trim();
-        if (t) { mainHeading = t; break; }
+      if (!(hr.width > 4 && hr.height > 4 && hr.top < vh && hr.bottom > 0)) continue;
+      const t = (h.innerText || '').replace(/\s+/g, ' ').trim();
+      if (!t) continue;
+      let lv = parseInt(h.getAttribute('aria-level') || '', 10);
+      if (!(lv >= 1 && lv <= 6)) {
+        const m = /^h([1-6])$/i.exec(h.tagName || '');
+        // role=heading with no aria-level: ARIA's own default is 2, so it competes
+        // with an <h2> rather than being ranked below every real heading.
+        lv = m ? parseInt(m[1], 10) : 2;
       }
+      if (lv < bestLv) { bestLv = lv; mainHeading = t; }
+      if (bestLv === 1) break;      // nothing can outrank a declared level 1
     }
   } catch (e) {}
   // STANDALONE MEDIA (detail='full' only). A plain <img> is not interactive, so
@@ -8634,6 +8655,52 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       if (/\d/.test(v) && v.length <= 24 && /^[^.]*$/.test(v) && /\s/.test(v)) return 'timeish';
       return 'prose';
     };
+    // POSITION IS NOT RANK WHEN THE SEQUENCE IS CUT IN PIECES. Every flat fold
+    // header said "in document order" unconditionally. That is true — members are
+    // sorted by ref — and the inference it invites is that position N is the Nth
+    // such thing on the page, which is false whenever another element OF THE SAME
+    // KIND sits between two members without being in the fold.
+    //
+    // Measured live on Hacker News: a 17-member group of comment counts printed
+    // above a 16-member group of story titles, both headed "in document order", and
+    // pairing them by position shifted every title by one story. On Wikipedia's
+    // ranked GDP column two folds of the same links interleaved, so position 5 gave
+    // Spain (15th) or Russia (9th) where the true 5th was the United Kingdom.
+    //
+    // The tree has said this since #27 (`_ordPhrase`); the flat listing never did,
+    // and flat is the format where it matters MORE — flat folds group ACROSS
+    // parents, so interleaving is the norm there rather than the exception.
+    //
+    // SAME KIND is what makes it a rank claim: a <button> between two story links
+    // does not break the story sequence. Kind is the element's declared tag and
+    // role, so this needs no threshold and no vocabulary. The quantity differs from
+    // the tree's (other GROUPS there, other same-kind ELEMENTS here) because the
+    // formats group differently; the load-bearing words are shared verbatim, so an
+    // agent reads the same warning either way.
+    const _ilvN = (v) => {
+      const n = parseInt(String(v).replace(/^.*:/, ''), 10);
+      return isFinite(n) ? n : null;
+    };
+    const _ilvCut = (members) => {
+      let lo = Infinity, hi = -Infinity;
+      const mine = new Set();
+      for (const m of members) {
+        const v = _ilvN(m.mmid);
+        if (v === null) continue;
+        mine.add(v);
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      if (!(lo < hi)) return 0;
+      const kind0 = String(members[0].role || members[0].tag || '');
+      let n = 0;
+      for (const e of shown) {
+        const v = _ilvN(e.mmid);
+        if (v === null || v <= lo || v >= hi || mine.has(v)) continue;
+        if (String(e.role || e.tag || '') === kind0) n++;
+      }
+      return n;
+    };
     for (const [k, members] of recSig) {
       if (members.length < 6 || window.__abNoFold) continue;
       try {
@@ -8684,8 +8751,13 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       // member's box as the group's shape would be a false statement about the
       // other N-1. "Same structure" is what is actually being asserted.
       const _ty = members.every((m) => m.type === m0.type) && m0.type ? `[${m0.type}]` : '';
+      const _cut = _ilvCut(members);
+      const _ord = _cut
+        ? `in document order; INTERLEAVED with ${_cut} other ${kind}`
+          + ` — position is not rank, merge by ref`
+        : 'in document order';
       compactBlocks.set('rec:' + k,
-        `${members.length}× ${kind}${_ty}${where}, same structure, in document order` +
+        `${members.length}× ${kind}${_ty}${where}, same structure, ${_ord}` +
         `${m0.href ? ' — each is a link, shown as ref:"label"→href' : ' — shown as ref:"label"'}` +
         ` (act on any via its ref): ${items}`);
       members.forEach((m) => { m.groupKey = 'rec:' + k; inCompact.add(m.mmid); });
@@ -9188,8 +9260,15 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
         // and pushed the tree past the flat listing, failing TR7's budget guard.
         // The load-bearing facts are that it interleaves and that position is not
         // page order; the rest was explanation.
+        // "NOT page order" was the first wording and it was inaccurate in a way
+        // that matters: the members ARE in document order (they come from the
+        // sibling list in order), so telling an agent otherwise invites it to
+        // distrust the sequence itself. What fails is only that position is not
+        // RANK, because other groups sit between these members. Same load-bearing
+        // words as the flat listing's marker, so the two formats read alike.
         return n
-          ? `NOT page order — interleaved with ${n} other group(s); merge by ref`
+          ? `in document order; INTERLEAVED with ${n} other group(s)`
+            + ` — position is not rank, merge by ref`
           : 'in document order';
       };
       // A GROUP THAT DOES NOT FOLD IS NOT HOISTED. Grouping pools members by shape
@@ -10082,6 +10161,44 @@ function _enterTextPage(selector, text) {
       if (inner) el = inner;
     }
   } catch (e) {}
+  // WRITABILITY IS DECLARED, AND "Typed into" MUST NOT BE SAID ABOUT AN ELEMENT
+  // THAT CANNOT HOLD TEXT. Two defects met in one line, both producing a false
+  // SUCCESS rather than a false failure:
+  //   * a plain <div>: nothing is written, and the readback verdict added in #23 —
+  //     which exists to turn a false Success into a failure — INVERTS, because
+  //     `actual` falls back to the element's own innerText and `actual.includes(text)`
+  //     is then satisfied by its LABEL. Live: form_input at <div>Search products</div>
+  //     with the text "Search" reported ok:true and "Typed into".
+  //   * a <button>: `value` exists, so the write lands on the property and reads back
+  //     EXACTLY, while typing into a button does nothing whatsoever.
+  //
+  // What can hold typed text is stated by the document: an editing host says so with
+  // contenteditable, and a form control says so with its tag plus the HTML type enum
+  // — the same declaration #24's submit picker reads. Everything else is refused and
+  // named, including a role=textbox that is not an editing host, because script
+  // cannot write to one at all and only trusted keystrokes can reach it.
+  const _NONTEXT = ['button', 'submit', 'reset', 'checkbox', 'radio', 'file',
+                    'image', 'hidden', 'range', 'color'];
+  let _writable = el.isContentEditable === true;
+  if (!_writable) {
+    const _tg0 = (el.tagName || '').toLowerCase();
+    if (_tg0 === 'textarea' || _tg0 === 'select') _writable = true;
+    else if (_tg0 === 'input') {
+      _writable = _NONTEXT.indexOf(String(el.type || 'text').toLowerCase()) < 0;
+    }
+  }
+  if (!_writable) {
+    const _tg = (el.tagName || '?').toLowerCase();
+    const _r = (el.getAttribute && el.getAttribute('role')) || '';
+    return { ok: false, actual: '',
+      msg: `${selector} cannot hold typed text: it is a <${_tg}>`
+         + (_r ? ` role=${_r}` : '')
+         + (_tg === 'input' ? ` type=${el.type}` : '')
+         + `, which declares neither text entry nor contenteditable — nothing was`
+         + ` written. Re-read the page and use the ref of the actual field; if it is`
+         + ` a custom editor, click it with computer(action="click") and then`
+         + ` computer(action="type").` };
+  }
   try { el.focus({ preventScroll: true }); } catch (e) {}
   // Rich-text editors (Lexical/ProseMirror/Quill/Slate/TipTap) keep their own
   // document model: writing textContent directly puts text on screen that the

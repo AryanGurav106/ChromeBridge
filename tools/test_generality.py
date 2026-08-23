@@ -1205,6 +1205,52 @@ async def main():
               f"{sub2.count('Foot ')} Foot rows, decoy present={'Card note' in sub2}")
         await rg2.close()
 
+        # ---- MH: the Main heading is chosen by DECLARED RANK --------------------
+        # "Main heading" is the cheapest what-am-I-looking-at signal in the listing,
+        # and it took the FIRST visible heading in DOM order. Rank is not document
+        # order: HTML declares it with h1..h6 and ARIA declares it with aria-level,
+        # so reading position instead of rank ignores what the page states.
+        #
+        # Measured live on Wikipedia: the Vector-2022 skin emits the table-of-contents
+        # heading BEFORE the article's own <h1>, so the line reported the furniture
+        # instead of the subject of the page — the single fact it exists to give.
+        # THE h2 MUST COME FIRST IN THE DOM or this passes without exercising
+        # anything, which is the vacuous-fixture shape that has bitten five checks
+        # this session.
+        mh = await browser.new_page(viewport={"width": 900, "height": 700})
+        await mh.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await mh.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<nav><h2 style='font-size:16px'>Contents</h2>"
+            "<a href=#s1>Section one</a></nav>"
+            "<main><h1 style='font-size:28px'>Economy of Japan</h1>"
+            "<p>Body text.</p></main></body>")
+        await mh.wait_for_timeout(120)
+        _mhl = await mh.evaluate("(function(){ " + COLLECT
+                                 + "; return _collectInteractivePage(false,null,'compact',"
+                                   "false,false,'tree'); })()")
+        _mhline = next((l for l in _mhl.splitlines() if l.startswith("Main heading")), "ABSENT")
+        check("MH1 the Main heading is the DECLARED top-rank heading, not the first"
+              " one in DOM order",
+              "Economy of Japan" in _mhline, _mhline[:90])
+        # MH2: aria-level is the other half of the same declaration, and it must beat
+        # the tag. A <h2 aria-level=1> outranks a plain <h2> that precedes it; without
+        # this the rule would just be "prefer h1", which is a tag preference rather
+        # than a rank read.
+        await mh.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<nav><h2 style='font-size:16px'>Site navigation</h2></nav>"
+            "<div role=heading aria-level=1 style='font-size:28px'>Quarterly results</div>"
+            "<a href=/x>A link</a></body>")
+        await mh.wait_for_timeout(120)
+        _mhl2 = await mh.evaluate("(function(){ " + COLLECT
+                                  + "; return _collectInteractivePage(false,null,'compact',"
+                                    "false,false,'tree'); })()")
+        _mhline2 = next((l for l in _mhl2.splitlines() if l.startswith("Main heading")), "ABSENT")
+        check("MH2 ...and aria-level declares rank too, outranking an earlier <h2>",
+              "Quarterly results" in _mhline2, _mhline2[:90])
+        await mh.close()
+
         await browser.close()
 
     passed = sum(1 for _, ok, _ in results if ok)

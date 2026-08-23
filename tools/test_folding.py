@@ -515,13 +515,38 @@ async def main():
         # printed on every fold would pass TR16 while telling agents to distrust
         # perfectly countable groups.
         _marked = [l for l in _ft.splitlines()
-                   if "identical siblings" in l and "interleaved with" in l]
+                   if "identical siblings" in l and "INTERLEAVED with" in l]
         check("TR16 an interleaved fold says so ON ITS HEADER, and that position is"
               " not page order",
-              len(_marked) == len(_groups) and all("NOT page order" in l for l in _marked),
+              len(_marked) == len(_groups) and all("position is not rank" in l for l in _marked),
               f"{len(_marked)} of {len(_groups)} group(s) marked: "
               + (_marked[0].strip()[:100] if _marked
                  else "NO MARKER — an agent counting positions here gets the wrong rank"))
+        # TR18: THE SAME WARNING IN THE FLAT LISTING, where it matters MORE. Flat
+        # folds group ACROSS parents, so interleaving is the norm there rather than
+        # the exception — and every flat fold header said "in document order"
+        # unconditionally until now, while the tree had said it since #27. Same page,
+        # same instant, only `format` differs, so this cannot pass for a reason other
+        # than the format.
+        _ff = await fp2.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'flat'); })()")
+        _fgroups = [l for l in _ff.splitlines() if "same structure" in l]
+        _fmarked = [l for l in _fgroups if "INTERLEAVED with" in l]
+        check("TR18 an interleaved fold in the FLAT listing says so on its header too",
+              len(_fgroups) == 2 and len(_fmarked) == 2
+              and all("position is not rank" in l for l in _fmarked),
+              f"{len(_fmarked)} of {len(_fgroups)} marked: "
+              + (_fmarked[0][:96] if _fmarked
+                 else "NO MARKER — pairing these two folds by position shifts every pair"))
+        # TR18b: the negative control, and the reason the test is keyed on SAME KIND.
+        # `folded` is D1's listing: twelve contiguous <a> with nothing between them,
+        # so position IS rank and a marker would be false. A warning printed on every
+        # fold would satisfy TR18 while training agents to distrust countable groups
+        # — the #15 lesson about always-on warnings.
+        check("TR18b ...and a contiguous fold is NOT marked",
+              "12×" in folded and "INTERLEAVED" not in folded,
+              next((l[:80] for l in folded.splitlines() if "12×" in l), "no fold found"))
         await fp2.close()
 
         # TR17: A GROUP THAT DOES NOT FOLD MUST NOT BE HOISTED. Sibling grouping

@@ -52,6 +52,7 @@ TYPESEARCH = extract("_typeIntoOpenPopoverSearchPage")
 COUNTOPTS = extract("_countVisibleOptionsPage")
 DETECTSUBMIT = extract("_detectSubmitPage")
 DOMTEXT = extract("_domTextPage")
+TYPETEXT = extract("_enterTextPage")
 
 results = []
 
@@ -733,6 +734,50 @@ async def main():
               f"C-one={_act.get('C-one')!r} C-two={_act.get('C-two')!r}"
               f" (both must be empty; the declared tabsets A and B are W16/W16b)")
         await tp2.close()
+
+        # ---- W21: writing to something that cannot hold text ---------------------
+        # `_enterTextPage` reported `Typed into ref_N` for any element it was handed,
+        # and decided ok/failed by comparing the requested text against the element's
+        # own inner text. On a non-field both halves are wrong: nothing is written,
+        # and the readback check added in #23 — which exists to turn a false Success
+        # into a failure — INVERTS into a false success whenever the element's own
+        # label happens to contain the text. Live: form_input at a div reported
+        # success for a write that never happened.
+        #
+        # THE DIV MUST CONTAIN THE TYPED STRING or this passes for the wrong reason:
+        # the interesting case is not "we noticed it failed", it is "the readback
+        # agreed with us".
+        wp = await browser.new_page(viewport={"width": 800, "height": 600})
+        await wp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await wp.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<div id=d onclick='void 0' style='width:300px;height:30px'>Search products</div>"
+            "<button id=b style='width:120px;height:30px'>Go</button>"
+            "<input id=i style='width:200px;height:24px'>"
+            "</body>")
+        await wp.wait_for_timeout(100)
+
+        async def _type(sel, txt):
+            return await wp.evaluate("(function(){ " + TYPETEXT + "; return _enterTextPage("
+                                     + json.dumps(sel) + "," + json.dumps(txt) + "); })()")
+
+        _rd = await _type("#d", "Search")
+        check("W21 writing to an element that cannot hold text is refused, not"
+              " reported as typed",
+              _rd.get("ok") is False and "Typed into" not in (_rd.get("msg") or ""),
+              f"ok={_rd.get('ok')} msg={(_rd.get('msg') or '')[:110]!r}")
+        _rb = await _type("#b", "Go")
+        check("W21b ...including a <button>, whose value property makes it look"
+              " writable while typing into it does nothing",
+              _rb.get("ok") is False and "Typed into" not in (_rb.get("msg") or ""),
+              f"ok={_rb.get('ok')} msg={(_rb.get('msg') or '')[:90]!r}")
+        # The negative control. Without it, refusing EVERYTHING would pass both
+        # checks above while breaking the only thing this function is for.
+        _ri = await _type("#i", "hello")
+        check("W21c ...and a real text input still accepts the write",
+              _ri.get("ok") is True and _ri.get("actual") == "hello",
+              f"ok={_ri.get('ok')} actual={_ri.get('actual')!r}")
+        await wp.close()
 
         await browser.close()
 
