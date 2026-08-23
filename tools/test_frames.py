@@ -50,6 +50,7 @@ def extract(name: str) -> str:
 
 SHELLS = extract("_frameShellsPage")
 COLLECT = extract("_collectInteractivePage")
+DOMTEXT = extract("_domTextPage")
 
 CHILD = """<!DOCTYPE html><meta charset="utf-8"><body style="margin:0">
 <button id="b" style="position:absolute;left:20px;top:12px;width:100px;height:30px">Field {n}</button>
@@ -123,6 +124,36 @@ async def main():
                   len(sh) == 3, f"got {len(sh)}: {[(s['w'], s['h']) for s in sh]}")
             check("shells carry src (identity, not just geometry)",
                   all(s.get("src") for s in sh), str([s.get("src", "")[-9:] for s in sh]))
+
+            # get_page_text runs in the TOP document and cannot read across an origin
+            # boundary, and it used to skip every cross-origin frame in silence.
+            # Consent dialogs, embedded checkouts, comment widgets and video
+            # descriptions all live there, and read_page DOES reach them
+            # (collectCrossFrames injects per-frame), so the two tools disagreed about
+            # the same frame with nothing saying which was blind.
+            #
+            # This page is the right place to check it: three real cross-origin frames
+            # on a different port, one same-origin srcdoc frame whose text must still
+            # be INCLUDED, and one 10x10 frame that must NOT be announced.
+            _txt = await page.evaluate("(function(){ " + DOMTEXT
+                                       + "; return _domTextPage(null); })()")
+            check("get_page_text names the cross-origin frames it cannot read",
+                  "CROSS-ORIGIN" in _txt and "3 CROSS-ORIGIN" in _txt,
+                  next((l[:100] for l in _txt.splitlines() if "CROSS-ORIGIN" in l),
+                       "NO NOTICE — the frames were skipped in silence"))
+            check("...and points at the tool that CAN read them",
+                  "read_page" in _txt and "ref_f" in _txt,
+                  next((l[-90:] for l in _txt.splitlines() if "CROSS-ORIGIN" in l), ""))
+            # The two negative controls, which are what make the count meaningful:
+            # a same-origin frame's text is still harvested (so the notice is about
+            # reach, not about frames in general), and the tracking-pixel frame is not
+            # announced (prominence, not existence — an always-on notice is noise).
+            check("...while a SAME-ORIGIN frame's text is still included",
+                  "same origin" in _txt,
+                  "srcdoc text present" if "same origin" in _txt else "SAME-ORIGIN TEXT LOST")
+            check("...and a 10x10 tracking frame is not announced (3, not 4)",
+                  "4 CROSS-ORIGIN" not in _txt,
+                  next((l[:60] for l in _txt.splitlines() if "CROSS-ORIGIN" in l), ""))
 
             same_size = [s for s in sh if s["w"] == 150 and s["h"] == 60]
             check("the two identically-sized siblings are present and distinguishable by src",

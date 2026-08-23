@@ -4434,23 +4434,64 @@ function _domTextPage(scopeMmid) {
   } catch (e) {}
   // Same-origin iframes (embedded result panes, editors, legacy widgets) hold
   // real page content the agent otherwise can't read — append it, labeled.
+  const _xoFrames = [];
   const harvestFrames = (doc, depth) => {
     if (depth > 3) return;
     // Shadow-aware: _walkInject recurses shadowRoot -> iframe, so a same-origin
     // frame inside a web component is collected structurally but its TEXT was
     // missing here — the two tools disagreeing about the same frame.
     (doc === document ? deepQuery('iframe,frame') : Array.from(doc.querySelectorAll('iframe,frame'))).forEach(f => {
+      let reached = false;
       try {
         const d = f.contentDocument;
         if (d && d.body) {
+          reached = true;
           const t = (d.body.innerText || '').trim();
           if (t) text += `\n[iframe "${f.title || f.id || f.name || ''}"]: ` + t;
           harvestFrames(d, depth + 1);
         }
       } catch (e) {}
+      if (reached) return;
+      // CROSS-ORIGIN: `contentDocument` throws or is null, so this pass cannot read
+      // a byte of it — and it used to skip the frame in SILENCE. Consent dialogs,
+      // embedded checkouts, comment widgets and video descriptions all live behind
+      // that boundary, and read_page DOES reach them (collectCrossFrames injects
+      // per-frame through chrome.scripting), so the two tools disagreed about the
+      // same frame with nothing saying which one was blind.
+      //
+      // Only a frame that is actually RENDERED is worth naming: a tracking pixel is
+      // not content the reader is missing, and announcing it would be the always-on
+      // noise #15 warns about. Prominence, not existence.
+      //
+      // 30px is `_frameShellsPage`'s own threshold, reused deliberately so the two
+      // cross-origin passes agree about which frames exist. The first version used
+      // the 4px sr-only bound instead and announced a 10x10 tracking frame that
+      // read_page's shell pass had correctly skipped — the tools disagreeing about
+      // frames, which is the exact defect this notice exists to end.
+      try {
+        const fr = f.getBoundingClientRect();
+        if (!(fr.width > 30 && fr.height > 30)) return;
+        // Host AND path: several frames from one host is the normal case (Stripe
+        // ships card/expiry/CVC as three js.stripe.com iframes), and three
+        // repetitions of the same hostname name nothing.
+        let nm = '';
+        try {
+          const u = new URL(f.src || '', location.href);
+          nm = u.hostname + (u.pathname && u.pathname !== '/' ? u.pathname : '');
+        } catch (e2) {}
+        const ttl = (f.getAttribute && (f.getAttribute('title') || f.getAttribute('name'))) || '';
+        _xoFrames.push((ttl ? `"${ttl}" ` : '') + (nm || 'unknown source'));
+      } catch (e2) {}
     });
   };
   try { harvestFrames(document, 0); } catch (e) {}
+  if (_xoFrames.length) {
+    text += `\n[${_xoFrames.length} CROSS-ORIGIN iframe(s) on this page whose text is`
+          + ` NOT included above: ${_xoFrames.join(', ')}. This pass runs in the top`
+          + ` document and cannot read across an origin boundary. read_page DOES reach`
+          + ` them — their refs look like ref_f<frameId>:<n> — so scope a read there if`
+          + ` the answer is inside one.]`;
+  }
   const alts = deepQuery('img').map(i => i.alt).filter(Boolean).join(' ');
   saved.forEach(([el, v]) => el.style.visibility = v);
   // DOCUMENT OUTLINE — innerText discards ALL hierarchy, so a question like
