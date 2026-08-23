@@ -1205,6 +1205,36 @@ async def main():
               f"{sub2.count('Foot ')} Foot rows, decoy present={'Card note' in sub2}")
         await rg2.close()
 
+        # RG15: THE CAP NOTICE MUST NOT TELL A SCOPED CALLER TO SCOPE. It said
+        # "Prefer narrowing — read_page(ref_id=…) on a smaller region" to every
+        # capped read, including one that had ALREADY passed ref_id — an instruction
+        # that restates the parameter just used and names nothing to narrow TO, since
+        # region hints are page-level and correctly suppressed under a scope (RG7).
+        # The scoped caller does have something available: the refs printed above it.
+        # NEEDS >150 ENTRIES INSIDE THE SCOPE or the cap never engages and the check
+        # passes over an output that has no notice at all.
+        cp = await browser.new_page(viewport={"width": 900, "height": 4000})
+        await cp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await cp.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'><main id=m>"
+            + "".join(f'<a href=/x{i} style="display:block;width:200px;height:18px">'
+                      f'Row {i}</a>' for i in range(200))
+            + "</main></body>")
+        await cp.wait_for_timeout(200)
+        _mid = await cp.evaluate(
+            "(function(){ " + COLLECT + "; _collectInteractivePage(true);"
+            "return document.getElementById('m').getAttribute('mmid'); })()")
+        _cap = await cp.evaluate("(function(){ " + COLLECT
+                                 + "; return _collectInteractivePage(false,'" + str(_mid)
+                                 + "','compact',false,false,'tree'); })()")
+        check("RG15 a capped SCOPED read points at the rows it printed, not at the"
+              " ref_id parameter the caller already passed",
+              "counts ENTRIES" in _cap and "Narrow FURTHER" in _cap
+              and "on a smaller region" not in _cap,
+              next((l.strip()[:150] for l in _cap.splitlines()
+                    if "counts ENTRIES" in l), "NO CAP NOTICE — cap did not engage"))
+        await cp.close()
+
         # ---- MH: the Main heading is chosen by DECLARED RANK --------------------
         # "Main heading" is the cheapest what-am-I-looking-at signal in the listing,
         # and it took the FIRST visible heading in DOM order. Rank is not document

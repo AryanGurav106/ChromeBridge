@@ -6443,6 +6443,23 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           // clipped element has no occluder, and telling an agent otherwise makes
           // it skip a control it could click. Unknown must resolve to NOT blocked.
           if (!stack.length) return true;
+          // MEASURED AND REJECTED: dropping the paint test. `elementsFromPoint`
+          // already excludes pointer-events:none, so on paper anything in the stack
+          // CAN receive the click and the first foreign layer should block -- which is
+          // what `_rectForPage`'s action-time pre-flight concludes, and it is why the
+          // two disagree on a transparent pointer-events:auto veil (listing says
+          // clickable, click refuses naming the div). Reported live as a gap.
+          //
+          // Priced across 30 frozen sites before changing it: 7,204 elements sampled,
+          // permissive flags 15.0%, strict flags 24.1% -- 651 elements (9.0% of the
+          // whole population) NEWLY flagged, concentrated where it does most harm:
+          // 131 of 139 sampled on theguardian (`div under iframe`) and +146 of 920 on
+          // gh_issues. Flagging 98% of a page (occluded/blocked) is the
+          // #23 defect at scale -- a false flag makes an agent skip a control it could
+          // have used, which is strictly worse than one refused click that names its
+          // blocker. The permissive walk stays, and the ASYMMETRY IS THE DESIGN: the
+          // listing is optimistic about reachability, the action path is strict and
+          // refuses rather than clicking the wrong thing.
           for (const t of stack) {
             if (hits(t)) return true;
             if (paintsPixels(t)) return false;
@@ -8377,9 +8394,18 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       (scopeMmid
         ? `This read is scoped, so it already returns the whole region — scrolling changes nothing here. `
         : `Scrolling changes WHICH entries are collected (this listing is viewport-scoped), so it shifts the window rather than lifting the cap. `) +
-      `Prefer narrowing — read_page(ref_id=…) ` +
-      `on a smaller region, find (it searches the whole page), or read_page(ref_id=…, filter="all") if ` +
-      `the rows you want are in a list or table. A question about the LARGEST or FIRST of something is ` +
+      // "Narrow with read_page(ref_id=…)" is a no-op instruction for a caller who
+      // ALREADY passed ref_id, and it names nothing to narrow TO — a scoped read has
+      // no region hint, because region hints are page-level and suppressed under a
+      // scope (RG7). A scoped caller does have one thing available: the refs printed
+      // above it. Say that, instead of restating the parameter it just used.
+      (scopeMmid
+        ? `Narrow FURTHER — read_page(ref_id=…) on one of the rows above — or use find, `
+          + `which searches the whole page. `
+        : `Prefer narrowing — read_page(ref_id=…) on a smaller region, or find (it `
+          + `searches the whole page). `) +
+      `read_page(ref_id=…, filter="all") returns the TEXT inside a row when what you ` +
+      `want is in a list or table. A question about the LARGEST or FIRST of something is ` +
       `not answerable from the rows above alone -- but every omitted entry is listed by ref ` +
       `below, so nothing here is unreachable.` +
       (_capTail.length ? `
@@ -10041,7 +10067,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     if (has(e => e.iconOnly))
       L.push(`  - (unlabeled-icon) — real control, no text label; screenshot if its purpose is unclear.`);
     if (has(e => e.clickable === false))
-      L.push(`  - (occluded/blocked) — painted over; may not receive clicks.`);
+      L.push(`  - (occluded/blocked) — painted over; may not receive clicks. Its ABSENCE is not a guarantee: a transparent layer intercepts clicks without painting anything, and only the action reports that (it refuses and names the blocker rather than clicking it).`);
     if (has(e => e.role === 'combobox' || e.tag === 'select'))
       L.push(`  - role=combobox / <select> — a DROPDOWN. Never type into one; pass the option TEXT to fill_form or form_input, which click-then-pick (typing into a BUTTON/DIV combobox fails silently).`);
     // NAME ONLY THE SECTIONS ACTUALLY PRESENT. Every other legend line is gated on
