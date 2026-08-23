@@ -1554,9 +1554,48 @@ function _deepAll(sel, root, depth) {
     try { r.querySelectorAll(sel).forEach((e) => acc.push(e)); } catch (e) {}
     try { r.querySelectorAll('*').forEach((e) => { if (e.shadowRoot) visit(e.shadowRoot, d + 1); }); }
     catch (e) {}
+    // SAME-ORIGIN FRAMES TOO. A shadow root and a frame are both subtrees the page
+    // renders and that `querySelectorAll` cannot see into; descending into one and
+    // not the other is an arbitrary line. It made the readiness probe report
+    // "settled" while a frame was still spinning — the #15 defect (a mid-load and
+    // a settled observation reported with identical confidence) one level down,
+    // and the FOURTH home for the scan-blindness class after #25 fixed it for
+    // shadow roots. Cross-origin `contentDocument` throws and is skipped: that
+    // frame's content is unknowable from here by design, not by omission.
+    try {
+      r.querySelectorAll('iframe,frame').forEach((f) => {
+        let fd = null;
+        try { fd = f.contentDocument; } catch (e) { return; }
+        if (fd) visit(fd, d + 1);
+      });
+    } catch (e) {}
   };
   visit(root || document, depth || 0);
   return acc;
+}
+
+// A rect in TOP-document coordinates. `getBoundingClientRect` is relative to the
+// element's OWN frame viewport, so once `_deepAll` started crossing frames the
+// viewport filters below were comparing frame-local coordinates against the top
+// window's height — a spinner at frame-y=50 inside a frame scrolled far off
+// screen would have counted forever, which is the always-on-warning failure #15
+// exists to prevent. Identical to getBoundingClientRect for a top-document
+// element (the loop does not run), so nothing that worked before changes.
+function _topRectFor(el) {
+  const r = el.getBoundingClientRect();
+  let x = r.left, y = r.top;
+  try {
+    let w = el.ownerDocument && el.ownerDocument.defaultView;
+    while (w && w !== window && w.frameElement) {
+      const fe = w.frameElement;
+      const fr = fe.getBoundingClientRect();
+      x += fr.left + (fe.clientLeft || 0);
+      y += fr.top + (fe.clientTop || 0);
+      w = w.parent;
+    }
+  } catch (e) {}
+  return { left: x, top: y, right: x + r.width, bottom: y + r.height,
+           width: r.width, height: r.height };
 }
 
 function _readinessPage() {
@@ -1575,7 +1614,7 @@ function _readinessPage() {
     const M = 200;
     for (const im of _deepAll('img')) {
       if (im.complete) continue;
-      const r = im.getBoundingClientRect();
+      const r = _topRectFor(im);
       if (r.width <= 8 || r.height <= 8) continue;
       if (r.bottom < -M || r.top > vh + M || r.right < 0 || r.left > vw) continue;
       o.imgs++;
@@ -1591,7 +1630,7 @@ function _readinessPage() {
     const pvw = window.innerWidth || document.documentElement.clientWidth || 0;
     o.prog = _deepAll('[role="progressbar"],progress').filter((n) => {
       try {
-        const r = n.getBoundingClientRect();
+        const r = _topRectFor(n);
         if (r.width <= 1 || r.height <= 1) return false;
         // Off-viewport indicators are not evidence THIS view is unsettled.
         // Unbounded, a parked <progress> pinned the banner on permanently,

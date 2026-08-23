@@ -38,6 +38,7 @@ BG = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
 # the probe reports a settled page — invisibly. Same swallowed-ReferenceError shape
 # as the vh/vw bug that R8 exists for; caught by the suite this time.
 READY = (_shared_extract("_deepAll", BG, verify=True) + ";\n"
+         + _shared_extract("_topRectFor", BG, verify=True) + ";\n"
          + _shared_extract("_readinessPage", BG, verify=True))
 
 try:
@@ -172,6 +173,44 @@ async def main():
         check("R8 ...while a real in-viewport progressbar is still counted",
               r["prog"] == 1, f"prog={r['prog']} — the negative control for R7")
         await pg.close()
+
+        # R9/R10: the probe was FRAME-BLIND. `querySelectorAll` stops at a frame
+        # boundary exactly as it stops at a shadow boundary, and _deepAll crossed
+        # only the second — so a page whose content lives in a same-origin frame
+        # (the classic app shell, and every embedded checkout) reported "settled"
+        # while the frame was still spinning. Fourth home for this class after #25.
+        fp = await browser.new_page(viewport={"width": 1200, "height": 800})
+        await fp.set_content(
+            "<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>"
+            "<iframe style='width:600px;height:300px;border:0' srcdoc=\""
+            "&lt;div role=progressbar style='width:200px;height:6px;background:#ccc'&gt;Loading&lt;/div&gt;"
+            "&lt;div aria-busy='true' style='width:200px;height:40px'&gt;results&lt;/div&gt;\"></iframe>"
+            "</body>")
+        await fp.wait_for_timeout(200)
+        r = await fp.evaluate("(function(){ " + READY + "; return _readinessPage(); })()")
+        check("R9 a progressbar and an aria-busy region inside a same-origin FRAME"
+              " are seen by the probe",
+              r["prog"] == 1 and r["busy"] == 1,
+              f"prog={r['prog']} busy={r['busy']} — 0/0 was 'settled' on a spinning page")
+
+        # THE COORDINATE CONTROL, and the reason _topRectFor exists. An in-frame
+        # rect is relative to the FRAME's viewport, so a spinner at frame-y=20
+        # inside a frame parked 4000px down looks in-viewport to a naive filter
+        # and pins the banner on forever — R7's failure, reintroduced by the very
+        # fix for R9. This check fails if the rect is not mapped to the top document.
+        await fp.set_content(
+            "<!DOCTYPE html><meta charset=utf-8><body style='margin:0'>"
+            "<div style='height:4000px'></div>"
+            "<iframe style='width:600px;height:300px;border:0' srcdoc=\""
+            "&lt;div role=progressbar style='width:200px;height:6px;background:#ccc'&gt;Loading&lt;/div&gt;\">"
+            "</iframe></body>")
+        await fp.wait_for_timeout(200)
+        r = await fp.evaluate("(function(){ " + READY + "; return _readinessPage(); })()")
+        check("R10 ...but one in a frame parked far below the fold does NOT count"
+              " (in-frame rects are frame-relative — the R7 failure, reintroduced"
+              " by R9's own fix unless mapped)",
+              r["prog"] == 0, f"prog={r['prog']}")
+        await fp.close()
 
         await browser.close()
 
