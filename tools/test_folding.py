@@ -319,6 +319,57 @@ async def main():
               + (f"  rows={[l[:44] for l in _rows]}" if _gap is not None else ""))
         await wp.close()
 
+        # TR12/TR13: THE LISTING MUST NOT NAME NOTATION IT DOES NOT PRINT. #27
+        # strips ` section=` from tree rows because the enclosing node is one line
+        # above — but the modal banner and the section legend were both written for
+        # the flat listing and kept telling the agent about `section=dialog`. In the
+        # DEFAULT format that token then appeared only inside the legend sentence
+        # describing it, so the single instruction an agent gets when a modal is
+        # open pointed at a marker no row carried. #13 established the rule (a
+        # legend line is gated on its notation appearing); #27 changed the default
+        # format underneath it and both sites went stale.
+        dp = await browser.new_page(viewport={"width": 1000, "height": 700})
+        await dp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        _dlg = ("<!doctype html><meta charset=utf-8><body style='margin:0'>"
+                "<button style='width:120px;height:30px'>Page Button</button>"
+                "<div role=dialog aria-modal=true style='width:400px;height:200px'>"
+                "<h2>Delete this item?</h2>"
+                "<button style='width:110px;height:28px'>Keep</button>"
+                "<button style='width:110px;height:28px'>Delete</button></div></body>")
+        await dp.set_content(_dlg)
+        await dp.wait_for_timeout(150)
+
+        async def _fmt(f):
+            return await dp.evaluate(
+                "(function(){ " + COLLECT + "; return _collectInteractivePage("
+                "false, null, 'compact', false, false, '" + f + "'); })()")
+
+        _tree, _flat = await _fmt("tree"), await _fmt("flat")
+        _rows_t = [l for l in _tree.splitlines() if l.strip().startswith("ref_")]
+        check("TR12 the tree names no notation it strips — no `section=` anywhere,"
+              " banner and legend included",
+              "section=" not in _tree and bool(_rows_t),
+              f"section= present={'section=' in _tree} rows={len(_rows_t)}"
+              + (f"  offending={[l.strip()[:70] for l in _tree.splitlines() if 'section=' in l][:2]}"
+                 if "section=" in _tree else ""))
+        check("TR13 ...while the flat listing, which does print it, still explains it"
+              " — the fix is format-aware, not a deletion",
+              "section=dialog" in _flat
+              and any("section=dialog" in l for l in _flat.splitlines()
+                      if l.strip().startswith("ref_")),
+              f"in_legend_or_banner={'section=' in _flat} "
+              f"on_a_row={any('section=dialog' in l for l in _flat.splitlines() if l.strip().startswith('ref_'))}")
+        # And the tree must still SAY a modal is open, by pointing at the nesting.
+        check("TR14 ...and the tree's modal banner points at the dialog NODE, which"
+              " the listing does print",
+              "MODAL/DIALOG IS CURRENTLY OPEN" in _tree
+              and "[dialog]" in _tree
+              and any(l.startswith(" ") and "Keep" in l for l in _tree.splitlines()),
+              f"banner={'MODAL/DIALOG IS CURRENTLY OPEN' in _tree} "
+              f"node={'[dialog]' in _tree} "
+              f"indented_child={any(l.startswith(' ') and 'Keep' in l for l in _tree.splitlines())}")
+        await dp.close()
+
         # TR10: an element's accessible name falls back to its descendants' text
         # concatenated, so a page shell reads as the whole page — demoqa's outermost
         # div arrived as a 390-char first row naming every nav item, heading, field

@@ -8708,8 +8708,20 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       }
     } catch (e) {}
   }
+  // THE BANNER MUST NAME SOMETHING THE LISTING ACTUALLY PRINTS. It told the agent
+  // to "focus on elements with section=dialog" in BOTH formats, and #27 strips
+  // `section=` from tree rows on purpose — the tree states containment by position
+  // instead. So in the default format `section=dialog` appeared only in the LEGEND
+  // describing the notation, never on a row, and the one instruction the agent gets
+  // when a modal is open was unfollowable. The information was there the whole time
+  // (`div[dialog]` with the dialog's controls indented beneath it); only the wording
+  // pointed at the other format. Also fixes the in-frame case for free: a dialog
+  // inside a same-origin frame nests correctly in the tree while its rows are
+  // tagged `section=iframe`, so naming the nesting is right there too.
   const banner = dialogOpen
-    ? "*** A MODAL/DIALOG IS CURRENTLY OPEN — focus on elements with section=dialog (or overlay-banner/menu items nested inside it); ignore underlying-page elements unless you need to dismiss the modal. ***\n"
+    ? (TREEFMT
+       ? "*** A MODAL/DIALOG IS CURRENTLY OPEN — work inside the dialog node below (the row marked [dialog], with its controls indented under it); ignore rows outside that subtree unless you need to dismiss the modal. ***\n"
+       : "*** A MODAL/DIALOG IS CURRENTLY OPEN — focus on elements with section=dialog (or overlay-banner/menu items nested inside it); ignore underlying-page elements unless you need to dismiss the modal. ***\n")
     : overlayLikely
     ? "*** MOST PAGE ELEMENTS ARE BLOCKED BY AN OVERLAY (likely a consent/notification layer). The few elements WITHOUT (occluded/blocked) are the overlay's own controls — handle those first. ***\n"
     : "";
@@ -8909,7 +8921,14 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     // ~900 chars that a default read returns, which is how a max_chars=900 read cut
     // EVERY element row and returned pure legend. Explaining notation the listing
     // does not use is what pushed out the listing itself.
-    if (has(e => e.section)) {
+    // ...AND NOT IN THE TREE, where `_treeLines` strips ` section=` from every row
+    // because the enclosing node is printed one line above. The gate above asks
+    // whether any ENTRY carries a section, which was true regardless of format, so
+    // the default listing explained a notation it then removed — the same "legend
+    // describes what the listing does not use" failure this block was written to
+    // fix, reintroduced by #27 changing the default format underneath it. The
+    // banner had the same bug and is fixed at its own site.
+    if (!TREEFMT && has(e => e.section)) {
       const secs = [];
       try {
         shown.forEach((e) => { if (e.section && secs.indexOf(e.section) < 0) secs.push(e.section); });
