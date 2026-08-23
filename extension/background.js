@@ -2039,6 +2039,50 @@ function _pickOptionPage(text, triggerSel) {
   // is handled at the HARVEST GATE below instead, which asks whether any visible
   // option lives inside the scope rather than whether any exists anywhere.
   if (!all.length) { all = deepQueryAll(OPTION_SEL); if (all.length) via = 'aria-roles-deep'; }
+  // A DECLARED PAGE LANDMARK IS NOT A DROPDOWN, and this is where that mattered.
+  // The line above is a WHOLE-DOCUMENT query. #29 narrowed the sampleOptions probe
+  // for exactly this reason and recorded that "_pickOptionPage has never scanned
+  // the document" — which is false, it is the line above, and that sentence is why
+  // the real widening survived the fix aimed at it.
+  //
+  // Measured live on ant.design 6.6.1 (rc-select): the trigger's aria-controls
+  // resolves to a HIDDEN decoy listbox, so the scoped query returns nothing, the
+  // document-wide fallback runs, and the site header's `<ul role="menu">` items
+  // qualify. `inOpen` below then PREFERS them, because their ancestor is a
+  // role=menu with no data-state. The result told the agent
+  //   'Visible options are: "Design", "Development", "Components", "Blog"…
+  //    Pass one of these exactly'
+  // for a field whose real options are Jack/Lucy/Tom — and obeying that instruction
+  // clicks a nav link and navigates off the page. Zero of the named options
+  // belonged to the field.
+  //
+  // The fallback itself has to stay: making the declared scope absolute was tried
+  // and broke select2, whose aria-controls resolves to a container that does not
+  // hold its rows. So the fix is not narrower scoping, it is refusing DECLARED PAGE
+  // CHROME. A dropdown popover is portaled out of flow; a site navigation lives
+  // inside a landmark, which the document states with a sectioning element or a
+  // navigation/menubar role. When the widened pass is all that is left, an empty
+  // pool is the honest answer ("the list may still be loading") — that is the
+  // situation on antd, where find() confirmed the real list had not rendered.
+  if (via === 'aria-roles-deep') {
+    const _chrome = (o) => {
+      try {
+        let w = o;
+        for (let i = 0; i < 24 && w; i++) {
+          w = w.parentElement || (w.getRootNode && w.getRootNode().host) || null;
+          if (!w || w === document.body || w === document.documentElement) break;
+          const t = (w.tagName || '').toLowerCase();
+          const r = (w.getAttribute && w.getAttribute('role')) || '';
+          if (t === 'nav' || t === 'header' || t === 'footer' || t === 'aside'
+              || r === 'navigation' || r === 'menubar' || r === 'banner'
+              || r === 'contentinfo') return true;
+        }
+      } catch (e) {}
+      return false;
+    };
+    const _kept = all.filter((o) => !_chrome(o));
+    if (_kept.length !== all.length) { all = _kept; via = 'aria-roles-deep-no-chrome'; }
+  }
   // [aria-selected] also lives on tabs / grid cells / table rows — those are
   // NOT pickable dropdown options; matching them would click page chrome.
   all = all.filter(o => {
@@ -3166,10 +3210,27 @@ async function fillDropdown(tabId, selector, text) {
     // the declared container held no role-bearing options — which is how a site's own
     // nav bar was reported to the model as "other options available" for a select.
     // Anything on the page carrying [aria-selected] or li[data-value] qualified.
-    // _pickOptionPage has never scanned the document; this probe is the half that
-    // drifted, and the two are supposed to agree about what a dropdown contains.
+    // CORRECTION: the note here used to say "_pickOptionPage has never scanned the
+    // document". It does — `deepQueryAll(OPTION_SEL)` — and asserting otherwise is
+    // why the widening in the half that matters outlived the fix aimed at it. Both
+    // copies now refuse DECLARED PAGE CHROME on the widened pass; see the long note
+    // at that site for the ant.design 6.6.1 measurement.
     if (!els.length && !scopeRoot) {
-      els = Array.from(document.querySelectorAll(OPTION_SEL)).filter(roleOk);
+      els = Array.from(document.querySelectorAll(OPTION_SEL)).filter(roleOk).filter((o) => {
+        try {
+          let w = o;
+          for (let i = 0; i < 24 && w; i++) {
+            w = w.parentElement || (w.getRootNode && w.getRootNode().host) || null;
+            if (!w || w === document.body || w === document.documentElement) break;
+            const t = (w.tagName || '').toLowerCase();
+            const r = (w.getAttribute && w.getAttribute('role')) || '';
+            if (t === 'nav' || t === 'header' || t === 'footer' || t === 'aside'
+                || r === 'navigation' || r === 'menubar' || r === 'banner'
+                || r === 'contentinfo') return false;
+          }
+        } catch (e) {}
+        return true;
+      });
     }
     if (!els.length) {
       const containers = (scopeRoot ? [scopeRoot] : Array.from(document.querySelectorAll(
@@ -8226,12 +8287,36 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     // on an entry's ancestor path. It is structure the document declares, and in a
     // tree it belongs where it sits rather than in an out-of-band legend line.
     try {
+      // SCOPED READS MUST NOT IMPORT TABLES FROM OUTSIDE THE SCOPE. The guard here
+      // was `(!scopeMmid || ent.size)` — true for ANY scoped read that kept a single
+      // entry — over a `document.querySelectorAll('table')`. So a read scoped to one
+      // <input> came back listing eight of the page's data tables, and a read scoped
+      // to one container listed five tables of which four were elsewhere, both under
+      // the header "[scoped to the subtree of ref_N — elements outside it are
+      // omitted]". Two live agents reported it. Same class as #26's Main-heading and
+      // below-fold leaks and #27's craigslist "955 controls" note, and the same fix:
+      // a page-level fact belongs to a page-level read.
+      let _scopeHost = null;
+      try {
+        if (scopeMmid && mmidReg && mmidReg.get) _scopeHost = mmidReg.get(String(scopeMmid)) || null;
+      } catch (err2) {}
       for (const t of document.querySelectorAll('table')) {
         if (!t.getAttribute('mmid')) continue;
+        // Containment via the composed walk, so a table inside a shadow root or a
+        // same-origin frame is judged by the same rule as everything else.
+        if (scopeMmid) {
+          if (!_scopeHost) continue;
+          let w = t, inside = false;
+          for (let i = 0; i < 40 && w; i++) {
+            if (w === _scopeHost) { inside = true; break; }
+            w = w.parentElement || (w.getRootNode && w.getRootNode().host) || null;
+          }
+          if (!inside) continue;
+        }
         const rs = Array.from(t.querySelectorAll('tr')).filter((r) => {
           try { return r.closest('table') === t; } catch (err) { return true; }
         }).length;
-        if (rs >= 2 && (!scopeMmid || ent.size)) { keep.add(t); declared.add(t); }
+        if (rs >= 2) { keep.add(t); declared.add(t); }
       }
     } catch (err) {}
     // A NODE THAT DOES NOT DIVIDE ANYTHING EARNS NO LINE. In a chain A > B > C
@@ -8608,6 +8693,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
           for (const a of perMember) if (a.length !== n0 || !n0) ok = false;
           if (ok) {
             const tag0 = (members[0].tagName || '').toLowerCase();
+            _foldGroups++;
             out.push(`${pad}${members.length}× ${tag0}, identical siblings, in document order`
                    + ` — one line per POSITION inside them; act on any ref:`);
             for (let i = 0; i < n0; i++) {
@@ -8652,6 +8738,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
             return `${me.mmid}:${JSON.stringify(lab)}${bx}${me.href ? '→' + me.href : ''}${fl}`;
           }).join(' ');
           const _t0 = members.every((m) => ent.get(m).type === e0.type) && e0.type ? `[${e0.type}]` : '';
+          _foldGroups++;
           out.push(`${pad}${members.length}× ${e0.role || e0.tag}${_t0}, identical siblings, in document order`
             + `${e0.href ? ' — each a link, ref:"label"→href' : ' — ref:"label"'}`
             + ` (act on any via its ref): ${items}`);
@@ -8680,6 +8767,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
   // Set when a container's label was dropped because its descendants account
   // for all of it — the legend says so only when it happened.
   let _sawRolled = false;
+  let _foldGroups = 0;   // how many fold GROUPS this listing printed (see the legend)
   if (TREEFMT) {
     for (const l of _treeLines()) lines.push(l);
   } else
@@ -9098,7 +9186,15 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     // on a clean page. Same rule as #23's cross-extension message and #14's stale
     // ref: state the FACT, list causes as causes, and never assert a recovery the
     // tool has not verified.
-    if (_ah >= 3 && dialogOpen) {
+    // ...and it is a WHOLE-DOCUMENT count, so it does not belong in a scoped read.
+    // `_stateDrops` accumulates over the entire collection walk, so a read scoped to
+    // one <button> reported "312 interactive element(s) are NOT listed because an
+    // ancestor is aria-hidden" — a number about the page, printed under a header
+    // promising that elements outside the scope are omitted. Reported live by two
+    // agents, alongside the table leak fixed above; the same #26 class.
+    if (scopeMmid) {
+      // nothing: the count describes the document, not this subtree
+    } else if (_ah >= 3 && dialogOpen) {
       L.push(`  - NOTE: ${_ah} interactive element(s) are NOT listed because an`
            + ` ancestor is aria-hidden="true"${_ahN ? ` (${_ahN} of them carry their own label or text)` : ''}.`
            + ` A dialog IS open (see the banner above), and marking the rest of the page`
@@ -9122,6 +9218,24 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     }
     if (_sawAlso)                L.push(`  - ref_A ref_B | ... — one row, several refs: nested elements with the SAME label and the SAME box. Any of them acts on that spot; they are listed together instead of as identical rows.`);
     if (_sawRolled)              L.push(`  - a container row with no text of its own — its label was every label indented beneath it, so it is not repeated here.`);
+    // TWO FOLDS ARE NOT TWO COLUMNS OF ONE TABLE. Each group's "in document order"
+    // is true OF THAT GROUP, and printing two of them invites reading position N of
+    // one against position N of the other. Measured live on Hacker News: a 17-member
+    // group of comment counts printed ABOVE a 16-member group of story titles, both
+    // claiming document order, and zipping them paired every title with the previous
+    // story's count — "The Art and Beauty of Blade Runner" against 50 comments when
+    // its real count was 21, all 16 pairs shifted by one, with nothing stating the
+    // length mismatch or the offset. #27 cited this as a reason the tree beats a
+    // flat list and left it unsaid in the output.
+    // The join key is already on every member: refs are assigned in document order,
+    // so a title at ref_218 belongs with the count at ref_232, not with the first
+    // number in the other line. Saying so costs one line and only when it applies.
+    // Kept SHORT deliberately: the first wording ran 277 chars and pushed the tree
+    // past the flat listing on TR7's fixture, which is a standing budget guard. The
+    // load-bearing facts are that positions do not correspond across groups and that
+    // refs do; everything else was explanation.
+    if (_foldGroups >= 2)
+      L.push(`  - member POSITIONS do not correspond BETWEEN folded groups (one may lack a member another has) — pair by nearby ref number, not by position.`);
     if (has(e => e.name))        L.push(`  - name="..." — IDENTITY (label / accessible name).`);
     if (has(e => e.near))        L.push(`  - near="..." — nearest visible text: a HINT for unnamed fields, never the real name.`);
     if (has(e => e.value))       L.push(`  - value="..." — CURRENT CONTENTS; empty/absent means blank.`);

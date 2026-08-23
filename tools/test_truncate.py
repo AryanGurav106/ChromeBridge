@@ -216,6 +216,37 @@ async def main_async():
     check("T18 a truncated fold never leaves half a member, at any budget",
           not _bad, f"{len(_bad)} bad of 750 budgets; first: {(_bad or ['-'])[0]}")
 
+    # T19: THE SAME SWEEP FOR PLAIN ROWS, which T18's guard never covered — it
+    # returned early unless the final line matched the FOLD pattern. Found live on
+    # the Fed's page at max_chars=1200:
+    #   ref_545 | div "An official website of the United States Government Here's
+    #                  how you know Official websit
+    # cut mid-word, opening quote never closed, no marker, so the label reads as
+    # finished content. Reported by two agents independently. Long labels on purpose:
+    # a row has to be long enough that budgets land inside it, which is the ordinary
+    # case on any real page.
+    _rows = "\n".join(
+        f'ref_{100 + i} | div "An official website of the United States Government '
+        f'Here is how you know official websites use .gov number {i}"'
+        for i in range(6))
+    _txt2 = "\n".join(["Current URL: /releases/h15",
+                       "Visible interactive elements (6 on screen).", _rows])
+    _bad2 = []
+    for _cap in range(200, 900):
+        _o = ms._truncate(_txt2, _cap, "h")
+        _b = _o.split("[output truncated")[0].rstrip()
+        if _b.count('"') % 2:
+            _bad2.append(f"cap={_cap} unterminated quote: {_b.splitlines()[-1][-40:]!r}")
+            continue
+        _lastline = _b.splitlines()[-1] if _b.splitlines() else ""
+        # Every printed row must be whole: if it starts a ref row it must also close
+        # its quoted label.
+        if _lastline.lstrip().startswith("ref_") and not _lastline.rstrip().endswith('"'):
+            _bad2.append(f"cap={_cap} partial row: {_lastline[-40:]!r}")
+    check("T19 ...and a truncated PLAIN row is dropped rather than left amputated,"
+          " at any budget",
+          not _bad2, f"{len(_bad2)} bad of 700 budgets; first: {(_bad2 or ['-'])[0]}")
+
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} truncation checks passed.")
     return 0 if passed == len(results) else 1

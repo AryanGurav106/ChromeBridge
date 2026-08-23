@@ -450,6 +450,41 @@ async def main():
               " defeats the rollup (the whole-page-label defect)",
               not _shell2,
               f"shell row still carries the concatenation: {(_shell2 or ['none'])[0].strip()[:90]}")
+        # TR15/TR16: TWO FOLDS ARE NOT TWO COLUMNS OF ONE TABLE. Each group's "in
+        # document order" is true of that group, and printing two invites reading
+        # position N of one against position N of the other. Measured live on Hacker
+        # News: a 17-member group of comment counts printed ABOVE a 16-member group
+        # of story titles, both claiming document order, and zipping them paired
+        # every title with the PREVIOUS story's count — "The Art and Beauty of Blade
+        # Runner" against 50 comments when its real count was 21, all 16 pairs
+        # shifted by one, with nothing stating the mismatch. #27 cited this as a
+        # reason the tree beats a flat list and left it unsaid in the output.
+        # BOTH RUNS MUST EXCEED THE FOLD THRESHOLD (6 members): at 6 and 5 the
+        # smaller run prints as loose rows, only one group exists, and the check
+        # passes without exercising anything — which is what two earlier drafts did.
+        fp2 = await browser.new_page(viewport={"width": 900, "height": 900})
+        await fp2.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        _t = "".join(f'<li><a class=t href=/s{i} style="display:block;width:300px;'
+                     f'height:20px">Story {i}</a></li>' for i in range(8))
+        _c = "".join(f'<li><a class=c href=/c{i} style="display:block;width:120px;'
+                     f'height:18px">{10 * i} comments</a></li>' for i in range(7))
+        await fp2.set_content("<!doctype html><meta charset=utf-8><body style='margin:0'>"
+                              f"<ul>{_t}</ul><ul>{_c}</ul></body>")
+        await fp2.wait_for_timeout(150)
+        _ft = await fp2.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'tree'); })()")
+        _groups = [l for l in _ft.splitlines() if "identical siblings" in l]
+        check("TR15 two folded groups of UNEQUAL length are both emitted",
+              len(_groups) == 2,
+              f"{len(_groups)} group(s): {[g.strip()[:24] for g in _groups]}")
+        check("TR16 ...and the listing says their positions are NOT aligned, so"
+              " zipping them is not invited",
+              any("do not correspond BETWEEN folded groups" in l for l in _ft.splitlines()),
+              next((l.strip()[:90] for l in _ft.splitlines() if "do not correspond" in l),
+                   "NO WARNING — an agent zipping these mispairs every record"))
+        await fp2.close()
+
         check("TR10d ...while its children and their labels all survive",
               all(any(f'"{t}"' in l for l in r_tree.splitlines())
                   for t in ("Widgets", "Alerts", "Read more")),

@@ -974,6 +974,15 @@ async def main():
             "<header><a href=/h>Home</a></header>"
             "<main><p>top</p><div style='height:1400px'></div>"
             "<a href=/d1>Deep One</a><a href=/d2>Deep Two</a><button>Deep Btn</button></main>"
+            # RG10's ingredients, both OUTSIDE <main>: a data table the tree used to
+            # import into every scoped read, and an aria-hidden subtree whose count
+            # is a whole-document number. Keep them out of <main> — inside it they
+            # legitimately belong to the scope and the checks go vacuous.
+            "<table><tr><th>Region</th><th>Q1</th></tr>"
+            "<tr><td>North</td><td>1,240</td></tr><tr><td>South</td><td>980</td></tr></table>"
+            "<div aria-hidden=true>"
+            + "".join(f"<button style='width:80px;height:20px'>Ghost {i}</button>" for i in range(6))
+            + "</div>"
             "<footer><a href=/f1>F1</a><a href=/f2>F2</a></footer></body>")
         await rg.wait_for_timeout(140)
         full = await rg.evaluate("(function(){ " + COLLECT
@@ -1007,6 +1016,48 @@ async def main():
         check("RG7 the hidden-tab 'DOM holds N controls' note is absent when scoped",
               "were collectable" not in sub,
               next((l.strip() for l in sub.splitlines() if "collectable" in l), ""))
+        # RG10/RG11: two more page-level facts found leaking by live agents, both
+        # under the header promising elements outside the scope are omitted.
+        #  - the TREE imported every <table> in the document, because its guard was
+        #    `(!scopeMmid || ent.size)` over a document-wide query — true for any
+        #    scoped read that kept one entry. A read scoped to a single <input> came
+        #    back listing eight of the page's data tables.
+        #  - the aria-hidden NOTE is a count accumulated over the whole collection
+        #    walk, so a read scoped to one <button> reported "312 interactive
+        #    element(s) are NOT listed…".
+        # Both tables and the aria-hidden subtree sit OUTSIDE <main> in the fixture,
+        # so neither is legitimately in scope.
+        # SCOPE TO A LEAF for the table check. Every live report was a read scoped to
+        # a single <input> or <button>: with a leaf scope the out-of-scope table has
+        # no kept ancestor inside the scope, so it becomes its own tree ROOT and
+        # prints. Scoping to `main` leaves it unreachable from the emit walk and the
+        # check passes without exercising anything — which is what it did first.
+        _leaf = await rg.evaluate(
+            "()=>{for (const b of document.querySelectorAll('button'))"
+            " if ((b.textContent||'').includes('Deep Btn')) return b.getAttribute('mmid');"
+            " return null;}")
+        # `format` MUST BE PASSED. The other RG calls use five positionals, which
+        # leaves `format` undefined — read as not-'tree' — so they exercise the FLAT
+        # listing. The table node line is emitted only by the tree, so without this
+        # the check cannot fail no matter what the collector does. Exactly the defect
+        # #29 records in measure_retention, which called with three positionals and
+        # silently measured the flat listing for every corpus figure this project
+        # had ever published.
+        sub_leaf = await rg.evaluate("(function(){ " + COLLECT
+                                     + "; return _collectInteractivePage(false,'" + str(_leaf)
+                                     + "','compact',false,false,'tree'); })()")
+        check("RG10 a scoped read does not import tables from outside the scope",
+              "rows, read with" not in sub_leaf and "data table(s)" not in sub_leaf,
+              next((l.strip()[:90] for l in sub_leaf.splitlines()
+                    if "rows, read with" in l or "data table(s)" in l), "clean"))
+        check("RG11 ...nor the whole-document aria-hidden count",
+              "aria-hidden" not in sub,
+              next((l.strip()[:100] for l in sub.splitlines() if "aria-hidden" in l), "clean"))
+        # The over-correction guard: unscoped, both facts must still be reported.
+        check("RG12 ...while the UNSCOPED read still reports both",
+              ("rows, read with" in full or "data table(s)" in full) and "aria-hidden" in full,
+              f"table_hint={'rows, read with' in full or 'data table(s)' in full} "
+              f"aria_hidden_note={'aria-hidden' in full}")
         # Unscoped reads must NOT start carrying the whole page: that variant was
         # measured at 1.51x-3.39x tokens for the same 96.0% recoverable and reverted.
         check("RG6 the UNSCOPED listing is still viewport-only",

@@ -622,6 +622,28 @@ def _truncate(text: str, max_chars: int, hint: str = "") -> str:
         out_lines = s.split("\n")
         last = out_lines[-1]
         if not _FOLD_ROW.match(last.lstrip()):
+            # A PLAIN ROW CAN BE LEFT HALF-WRITTEN TOO, and this returned it as-is.
+            # Measured live on the Fed's page at max_chars=1200:
+            #   ref_545 | div "An official website of the United States Government
+            #                  Here's how you know Official websit
+            # amputated mid-word with the opening quote never closed and no marker,
+            # so the label reads as complete content. Two agents reported it. The
+            # incompleteness test is the same one the fold path uses; only a fold
+            # was ever asked. For a plain row there is nothing to trim back to
+            # WITHIN the row, so the whole partial row goes and the residual counter
+            # below accounts for it — a row that cannot be printed whole is not a
+            # shown row.
+            _l = last.lstrip()
+            if (_ROW_LINE.match(_l) or _l.startswith("ref_")) and len(out_lines) > 1:
+                # WHOLENESS IS EXACT, NOT INFERRED FROM THE TEXT. The first version
+                # asked whether the cut landed mid-token or left an odd quote count,
+                # which is the FOLD test — and it missed every cut that lands before
+                # the label starts: `ref_101` alone has zero quotes (even) and is
+                # followed by a space (not mid-token), so it survived as a row with
+                # no content. 15 of 700 budgets still produced one.
+                # A line is whole if and only if the cut fell on its terminator.
+                if cut < len(full) and full[cut] != "\n":
+                    return "\n".join(out_lines[:-1])
             return s
         # WHETHER THE CUT LANDED MID-TOKEN IS KNOWN EXACTLY, not guessed: if the
         # next character in the original is not whitespace, the final token is a

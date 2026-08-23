@@ -504,6 +504,24 @@ async def main():
         check("W17b ...and the page's nav is never offered as the field's options",
               not any(w in (_ar.get("msg") or "") for w in ("Products", "Pricing", "Docs")),
               f"msg={(_ar.get('msg') or '')[:110]!r}")
+        # W17c IS THE LIVE ANTD CASE, AND W17/W17b DO NOT COVER IT. There the portal
+        # is POPULATED, so the harvest finds real rows and wins before the widened
+        # document scan can do damage. On ant.design 6.6.1 the field's list had not
+        # rendered at all (find() confirmed no Jack/Lucy/Tom anywhere), so the
+        # harvest found nothing, the document-wide fallback stood, and the site
+        # header's items were handed back as the field's options with
+        # "Pass one of these exactly" — an instruction that navigates off the page.
+        # Emptying the portal is the whole point of this fixture: with rows in it the
+        # check passes for the wrong reason, which is what W17 had been doing.
+        await ap.evaluate("()=>{document.getElementById('portal').innerHTML='';}")
+        await ap.wait_for_timeout(60)
+        _ae = await ap.evaluate(
+            "(function(){ " + PICK + "; return _pickOptionPage('Medium', '#trig'); })()")
+        check("W17c when the real list has NOT rendered, the answer is 'no options',"
+              " never the page's own navigation",
+              _ae.get("ok") is False
+              and not any(w in (_ae.get("msg") or "") for w in ("Products", "Pricing", "Docs")),
+              f"ok={_ae.get('ok')} msg={(_ae.get('msg') or '')[:130]!r}")
         await ap.close()
 
         # ---- W16: which tab is selected, decided by DECLARATIONS -------------
