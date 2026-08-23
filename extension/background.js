@@ -4347,6 +4347,32 @@ function _domTextPage(scopeMmid) {
             if (ct) _cap = '\n  [caption] ' + ct;
           }
         } catch (e) {}
+        // AND THE DECLARED ASSOCIATION, for the units a page puts OUTSIDE the table.
+        // <caption> is one way to say what a table's numbers mean; ARIA's is
+        // aria-labelledby/aria-describedby pointing at a heading or a note elsewhere
+        // on the page. The Federal Reserve's H.15 does exactly that — the table
+        // renders as clean aligned columns of numbers while "percent per annum" lives
+        // in a node beside it, so a scoped read gave an agent 3.82 and 3.99 with
+        // nothing saying what either figure was measured in. Same failure as the
+        // dropped caption, same fix, and the same declaration #29 used to replace the
+        // English class-substring guesses for form help text: the page states the
+        // association, so nothing is inferred.
+        try {
+          const seen = new Set();
+          for (const at of ['aria-labelledby', 'aria-describedby']) {
+            const ids = ((t.getAttribute && t.getAttribute(at)) || '').trim().split(/\s+/);
+            for (const id of ids) {
+              if (!id || seen.has(id)) continue;
+              seen.add(id);
+              let n = null;
+              try { n = (t.ownerDocument || document).getElementById(id); } catch (e2) {}
+              if (!n || n === t || t.contains(n)) continue;   // inside: already rendered
+              const nt = ((n.innerText != null ? n.innerText : n.textContent) || '')
+                .replace(/\s+/g, ' ').trim();
+              if (nt) _cap += `\n  [${at === 'aria-labelledby' ? 'titled' : 'described'} by] ` + nt;
+            }
+          }
+        } catch (e) {}
         _grids.push(`--- TABLE (${grid.length} row(s) x ${wide} column(s)) ---${_cap}\n` + out.join('\n'));
       }
       if (_grids.length) _st = (_st ? _st + '\n\n' : '') + _grids.join('\n\n');
@@ -5376,6 +5402,60 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           n = n.parentElement;
         }
         if (!owner) return true;
+        // SO IT MAY ONLY REMOVE AN ELEMENT THAT CARRIES NO IDENTITY AT ALL -- no
+        // text, no alt, no aria-label of its own once punctuation and icon glyphs are
+        // stripped. That is provably lossless: a label cannot vanish from the listing
+        // if nothing carrying a label is ever removed.
+        //
+        // A WIDER VERSION WAS MEASURED AND REJECTED. The natural argument is that when
+        // the owner declares no name override its accessible name comes from its
+        // CONTENT (AccName step 2F), so it already contains the descendant's text and
+        // dropping a labelled descendant loses nothing. Across 20 frozen sites that
+        // removed 3,379 entries -- a third of some listings -- and 93 of the 2,463
+        // labelled removals (3.78%) had their text on NO kept row: span
+        // "Baseline Check" on MDN, span "issue opened" on GitHub issues, span "1位"
+        // on Yahoo Japan, span "Pro plan" on the MUI datepicker. So the
+        // content-derived-name argument is not true in practice, and I could not
+        // establish why in reasonable time -- an aria-hidden sibling excluded from the
+        // name, a different label provider, something else. An unexplained 3.78%
+        // identity loss is not shippable in a system whose worst failure is a false
+        // negative, and "I could not reproduce the cause" is not evidence there is none.
+        //
+        // The narrow rule still fixes the entire reported defect: `[` and `]` strip to
+        // empty, so Wikipedia's citations go from three rows to one. The wider version
+        // was only ever buying compression, and it was buying it with ground truth.
+        const _nrm = (v) => String(v || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+        // EVERY SOURCE AN ENTRY'S NAME CAN COME FROM, not just the obvious three.
+        // The first version tested innerText/alt/aria-label and the corpus still
+        // reported losses, because a name is also resolvable from `title` and from
+        // aria-labelledby pointing elsewhere -- and #29 synthesizes a handle for an
+        // icon control from those. aria-labelledby resolves to another node, so its
+        // mere presence counts as an identity: keep, which is the safe direction.
+        const _mine = _nrm((el.innerText != null ? el.innerText : el.textContent) || '')
+                   || (el.getAttribute ? (_nrm(el.getAttribute('alt'))
+                        || _nrm(el.getAttribute('aria-label'))
+                        || _nrm(el.getAttribute('title'))
+                        || (el.getAttribute('aria-labelledby') ? 'x' : '')) : '');
+        // ...AND A NAME RESOLVED FROM A DESCENDANT. The last 19 losses on the
+        // corpus were all one site and all icons: GitHub renders
+        // `<span><svg><title>issue opened</title></svg></span>`, so the span's own
+        // text and attributes are empty while its NAME comes from the svg title --
+        // #29's icon-name path. A descendant that can name this element is an
+        // identity like any other.
+        let _desc = '';
+        try {
+          // 'svg, img' as well as a name source: an element WRAPPING an icon is
+          // carrying content even when neither it nor the icon is named, and on
+          // GitHub's issue list that wrapper is what the entry's label hangs off.
+          const dn = el.querySelector && el.querySelector('title, [aria-label], img, svg');
+          if (dn) {
+            _desc = _nrm((dn.textContent || '')) || _nrm(dn.getAttribute('aria-label'))
+                 || _nrm(dn.getAttribute('alt'))
+                 || ((dn.tagName || '').toLowerCase() === 'svg'
+                     || (dn.tagName || '').toLowerCase() === 'img' ? 'icon' : '');
+          }
+        } catch (e2) {}
+        if (_mine || _desc) return true;
         return _drop(el, 'cursor-inherited-non-root');
       }
     } catch (e) {}

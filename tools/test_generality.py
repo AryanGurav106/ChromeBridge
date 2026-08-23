@@ -266,6 +266,30 @@ async def main():
         _cled = await cu.evaluate(
             "(function(){ " + COLLECT
             + "; return _collectInteractivePage(false,null,'compact',true,false,'tree'); })()")
+        # CU4: NOTHING MAY LOSE AN IDENTITY, the condition that changed this rule after
+        # it was written. The owner test alone removed 155 labels on mdn_select and 28
+        # on gh_issues that appeared on NO kept row — including
+        # span "188530 users starred this repository" inside a link whose own
+        # aria-label is shorter. Those spans are not separate TARGETS, which the owner
+        # test decides correctly; their TEXT is content, and deleting it is silent loss.
+        # When the owner declares NO override its name comes from its content and
+        # therefore contains the descendant's text, so nothing is lost — that is CU1.
+        # THE aria-label MUST NOT CONTAIN THE SPAN'S TEXT or the containment test is
+        # satisfied and this passes without exercising the rule.
+        _ovr = await cu.evaluate(
+            "()=>{const a=document.createElement('a');a.href='/repo/stargazers';"
+            "a.setAttribute('aria-label','Star');a.style.cssText='display:block;width:200px;height:24px';"
+            "a.innerHTML='<span id=sc>188530 users starred this repository</span>';"
+            "document.body.appendChild(a);return 1;}")
+        await cu.wait_for_timeout(90)
+        _ovl = await cu.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'tree'); })()")
+        check("CU4 a descendant whose text the owner's aria-label does NOT carry keeps"
+              " its row — the rule may not delete an identity",
+              "188530 users starred" in _ovl,
+              next((l.strip()[:80] for l in _ovl.splitlines() if "188530" in l),
+                   "IDENTITY LOST — the only row says aria-label 'Star'"))
         check("CU3 ...and the removal is RECORDED, so the ledger can answer why a"
               " bracket span has no row",
               any(str(d.get("rule")) == "cursor-inherited-non-root"
@@ -988,6 +1012,43 @@ async def main():
         check("TB8 hidden-then-restored: the whole-page read still sees the table",
               "1,240" in whole and "東京" in whole)
         await tb.close()
+
+        # TB13: THE UNITS A PAGE PUTS OUTSIDE THE TABLE. <caption> is one way to say
+        # what a table's numbers mean and it is already rendered (the Wikipedia
+        # "million US$" case); ARIA's way is aria-labelledby/aria-describedby pointing
+        # at a heading or a note elsewhere on the page. The Federal Reserve's H.15
+        # does exactly that — the grid renders as clean aligned numbers while
+        # "percent per annum" lives in a node beside it, so a scoped read handed an
+        # agent 3.82 and 3.99 with nothing saying what either figure measured.
+        # THE NOTE MUST SIT OUTSIDE THE <table> or it is rendered as a cell anyway and
+        # this passes without exercising the association.
+        tb2 = await browser.new_page(viewport={"width": 900, "height": 700})
+        await tb2.set_content(
+            "<!doctype html><meta charset=utf-8><body>"
+            "<h2 id=t-title>Selected interest rates</h2>"
+            "<p id=t-units>Yields in percent per annum</p>"
+            "<table id=fedtab aria-labelledby=t-title aria-describedby=t-units>"
+            "<tr><th>Instrument</th><th>Aug 18</th></tr>"
+            "<tr><td>1-year T-bill</td><td>3.82</td></tr>"
+            "<tr><td>1-year maturity</td><td>3.99</td></tr></table></body>")
+        await tb2.wait_for_timeout(120)
+        # SCOPED: the aligned-grid renderer runs for a scoped read (that is the view
+        # built for reading numbers), so a whole-page read would not exercise it --
+        # which is how the first version of this fixture failed for the wrong reason.
+        _fm = await tb2.evaluate(
+            "(function(){ " + COLLECT + "; _collectInteractivePage(true);"
+            "return document.getElementById('fedtab').getAttribute('mmid'); })()")
+        _tt = await tb2.evaluate("(function(){ " + DOMTEXT + "; return _domTextPage('"
+                                 + str(_fm) + "'); })()")
+        check("TB13 a table's declared units reach the grid that renders its numbers",
+              "percent per annum" in _tt and "3.82" in _tt
+              and "[described by]" in _tt,
+              next((l.strip()[:80] for l in _tt.splitlines() if "described by" in l),
+                   "NO ASSOCIATION RENDERED — 3.82 arrives with no unit"))
+        check("TB13b ...and aria-labelledby titles it, distinctly from a description",
+              "[titled by] Selected interest rates" in _tt,
+              next((l.strip()[:70] for l in _tt.splitlines() if "titled by" in l), "ABSENT"))
+        await tb2.close()
 
         # ---- WM: WebMCP — tools the PAGE declares about itself -------------------
         # Tested against a STUB document.modelContext so discovery, schema parsing,
