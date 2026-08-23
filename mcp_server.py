@@ -1375,11 +1375,27 @@ async def find(
         return 0.0
 
     def score(el: dict) -> float:
-        label = _fold(_nfc(el.get("label")))
+        # A SUBTREE CONCATENATION IS NOT AN IDENTITY. AccName's name-from-content
+        # fallback gives a generic container the text of everything inside it, so
+        # demoqa's outermost div carried all 390 characters of the page — every nav
+        # item, field label and the copyright line. That matches ANY query about
+        # ANYTHING on the page, which is why this shape kept winning under a
+        # confident `Found 1 element(s) matching`:
+        #     find("Sports hobbies checkbox") -> ref_4 | div "Elements Forms ..."
+        #     find("State dropdown")          -> the same ref_4
+        # #29 removed it from the tree LISTING and I recorded that as fixed; the tree
+        # is a serializer, and this scorer reads the structured array, so the blob was
+        # still the matchable identity. Verified live after the display fix.
+        # The collector marks it (`subtreeName`) with a local test — no declared name,
+        # no direct text of its own, yet a name exists — and the element stays fully
+        # findable by role, near=, placeholder and value. Only the borrowed text stops
+        # being treated as its own.
+        _borrowed = bool(el.get("subtreeName"))
+        label = "" if _borrowed else _fold(_nfc(el.get("label")))
         tag = str(el.get("tag") or "").casefold()
         role = str(el.get("role") or "").casefold()
         placeholder = _fold(_nfc(el.get("placeholder")))
-        name = _fold(_nfc(el.get("name")))
+        name = "" if _borrowed else _fold(_nfc(el.get("name")))
         near = _fold(_nfc(el.get("near")))
         s = 0.0
         _cov = set()

@@ -7236,6 +7236,37 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       x: Math.round(ax), y: Math.round(ay),
       w: Math.round(aw), h: Math.round(ah),
       clickable,
+      // IS THIS "NAME" JUST THE SUBTREE'S TEXT GLUED TOGETHER?
+      //
+      // AccName's name-from-content fallback gives a generic container the
+      // concatenation of everything inside it. #29 stopped PRINTING that in the
+      // tree, and I reported it fixed — but the tree is a serializer, and `find`
+      // scores the STRUCTURED array, so the 390-char blob was still the matchable
+      // identity of demoqa's outermost div. Verified live after the display fix:
+      //   find("Sports hobbies checkbox")
+      //     -> Found 1 element(s) matching: ref_4 | div "Elements Forms Practice
+      //        Form ... © 2013-2026 TOOLSQA.COM | ALL RIGHTS RESERVED."
+      // A whole-page label matches any query about anything on the page, which is
+      // why this shape kept winning `find` under a confident header.
+      //
+      // The test is local, so it belongs on the entry rather than in either
+      // consumer: no DECLARED name (aria-label / aria-labelledby / title / a real
+      // <label>), no direct child text node of its own, and yet a name exists —
+      // then the name came from descendants and is not this element's identity.
+      // The tree reads this flag instead of recomputing the same question, so the
+      // two cannot drift (#21's lesson about one concept spelled twice).
+      subtreeName: (() => {
+        try {
+          if (!(name || label || text)) return false;
+          if (el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')
+              || (el.getAttribute('title') || '').trim()
+              || (el.labels && el.labels.length)) return false;
+          for (const n of el.childNodes) {
+            if (n.nodeType === 3 && /[\p{L}\p{N}]/u.test(n.nodeValue || '')) return false;
+          }
+          return el.children && el.children.length > 0;
+        } catch (e) { return false; }
+      })(),
       active: activeHint(el),
       required,
       unselected,
@@ -8751,22 +8782,11 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
             //     arise; this drops the label or keeps it whole, never a fragment.
             // A DECLARED name (aria-label / aria-labelledby / title / a real
             // <label>) is the page stating what this is called and is never touched.
-            let _keepName = false;
-            try {
-              _keepName = !!(el.getAttribute('aria-label')
-                             || el.getAttribute('aria-labelledby')
-                             || (el.getAttribute('title') || '').trim()
-                             || (el.labels && el.labels.length));
-              if (!_keepName) {
-                for (const n of el.childNodes) {
-                  if (n.nodeType === 3 && /[\p{L}\p{N}]/u.test(n.nodeValue || '')) {
-                    _keepName = true;
-                    break;
-                  }
-                }
-              }
-            } catch (e2) {}
-            if (!_keepName) {
+            // READ THE FLAG, DO NOT RECOMPUTE IT. This asked the same question the
+            // entry now answers at build time (`subtreeName`), and having it in two
+            // places is how #21's "one concept spelled two ways" starts — the entry's
+            // copy also feeds `find`, and the two must agree about what a name is.
+            if (e.subtreeName) {
               _e = Object.assign({}, e, { name: '', label: '', text: '' });
               _sawRolled = true;
             }

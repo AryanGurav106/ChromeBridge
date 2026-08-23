@@ -279,6 +279,35 @@ async def main():
     check("F25 a dropdown that is not the one asked for is not confident",
           "NO CONFIDENT MATCH" in out, out.splitlines()[0][:96])
 
+    # F30/F31: A SUBTREE CONCATENATION IS NOT AN IDENTITY. AccName's
+    # name-from-content fallback hands a generic container the text of everything
+    # inside it, so demoqa's outermost div carried all 390 characters of the page.
+    # That matches ANY query about ANYTHING on it, and it kept winning under a
+    # confident header — verified live with two unrelated queries returning the same
+    # ref_4. #29 removed it from the tree LISTING and recorded the defect as fixed,
+    # but the tree is a serializer and this scorer reads the structured array, so the
+    # blob was still the matchable identity. The collector marks it `subtreeName`.
+    # F31 is the guard that this is a targeted exclusion, not a demotion of
+    # containers: the same element remains reachable by every field that IS its own.
+    _blob = ("Elements Forms Practice Form Student Registration Form Name Email Gender "
+             "Male Female Other Mobile Date of Birth Subjects Hobbies Sports Reading "
+             "Music Picture Current Address State and City Submit "
+             "© 2013-2026 TOOLSQA.COM | ALL RIGHTS RESERVED.")
+    page(el(mmid="4", tag="div", label=_blob, name=_blob, subtreeName=True, w=1900, h=1370),
+         el(mmid="283", tag="input", type="checkbox", name="Sports", w=16, h=16, y=400))
+    out = await run("Sports hobbies checkbox")
+    check("F30 a container whose name is its whole subtree does not win the query",
+          "ref_4" not in out, out.splitlines()[0][:100]
+          + (" | " + next((l.strip()[:60] for l in out.splitlines() if "ref_" in l), "")))
+    check("F30b ...and the real control is what comes back",
+          "ref_283" in out, next((l.strip()[:70] for l in out.splitlines() if "ref_" in l), out[:70]))
+
+    page(el(mmid="4", tag="div", role="navigation", label=_blob, name=_blob,
+            subtreeName=True, near="Site navigation", w=1900, h=1370))
+    out = await run("navigation")
+    check("F31 ...while that element is still findable by what IS its own (role, near=)",
+          "ref_4" in out, out.splitlines()[0][:100])
+
     page(el(mmid="2229", tag="button", label="구독", name="구독",
             near="매일경제 08월 10일 05:52 구독"),
          el(mmid="528", tag="button", label="구독", name="구독"),
