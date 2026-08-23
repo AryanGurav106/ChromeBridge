@@ -627,6 +627,54 @@ async def main():
               _near("v") == "Visible Label", f"near={_near('v')!r}")
         await np.close()
 
+        # ---- W17d: A COMBOBOX'S OPTIONS ARE NEVER `menuitem` ------------------
+        # ant.design's docs site, measured live: the picker for "Select a person"
+        # offered "Components Overview", "Changelog v6.6.1", "Button", "FloatButton",
+        # "Icon", "Typography", "Divider", "Flex" -- the SITE'S LEFT SIDEBAR, zero of
+        # them the field's options -- under "Pass one of these exactly", an
+        # instruction that navigates the agent off the page.
+        #
+        # THE SIDEBAR MUST BE INSIDE <main>, WITH NO LANDMARK ANYWHERE ON ITS CHAIN.
+        # That is the real shape, and it is what defeated the previous guard: a list
+        # of landmark elements and roles (nav/header/footer/aside + navigation/
+        # menubar/banner/contentinfo). antd's chain is
+        #     li[role=menuitem] -> ul[role=menu] -> div -> main -> body
+        # so wrapping this fixture's menu in a <nav> would make it pass against the
+        # old guard too, and prove nothing. The rule now used is a spec relationship:
+        # ARIA's combobox pattern opens a listbox/tree/grid/dialog, never a menu, so a
+        # menuitem is categorically not one of a combobox's values.
+        mp = await browser.new_page(viewport={"width": 1000, "height": 800})
+        await mp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await mp.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'><main>"
+            "<ul role=menu style='position:sticky;z-index:1'>"
+            + "".join(f"<li role=menuitem style='width:180px;height:24px;cursor:pointer'>"
+                      f"Sidebar item {i}</li>" for i in range(6))
+            + "</ul>"
+            "<div id=ctl role=combobox aria-expanded=true tabindex=0"
+            " style='width:200px;height:32px;border:1px solid #999'>Select a person</div>"
+            "</main></body>")
+        await mp.wait_for_timeout(150)
+        _mr = await mp.evaluate(
+            "(function(){ " + PICK + "; return _pickOptionPage('Beatrice', '#ctl'); })()")
+        check("W17d a combobox is never offered `menuitem`s as its options, even when"
+              " no landmark appears anywhere on their ancestor chain",
+              _mr.get("ok") is False
+              and not any(w in (_mr.get("msg") or "") for w in ("Sidebar item", "Sidebar")),
+              f"ok={_mr.get('ok')} msg={(_mr.get('msg') or '')[:120]!r}")
+        # And the converse: a menu-backed dropdown (Radix DropdownMenu style) declares
+        # aria-haspopup="menu" on a button, and its menuitems ARE its options.
+        await mp.evaluate("()=>{const c=document.getElementById('ctl');"
+                         "c.setAttribute('role','button');"
+                         "c.setAttribute('aria-haspopup','menu');}")
+        _mr2 = await mp.evaluate(
+            "(function(){ " + PICK + "; return _pickOptionPage('Sidebar item 3', '#ctl'); })()")
+        check("W17e ...while a trigger declaring aria-haspopup=menu still picks a"
+              " menuitem (the guard is a role relationship, not a ban)",
+              _mr2.get("ok") is True and "Sidebar item 3" in str(_mr2.get("actual") or ""),
+              f"ok={_mr2.get('ok')} actual={_mr2.get('actual')!r}")
+        await mp.close()
+
         # ---- W16: which tab is selected, decided by DECLARATIONS -------------
         # `(current)/(selected)` tells the agent "already active; don't re-click",
         # so a wrong one suppresses a real action. It used to be answered, after

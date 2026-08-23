@@ -2272,6 +2272,21 @@ function _pickOptionPage(text, triggerSel) {
           const qq2 = (x) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(x || ''); const r2 = window.__mmidReg; if (m && r2) { const n = r2.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(x); };
           const tg = triggerSel ? qq2(triggerSel) : null;
           if (tg && c.contains(tg)) return false;         // selection box, not a popover
+          // A COMBOBOX'S POPUP IS NOT A MENU. Applied here as well as to the ARIA
+          // pool, because the HARVEST is the path that actually leaked: antd's
+          // sidebar is `position:sticky; z-index:1`, so it satisfies the structural
+          // popover test, and the harvest then scrapes its <li>s by tag without ever
+          // consulting a role. My first version of this rule filtered only the
+          // role-selector pool and W17d still failed with the sidebar items listed —
+          // the container test is where it has to happen.
+          try {
+            const _cr = c.getAttribute && c.getAttribute('role');
+            if (_cr === 'menu' && tg) {
+              const _tr = tg.getAttribute('role');
+              const _thp = (tg.getAttribute('aria-haspopup') || '').toLowerCase();
+              if (_tr === 'combobox' && _thp !== 'menu') return false;
+            }
+          } catch (e) {}
           return true;
         } catch (e) { return false; }
       });
@@ -2341,7 +2356,42 @@ function _pickOptionPage(text, triggerSel) {
   // NOT pickable dropdown options; matching them would click page chrome.
   all = all.filter(o => {
     const ro = o.getAttribute && o.getAttribute('role');
-    return !ro || !['tab', 'row', 'gridcell', 'columnheader', 'rowheader'].includes(ro);
+    if (ro && ['tab', 'row', 'gridcell', 'columnheader', 'rowheader'].includes(ro)) return false;
+    // A COMBOBOX OPENS A LISTBOX OF OPTIONS. A `menuitem` is a COMMAND, not a value —
+    // ARIA's combobox pattern says the popup is a listbox/tree/grid/dialog, never a
+    // menu. So when the trigger declares itself a combobox, a menuitem is
+    // categorically the wrong kind of thing and cannot be one of its options.
+    //
+    // This is what antd's docs site walked through. Measured live: the picker for
+    // "Select a person" offered
+    //     "Components Overview", "Changelog v6.6.1", "Button", "FloatButton",
+    //     "Icon", "Typography", "Divider", "Flex"
+    // which is the SITE'S LEFT SIDEBAR — zero of them the field's options (Jack,
+    // Lucy, Tom) — under "Pass one of these exactly", an instruction that navigates
+    // the agent off the page.
+    //
+    // My previous guard was a landmark list (nav/header/footer/aside +
+    // navigation/menubar/banner/contentinfo) and it missed this completely, because
+    // the ancestor chain is
+    //     li[role=menuitem] -> ul[role=menu] -> div.ant-col -> main -> body
+    // antd puts its sidebar INSIDE <main>. That guard was a list of the landmarks I
+    // thought of, which is the exact failure this project keeps removing; this one is
+    // a role relationship the spec defines.
+    //
+    // Menu-backed dropdowns are unaffected: a Radix DropdownMenu trigger is a button
+    // declaring aria-haspopup="menu", not a combobox, so its menuitems still qualify.
+    if (ro && ro.indexOf('menuitem') === 0) {
+      try {
+        const _q = (x) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(x || ''); const r2 = window.__mmidReg; if (m && r2) { const n = r2.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(x); };
+        const _tg = triggerSel ? _q(triggerSel) : null;
+        if (_tg) {
+          const _tr = _tg.getAttribute('role');
+          const _hp = _tg.getAttribute('aria-haspopup');
+          if (_tr === 'combobox' && _hp !== 'menu') return false;
+        }
+      } catch (e) {}
+    }
+    return true;
   });
   const isVisible = (o) => {
     try {
@@ -2452,6 +2502,32 @@ function _pickOptionPage(text, triggerSel) {
       // Harvested rows go FIRST (they came from the scoped/topmost popover, so they win
       // ties) but the ARIA pool is APPENDED rather than discarded: overwriting it meant
       // a wrong-but-nonempty scope threw away the genuine options entirely.
+      // AND FILTER THE HARVEST BY THE SAME RULE. The harvest runs AFTER the role
+      // filter above and REPLACES the pool, so a rule applied only to the
+      // role-selector set is bypassed entirely — which is why W17d still failed
+      // twice: once when the rule was on the ARIA pool, and again when it was on the
+      // aria-controls container. antd's sidebar is `position:sticky; z-index:1`, so
+      // it satisfies the structural popover test, and the harvest scrapes `div, li,
+      // span, button, a` by TAG without consulting a role at all.
+      // A combobox's popup is a listbox per ARIA; a menuitem is a command, not a
+      // value. Menu-backed triggers (aria-haspopup="menu") are untouched — W17e.
+      if (h.length) {
+        try {
+          const _q3 = (x) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(x || ''); const r3 = window.__mmidReg; if (m && r3) { const n = r3.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(x); };
+          const _tg3 = triggerSel ? _q3(triggerSel) : null;
+          if (_tg3 && _tg3.getAttribute('role') === 'combobox'
+              && (_tg3.getAttribute('aria-haspopup') || '').toLowerCase() !== 'menu') {
+            h = h.filter((n) => {
+              try {
+                const r4 = n.getAttribute && n.getAttribute('role');
+                if (r4 && r4.indexOf('menuitem') === 0) return false;
+                const anc = n.closest && n.closest('[role="menu"]');
+                return !anc;
+              } catch (e) { return true; }
+            });
+          }
+        } catch (e) {}
+      }
       if (h.length) { const prev = vis; all = h; via = hv; vis = all.filter(isVisible).concat(prev); }
     }
   }
