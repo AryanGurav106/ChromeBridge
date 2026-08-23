@@ -360,13 +360,36 @@ async def main():
               f"in_legend_or_banner={'section=' in _flat} "
               f"on_a_row={any('section=dialog' in l for l in _flat.splitlines() if l.strip().startswith('ref_'))}")
         # And the tree must still SAY a modal is open, by pointing at the nesting.
-        check("TR14 ...and the tree's modal banner points at the dialog NODE, which"
-              " the listing does print",
-              "MODAL/DIALOG IS CURRENTLY OPEN" in _tree
-              and "[dialog]" in _tree
+        # TR14 asserts the banner names a marker that is REALLY IN THE ROWS. Its
+        # first version checked for "[dialog]" and passed — because the fixture's
+        # own listing happened to contain that substring elsewhere — while the
+        # dialog row prints `role=dialog`. A live agent searched the output for
+        # `[dialog]`, found nothing, and concluded the dialog had not been listed.
+        # So the check now takes the marker OUT of the banner text and requires it
+        # to appear on an actual row: that is the property, and it cannot be
+        # satisfied by the banner talking about itself.
+        # The general property, because a literal check is what went wrong twice.
+        # The tree renders a dialog TWO ways — as an entry (`… role=dialog`) when it
+        # earned a ref, or as a structural node (`div[dialog]`) when it did not —
+        # so any literal the banner quotes is absent on half of all pages. The
+        # invariant is therefore: every `key=value` or `[token]` literal the banner
+        # quotes must appear somewhere in the ROWS. That catches "[dialog]" on an
+        # entry-style page and "role=dialog" on a node-style page, which is exactly
+        # the pair of mistakes made here.
+        import re as _re
+        _banner = next((l for l in _tree.splitlines()
+                        if "MODAL/DIALOG IS CURRENTLY OPEN" in l), "")
+        _rowtext = "\n".join(l for l in _tree.splitlines()
+                             if "MODAL/DIALOG" not in l and not l.startswith("  - "))
+        _quoted = _re.findall(r"\[[a-z-]+\]|\b[a-z_]+=[a-z-]+", _banner)
+        _absent = [q for q in _quoted if q not in _rowtext]
+        _identified = ("role=dialog" in _rowtext) or ("[dialog]" in _rowtext)
+        check("TR14 ...and every literal the modal banner quotes appears in the ROWS"
+              " (the tree renders a dialog two ways, so no single literal is safe)",
+              bool(_banner) and not _absent and _identified
               and any(l.startswith(" ") and "Keep" in l for l in _tree.splitlines()),
-              f"banner={'MODAL/DIALOG IS CURRENTLY OPEN' in _tree} "
-              f"node={'[dialog]' in _tree} "
+              f"banner={bool(_banner)} quoted={_quoted} absent_from_rows={_absent} "
+              f"dialog_identified={_identified} "
               f"indented_child={any(l.startswith(' ') and 'Keep' in l for l in _tree.splitlines())}")
         await dp.close()
 

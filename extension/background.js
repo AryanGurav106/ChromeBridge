@@ -3901,7 +3901,25 @@ function _domTextPage(scopeMmid) {
         });
         const hi = grid.findIndex((r) => r.head);
         if (hi >= 0) out.splice(hi + 1, 0, '  ' + Array(wide).fill('---').join(' | '));
-        _grids.push(`--- TABLE (${grid.length} row(s) x ${wide} column(s)) ---\n` + out.join('\n'));
+        // THE <caption> IS THE TABLE'S OWN TITLE, AND IT CARRIES THE UNIT. Dropping
+        // it was the highest-severity finding of the table audit: Wikipedia's GDP
+        // table captions itself "GDP forecast or estimate (million US$) by country",
+        // and the render began straight at the column headers — so an agent reads
+        // `United States | 32,383,920` with nothing anywhere saying millions. A
+        // 10^6 error with no signal, in the one view built for reading numbers.
+        // The element is declared for exactly this purpose (HTML: "the caption
+        // element represents the caption of its parent table"), so there is nothing
+        // to infer.
+        let _cap = '';
+        try {
+          const cn = t.querySelector && t.querySelector('caption');
+          if (cn && (cn.closest && cn.closest('table')) === t) {
+            const ct = ((cn.innerText != null ? cn.innerText : cn.textContent) || '')
+              .replace(/\s+/g, ' ').trim();
+            if (ct) _cap = '\n  [caption] ' + ct;
+          }
+        } catch (e) {}
+        _grids.push(`--- TABLE (${grid.length} row(s) x ${wide} column(s)) ---${_cap}\n` + out.join('\n'));
       }
       if (_grids.length) _st = (_st ? _st + '\n\n' : '') + _grids.join('\n\n');
       // Skipping the prose read is only correct when a grid REPLACES it. A table
@@ -5488,13 +5506,41 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // committed input says `role=combobox` and carries aria-expanded; a decoy
     // mirror declares nothing and stays dropped (P2), which is the same
     // declaration-over-inference rule the rest of the collector runs on.
+    // MEASURED INCOMPLETE ON THE FIRST PASS. A live probe set showed a transparent
+    // input survived only when a <label> WRAPPED it (that is what fed `ownLabel`):
+    //   checkbox opacity:0 in a plain div  -> NOT listed
+    //   checkbox opacity:0 in a <label>    -> listed
+    //   file     opacity:0 + aria-label    -> NOT listed
+    //   file     opacity:0 in a <label>    -> listed
+    // So the opacity-0 input[file] under a styled upload button — the case the
+    // comment below cites as the reason ANCESTOR opacity is allowed — did not
+    // actually work, and an explicit aria-label did not rescue it. For a checkbox
+    // the wrapper got listed as a `div`, so `(checked)` was unreadable and kind
+    // routing saw a container; for a file input, file_upload() needs the input's own
+    // ref and there was none.
+    // Three more declarations therefore count, each one the page stating something:
+    //  - an explicit accessible name (aria-label / aria-labelledby / title);
+    //  - an input TYPE that is inherently a widget rather than a text field. A
+    //    checkbox, radio, file or range IS its type — there is no "mirror checkbox"
+    //    idiom the way there is a mirror text input, which is what P2 guards;
+    //  - a native control that is genuinely form-associated via `name`.
+    // The decoy P2 protects — <input type=text> with no role, no name, no aria —
+    // still declares nothing and stays dropped.
     let _declaredCtl = false;
     try {
       const _dr = el.getAttribute('role');
+      const _wt = (el.getAttribute('type') || '').toLowerCase();
+      const _WIDGET_TYPES = ['checkbox', 'radio', 'file', 'range', 'color', 'date',
+                             'datetime-local', 'month', 'week', 'time', 'submit',
+                             'reset', 'image', 'button'];
       _declaredCtl = !!(_dr && INTERACTIVE_ROLES.has(_dr))
                      || el.hasAttribute('aria-expanded')
                      || el.hasAttribute('aria-autocomplete')
-                     || el.hasAttribute('aria-controls');
+                     || el.hasAttribute('aria-controls')
+                     || el.hasAttribute('aria-label')
+                     || el.hasAttribute('aria-labelledby')
+                     || !!(el.getAttribute('title') || '').trim()
+                     || (tagL === 'input' && _WIDGET_TYPES.indexOf(_wt) !== -1);
     } catch (e) {}
     let visible = r.width > 1 && r.height > 1 && cs.visibility !== 'hidden' &&
                     cs.display !== 'none' && (_selfOpaque || !!ownLabel || _declaredCtl);
@@ -6826,7 +6872,25 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // Inert controls: present but currently non-functional. Keep them listed
     // (the agent should know the control exists) but flagged, so it doesn't
     // burn turns clicking them or misread silence as a bug.
-    const disabled = el.disabled === true || el.getAttribute('aria-disabled') === 'true' || peDisabled;
+    // `(disabled)` MEANS THE PAGE SAID DISABLED. `pointer-events:none` is not that
+    // claim — it is a paint/hit-testing property, and component libraries put it on
+    // the real control while routing clicks through a wrapping <label> or an overlay.
+    // Measured live, two independent agents:
+    //   - Bootstrap's checks-radios page: 18 `.btn-check` rows all flagged
+    //     (disabled); only 4 carry the attribute. One was clicked and its `.checked`
+    //     went false -> true, so the flag was provably wrong on a working control.
+    //   - Vuetify: ~20 rows flagged, including the children of a link marked
+    //     `(current)` and of a tab marked `(selected)` — self-refuting on their face
+    //     — and `find` reported `ref_3708 (disabled)` moments before `form_input`
+    //     wrote to it successfully.
+    // The legend promises "inert; clicking does nothing right now", so a wrong
+    // (disabled) tells the agent NOT to act on something that works, and it also
+    // destroys the marker's value where it is right: demoqa's genuinely disabled
+    // City field uses the identical token, so on a Vuetify page the flag decides
+    // nothing. The pointer-events observation is still recorded — it demotes the
+    // element (`was:pointer-events-none`, visible in the ledger) — which is the
+    // right home for an inference: prominence, never a claim about state.
+    const disabled = el.disabled === true || el.getAttribute('aria-disabled') === 'true';
     const _entry = {
       mmid: _mmid,
       tag: tagL,
@@ -6855,7 +6919,18 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
               return r.width > 0 && r.height > 0;
             } catch (e) { return false; }
           };
-          const txt = (h) => (h.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+          // NO CAP HERE. This was `.slice(0, 40)` — a bare cut with no marker, in a
+          // field an agent reads for context. Measured live on arXiv:
+          //   under="Fri, 21 Aug 2026 (showing first 50 of 14"
+          // where the heading is "…first 50 of 145 entries )". The count 145 arrived
+          // as 14 — a WRONG NUMBER, the exact Wolfram-class failure (#14) where a
+          // cut that does not look like a cut reads as a finished value.
+          // #24 deleted the per-field caps for this reason and measured the cost at
+          // +3.1% chars: a HEADING is bounded by human authorship already, so a cap
+          // here buys nothing. The display side (`_q(underHeading, 200)` in
+          // mcp_server.py) already marks a cut with its true residual if one is ever
+          // needed, so removing the number removes the silence rather than moving it.
+          const txt = (h) => (h.innerText || '').replace(/\s+/g, ' ').trim();
           let n = el, hops = 0;
           while (n && hops < 6) {
             let sib = n.previousElementSibling, k = 0;
@@ -7633,8 +7708,17 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       const _shownIds = new Set(shown.map((e) => String(e.mmid)));
       _capTail = out.filter((e) => !_shownIds.has(String(e.mmid)))
         .map((e) => {
+          // markCut, not a bare ellipsis. This built `lab.slice(0,40) + '…'`, which
+          // says a cut happened but not how big it was — and the whole point of the
+          // count is that it decides whether to escalate. Measured live on Hacker
+          // News: `693:"Autolith: A programming agent with a liv…"` was missing 8
+          // characters and `643:"Figmimic – A bookmarklet to copy any web…"` was
+          // missing 33, printed identically. The same titles appeared UNCUT in the
+          // fold lines of the same listing, so the inconsistency was visible in one
+          // screenful. Sixth home for this bug; markCut exists so a new bounded
+          // field cannot reintroduce the silence by hand-rolling the cut.
           const lab = (e.name || e.label || e.text || '').trim();
-          return e.mmid + (lab ? ':' + JSON.stringify(lab.length > 40 ? lab.slice(0, 40) + '…' : lab) : '');
+          return e.mmid + (lab ? ':' + JSON.stringify(markCut(lab, 40)) : '');
         });
     } catch (e) {}
   }
@@ -7647,9 +7731,20 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     : "";
   const truncNote = hiddenCount > 0
     ? `\n... +${hiddenCount} more interactive element(s) not shown (listing capped at ${LISTING_CAP}; ` +
-      `dialog/required/dropdown/input fields are prioritized). SCROLLING WILL NOT HELP and neither ` +
-      `will a larger max_chars: this cap counts ENTRIES and slices in document order, so a scroll ` +
-      `plus a re-read returns byte-identical output. Recover by narrowing instead — read_page(ref_id=…) ` +
+      // "SCROLLING WILL NOT HELP ... a scroll plus a re-read returns byte-identical
+      // output" was FALSE, and a live agent disproved it by doing it: on Hacker
+      // News a scroll moved the folds from 39/52 to 202/214, brought in seven
+      // story titles and eight footer links that the first read did not contain,
+      // and shifted the omitted list from 421-621 to 614-806. The claim confused
+      // two different things — the cap slices in document order, but WHAT REACHES
+      // the cap is the viewport-scoped collection, so scrolling changes the input
+      // set and therefore the survivors. Telling the agent not to try a recovery
+      // that works is the #23 cross-extension defect again: a tool asserting an
+      // impossibility a live agent had just performed.
+      `dialog/required/dropdown/input fields are prioritized). A larger max_chars will NOT help: ` +
+      `this cap counts ENTRIES, not characters. Scrolling changes WHICH entries are collected ` +
+      `(this listing is viewport-scoped), so it shifts the window rather than lifting the cap. ` +
+      `Prefer narrowing — read_page(ref_id=…) ` +
       `on a smaller region, find (it searches the whole page), or read_page(ref_id=…, filter="all") if ` +
       `the rows you want are in a list or table. A question about the LARGEST or FIRST of something is ` +
       `not answerable from the rows above alone -- but every omitted entry is listed by ref ` +
@@ -8756,7 +8851,24 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
   // tagged `section=iframe`, so naming the nesting is right there too.
   const banner = dialogOpen
     ? (TREEFMT
-       ? "*** A MODAL/DIALOG IS CURRENTLY OPEN — work inside the dialog node below (the row marked [dialog], with its controls indented under it); ignore rows outside that subtree unless you need to dismiss the modal. ***\n"
+       // NAME THE MARKER THE ROW ACTUALLY CARRIES. The first version of this said
+       // "the row marked [dialog]" — and the tree prints `role=dialog`, never
+       // `[dialog]`. Square brackets ARE live notation here (`div[region]`,
+       // `input[radio]`), so `[dialog]` reads as a real token of this vocabulary,
+       // an agent searching for it gets zero hits, and the reasonable conclusion
+       // is that the dialog was not listed. That is the identical
+       // instruction-names-an-absent-marker defect this banner was just rewritten
+       // to fix, reintroduced in the rewrite and caught by a live agent.
+       // ...and the tree has TWO renderings for a dialog, so no single literal is
+       // safe to quote: a dialog that earned its own ref prints as an entry
+       // (`div name="…" role=dialog`), while one that is only structure prints in
+       // the node form (`div[dialog]`). Naming either literal is wrong half the
+       // time — the first attempt named `[dialog]` and a live agent searching for
+       // it on a page of the other kind found nothing and concluded the dialog was
+       // not listed. So the banner describes the ROLE in prose, which is true of
+       // both forms, and TR14 asserts the general property: any literal token the
+       // banner quotes must appear on a row.
+       ? "*** A MODAL/DIALOG IS CURRENTLY OPEN — work inside the dialog node below (the row whose role is dialog, with its controls indented under it); ignore rows outside that subtree unless you need to dismiss the modal. ***\n"
        : "*** A MODAL/DIALOG IS CURRENTLY OPEN — focus on elements with section=dialog (or overlay-banner/menu items nested inside it); ignore underlying-page elements unless you need to dismiss the modal. ***\n")
     : overlayLikely
     ? "*** MOST PAGE ELEMENTS ARE BLOCKED BY AN OVERLAY (likely a consent/notification layer). The few elements WITHOUT (occluded/blocked) are the overlay's own controls — handle those first. ***\n"
@@ -8902,13 +9014,38 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     // report the fact without the story, and only when the count is large enough
     // to be worth a line at all.
     const _ah = _stateDrops['aria-hidden'], _ahN = _stateDrops['aria-hidden-named'];
-    if (_ah >= 3 && (dialogOpen || _ahN >= 3)) {
+    // ONLY ASSERT AN OPEN OVERLAY WHEN ONE IS ACTUALLY OPEN. This branch used to
+    // fire on `dialogOpen || _ahN >= 3` — i.e. an element merely HAVING a label
+    // was taken as evidence that a menu or dialog was open — and then prescribed
+    // "close it (Escape, or click the trigger again) and re-read, and they come
+    // back". Four independent live agents reported it on pages with nothing open:
+    // NHK 239 elements, Al Jazeera 130, antd 306, Vuetify 168 and 312, Wikipedia
+    // 35, every menu trigger on those pages printing `(collapsed)`. On Shoelace
+    // the count GREW from 554 to 558 after the one real dialog was dismissed,
+    // which disproves the promised recovery outright: closing brought back fewer.
+    //
+    // An agent that cannot find an element is told a few hundred are recoverable
+    // by dismissing an overlay that does not exist, and burns calls pressing
+    // Escape while the same output already carries the real recovery (`find`, or a
+    // scoped read of a named region). Worst case it manufactures a phantom modal
+    // on a clean page. Same rule as #23's cross-extension message and #14's stale
+    // ref: state the FACT, list causes as causes, and never assert a recovery the
+    // tool has not verified.
+    if (_ah >= 3 && dialogOpen) {
       L.push(`  - NOTE: ${_ah} interactive element(s) are NOT listed because an`
            + ` ancestor is aria-hidden="true"${_ahN ? ` (${_ahN} of them carry their own label or text)` : ''}.`
-           + ` That is usually a library marking the page`
-           + ` inert behind an OPEN menu, dropdown or dialog — close it (Escape, or click`
-           + ` the trigger again) and re-read, and they come back. This is page STATE, not`
-           + ` the page's contents.`);
+           + ` A dialog IS open (see the banner above), and marking the rest of the page`
+           + ` hidden is how focus-trap libraries do that — dismiss it and re-read to see`
+           + ` the page again. This is page STATE, not the page's contents.`);
+    } else if (_ah >= 3 && _ahN >= 3) {
+      L.push(`  - NOTE: ${_ah} interactive element(s) are NOT listed because an`
+           + ` ancestor is aria-hidden="true"${_ahN ? ` (${_ahN} of them carry their own label or text)` : ''}.`
+           + ` Nothing here indicates an open dialog, so this is most likely a CLOSED`
+           + ` menu/panel kept in the DOM, or a library's own duplicate markup. Do not go`
+           + ` hunting for something to dismiss: if you are missing a specific element,`
+           + ` read_page(ledger=true) names what was dropped and why, and find() reaches`
+           + ` elements this viewport-scoped listing omits. This is page STATE, not the`
+           + ` page's contents.`);
     } else if (_ah >= 25) {
       L.push(`  - NOTE: ${_ah} interactive element(s) sit under aria-hidden="true" ancestors and are`
            + ` not listed, and NONE of them carry a label or text of their own — on component`

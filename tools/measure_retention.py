@@ -300,6 +300,44 @@ def load_sites() -> list[tuple[str, str]]:
     return re.findall(r'\(\s*"([a-z_0-9]+)"\s*,\s*"(https?://[^"]+)"', body)
 
 
+def report_floor(rows: list[dict]) -> dict:
+    """Print the self-measured noise floor, and name the site that sets it.
+
+    Naming the worst site is the part that matters. An aggregate that moved 5%
+    tells you nothing about whether to believe it; "mastodon replayed 1837 then
+    6482 tokens" tells you immediately that the aggregate is hostage to one
+    recording, and freeze_corpus.py already lists that recording as unstable.
+    """
+    have = [r for r in rows if r.get("_reps")]
+    if not have:
+        print("\nNOISE FLOOR: not measured (pass --replicates 2). Any change you are "
+              "about to attribute to a code edit is UNVALIDATED — two identical runs of "
+              "this corpus have differed by 4.7% in entries and 2.8pp in findability MRR.")
+        return {}
+    worst = {"entries": (0.0, ""), "tokens": (0.0, ""), "presence": (0.0, ""), "mrr": (0.0, "")}
+    for r in have:
+        base = {"entries": r["compact"]["entries"], "tokens": r["compact"]["approx_tokens"],
+                "presence": r["compact"]["presence"],
+                "mrr": (r.get("findability") or {}).get("mrr")}
+        for k in worst:
+            vals = [base[k]] + [rep[k] for rep in r["_reps"] if rep.get(k) is not None]
+            vals = [v for v in vals if v is not None]
+            if len(vals) < 2:
+                continue
+            lo, hi = min(vals), max(vals)
+            # Ratio for counts, absolute points for the 0..1 rates.
+            spread = (hi / lo - 1.0) if (k in ("entries", "tokens") and lo) else (hi - lo)
+            if spread > worst[k][0]:
+                worst[k] = (spread, r["name"])
+    print(f"\nNOISE FLOOR from {len(have)} site(s) measured "
+          f"{1 + len(have[0]['_reps'])}x back-to-back — a change smaller than this is NOT a result:")
+    for k, unit in (("entries", "%"), ("tokens", "%"), ("presence", "pp"), ("mrr", "pp")):
+        sp, who = worst[k]
+        shown = f"{sp * 100:.1f}{unit}" if unit == "%" else f"{sp * 100:.1f}{unit}"
+        print(f"  {k:<9} +/- {shown:<8} worst site: {who or '-'}")
+    return {k: {"spread": round(v[0], 4), "site": v[1]} for k, v in worst.items()}
+
+
 def summarise(rows: list[dict], label: str) -> dict:
     scored = [r for r in rows if "compact" in r]
     if not scored:
@@ -355,6 +393,11 @@ async def main() -> int:
     ap.add_argument("--holdout", type=float, default=0.0,
                     help="fraction of sites reported separately as held-out (deterministic split)")
     ap.add_argument("--baseline", action="store_true", help="write temp/retention/baseline.json")
+    ap.add_argument("--replicates", type=int, default=1,
+                    help="measure each site N times back-to-back and report the worst "
+                         "per-metric spread as a NOISE FLOOR. Any change smaller than the "
+                         "floor is not a result. 2 is enough to catch an unstable replay; "
+                         "costs N x runtime.")
     args = ap.parse_args()
 
     sites = load_sites()
@@ -371,6 +414,33 @@ async def main() -> int:
         browser = await p.chromium.launch(headless=True)
         for i, (name, url) in enumerate(sites, 1):
             r = await run_site(browser, name, url, args.live)
+            # SELF-MEASURED NOISE FLOOR. Replicates are taken BACK TO BACK on the
+            # same site, so the spread between them is that site's own replay
+            # instability over the smallest possible window — the tightest floor
+            # available, and the one the aggregate has to clear.
+            #
+            # This exists because the tool misled me. Two runs of IDENTICAL code
+            # reported median entries 234 and 223.5, flat tokens 1161 and 1099.5,
+            # findability MRR 0.954 and 0.982 — and I was one commit from
+            # publishing the difference as the price of a code change. The cause
+            # was one site: mastodon replayed at 1837 tokens and then at 6482, a
+            # 3.5x swing with nothing changed, and on a 34-site median that moves
+            # the aggregate. freeze_corpus.py already names 18 recordings as
+            # non-deterministic; nothing downstream was using that fact.
+            #
+            # #19 established this for audit_thresholds ("the floor is the worst
+            # spread among replicates"). It belongs in every tool whose output
+            # gets quoted, which is this one.
+            r["_reps"] = []
+            for _ in range(max(0, args.replicates - 1)):
+                rr = await run_site(browser, name, url, args.live)
+                if "compact" in rr and "compact" in r:
+                    r["_reps"].append({
+                        "entries": rr["compact"]["entries"],
+                        "tokens": rr["compact"]["approx_tokens"],
+                        "presence": rr["compact"]["presence"],
+                        "mrr": (rr.get("findability") or {}).get("mrr"),
+                    })
             rows.append(r)
             if "skipped" in r:
                 print(f"  [{i:>3}/{len(sites)}] skip {name:<24} {r['skipped']}")
@@ -391,7 +461,9 @@ async def main() -> int:
     else:
         summary = {"all": summarise(rows, "CORPUS")}
 
-    payload = {"sites": rows, "summary": summary, "seconds": round(time.time() - t0, 1),
+    floor = report_floor(rows)
+    payload = {"sites": rows, "summary": summary, "noise_floor": floor,
+               "seconds": round(time.time() - t0, 1),
                "mode": "live" if args.live else "frozen"}
     (OUT / "latest.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     if args.baseline:

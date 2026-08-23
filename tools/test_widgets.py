@@ -370,7 +370,53 @@ async def main():
               not _forms and not any(str(e.get("mmid")) == str(_wrap) and not e.get("demoted")
                                      for e in _st),
               f"containers listed={[e.get('tag') for e in _forms]}")
+        # W15d: `(disabled)` MEANS THE PAGE SAID DISABLED. The State side of this
+        # same fixture is the control: its wrapper has no pointer-events:none and its
+        # input has no disabled attribute, so nothing about it may carry the flag.
+        # The bug this pins inferred (disabled) from pointer-events:none, which
+        # component libraries put on the REAL control while routing clicks through a
+        # wrapping label. Two live agents proved it wrong by acting: Bootstrap's
+        # checks-radios page flagged 18 `.btn-check` rows when only 4 carry the
+        # attribute, and clicking one flipped its .checked false->true; on Vuetify the
+        # flag landed on the children of a `(current)` link and a `(selected)` tab,
+        # and on a ref that accepted a successful form_input seconds later. A wrong
+        # (disabled) tells the agent NOT to act, and it also voids the marker where
+        # it is right — W15b's City field uses the identical token.
         await dp.close()
+
+        # REQUIRED SHAPE: pointer-events:none on the NATIVE CONTROL ITSELF, with a
+        # <label for> routing the click — this is Bootstrap's `.btn-check`, which
+        # clips the input to rect(0,0,0,0) and styles the label as the button. Do NOT
+        # "simplify" this by moving pointer-events onto a wrapper div: the first
+        # version of this fixture did that and passed pre-fix, because the wrapper
+        # never carried the flag. The real defect only appears when the control the
+        # agent must act on is the one with pointer-events:none.
+        bp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await bp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await bp.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<input type=checkbox id=live style='pointer-events:none;width:16px;height:16px'>"
+            "<label for=live style='display:inline-block;width:120px;height:30px'>Bold</label>"
+            "<input type=checkbox id=dead disabled style='width:16px;height:16px'>"
+            "<label for=dead style='display:inline-block;width:120px;height:30px'>Locked</label>"
+            "</body>")
+        await bp.wait_for_timeout(150)
+        _bst = await bp.evaluate("(function(){ " + COLLECT
+                                 + "; return _collectInteractivePage(true,null,'compact',false,false); })()")
+        _mm = await bp.evaluate("()=>({live:document.getElementById('live').getAttribute('mmid'),"
+                                "dead:document.getElementById('dead').getAttribute('mmid')})")
+        _lv = next((e for e in _bst if str(e.get("mmid")) == str(_mm["live"])), None)
+        _dd = next((e for e in _bst if str(e.get("mmid")) == str(_mm["dead"])), None)
+        check("W15d (disabled) is NEVER inferred from pointer-events:none — a"
+              " Bootstrap .btn-check style control is operable and must not be flagged",
+              _lv is not None and _lv.get("disabled") is not True,
+              f"present={_lv is not None} disabled={(_lv or {}).get('disabled')} "
+              f"(clicking one of these live flipped .checked false->true)")
+        check("W15e ...and the DECLARED disabled twin beside it still is flagged,"
+              " so the marker keeps its meaning",
+              _dd is not None and _dd.get("disabled") is True,
+              f"present={_dd is not None} disabled={(_dd or {}).get('disabled')}")
+        await bp.close()
 
         # ---- W18: value= belongs to the FIELD, not to its neighbours ----------
         # The input-combobox hoist reads the displayed selection off a sibling node,

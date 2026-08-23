@@ -263,7 +263,7 @@ async def main():
         # ---- D: detail levels ---------------------------------------------------
         # compact is what every observation pays for; full is the escape hatch.
         dm = await page.evaluate('''() => { const o = {};
-            for (const id of ['gd-link','gd-plain','gd-imglink','gd-data','gd-tracker','gp-submit','gp-leaf','gq-bg','gq-grad','gs-cb','gs-decoy','gs-live','gs-card','gt-day','gt-sec','gt-alink','gt-longalt'])
+            for (const id of ['gd-link','gd-plain','gd-imglink','gd-data','gd-tracker','gp-submit','gp-leaf','gq-bg','gq-grad','gs-cb','gs-decoy','gs-live','gs-file','gs-cbx','gs-card','gt-day','gt-sec','gt-alink','gt-longalt'])
               { const n = document.getElementById(id); o[id] = n && n.getAttribute('mmid'); }
             return o; }''')
         comp = await page.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(false, null, 'compact'); })()")
@@ -445,6 +445,26 @@ async def main():
               dm["gs-live"] in by,
               "kept" if dm["gs-live"] in by
               else "DELETED — a filled combobox vanishes the moment it succeeds")
+        # P2c/P2d: the first version of P2b only covered a declared ARIA role, and a
+        # live probe then showed a transparent input survived ONLY when a <label>
+        # wrapped it (feeding `ownLabel`) — so the opacity-0 input[file] under a
+        # styled upload button, the very case the collector's comment cites as
+        # must-keep, did not work, and an explicit aria-label did not rescue it.
+        # An input's TYPE is a declaration too: a checkbox/radio/file IS its type,
+        # and unlike a text field there is no mirror-checkbox idiom for P2's decoy
+        # rule to protect against. file_upload() needs the input's own ref, and a
+        # checkbox needs its own row for (checked) to be readable at all.
+        _pf, _pc = by.get(dm["gs-file"]), by.get(dm["gs-cbx"])
+        check("P2c an opacity:0 input[file] under a styled button is kept — its ref"
+              " is the only thing file_upload can act on",
+              _pf is not None and _pf.get("type") == "file",
+              f"listed={_pf is not None} type={(_pf or {}).get('type')}")
+        check("P2d ...and an opacity:0 checkbox whose click target is a SIBLING"
+              " label[for] is kept, as a checkbox, with its state readable",
+              _pc is not None and _pc.get("type") == "checkbox"
+              and "Remember me" in (_pc.get("name") or ""),
+              f"listed={_pc is not None} type={(_pc or {}).get('type')} "
+              f"name={(_pc or {}).get('name')!r}")
         check("P3 a clickable card with a heading and 3 inner links is not deleted as a wrapper",
               dm["gs-card"] in by, "kept" if dm["gs-card"] in by else "DELETED — unreachable by listing AND find")
         txt3 = await page.evaluate("(function(){ " + DOMTEXT + "; return _domTextPage(); })()")
@@ -786,7 +806,13 @@ async def main():
         await tb.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<div id=wrap><p>Notes before.</p>"
-            "<table><thead><tr><th>Region</th><th>Q1</th><th>Q2</th></tr></thead><tbody>"
+            # The <caption> carries the UNIT here, exactly as Wikipedia's GDP table
+            # captions itself "GDP forecast or estimate (million US$) by country".
+            # Dropping it let an agent read `United States | 32,383,920` with nothing
+            # anywhere saying millions — a 10^6 error with no signal, in the one view
+            # built for reading numbers.
+            "<table><caption>Revenue by region (thousands of JPY)</caption>"
+            "<thead><tr><th>Region</th><th>Q1</th><th>Q2</th></tr></thead><tbody>"
             "<tr><td>North</td><td>1,240</td><td>1,600</td></tr>"
             "<tr><td>東京</td><td>2,300</td><td>2,450</td></tr>"
             "</tbody></table><p>Notes after.</p></div>"
@@ -828,6 +854,13 @@ async def main():
         check("TB2 column names come from <th> (the document declaring them)",
               any(r.startswith("Region |") for r in rows),
               next((r for r in rows if "Region" in r), "NO HEADER")[:70])
+        # TB11: the <caption> is the table's declared title and often the only place
+        # the UNIT appears. HTML says "the caption element represents the caption of
+        # its parent table", so there is nothing to infer — it was simply not read.
+        check("TB11 the <caption> is rendered, so a figure's UNIT is not lost",
+              "[caption] Revenue by region (thousands of JPY)" in w,
+              next((l.strip() for l in w.splitlines() if "caption" in l.lower()),
+                   "NO CAPTION LINE — every number reads as unitless"))
         check("TB3 a non-Latin cell survives with its row intact",
               any(r.startswith("東京 |") and "2,300" in r for r in rows),
               next((r for r in rows if "東京" in r), "ABSENT")[:70])

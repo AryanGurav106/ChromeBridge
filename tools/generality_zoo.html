@@ -142,6 +142,19 @@ int delta(int x) { return x * 5; }</div>
        it from the decoy above is the declaration, which is the whole test. -->
   <input type="text" id="gs-live" role="combobox" aria-expanded="false"
          style="width:120px;height:20px;opacity:0">
+  <!-- The opacity-0 input[file] under a styled upload button — the pattern the
+       collector's own comment cites as the reason ancestor opacity is allowed, and
+       which a live probe showed did NOT survive unless a <label> wrapped it. Note
+       there is deliberately NO wrapping <label> here: with one, `ownLabel` rescues
+       it and the fixture passes for the wrong reason. file_upload() needs THIS
+       element's ref, so the styled div is not a substitute. -->
+  <div style="width:150px;height:34px;border:1px solid #999">Choose file
+    <input type="file" id="gs-file" style="width:150px;height:34px;opacity:0"></div>
+  <!-- Same, for the most deployed custom-control idiom: a real checkbox at
+       opacity:0 whose click target is a SIBLING label[for]. Without its own row the
+       (checked) state is unreadable and kind-routing sees a container. -->
+  <input type="checkbox" id="gs-cbx" style="width:16px;height:16px;opacity:0">
+  <label for="gs-cbx" style="display:inline-block;width:140px;height:24px">Remember me</label>
   <!-- A clickable news card: handler on the card, heading + prose + 3 inner links. -->
   <div id="gs-card" style="width:340px;height:150px;border:1px solid #ccc">
     <h3>Quarterly results beat expectations</h3><p>Revenue rose 12% on strong demand.</p>
