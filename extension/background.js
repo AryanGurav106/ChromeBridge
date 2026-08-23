@@ -1373,7 +1373,8 @@ async function _computerPoint(tabId, params) {
 // SELF-CONTAINED: injected via runInTab, so it must not call a top-level sibling.
 // C11 in tools/test_contracts.py enforces that mechanically.
 function _hitTestPage(x, y) {
-  const out = { ref: null, tag: '', role: '', label: '', deep: 0, listed: false, oob: false };
+  const out = { ref: null, tag: '', role: '', label: '', deep: 0, listed: false,
+                oob: false, substituted: false, chain: [] };
   try {
     const vw = window.innerWidth || document.documentElement.clientWidth || 0;
     const vh = window.innerHeight || document.documentElement.clientHeight || 0;
@@ -1422,6 +1423,10 @@ function _hitTestPage(x, y) {
       if (m) {
         out.ref = String(m);
         out.listed = true;
+        // hops > 0 means the ref belongs to an ANCESTOR, not to the element the
+        // renderer actually hit — the caller must not be told those are the same
+        // thing. See _hitEcho.
+        out.substituted = hops > 0;
         try { out.tag = (n.tagName || '').toLowerCase(); } catch (e) {}
         try { out.role = n.getAttribute('role') || ''; } catch (e) {}
         try {
@@ -1448,8 +1453,20 @@ function _hitTestPage(x, y) {
 function _hitEcho(h, sel) {
   if (!h) return '';
   if (h.oob) return ' NOTE: that point is outside the viewport, so nothing was under it.';
+  // DO NOT PRESENT AN ANCESTOR AS THE HIT-TEST RESULT. When the element actually
+  // under the point has no ref, the walk finds the nearest ref-bearing ANCESTOR —
+  // useful, but reporting it as "the renderer hit-tests ref_3 <body>" states
+  // something false and erases the only fact the agent needs: an element that is
+  // NOT in the listing is on top. Measured live with an injected overlay: before it
+  // had an mmid the echo said `hit-tests ref_3 <body> "Elements Forms Practice…"`,
+  // and `body` is an unactionable place to go looking; once the overlay had an mmid
+  // the same point correctly reported it. `substituted` is set when the ref came
+  // from an ancestor rather than from the hit element itself.
   const what = h.ref
-    ? `ref_${h.ref}${h.tag ? ' <' + h.tag + (h.role ? ' role=' + h.role : '') + '>' : ''}${h.label ? ' "' + h.label + '"' : ''}`
+    ? (h.substituted
+        ? `an element with no ref of its own (nearest listed ancestor: ref_${h.ref}`
+          + `${h.tag ? ' <' + h.tag + '>' : ''}) — something not in the current listing is on top`
+        : `ref_${h.ref}${h.tag ? ' <' + h.tag + (h.role ? ' role=' + h.role : '') + '>' : ''}${h.label ? ' "' + h.label + '"' : ''}`)
     : (h.tag ? `<${h.tag}${h.role ? ' role=' + h.role : ''}> (no ref — not in the current listing)` : 'nothing');
   const deep = h.deep ? ' (inside a shadow root)' : '';
   // When a ref was NAMED and the renderer disagrees, that is the whole point of
@@ -1472,6 +1489,14 @@ function _hitEcho(h, sel) {
       return ` WARNING: you named ref_${want}, but the renderer finds ${what}${deep} at that point.`;
     }
     return '';   // agreement on a ref action is the expected case; say nothing
+  }
+  // "act on that ref" was appended unconditionally, so the no-control path read
+  // "The renderer hit-tests nothing at that point — act on that ref", with no
+  // antecedent anywhere in the sentence. The out-of-viewport branch words the same
+  // situation correctly, so one of two "nothing" branches was wrong.
+  if (!h.ref) {
+    return ` The renderer hit-tests ${what}${deep} at that point, so there is no ref to act on`
+      + ` — re-read the page, or take a screenshot if this should be a control.`;
   }
   return ` The renderer hit-tests ${what}${deep} at that point — act on that ref to re-measure instead of reusing the coordinate.`;
 }
@@ -11293,6 +11318,22 @@ async function handleOp({ id, op, params }) {
                   const _o = el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
                   return _mk(_o ? (_o.text || '').trim() : '');
                 }
+                // A CHECKBOX'S STATE IS `checked`, NOT `value`. `value` is a constant
+                // submission token the page author picked ("1", "2", "on") and says
+                // NOTHING about whether the box is ticked — so the verdict below
+                // compared the requested "true" against "1" and could never match.
+                // Every checkbox write that LANDED was therefore reported as having
+                // failed, and the message's own remedy ("use computer left_click")
+                // un-ticks a correctly-ticked box when followed. A live agent walked
+                // that whole chain: box correctly checked -> "did NOT land" -> obeyed
+                // the advice -> box unchecked. fill_form reads `.checked` and was
+                // right about the same control seconds apart; only this verdict was
+                // broken, so the information was already in the system.
+                // Exactly #25's regression class in a new place: the check is right,
+                // it was reading the wrong field.
+                if (tg === 'input' && (el.type === 'checkbox' || el.type === 'radio')) {
+                  return _mk(el.checked ? 'checked' : 'unchecked');
+                }
                 if (tg === 'input' || tg === 'textarea') {
                   return _mk(String(el.value == null ? '' : el.value));
                 }
@@ -11325,7 +11366,20 @@ async function handleOp({ id, op, params }) {
           // it, that is not success, whatever the write path believed.
           let _landed = true, _why = "";
           try {
-            const _want = String(params.text == null ? "" : params.text).trim();
+            let _want = String(params.text == null ? "" : params.text).trim();
+            // A BOOLEAN WRITE IS NOT A TEXT WRITE. The caller sends true/false for a
+            // checkbox; the readback above now reports checked/unchecked, so compare
+            // those instead of looking for "true" inside a state word.
+            const _boolish = /^(true|false|1|0|yes|no|on|off|checked|unchecked)$/i.test(_want);
+            if (_boolish && (_shown === 'checked' || _shown === 'unchecked')) {
+              const _asked = /^(true|1|yes|on|checked)$/i.test(_want);
+              if (_asked !== (_shown === 'checked')) {
+                _landed = false;
+                _why = ` The control reads ${JSON.stringify(_shown)} but ${_asked ? 'checking' : 'unchecking'}`
+                     + ` it was requested — the write did not reach this control.`;
+              }
+              _want = "";   // handled; skip the text containment test below
+            }
             if (r.ok && _want && _shown != null) {
               const _got = String(_shown);
               // Compare on the marked-cut prefix: the readback may be bounded, so a

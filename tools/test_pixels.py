@@ -65,11 +65,17 @@ _HIT_PAGE = """<!doctype html><meta charset=utf-8><body style="margin:0">
 <div id=host mmid="13" style="position:absolute;left:40px;top:400px;width:120px;height:30px"></div>
 <button id=outer mmid="21" style="position:absolute;left:40px;top:480px;width:160px;height:34px">
   <span id=inner mmid="23">Save changes</span></button>
+<!-- A LISTED wrapper in an otherwise empty region. X16 injects an UNREFED overlay
+     inside it, so the hit element has no ref of its own while its nearest listed
+     ancestor does -- which is the live shape, where the substituted ancestor was
+     <body>. Without a listed ancestor the walk finds nothing and takes the
+     "no ref at all" branch instead, which is X17's case, not X16's. -->
+<div id=wrap mmid="31" style="position:absolute;left:400px;top:100px;width:200px;height:60px"></div>
 <script>
 window.__mmidReg = new Map([["7",document.getElementById('want')],
   ["9",document.getElementById('veil')],["11",document.getElementById('clear')],
   ["13",document.getElementById('host')],["21",document.getElementById('outer')],
-  ["23",document.getElementById('inner')]]);
+  ["23",document.getElementById('inner')],["31",document.getElementById('wrap')]]);
 document.getElementById('host').attachShadow({mode:'open'}).innerHTML =
   '<button style="width:120px;height:30px">Inside shadow</button>';
 </script></body>"""
@@ -152,6 +158,36 @@ async def _hit_echo_checks(browser, check):
           "oob=" + repr(h["oob"]) + " ref=" + repr(h["ref"]))
     _oob = await echo(900, 55, None)
     check("X14b ...in words", "outside the viewport" in _oob, _oob.strip()[:90])
+
+    # X16: DO NOT PRESENT AN ANCESTOR AS THE HIT-TEST RESULT. Measured live with an
+    # injected overlay: before it had an mmid the echo said `The renderer hit-tests
+    # ref_3 <body> "Elements Forms Practice…"`. That is false about the hit test, and
+    # it erases the only fact the agent needs — an element NOT in the listing is on
+    # top — while sending it to `body`, which is unactionable. Here the unrefed div
+    # covers the button, so the walk finds an ancestor rather than the hit element.
+    await pg.evaluate("""() => {
+        const d = document.createElement('div');
+        d.id = '__noref';
+        d.style.cssText = 'position:absolute;left:0;top:0;width:200px;'
+                        + 'height:60px;background:transparent;z-index:99';
+        document.getElementById('wrap').appendChild(d);   // deliberately NO mmid
+    }""")
+    h = await hit(500, 130)
+    check("X16 a hit on an element with NO ref reports that fact, not its ancestor",
+          h.get("substituted") is True,
+          "substituted=" + repr(h.get("substituted")) + " ref=" + repr(h["ref"]))
+    _sub = await echo(500, 130, None)
+    check("X16b ...in words, naming the unlisted element as the thing on top",
+          "no ref of its own" in _sub and "on top" in _sub, _sub.strip()[:130])
+    await pg.evaluate("()=>{const n=document.getElementById('__noref'); if(n) n.remove();}")
+
+    # X17: the no-control path used to append "act on that ref" with no ref anywhere
+    # in the sentence. The out-of-viewport branch worded the same situation correctly,
+    # so one of two "nothing" branches was wrong.
+    _none = await echo(700, 550, None)
+    check("X17 the no-control path does not tell you to act on a ref it never named",
+          "act on that ref" not in _none and "no ref to act on" in _none,
+          _none.strip()[:120])
     await pg.close()
 
 
