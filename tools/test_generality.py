@@ -818,6 +818,15 @@ async def main():
             "</tbody></table><p>Notes after.</p></div>"
             "<table id=solo><tr><td>x</td><td>y</td></tr><tr><td>z</td><td>w</td></tr></table>"
             "<table id=one><tr><td>lonely</td></tr></table>"
+            # TB12's shape: a real multi-column data table whose FIRST row is a single
+            # spanning header. `cs` is measured from that first row, so the old
+            # >=2-columns rule scored this table as 1 column and left it out of the
+            # hint, while the tree announced it on row count alone. Keep the spanning
+            # first row: without it every table has >=2 columns and the check passes
+            # whatever the rule says.
+            "<table id=span1><tr><th colspan=3>Quarterly totals</th></tr>"
+            "<tr><td>a</td><td>b</td><td>c</td></tr>"
+            "<tr><td>d</td><td>e</td><td>f</td></tr></table>"
             "<button>Go</button></body>")
         await tb.wait_for_timeout(130)
         await tb.evaluate("(function(){ " + COLLECT
@@ -857,6 +866,27 @@ async def main():
         # TB11: the <caption> is the table's declared title and often the only place
         # the UNIT appears. HTML says "the caption element represents the caption of
         # its parent table", so there is nothing to infer — it was simply not read.
+        # TB12: THE HINT AND THE TREE MUST COUNT THE SAME TABLES. The hint required
+        # >=2 columns while the tree prints a table node on >=2 rows alone, so one
+        # response announced "6 data table(s)" and then listed SEVEN tables — the
+        # missing one a genuine 62-row, 4-header data table. Two counts of the same
+        # thing in one output, with nothing to say which is right. The fixture has a
+        # two-column table (`#solo`) that the old column rule excluded.
+        # `format` MUST BE PASSED: `_full` above uses five positionals, so it is the
+        # FLAT listing and contains no tree table nodes at all. The first version of
+        # this check read it and compared an empty set, passing either way — the same
+        # trap RG10 fell into twice, and #29's measure_retention bug before that.
+        _tree_full = await tb.evaluate(
+            "(function(){ " + COLLECT
+            + "; return _collectInteractivePage(false,null,'compact',false,false,'tree'); })()")
+        _hint_refs = set(re.findall(r"ref_(\d+) \(\d+x\d+\)", _tnote))
+        _tree_refs = set(re.findall(r"read with ref_(\d+)", _tree_full))
+        check("TB12 every table the tree names is also in the data-table hint",
+              _tree_refs.issubset(_hint_refs) or not _tree_refs,
+              f"tree={sorted(_tree_refs)} hint={sorted(_hint_refs)}"
+              + (f" MISSING FROM HINT={sorted(_tree_refs - _hint_refs)}"
+                 if _tree_refs - _hint_refs else ""))
+
         check("TB11 the <caption> is rendered, so a figure's UNIT is not lost",
               "[caption] Revenue by region (thousands of JPY)" in w,
               next((l.strip() for l in w.splitlines() if "caption" in l.lower()),

@@ -4305,7 +4305,15 @@ function _domTextPage(scopeMmid) {
         visit(el.shadowRoot, depth + 1);
       }
     };
-    visit(document, 0);
+    // SCOPE IT. This walked `document` unconditionally, so a read scoped to one
+    // region appended shadow text from anywhere on the page — the same leak class as
+    // #26's Main heading and the tree's table import, under a header that promises
+    // elements outside the scope are omitted.
+    let _txRoot = document;
+    try {
+      if (scopeMmid && mmidReg && mmidReg.get) _txRoot = mmidReg.get(String(scopeMmid)) || document;
+    } catch (e) {}
+    visit(_txRoot, 0);
     if (parts.length) {
       text += `\n\n--- TEXT INSIDE WEB COMPONENTS (shadow DOM; ${parts.length} component(s)) ---\n`
             + parts.join('\n\n');
@@ -5093,8 +5101,28 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       for (const n of node.childNodes) {
         if (n.nodeType === 3) parts.push(n.nodeValue || '');
         else if (n.nodeType === 1) {
+          // "EMPTY" IS THE WRONG TRIGGER. `innerText` stops at every shadow
+          // boundary, so a node that mixes light text with a custom element returns
+          // PART of what is on screen — and the deep walk was gated on the result
+          // being empty, which that partial string is not. Proven by injecting the
+          // shape #29 was written for:
+          //     <a>opened <probe-time>3 days ago</probe-time></a>
+          // innerText = "opened ", so the gate never fired and the text pass emitted
+          // "opened" while read_page's row correctly read "opened 3 days ago". Same
+          // page, same instant, two answers. On Shoelace it dropped all 7 select
+          // labels and the help text — every one verified visible with a real rect.
+          // The test is now structural: if this subtree CONTAINS a shadow root, the
+          // shallow read cannot have seen all of it, so use the composed walk.
           let t = (n.innerText != null ? n.innerText : n.textContent) || '';
-          if (!t.trim()) t = _deepText(n);
+          let _hasShadow = false;
+          try {
+            _hasShadow = !!n.shadowRoot
+              || Array.prototype.some.call(n.querySelectorAll('*'), (x) => !!x.shadowRoot);
+          } catch (e) {}
+          if (!t.trim() || _hasShadow) {
+            const _d = _deepText(n);
+            if (_d && _d.trim().length > t.trim().length) t = _d;
+          }
           if (t.trim()) parts.push(' ' + t + ' ');
         }
       }
@@ -9554,13 +9582,29 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       // class as #11's page-level facts leaking into scoped reads (Main heading,
       // below-fold counts), and the same fix.
       if (document.visibilityState === 'hidden' && !scopeMmid) {
-        let _domCtl = 0;
+        // COMPARE LIKE WITH LIKE. This counted RENDERED controls across the whole
+        // DOCUMENT and compared them against `out.length`, which is the
+        // VIEWPORT-SCOPED listing — so the ratio trips on any page taller than the
+        // viewport, whether or not anything is deferred. It fired on Wikipedia and
+        // arXiv, neither of which defers layout, and its own arithmetic gave it
+        // away: "1156 controls but only 81 were collectable" printed beside "1089
+        // more below the current viewport", and 81 + 1089 = 1170 > 1156.
+        //
+        // The thing this note exists to catch is a page that deferred LAYOUT while
+        // the tab was hidden (#23's Unsplash case), and layout that has not run
+        // leaves controls with NO BOX AT ALL. That is the signal: not how many
+        // controls exist, but what fraction of them have no client rect. A page
+        // that renders normally while hidden has almost none, however long it is.
+        let _noBox = 0, _ctlTotal = 0;
         try {
           for (const _c of document.querySelectorAll('a[href],button,input,select,textarea')) {
-            if (_c.offsetParent !== null || (_c.getClientRects && _c.getClientRects().length)) _domCtl++;
+            _ctlTotal++;
+            const _n = _c.getClientRects ? _c.getClientRects().length : 1;
+            if (!_n) _noBox++;
           }
-        } catch (e2) { _domCtl = document.querySelectorAll('a[href],button,input,select,textarea').length; }
-        if (_domCtl >= 20 && out.length * 3 <= _domCtl) {
+        } catch (e2) {}
+        if (_ctlTotal >= 20 && _noBox * 2 >= _ctlTotal) {
+          const _domCtl = _ctlTotal;
           L.push(`  - NOTE: the DOM holds ${_domCtl} controls but only ${out.length} were collectable.`
                + ` This tab is in the BACKGROUND (visibilityState="hidden"), and some sites defer`
                + ` layout until a tab is visible, leaving content display:none. If this page looks`
@@ -9762,7 +9806,12 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
           const rs = t.querySelectorAll('tr').length;
           const cs = t.querySelector('tr') ? t.querySelector('tr').children.length : 0;
           const mm = t.getAttribute('mmid');
-          if (rs >= 2 && cs >= 2 && mm) _dt.push(`ref_${mm} (${rs}x${cs})`);
+          // MATCH THE TREE'S OWN TEST. The hint required >=2 COLUMNS while the tree
+          // prints a `table (N rows, read with ref_M)` node on >=2 rows alone, so one
+          // response announced "6 data table(s)" and then listed SEVEN tables — the
+          // missing one a genuine 62-row, 4-header data table. Two counts of the same
+          // thing in one output, with nothing to say which is right.
+          if (rs >= 2 && mm) _dt.push(`ref_${mm} (${rs}x${cs})`);
           if (_dt.length >= 6) break;
         }
         if (_dt.length) {
