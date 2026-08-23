@@ -1855,12 +1855,42 @@ async def computer(
         raise ValueError(f"unknown action {action!r} — must be one of {_COMPUTER_ACTIONS}")
 
     if action == "screenshot":
+        from PIL import Image as PILImage
         _t0 = time.monotonic()
         png, image_id = await _take_screenshot(tabId)
         _ms = (time.monotonic() - _t0) * 1000.0
+        # STATE THE COORDINATE CONTRACT. BENCHMARK.md complaint #3 is that the tool
+        # never says which space `computer` expects, so an agent reading a position
+        # off this image has to assume. It IS 1:1 — `_to_css_pixels` downscales the
+        # device-pixel capture to CSS px (pinned by test_pixels.py at DPR 1.0/1.25/
+        # 2.0) — and saying so costs one clause. The pointer to `hover` matters more:
+        # a coordinate read off an image is the least reliable input the system takes
+        # (box() drifts ~110px mid-load, 1,097px on OpenStreetMap), while hovering the
+        # point returns the ref under it, and acting on a ref re-measures.
+        _dims = ""
+        try:
+            # Same viewport query the zoom branch uses; if it fails, fall back to the
+            # image's own pixel size and label it honestly rather than claiming CSS px.
+            _b = await _bridge()
+            _vp = await _b.call("javascript_exec",
+                                code="({w: innerWidth, h: innerHeight})", tabId=tabId)
+            _v = _vp if isinstance(_vp, dict) else json.loads(_vp)
+            _w, _h = int(_v["result"]["w"]), int(_v["result"]["h"])
+            _dims = f", {_w}x{_h} CSS px"
+        except Exception:
+            try:
+                _im = PILImage.open(io.BytesIO(png))
+                _dims = f", {_im.width}x{_im.height} device px"
+            except Exception:
+                pass
         return [_image_content(png), TextContent(
             type="text",
-            text=f"screenshot captured (imageId: {image_id}, {len(png) // 1024} KB, capture took {_ms:.0f} ms)")]
+            text=f"screenshot captured (imageId: {image_id}, {len(png) // 1024} KB{_dims},"
+                 f" capture took {_ms:.0f} ms). computer() coordinates are CSS px, 1:1 with"
+                 f" this image. To act on something you can see here, prefer"
+                 f" computer(action=\"hover\", coordinate=[x,y]) — it reports the ref under"
+                 f" that point, and acting on a ref re-measures at click time instead of"
+                 f" trusting a coordinate that may have moved.")]
 
     if action == "wait":
         secs = min(float(duration or 1.0), 10.0)

@@ -1342,6 +1342,110 @@ async function _computerPoint(tabId, params) {
   return { x: (vp && vp.w || 800) / 2, y: (vp && vp.h || 600) / 2 };
 }
 
+// WHAT THE RENDERER SAYS IS AT A POINT — the coordinate path's missing answer.
+//
+// A ref action re-measures at click time and refuses when a foreign element is
+// positively on top (the occlusion pre-flight in `_rectForPage`). A COORDINATE
+// action has never had any of that: it dispatches blind and reports
+// `left_click at (x,y)`, which restates the input rather than observing anything.
+// That is the one remaining path with no symptom for the #10/#11/#12 family, where
+// every failure was "the click landed somewhere other than the element and the tool
+// reported success" — #10 measured before the infobar shifted the page, #11 before
+// a smooth-scroll had finished, #12 dispatched into a widget Chrome drops input to.
+// Coordinates are also the least trustworthy number the system produces: `box()`
+// drifts ~110px on a loading page (#23) and the same ref reported clicks 1,097px
+// apart on OpenStreetMap (#25).
+//
+// This is not pixel analysis and it is not a guess. `elementsFromPoint` is the
+// renderer's OWN hit test — the same mechanism that will decide where the click
+// goes — so it answers exactly the question that matters ("what will receive
+// this?") rather than the question pixels can answer ("is something painted?").
+// A transparent overlay paints nothing and still swallows clicks; a
+// `pointer-events:none` decoration paints and does not. Only the hit test knows.
+//
+// It also completes the loop the other way: a screenshot has no handles, so
+// anything the agent finds visually could previously only be acted on by raw
+// coordinate. `hover` now returns the ref under a point, which turns
+// "screenshot -> spot it -> hover -> act by ref" into a path where the ACTION goes
+// through a stable handle that re-measures itself. RESEARCH.md Part 1.4 specified
+// this reconciliation and it was never carried into the MCP path.
+//
+// SELF-CONTAINED: injected via runInTab, so it must not call a top-level sibling.
+// C11 in tools/test_contracts.py enforces that mechanically.
+function _hitTestPage(x, y) {
+  const out = { ref: null, tag: '', role: '', label: '', deep: 0, listed: false, oob: false };
+  try {
+    const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    if (x < 0 || y < 0 || x > vw || y > vh) { out.oob = true; return out; }
+    // Deepest-first, and pierce shadow roots the same way a real click does:
+    // elementsFromPoint stops at a shadow host, so ask the root again from inside.
+    let stack = [];
+    try { stack = document.elementsFromPoint(x, y) || []; } catch (e) {}
+    let el = stack[0] || null;
+    for (let i = 0; i < 8 && el && el.shadowRoot; i++) {
+      let inner = null;
+      try { inner = (el.shadowRoot.elementsFromPoint(x, y) || [])[0]; } catch (e) { break; }
+      if (!inner || inner === el) break;
+      el = inner;
+      out.deep++;
+    }
+    if (!el) return out;
+    // Walk up to the nearest element the agent has a handle for. An mmid on an
+    // ancestor is the honest answer: acting on it is what clicking here does.
+    let n = el, hops = 0;
+    while (n && hops < 40) {
+      let m = null;
+      try { m = n.getAttribute && n.getAttribute('mmid'); } catch (e) {}
+      if (m) {
+        out.ref = String(m);
+        out.listed = true;
+        try { out.tag = (n.tagName || '').toLowerCase(); } catch (e) {}
+        try { out.role = n.getAttribute('role') || ''; } catch (e) {}
+        try {
+          const t2 = (n.getAttribute('aria-label') || n.getAttribute('title') || '').trim()
+            || ((n.innerText != null ? n.innerText : n.textContent) || '').replace(/\s+/g, ' ').trim();
+          out.label = t2.length > 60 ? t2.slice(0, 60) + '…(+' + (t2.length - 60) + ')' : t2;
+        } catch (e) {}
+        return out;
+      }
+      n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
+      hops++;
+    }
+    // Nothing with a handle: still name what IS there, so the report is a fact
+    // about the page rather than a shrug.
+    try { out.tag = (el.tagName || '').toLowerCase(); } catch (e) {}
+    try { out.role = el.getAttribute('role') || ''; } catch (e) {}
+  } catch (e) {}
+  return out;
+}
+
+// One sentence describing a hit-test result. Kept beside the probe so the two
+// cannot drift, and phrased as an OBSERVATION rather than a verdict: it reports
+// what the renderer says and lets the agent decide whether that is the target.
+function _hitEcho(h, sel) {
+  if (!h) return '';
+  if (h.oob) return ' NOTE: that point is outside the viewport, so nothing was under it.';
+  const what = h.ref
+    ? `ref_${h.ref}${h.tag ? ' <' + h.tag + (h.role ? ' role=' + h.role : '') + '>' : ''}${h.label ? ' "' + h.label + '"' : ''}`
+    : (h.tag ? `<${h.tag}${h.role ? ' role=' + h.role : ''}> (no ref — not in the current listing)` : 'nothing');
+  const deep = h.deep ? ' (inside a shadow root)' : '';
+  // When a ref was NAMED and the renderer disagrees, that is the whole point of
+  // the echo — say it plainly rather than burying it in a match/no-match token.
+  if (sel) {
+    const want = (/mmid=['"]?([^'"\]]+)/.exec(sel) || [])[1];
+    if (want && h.ref && String(want) !== String(h.ref)) {
+      return ` MISMATCH: you named ref_${want}, but the renderer hit-tests ${what}${deep} at that point`
+        + ` — something is on top, or the layout moved since the coordinate was produced.`;
+    }
+    if (want && !h.ref) {
+      return ` WARNING: you named ref_${want}, but the renderer finds ${what}${deep} at that point.`;
+    }
+    return '';   // agreement on a ref action is the expected case; say nothing
+  }
+  return ` The renderer hit-tests ${what}${deep} at that point — act on that ref to re-measure instead of reusing the coordinate.`;
+}
+
 async function computerOp(t, params) {
   const action = String(params.action || "");
   const dbg = { tabId: t.id };
@@ -1437,7 +1541,15 @@ async function computerOp(t, params) {
     const pt = await _computerPoint(t.id, params);
     await cdpSend(t.id, "Input.dispatchMouseEvent",
       { type: "mouseMoved", x: pt.x, y: pt.y, button: "none", modifiers: bits });
-    return `Hovering at (${Math.round(pt.x)},${Math.round(pt.y)}).${_shiftWarn}`;
+    // HOVER IS ALSO THE POINT->REF QUERY. A screenshot has no handles, so anything
+    // spotted visually could previously only be acted on by raw coordinate — the
+    // least trustworthy number here. Asking the renderer what is under the point
+    // turns that into "screenshot -> hover -> act on the ref", where the action
+    // re-measures itself and survives the drift the coordinate cannot.
+    let _hh = null;
+    try { _hh = await runInTab(t.id, _hitTestPage, [pt.x, pt.y]); } catch (e) {}
+    return `Hovering at (${Math.round(pt.x)},${Math.round(pt.y)}).`
+      + `${_hitEcho(_hh, params.selector)}${_shiftWarn}`;
   }
 
   if (action === "left_click_drag") {
@@ -1466,6 +1578,14 @@ async function computerOp(t, params) {
   if (clickKinds[action]) {
     const [button, count] = clickKinds[action];
     const pt = await _computerPoint(t.id, params);
+    // BEFORE dispatch, and AFTER the attach+settle above, which is the only moment
+    // the answer is true: fix #10's ordering exists because the infobar shifts the
+    // page on attach, so a hit test taken any earlier describes a layout that no
+    // longer applies. Failure here must never block the click — the echo is an
+    // observation, and #12 means the whole CDP channel can be unavailable on
+    // exactly the login pages where an agent needs it most.
+    let _hh = null;
+    try { _hh = await runInTab(t.id, _hitTestPage, [pt.x, pt.y]); } catch (e) {}
     await cdpSend(t.id, "Input.dispatchMouseEvent",
       { type: "mouseMoved", x: pt.x, y: pt.y, button: "none", modifiers: bits });
     for (let c = 1; c <= count; c++) {
@@ -1474,7 +1594,8 @@ async function computerOp(t, params) {
       await cdpSend(t.id, "Input.dispatchMouseEvent",
         { type: "mouseReleased", x: pt.x, y: pt.y, button, clickCount: c, buttons: 0, modifiers: bits });
     }
-    return `${action} at (${Math.round(pt.x)},${Math.round(pt.y)})${params.selector ? ` on ${params.selector}` : ""}.${_actNote}${_shiftWarn}`;
+    return `${action} at (${Math.round(pt.x)},${Math.round(pt.y)})${params.selector ? ` on ${params.selector}` : ""}.`
+      + `${_hitEcho(_hh, params.selector)}${_actNote}${_shiftWarn}`;
   }
 
   throw new Error(`computer: unknown action ${action}`);

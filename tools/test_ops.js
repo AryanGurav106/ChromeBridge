@@ -859,6 +859,65 @@ const FIELDS3 = () => ([
       !/NO detectable effect/.test(String(r.result)), String(r.result).slice(0, 160));
   });
 
+  // ---- the coordinate path's hit-test echo, at the ROUTER
+  // Two properties the page-side fixtures (X10-X14b in test_pixels.py) cannot see:
+  // that the probe runs AFTER attach+settle -- fix #10's ordering, because the
+  // infobar shifts the page on attach, so a hit test taken earlier describes a
+  // layout that no longer applies -- and that a probe FAILURE never blocks the
+  // click. #12 means the whole CDP channel can be gone on exactly the login pages
+  // where an agent needs it, so the echo has to be an observation, never a gate.
+  await test("computer hit-test echo", async () => {
+    resetState();
+    setStubs({
+      _hitTestPage: () => ({ ref: "42", tag: "button", role: "", label: "Buy now",
+                             deep: 0, listed: true, oob: false }),
+    });
+    const r = await callOp("computer", { tabId: 1, action: "left_click", coordinate: [120, 80] });
+    check("computer: a bare coordinate click reports the ref the renderer hit-tests",
+      /ref_42/.test(String(r.result)) && /button/.test(String(r.result)),
+      String(r.result).slice(0, 150));
+    const iAttach = idxOf((e) => e.kind === "cdp.attach");
+    const iHit = idxOf((e) => e.kind === "exec" && e.name === "_hitTestPage");
+    const iDispatch = idxOf((e) => e.kind === "cdp" && e.method === "Input.dispatchMouseEvent");
+    check("computer: the hit test runs AFTER attach and BEFORE dispatch (fix #10 ordering)",
+      iAttach !== -1 && iHit !== -1 && iDispatch !== -1 && iAttach < iHit && iHit < iDispatch,
+      `attach@${iAttach} hit@${iHit} dispatch@${iDispatch}`);
+  });
+
+  await test("computer hit-test echo mismatch + failure tolerance", async () => {
+    resetState();
+    setStubs({
+      _hitTestPage: () => ({ ref: "9", tag: "div", role: "", label: "",
+                             deep: 0, listed: true, oob: false }),
+    });
+    const r = await callOp("computer",
+      { tabId: 1, action: "left_click", coordinate: [120, 80], selector: "[mmid='7']" });
+    check("computer: naming a ref the renderer disagrees with yields a MISMATCH",
+      /MISMATCH/.test(String(r.result)) && /ref_7/.test(String(r.result))
+        && /ref_9/.test(String(r.result)),
+      String(r.result).slice(0, 170));
+
+    resetState();
+    setStubs({ _hitTestPage: () => { throw new Error("probe unavailable"); } });
+    const r2 = await callOp("computer", { tabId: 1, action: "left_click", coordinate: [50, 60] });
+    const dispatched = allOf((e) => e.kind === "cdp" && e.method === "Input.dispatchMouseEvent").length;
+    check("computer: a FAILING hit test does not block the click (echo is an observation)",
+      r2.ok && dispatched > 0 && /left_click at \(50,60\)/.test(String(r2.result)),
+      `ok=${r2.ok} dispatched=${dispatched} ${String(r2.result).slice(0, 90)}`);
+  });
+
+  await test("computer hover returns the ref under a point", async () => {
+    resetState();
+    setStubs({
+      _hitTestPage: () => ({ ref: "31", tag: "a", role: "", label: "Next page",
+                             deep: 0, listed: true, oob: false }),
+    });
+    const r = await callOp("computer", { tabId: 1, action: "hover", coordinate: [200, 300] });
+    check("computer: hover is a point->ref query, so a screenshot find becomes an actionable ref",
+      /ref_31/.test(String(r.result)) && /Next page/.test(String(r.result)),
+      String(r.result).slice(0, 150));
+  });
+
   // ---- navigate
   await test("navigate", async () => {
     resetState();

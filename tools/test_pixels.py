@@ -46,6 +46,91 @@ PAGE = """
 </body>
 """
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _extract import extract as _shared_extract  # noqa: E402
+
+_BG = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
+HIT = _shared_extract("_hitTestPage", _BG, verify=True)
+ECHO = _shared_extract("_hitEcho", _BG, verify=True)
+
+# The page a coordinate click can get wrong in every way that matters. The veil is
+# TRANSPARENT on purpose: it paints nothing, so a pixel comparison asking "is the
+# button there?" sees the button and concludes the click will land — while every
+# click in that region goes to the veil. Only the renderer's own hit test knows,
+# which is the argument for doing this with elementsFromPoint rather than pixels.
+_HIT_PAGE = """<!doctype html><meta charset=utf-8><body style="margin:0">
+<button id=want mmid="7" style="position:absolute;left:40px;top:40px;width:120px;height:30px">Add to cart</button>
+<div id=veil mmid="9" style="position:absolute;left:0;top:0;width:400px;height:200px;background:transparent"></div>
+<button id=clear mmid="11" style="position:absolute;left:40px;top:300px;width:120px;height:30px">Clear target</button>
+<div id=host mmid="13" style="position:absolute;left:40px;top:400px;width:120px;height:30px"></div>
+<script>
+window.__mmidReg = new Map([["7",document.getElementById('want')],
+  ["9",document.getElementById('veil')],["11",document.getElementById('clear')],
+  ["13",document.getElementById('host')]]);
+document.getElementById('host').attachShadow({mode:'open'}).innerHTML =
+  '<button style="width:120px;height:30px">Inside shadow</button>';
+</script></body>"""
+
+
+async def _hit_echo_checks(browser, check):
+    """The coordinate path's only observation of where a click actually goes.
+
+    A ref action re-measures at click time and refuses when a foreign element is on
+    top; a coordinate action dispatched blind and reported its own input back, which
+    is why every failure in the #10/#11/#12 family looked like success. These pin
+    the echo that closes it — including the case pixels provably cannot catch.
+    """
+    pg = await browser.new_page(viewport={"width": 800, "height": 600})
+    await pg.set_content(_HIT_PAGE)
+    await pg.wait_for_timeout(120)
+
+    async def hit(x, y):
+        return await pg.evaluate("(function(){ " + HIT + "; return _hitTestPage("
+                                 + str(x) + "," + str(y) + "); })()")
+
+    async def echo(x, y, sel):
+        arg = '"' + sel + '"' if sel else "null"
+        return await pg.evaluate("(function(){ " + HIT + ";" + ECHO
+                                 + "; return _hitEcho(_hitTestPage(" + str(x) + ","
+                                 + str(y) + "), " + arg + "); })()")
+
+    h = await hit(100, 55)
+    check("X10 a TRANSPARENT overlay is reported as the hit target, which pixels cannot see",
+          h["ref"] == "9", "ref=" + repr(h["ref"]) + " (9 is the veil, 7 is the button under it)")
+    m = await echo(100, 55, "[mmid='7']")
+    check("X10b ...and naming the covered ref produces an explicit MISMATCH",
+          "MISMATCH" in m and "ref_7" in m and "ref_9" in m, m.strip()[:130])
+
+    h = await hit(100, 315)
+    check("X11 an unobstructed control resolves to its own ref, with its label",
+          h["ref"] == "11" and "Clear target" in (h["label"] or ""),
+          "ref=" + repr(h["ref"]) + " label=" + repr(h["label"]))
+    _agree = await echo(100, 315, "[mmid='11']")
+    check("X11b ...and agreement on a named ref says NOTHING (no per-click noise)",
+          _agree.strip() == "", repr(_agree))
+    _bare = await echo(100, 315, None)
+    check("X11c ...while a BARE coordinate is handed the ref to act on instead",
+          "ref_11" in _bare, _bare.strip()[:120])
+
+    h = await hit(100, 415)
+    check("X12 the hit test pierces a shadow root, as a real click does",
+          h["ref"] == "13" and h["deep"] >= 1,
+          "ref=" + repr(h["ref"]) + " deep=" + repr(h["deep"]))
+
+    h = await hit(700, 550)
+    check("X13 a point over no control names what IS there rather than shrugging",
+          h["ref"] is None and h["tag"] == "html",
+          "ref=" + repr(h["ref"]) + " tag=" + repr(h["tag"]))
+
+    h = await hit(900, 55)
+    check("X14 a point outside the viewport is reported as such, not as a hit",
+          h["oob"] is True and h["ref"] is None,
+          "oob=" + repr(h["oob"]) + " ref=" + repr(h["ref"]))
+    _oob = await echo(900, 55, None)
+    check("X14b ...in words", "outside the viewport" in _oob, _oob.strip()[:90])
+    await pg.close()
+
+
 results = []
 
 
@@ -100,6 +185,9 @@ async def main():
                       owhite, f"pixel={opx}")
 
             await ctx.close()
+        # The hit-echo checks reuse this browser: they need no display scaling, only
+        # a page whose layout is known, so they run once rather than per DPR.
+        await _hit_echo_checks(browser, check)
         await browser.close()
 
     passed = sum(1 for r in results if r)
