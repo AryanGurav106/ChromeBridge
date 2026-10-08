@@ -2,73 +2,80 @@
 
     .venv\\Scripts\\python.exe tools\\make_icons.py
 
-The mark is a bridge span: two anchor nodes joined by a cable arc, white on an
-indigo->violet diagonal gradient squircle. Everything is drawn once at 1024px
-and LANCZOS-downsampled, which is what keeps the 16px toolbar rendering clean --
-earlier variants with thinner strokes or a smaller mark turned to mush there.
+The mark is the site's cursor: a bone-white pointer outlined in the canvas
+colour, with Claude's orange (#FF6B35) copy offset behind it, on a near-black
+tile. Everything is drawn once at 1024px and LANCZOS-downsampled, which is what
+keeps the 16px toolbar rendering clean.
 
-The same geometry is inlined as SVG in the side panel header (panel.html), so
-if you change the numbers here, change them there too.
+The same geometry is inlined as SVG in the side panel header (panel.html):
+a 28-unit viewBox, the lucide mouse-pointer path, and the orange copy shifted
+by (4.5, 4.5). If you change the numbers here, change them there too.
 """
 import os
 from PIL import Image, ImageDraw
 
 S = 1024                      # master render size
 SIZES = (16, 32, 48, 128)     # what manifest.json declares
-C0 = (79, 70, 229)            # indigo-600
-C1 = (147, 51, 234)           # purple-600
 
-# --- mark geometry, normalized 0..1 (mirrored in panel.html's inline SVG) -----
-NODE_Y   = 0.685
-NODE_LX  = 0.200
-NODE_RX  = 0.800
-NODE_R   = 0.130
-ARC_BOX  = (0.200, 0.335, 0.800, 1.035)   # ellipse bbox; top half is the cable
-ARC_W    = 0.105
-TILE_INSET  = 0.02
+TILE_TOP = (30, 30, 34)       # site tile gradient, rgba(30,30,34) -> (16,16,18)
+TILE_BOT = (16, 16, 18)
+TILE_EDGE = (58, 58, 64)      # the tile's hairline highlight
+BONE = (237, 237, 239)        # #EDEDEF
+CANVAS = (10, 10, 11)         # #0A0A0B
+ACCENT = (255, 107, 53)       # #FF6B35
+
+TILE_INSET = 0.02
 TILE_RADIUS = 0.235
 
+# The lucide mouse-pointer path in its own 24-unit space, corners flattened to
+# their endpoints (the arcs are ~0.5 units, invisible below 128px).
+POINTER = [(4.30, 4.30), (20.69, 10.54), (20.63, 11.48), (14.50, 13.06),
+           (13.06, 14.50), (11.48, 20.63), (10.54, 20.69)]
+VIEW = 28.0                   # panel.html viewBox
+MARK_SCALE = 0.86             # how much of the tile the 28-unit box spans
+SHADOW = (4.5, 4.5)           # the orange copy's offset, in path units
+OUTLINE = 2.2                 # canvas-coloured stroke, in path units
 
-def gradient(size):
-    """Diagonal linear gradient, top-left C0 -> bottom-right C1."""
+
+def tile(size):
     g = Image.new("RGB", (size, size))
     d = ImageDraw.Draw(g)
-    for i in range(2 * size):
-        t = i / (2.0 * size - 1)
-        d.line([(i, 0), (0, i)],
-               fill=(int(C0[0] + (C1[0] - C0[0]) * t),
-                     int(C0[1] + (C1[1] - C0[1]) * t),
-                     int(C0[2] + (C1[2] - C0[2]) * t)),
-               width=2)
-    return g
-
-
-def squircle_mask(size):
+    for y in range(size):
+        t = y / (size - 1)
+        d.line([(0, y), (size, y)], fill=tuple(int(a + (b - a) * t) for a, b in zip(TILE_TOP, TILE_BOT)))
     m = Image.new("L", (size, size), 0)
     a = TILE_INSET * size
-    ImageDraw.Draw(m).rounded_rectangle(
-        [a, a, size - a - 1, size - a - 1], radius=TILE_RADIUS * size, fill=255)
-    return m
+    ImageDraw.Draw(m).rounded_rectangle([a, a, size - a - 1, size - a - 1],
+                                        radius=TILE_RADIUS * size, fill=255)
+    out = g.convert("RGBA")
+    out.putalpha(m)
+    edge = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(edge).rounded_rectangle([a, a, size - a - 1, size - a - 1],
+                                           radius=TILE_RADIUS * size,
+                                           outline=TILE_EDGE + (255,), width=max(2, size // 128))
+    return Image.alpha_composite(out, edge)
 
 
-def mark_mask(size):
-    layer = Image.new("L", (size, size), 0)
-    d = ImageDraw.Draw(layer)
-    u = lambda v: v * size
-    d.arc([u(ARC_BOX[0]), u(ARC_BOX[1]), u(ARC_BOX[2]), u(ARC_BOX[3])],
-          180, 360, fill=255, width=int(u(ARC_W)))
-    for cx in (NODE_LX, NODE_RX):
-        d.ellipse([u(cx - NODE_R), u(NODE_Y - NODE_R),
-                   u(cx + NODE_R), u(NODE_Y + NODE_R)], fill=255)
-    return layer
+def pointer_pts(size, dx=0.0, dy=0.0):
+    k = size * MARK_SCALE / VIEW
+    off = size * (1 - MARK_SCALE) / 2
+    return [(off + (x + dx) * k, off + (y + dy) * k) for x, y in POINTER]
 
 
 def build():
-    base = gradient(S).convert("RGBA")
-    base.putalpha(squircle_mask(S))
-    fg = Image.new("RGBA", (S, S), (255, 255, 255, 0))
-    fg.putalpha(mark_mask(S))
-    return Image.alpha_composite(base, fg)
+    img = tile(S)
+    d = ImageDraw.Draw(img)
+    k = S * MARK_SCALE / VIEW
+    d.polygon(pointer_pts(S, *SHADOW), fill=ACCENT)
+    pts = pointer_pts(S)
+    # Outline first, fat and round-jointed, then the fill on top of it: the
+    # same result as SVG's centred stroke with stroke-linejoin="round".
+    w = int(OUTLINE * k)
+    d.line(pts + [pts[0]], fill=CANVAS, width=w, joint="curve")
+    for x, y in pts:
+        d.ellipse([x - w / 2, y - w / 2, x + w / 2, y + w / 2], fill=CANVAS)
+    d.polygon(pts, fill=BONE)
+    return img
 
 
 def main():

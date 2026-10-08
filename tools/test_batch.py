@@ -91,6 +91,24 @@ async def fake_act(tabId: int, ref: str = "ref_1"):
     return f"acted on {ref}"
 
 
+async def fake_create():
+    """`tabs_create_mcp`'s shape: no tabId in, one tabId out, as JSON.
+
+    Registered under the REAL tool name for the same reason fake_computer is --
+    the threading keys on the name of the tool that MAKES a tab, so a hand-named
+    stand-in would only test whether some list contained it.
+    """
+    RAN.append(("tabs_create_mcp", None, None))
+    return '{"tabId": 77, "groupId": 3}'
+
+
+async def fake_obs(tabId: int = None, value: str = "obs"):
+    """An observation whose tabId is OPTIONAL — which is the only kind threading
+    can reach, since the pre-flight refuses a tool whose tabId is required."""
+    RAN.append(("fake_obs", tabId, value))
+    return f"observed {value} on {tabId}"
+
+
 # Every page_fingerprint the batch asks for. The guard that skips them is only
 # worth having if it can be shown to skip, and only safe if it can be shown NOT to
 # skip when a ref is coming (B10/B10b).
@@ -103,7 +121,8 @@ def install(fingerprints):
     FPS.clear()
     ms._BATCHABLE.clear()
     ms._BATCHABLE.update({"fake_tool": fake_tool, "navigate": fake_navigate,
-                          "fake_act": fake_act, "computer": fake_computer})
+                          "fake_act": fake_act, "computer": fake_computer,
+                          "tabs_create_mcp": fake_create, "fake_obs": fake_obs})
     # NOTHING IS DECLARED SAFE HERE ANY MORE. This used to add `fake_tool` to an
     # `_OBSERVES` whitelist, which meant every check below was really testing
     # whether a name was in a set -- and a name missing from that set was stopped
@@ -444,6 +463,98 @@ async def main():
           len(RAN) == 2 and "fake_act" not in [r[0] for r in RAN]
           and "DOM changed" in text_of(out),
           f"ran={[r[0] for r in RAN]} said={text_of(out)[:90]!r}")
+
+    # ------------------------------------------------------------------
+    # B11: A TAB THIS BATCH CREATED IS THE TAB THIS BATCH MEANT.
+    #
+    # `tabs_create_mcp` makes the tab `active: false` (never steal the user's
+    # view) while `resolveTab` falls back to the ACTIVE tab when no tabId is
+    # given — so the natural opening batch ran `navigate` in the USER'S OWN TAB
+    # and reported success. That is the #10/#11/#12 signature (an action landing
+    # somewhere other than the target, saying it worked), and it is also why the
+    # tab ceremony was structurally forced: the only way to learn the new id was
+    # to end the batch and read it, which costs a whole model turn (~3.6s, #38).
+    # ------------------------------------------------------------------
+    install([SAME] * 8)
+    out = await ms.browser_batch([
+        {"name": "tabs_create_mcp", "input": {}},
+        {"name": "fake_obs", "input": {"value": "after create"}},
+    ])
+    _obs = [r for r in RAN if r[0] == "fake_obs"]
+    check("B11 a tabId-less step after tabs_create_mcp runs in the CREATED tab",
+          len(_obs) == 1 and _obs[0][1] == 77,
+          f"tabId={_obs[0][1] if _obs else 'step did not run'} (created 77, "
+          f"not None->active tab)")
+
+    # B11b — THE CONTROL THAT IT FILLS A BLANK AND NEVER OVERRIDES A DECISION.
+    # Without this, "always use the created tab" would also pass B11 while
+    # silently redirecting a step the agent had aimed somewhere explicitly.
+    install([SAME] * 8)
+    out = await ms.browser_batch([
+        {"name": "tabs_create_mcp", "input": {}},
+        {"name": "fake_obs", "input": {"tabId": 5, "value": "explicit"}},
+    ])
+    _obs = [r for r in RAN if r[0] == "fake_obs"]
+    check("B11b an EXPLICIT tabId is not overridden by the created tab",
+          len(_obs) == 1 and _obs[0][1] == 5,
+          f"tabId={_obs[0][1] if _obs else 'step did not run'} (asked for 5)")
+
+    # B11c — THE CONTROL THAT A BATCH CREATING NOTHING IS UNAFFECTED. This is what
+    # keeps active-tab fallback working everywhere else; a threading rule that
+    # fired without a create step would change every existing batch.
+    install([SAME] * 8)
+    out = await ms.browser_batch([
+        {"name": "fake_obs", "input": {"value": "no create"}},
+    ])
+    _obs = [r for r in RAN if r[0] == "fake_obs"]
+    check("B11c with no create step a tabId-less observation still falls back",
+          len(_obs) == 1 and _obs[0][1] is None,
+          f"tabId={_obs[0][1] if _obs else 'step did not run'} (expected None)")
+
+    # B11d — ONLY STEPS AFTER THE CREATE. A step BEFORE it was planned against
+    # whatever the agent was already looking at, and retro-fitting a tab that did
+    # not exist yet would be the same wrong-tab defect pointed backwards.
+    install([SAME] * 8)
+    out = await ms.browser_batch([
+        {"name": "fake_obs", "input": {"value": "before"}},
+        {"name": "tabs_create_mcp", "input": {}},
+        {"name": "fake_obs", "input": {"value": "after"}},
+    ])
+    _obs = [r for r in RAN if r[0] == "fake_obs"]
+    check("B11d only steps AFTER the create inherit it",
+          len(_obs) == 2 and _obs[0][1] is None and _obs[1][1] == 77,
+          f"before={_obs[0][1] if _obs else '?'} after={_obs[1][1] if len(_obs) > 1 else '?'}")
+
+    # B11e — THE REAL OPENING SHAPE, end to end: the three turns the ceremony cost
+    # collapsing into one. `navigate` declares a page change, so the trailing
+    # observation must still run (that is #38/#42's rule) AND must still land in
+    # the created tab rather than reverting to the active one.
+    install([SAME] * 8)
+    out = await ms.browser_batch([
+        {"name": "tabs_create_mcp", "input": {}},
+        {"name": "navigate", "input": {"url": "https://example.com"}},
+        {"name": "fake_obs", "input": {"value": "read"}},
+    ])
+    _nav = [r for r in RAN if r[0] == "navigate"]
+    _obs = [r for r in RAN if r[0] == "fake_obs"]
+    check("B11e create -> navigate -> read is ONE turn, all three in the new tab",
+          len(_nav) == 1 and _nav[0][1] == 77 and len(_obs) == 1 and _obs[0][1] == 77,
+          f"navigate tab={_nav[0][1] if _nav else '?'}, read tab="
+          f"{_obs[0][1] if _obs else 'DROPPED'}")
+
+    # B11f — THE CONTROL FOR THE PRE-FLIGHT RELAXATION. Treating tabId as supplied
+    # after a create must not turn the pre-flight into a no-op: a batch with no
+    # create step and a genuinely missing required argument is still refused, with
+    # nothing executed. Without this, "always consider tabId supplied" would pass
+    # B11e while deleting the check #32 added.
+    install([SAME] * 8)
+    out = await ms.browser_batch([
+        {"name": "navigate", "input": {"url": "https://example.com"}},
+    ])
+    _txt = text_of(out)
+    check("B11f with no create step a missing required tabId is still REFUSED",
+          "REFUSED" in _txt and "tabId" in _txt and not RAN,
+          f"ran={len(RAN)} (expected 0); {_txt.strip()[:90]}")
 
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} browser_batch checks passed.")

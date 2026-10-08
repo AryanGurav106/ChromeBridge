@@ -296,6 +296,15 @@ CHAIN STEPS WITH browser_batch. It runs sequentially in ONE round trip and
 pre-flights every step before running any. `navigate` then `read_page` is one
 turn, not two: a page change only stops later steps that NAME a ref.
 
+START IN ONE TURN. A batch may open with `tabs_create_mcp` and OMIT tabId on the
+steps after it -- they inherit the tab it just made:
+  browser_batch([{"name":"tabs_create_mcp","input":{}},
+                 {"name":"navigate","input":{"url":"..."}},
+                 {"name":"read_page","input":{}}])
+Do NOT omit tabId on a step BEFORE a create, and do not omit it to mean "the tab
+I made in an earlier call" -- outside that batch a missing tabId still means the
+user's ACTIVE tab.
+
 PERMISSION IS PER ORIGIN AND DEFAULT DENY. The first op on a new site is
 SUPPOSED to be refused -- that is the consent model, not a failure. The refusal
 names the origin; the user allows it in the side panel. Do not retry in a loop.
@@ -2937,6 +2946,21 @@ async def gif_creator(
 
 _BATCHABLE = {}  # name -> coroutine fn; populated below
 
+
+def _takes_tab(fn) -> bool:
+    """Does this tool accept a tabId at all?
+
+    ASKED OF THE SIGNATURE, never of a list of tool names. A hand-kept list is the
+    thing that has to be remembered every time a tool or parameter is added, and
+    #42 deleted `_OBSERVES` for exactly that -- it was not updated three times in
+    one day. `fn(**input)` raises TypeError on an unexpected keyword, so filling in
+    a tabId for a tool that has none would turn a working batch into an error.
+    """
+    try:
+        return "tabId" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+
 # THERE IS NO LIST OF "SAFE TOOLS" HERE, DELIBERATELY. One stood here -- an
 # `_OBSERVES` whitelist of read-only tools -- on the argument that a ref-free step
 # being NOT STALE does not make it SAFE. The argument is true and the whitelist was
@@ -2975,6 +2999,13 @@ async def browser_batch(
     # mistake, and a wrong parameter name surfaced as a raw TypeError from
     # fn(**input) naming neither the tool nor the accepted arguments. Validate the
     # WHOLE list first: nothing executes unless every step can.
+    # THE PRE-FLIGHT HAS TO KNOW ABOUT THREADING OR IT REFUSES THE THING IT ENABLES.
+    # `navigate` requires a tabId (unlike every other tool, where it is optional
+    # with an active-tab fallback), so without this the one batch worth saving --
+    # create, navigate, read -- is rejected for a missing argument the batch is
+    # about to supply. Found by B11e rather than by reading: the first threading
+    # fix reached every optional-tabId tool and missed the only required one.
+    _will_have_tab = False
     for i, item in enumerate(actions):
         name = (item or {}).get("name")
         fn = _BATCHABLE.get(name)
@@ -2985,6 +3016,8 @@ async def browser_batch(
         try:
             _sig = inspect.signature(fn)
             _given = set((item.get("input") or {}).keys())
+            if _will_have_tab:
+                _given = _given | {"tabId"}
             _accepted = set(_sig.parameters)
             _unknown = _given - _accepted
             if _unknown:
@@ -2999,6 +3032,8 @@ async def browser_batch(
                     f"NOTHING in this batch ran."))]
         except (TypeError, ValueError):
             pass  # unintrospectable callable: fall through and let the call itself report
+        if name == "tabs_create_mcp":
+            _will_have_tab = True
 
     # PAGE-CHANGE GUARDS, both layers, mirroring what a single-step agent gets for
     # free by re-reading between calls. Without them a batch of trusted input fires
@@ -3103,6 +3138,7 @@ async def browser_batch(
             return None
 
     _seen_tabs: dict = {}
+    _made_tab = None       # a tab THIS batch created; later tabId-less steps inherit it
     _stale_why = None      # the page moved under the plan; set once, never cleared
     _acted = False         # an earlier step of THIS batch named a ref/coordinate and ran,
                            # so any focus it set is the focus later steps meant
@@ -3111,6 +3147,30 @@ async def browser_batch(
         name = item.get("name")
         fn = _BATCHABLE[name]
         _inp = item.get("input") or {}
+
+        # A TAB THIS BATCH JUST CREATED IS THE TAB THIS BATCH MEANT.
+        #
+        # `tabs_create_mcp` makes the tab `active: false` on purpose -- never steal
+        # the user's view -- and `resolveTab` falls back to the ACTIVE tab when no
+        # tabId is given. So the natural opening batch,
+        #   [tabs_create_mcp, navigate(url), read_page()]
+        # did not merely waste the creation: it ran `navigate` in THE USER'S OWN
+        # TAB, silently, while reporting success. That is the #10/#11/#12 family
+        # again -- an action landing somewhere other than the target and saying it
+        # worked -- and it is why the tab ceremony was structurally forced: an agent
+        # could not get a usable tab in fewer than two turns, because the only way
+        # to learn the new id was to end the batch and read it.
+        #
+        # Threaded from `tabs_create_mcp` ONLY, which returns exactly one tabId it
+        # just made. `tabs_context_mcp` returns the whole group, so picking one of
+        # several would be a guess, and this codebase does not guess (#27/#28): an
+        # agent using that tool still reads the result itself.
+        #
+        # An EXPLICIT tabId always wins -- this fills a blank, it never overrides a
+        # decision -- and a batch that creates nothing is completely unaffected,
+        # which is what keeps active-tab fallback working everywhere else.
+        if _made_tab is not None and _inp.get("tabId") is None and _takes_tab(fn):
+            _inp = dict(_inp, tabId=_made_tab)
         _tab = _inp.get("tabId")
         _more = len(actions) - i - 1
 
@@ -3167,6 +3227,11 @@ async def browser_batch(
         # a step that threw established nothing.
         if _ref_at[i] and not _is_focus_step(item):
             _acted = True
+        if name == "tabs_create_mcp":
+            try:
+                _made_tab = (json.loads(res) or {}).get("tabId")
+            except Exception:
+                _made_tab = None
         if isinstance(res, list):
             out.append(TextContent(type="text", text=f"[{i}] {name}:"))
             out.extend(res)

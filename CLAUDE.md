@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 18 suites, 809 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 18 suites, 815 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -498,7 +498,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 18 suites, 809 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 18 suites, 815 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -3706,6 +3706,75 @@ granted in the side panel is refused with the same message the agent gets.
     Suites: 809 checks. New — C20/C20b/C20c (the instructions channel, with three
     planted-violation controls).
 
+46. **THE TAB CEREMONY WAS NOT A DOCSTRING, IT WAS A MISSING WIRE — AND THE
+    NATURAL BATCH WAS SILENTLY DRIVING THE USER'S OWN TAB.** #45 left the tab
+    half of the turn question "unmeasured, downgraded to a measurement design",
+    and the next step was going to be a live A/B varying `tabs_context_mcp`'s
+    "CRITICAL" docstring. **That experiment would have measured the wrong thing.**
+    Before running it, the cheaper question: *can* an agent skip the ceremony? The
+    answer was no, for a structural reason no prompt could change.
+
+    `tabs_create_mcp` creates the tab with `active: false` — deliberately, "never
+    steal the user's view" — while `resolveTab` falls back to the **active** tab
+    when a step names no `tabId`. And `browser_batch` passed each step's `input`
+    straight through with no threading of any kind. So the obvious opening batch,
+
+        [tabs_create_mcp, navigate(url), read_page()]
+
+    did not merely waste the tab it created: **it navigated the USER'S OWN TAB**,
+    silently, and reported success. That is the #10/#11/#12 signature exactly — an
+    action landing somewhere other than the target while the tool says it worked —
+    and this time the target was not an element 32px away, it was a different tab
+    belonging to the person watching. It is also *why* the ceremony was forced: the
+    only way to learn the new id was to end the batch and read it, which costs a
+    whole model turn (~3.6s, 92–97% of a tool call, #38). **No wording of any
+    docstring could have removed a turn the plumbing required.**
+
+    Fixed by threading: a tab created by `tabs_create_mcp` is carried into later
+    steps of the SAME batch that name no `tabId`. Three rules, each a constraint
+    rather than a preference, and each with the control that pins it:
+    - **From `tabs_create_mcp` only.** It returns exactly one id it just made.
+      `tabs_context_mcp` returns the whole group, so choosing among several would
+      be a guess, and #27/#28 removed guessing from the paths that decide things.
+    - **It fills a blank, never overrides a decision** (B11b) — an explicit
+      `tabId` always wins — and **only steps AFTER the create inherit it** (B11d),
+      because retro-fitting a tab that did not exist yet is the same wrong-tab
+      defect pointed backwards.
+    - **A batch that creates nothing is untouched** (B11c), which is what keeps
+      active-tab fallback working everywhere else.
+    Whether a tool can even take a `tabId` is asked of its **signature**, never of
+    a list of tool names — `fn(**input)` raises on an unexpected keyword, and a
+    hand-kept list is the thing #42 deleted `_OBSERVES` for after it went unupdated
+    three times in one day.
+
+    **AND THE FIRST FIX MISSED THE ONLY TOOL THAT MATTERED, which a fixture caught
+    and reading had not.** `navigate` is the one tool whose `tabId` is REQUIRED —
+    every other is optional with an active-tab fallback — so the pre-flight (#32,
+    "nothing executes unless every step can") refused `create → navigate → read`
+    for a missing argument the batch was two lines from supplying. Threading
+    reached all eighteen optional-`tabId` tools and the single required one it
+    existed for. **B11e failed on exactly that**, and the pre-flight now treats
+    `tabId` as supplied for steps following a create. B11f is the control that this
+    did not turn the pre-flight into a no-op: with no create step, a missing
+    required argument is still refused with nothing executed.
+
+    **Discoverability is part of the fix, not a note about it.** #26 records a
+    capability the agent cannot find not being a capability — the columnar table
+    renderer worked and needed `javascript_tool` to reach. So the shape is written
+    into the instructions #45 added, with the boundary stated: omitting `tabId`
+    OUTSIDE that batch still means the user's active tab, which is the hazard this
+    entry is about and not a new idiom.
+
+    **What this says about the method.** #45's measurement said tab discovery was
+    1.65 turns/run and could not separate the docstring from my own prompt. The
+    answer was in neither: it was in whether the plumbing permitted the cheaper
+    path at all, which is a thing to CHECK, not to A/B. A live experiment on a
+    docstring would have produced a clean null result and left the wrong-tab bug
+    sitting there.
+
+    Suites: 815 checks. New — B11–B11f (threading, with the explicit-tabId,
+    no-create, before-the-create, and pre-flight-still-refuses controls).
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -3762,6 +3831,7 @@ granted in the side panel is refused with the same message the agent gets.
 | `(just appeared)` no longer fires when you scroll to a control | Fixed in #42 — the seen-set was seeded from the VIEWPORT-FILTERED `out`, so any below-fold control was announced new the moment the page scrolled to it, contradicting the flag's own contract. Seeded from the mmid registry now. **If you are using the flag as evidence an element was absent from the DOM, do not** — that inference is what made D19's diagnosis wrong |
 | `navigate` says the page has not supplied a `<title>` | By design since #42 — Chrome fills `tab.title` with the url minus its scheme until the document sets one, so the old line printed `title: nginx.org/en/docs/…` for a page whose title is `Module ngx_http_proxy_module`. It waits ~600ms and then says so, because substituting the url is indistinguishable from a page that genuinely declares none |
 | `Main heading` changed on a page with a cookie banner | Fixed in #42 — both headings are usually `<h2>`, so the declared-rank rule tied and fell back to document order while the consent overlay is injected at the top. `<main>` breaks the tie; rank still wins ACROSS the boundary (MH3b), and a page with no `<main>` is unchanged |
+| A batch opened with `tabs_create_mcp` and the later steps have no `tabId` | By design since #46 — they inherit the tab it just made. Before that they hit `resolveTab`'s active-tab fallback and drove the USER'S OWN tab while reporting success, because a created tab is `active: false` on purpose. Threaded from `tabs_create_mcp` only (it returns one id; `tabs_context_mcp` returns the group), only for steps AFTER it, and an explicit `tabId` always wins. Outside that batch a missing `tabId` still means the active tab |
 | A batch kept going after `javascript_tool` or a second `navigate` | By design since #42 — the `_OBSERVES` whitelist is gone. A step is stopped only if it ADDRESSES the previous page, decided from its own input: a ref/coordinate, `back`/`forward`, or `computer(action="key"/"type")` whose target is the focused element. A whitelist had to be remembered every time a tool or parameter was added, and was not, three times in one day |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
