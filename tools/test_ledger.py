@@ -100,6 +100,10 @@ async def main():
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 900, "height": 700})
         await page.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await page.goto("about:blank")
         await page.set_content(PAGE)
         await page.wait_for_timeout(150)
 

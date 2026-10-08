@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import io
 import json
 import mimetypes
@@ -361,6 +362,14 @@ def _line_ident(line: str) -> str:
     # section is the one an agent must act on — a ~94% false rate there refunds the
     # whole token saving and costs a turn.
     line = re.sub(r"^\d+(×|x)(?=\s)", "N×", line)
+    # STRIP THE NOVELTY FLAG, for the same reason as geometry below: it describes
+    # the row's history, not the row. An element flagged (just appeared) on read 2
+    # is in the seen-set by read 3 and loses the flag, so without this every element
+    # a click created would surface once as ADDED and then a second time as
+    # ADDED+GONE on the following read — the same false-churn shape the fold
+    # cardinality rule above was written for, and delta's credibility is spent
+    # entirely in the GONE section.
+    line = re.sub(r"\s*\(just appeared\)", "", line)
     # STRIP GEOMETRY. box(x,y,w,h) is where a row is, not what it is. A live
     # agent expanding a Bootstrap accordion saw 7 rows in NEW and the SAME 7 in
     # GONE, byte-identical apart from y=63 -> y=10: nothing had been removed,
@@ -654,6 +663,31 @@ _ROLE_TOKENS = frozenset((
     "slider", "option", "combobox", "menu",
 ))
 
+# THE NOTATION WE OURSELVES PRINT. read_page writes `(disabled)`, `(required)`,
+# `(unselected)`, `(expanded)`/`(collapsed)` and the legend defines each one, so an
+# agent asking for "the disabled select menu" is typing OUR vocabulary back at us
+# — and find scored it against page TEXT only, where a state flag appears nowhere.
+# Measured live: a query naming a disabled control could only be answered by first
+# reading a listing, which is a whole model turn (#38 prices one at 92-97% of a
+# tool call) to recover something the entry already carried.
+#
+# THIS IS NOT THE WORDLIST CLASS #24 DELETED, and the distinction is the whole
+# reason it is allowed: those read PAGE TEXT, guessing at an author's words in
+# languages nobody enumerated. This reads the QUERY, and maps it to a flag the
+# collector derived structurally. The set is exactly the strings we emit — not
+# synonyms somebody thought of, which is why "greyed", "mandatory", "inactive"
+# and "blank" are deliberately absent. "open"/"closed" are absent for a second
+# reason: they are ordinary English that an agent would write about page content
+# ("open account button"), so admitting them would boost by accident.
+#
+# ENGLISH ONLY, unlike the role-word table, which carries ~20 languages. A role
+# word describes THE PAGE, which may be in any language; a state word describes
+# OUR OWN output, which we print in English. Translating these would be guessing
+# at a vocabulary we do not emit.
+_STATE_TOKENS = frozenset((
+    "disabled", "required", "unselected", "expanded", "collapsed",
+))
+
 
 def _truncate(text: str, max_chars: int, hint: str = "") -> str:
     """Truncate with advice the caller has not already taken.
@@ -747,7 +781,16 @@ def _truncate(text: str, max_chars: int, hint: str = "") -> str:
         # up from the field markers. Folds are also the most efficient payload
         # available: one ~400-char line carries 26 acting refs.
         rows = [ln for ln in text.split("\n") if _ROW_LINE.match(ln)]
-        if rows and not any(_ROW_LINE.match(ln) for ln in text[:max_chars].split("\n")):
+        # THE GUARD MUST ASK WHAT WILL ACTUALLY BE RETURNED. It asked whether a plain
+        # slice REACHES a row — but `_whole_members` then removes that row whenever the
+        # cut left it half-written, so the two protections cancelled each other: the
+        # guard saw a row in the raw slice, declined to drop the legend, and the slicer
+        # deleted the only row there was. Reproduced offline on a listing whose first
+        # row is 865 chars: at max_chars=1200 it returned 646 chars of legend and ZERO
+        # rows, without even spending the budget it had. That is #13's defect exactly,
+        # arriving through the later half-row fix instead of through the legend.
+        _plain_first = _whole_members(text, max_chars)
+        if rows and not any(_ROW_LINE.match(ln) for ln in _plain_first.split("\n")):
             head = text.split("\n", 1)[0]          # "Current URL: ..." keeps context
             kept, body = [], 0
             budget = max(0, max_chars - len(head) - 1)
@@ -762,6 +805,31 @@ def _truncate(text: str, max_chars: int, hint: str = "") -> str:
             # "21 more element(s) not shown" while 99 were dropped, and on arXiv
             # the clause was omitted altogether while 74 vanished — the exact
             # silence the truncation work exists to remove, one level up.
+            if not kept:
+                # NOT ONE ROW FITS, even with the legend gone. Returning a header and
+                # a count reads as "this page has almost nothing" — the precise failure
+                # this whole fallback exists to prevent — so state what is true and the
+                # budget that would work, rather than leaving the caller to bisect.
+                # NAME THE ACTUAL BLOCKER. The first draft of this said "the shortest
+                # row is N chars and does not fit", which was false and would have sent
+                # the reader to the wrong number: rows are emitted in DOCUMENT ORDER
+                # and the loop stops at the first that does not fit, so on a page whose
+                # opening row is a large app-shell container it is that row blocking,
+                # not the smallest one. Reporting a size that plainly fits inside the
+                # stated budget also reads as a bug in the tool.
+                _first = len(rows[0])
+                return (
+                    head
+                    + f"\n\n[output truncated at {max_chars} chars — NOTHING could be shown."
+                    + f" Rows are printed in document order, and the FIRST one is {_first}"
+                    + f" chars, which does not fit in the {budget} available here, so the"
+                    + f" listing stops before it. All {_row_elements(chr(10).join(rows))}"
+                    + f" element(s) are missing. Raise max_chars to at least"
+                    + f" {_first + len(head) + 120}, or scope the read with ref_id — a"
+                    + " scoped listing is not viewport-limited and is usually far smaller."
+                    + (f" {hint}" if hint else "")
+                    + "]"
+                )
             dropped = _row_elements("\n".join(rows[len(kept):]))
             return (
                 head + "\n" + "\n".join(kept)
@@ -1010,6 +1078,18 @@ async def read_page(
         )
     if scope_mmid:
         out = f"[scoped to the subtree of ref_{scope_mmid} — elements outside it are omitted]\n" + out
+    # DO NOT ADVISE THE PARAMETER THE CALLER JUST PASSED. The collector cannot
+    # know `filter` — it only ever produces an element listing — so its
+    # scoped-zero explanation offers `filter="all"` to reach the text. When the
+    # caller already asked for "all", that reads as a loop invitation and the text
+    # is in the very same response, a few lines below. Same defect as #25's RG15,
+    # where the entry-cap notice told an ALREADY-scoped caller to narrow with
+    # ref_id. Measured live on curl's 92x10 comparison table.
+    if filter == "all" and 'filter="all"' in out:
+        out = out.replace(
+            f'(for its TEXT use read_page(ref_id="ref_{scope_mmid}", filter="all"); '
+            f'for pixel content take a screenshot)',
+            '(its TEXT is below in this same response; for pixel content take a screenshot)')
     if filter == "all":
         # ref_id scopes the ELEMENT listing; get_dom_text is whole-document, so
         # appending it to a scoped read hands back the entire page an agent just
@@ -1120,9 +1200,49 @@ async def sw_info(
 ) -> str:
     """Diagnostic: the extension service worker's id, age, and which tabs it holds a
     debugger session for. A CHANGED id between two calls means the MV3 worker was
-    terminated and restarted — which silently destroys every trusted-input session."""
+    terminated and restarted — which silently destroys every trusted-input session.
+
+    Also reports BRIDGE TIMING: how long the last op actually spent between this
+    server and the extension, and the running total. Use it to tell "the browser is
+    slow" apart from "the loop is slow" — if bridge_ms is small and the wall clock
+    is not, the time is in the agent turn, not in the page."""
     b = await _bridge()
-    return str(await b.call("sw_info", tabId=tabId))
+    res = await b.call("sw_info", tabId=tabId)
+    # THE BRIDGE HAS ALWAYS MEASURED THIS AND NOTHING COULD READ IT.
+    # `ExtensionBridge.call` records `last_call_ms`/`total_bridge_ms` for "the
+    # per-tool TimingTracker" — a consumer that lives only in `legacy/`, which does
+    # not import. So the one number that separates transport from model time was
+    # computed on every single op and thrown away, and answering "why is this slow"
+    # needed a differential experiment against the wall clock instead of a read.
+    # Reported AFTER the call above, so `last_call_ms` describes this very round trip.
+    try:
+        out = res if isinstance(res, dict) else {"sw": res}
+        out["bridge_ms_this_call"] = round(b.last_call_ms, 1)
+        out["bridge_ms_total"] = round(b.total_bridge_ms, 1)
+        # WHAT THE CLIENT DECLARED, read from the live handshake rather than from
+        # documentation. The zero-key constraint says the SERVER holds no model —
+        # it does not say no model is reachable, because MCP has a server->client
+        # `sampling/createMessage` primitive: the server asks the CLIENT to run a
+        # completion, billed to the user's own subscription. If this client
+        # declares `sampling`, find's one real gap (goal->element inference, #20's
+        # measured 0%) is closable without a key and without an extra agent turn.
+        # Docs go stale and capabilities differ per client, so this reports the
+        # handshake itself; `caps_raw` is included because an absent capability and
+        # an unparsed one must not look alike.
+        try:
+            _ctx = mcp.get_context()
+            _cp = getattr(_ctx.session, "client_params", None)
+            _caps = getattr(_cp, "capabilities", None)
+            out["client_name"] = getattr(getattr(_cp, "clientInfo", None), "name", None)
+            out["client_sampling"] = bool(getattr(_caps, "sampling", None) is not None)
+            out["client_elicitation"] = bool(getattr(_caps, "elicitation", None) is not None)
+            out["caps_raw"] = (_caps.model_dump() if hasattr(_caps, "model_dump")
+                               else str(_caps))
+        except Exception as e:
+            out["client_caps_error"] = f"{type(e).__name__}: {e}"
+        return json.dumps(out, default=str)
+    except Exception:
+        return str(res)
 
 
 @mcp.tool()
@@ -1243,9 +1363,28 @@ async def get_page_text(
     tabId: Annotated[int, Field(description="Tab ID to extract text from.")],
     max_chars: Annotated[int, Field(description="Maximum characters to return (default 30000). The DOCUMENT OUTLINE is always kept, even when the body is truncated.")] = 30000,
 ) -> str:
-    """Extract raw text content from the page (articles, posts, text-heavy pages).
-    Plain text without HTML formatting, followed by a DOCUMENT OUTLINE of the page's
-    headings with nesting depth."""
+    """Extract raw text content from the page. Plain text without HTML formatting,
+    followed by a DOCUMENT OUTLINE of the page's headings with nesting depth.
+
+    THIS IS THE DEFAULT WAY TO READ A PAGE. If you want a fact out of a reference
+    record, a spec, a metadata block or a table, call this ONCE and read it, rather
+    than guessing patterns with `search_page` or selectors with `query_elements`.
+    Those are for a string you already know on a page too large to carry; a guess
+    that misses costs a whole round trip, while reading more than you needed costs
+    a fraction of one.
+
+    THE BUDGET IS SPENT IN DOCUMENT ORDER, which on most sites means the header,
+    nav and sidebar are paid for before any content. Measured twice in the 10-task
+    eval: a 2,556-character results page whose first ~2,000 characters were the
+    site's nav and tag cloud, so a hand-set `max_chars=3000` cut exactly at the
+    value being read, and `max_chars` had to be raised and the page re-read.
+    The default of 30,000 does not have this problem; lowering it is what creates
+    it. If the page is genuinely huge and you know the exact string,
+    `search_page(pattern)` returns a few hundred characters with the match
+    attributed to the element holding it; if you know which REGION holds it,
+    `read_page(ref_id=…, filter="all")` returns that region in full and is not
+    viewport-limited. Reach for either only when you can name the string or the
+    region — otherwise one full read is cheaper than two guesses."""
     b = await _bridge()
     res = str(await b.call("get_dom_text", tabId=tabId))
     if max_chars and len(res) > max_chars:
@@ -1259,28 +1398,425 @@ async def get_page_text(
         # find() treat the whole body as outline and keep it — a 1000-char cap
         # returned 3170 chars.
         _bnr, res = _split_banner(res)
-        if _bnr:
-            max_chars = max(200, max_chars - len(_bnr))
+        # THE CALLER'S NUMBER IS NEVER REBOUND. This used to do
+        # `max_chars = max_chars - len(_bnr)` and then print that reduced figure as
+        # "the N requested", so a caller who passed 1600 was told their budget was
+        # 1303 and could not reconcile it against their own call. Measured five
+        # times across four pages and three agents in the 24-task eval, every
+        # sighting in the same direction. `budget` is what the caller asked for and
+        # is what every message below quotes; `avail` is what is left for the parts
+        # this function chooses, and the note NAMES each deduction so the two
+        # always add up.
+        budget = max_chars
+        avail = max(0, budget - len(_bnr))
         i = res.rfind(marker)
         outline = res[i:] if i != -1 else ""
-        # A heading-dense page (a spec, a long API reference) can have an outline
-        # bigger than the cap on its own. Keeping it is right — it is the part that
-        # orients you — but returning more than was asked for silently is not.
-        if len(outline) + 120 >= max_chars:
-            # _bnr goes back on EVERY return of this branch. Peeling it and then
-            # forgetting to restore it made the banner vanish entirely — a
-            # regression on the very fix meant to stop it being cut in half.
-            # Reserving room for something and then dropping it is worse than
-            # never reserving the room at all.
-            return (_bnr + res[:max(0, max_chars - 200)] +
-                    f"\n\n[the DOCUMENT OUTLINE alone is {len(outline)} chars, over the {max_chars} "
-                    f"requested; it is kept whole and the body dropped. Raise max_chars for body text.]\n" +
-                    outline)
-        keep = max(0, max_chars - len(outline) - 120)
         orig_len = i if i != -1 else len(res)
-        note = "\n\n[body truncated at {} of {} chars — raise max_chars for more]\n\n".format(keep, orig_len)
-        res = _bnr + res[:keep] + note + outline
+        # NAME THE CHEAPER ROUTES, NOT JUST THE OBVIOUS ONE. "raise max_chars"
+        # re-reads the WHOLE page including the header, nav and sidebar that
+        # consumed the budget in the first place — the text is emitted in document
+        # order, so site chrome is paid for before any content. Measured twice in
+        # the 10-task eval: a 2,556-char results page whose first ~2,000 chars were
+        # nav, so the cut landed exactly on the value being read and the fix was a
+        # second full read. Same shape as find's miss path before #39: prescribing
+        # one recovery when two cheaper ones exist.
+        # THE NOTE IS CHARGED AT ITS REAL LENGTH. The reserve here was a literal 120
+        # against a note that is ~560 characters, so the function returned ~440 MORE
+        # than the caller asked for while its message reported a shortfall — the
+        # same number being unreconcilable in both directions at once. Formatting it
+        # against `orig_len` first prices it exactly: the only part that varies is
+        # the digit count of `keep`, and keep <= orig_len, so the probe is never an
+        # under-estimate and the result can never exceed the budget.
+        # TWO FORMS OF THE SAME NOTE, because the advice can cost more than the
+        # budget it is explaining. The long form is ~560 chars, so at max_chars=400
+        # it crowded the body out entirely and the caller got a page of guidance
+        # about a page they could not see. The brief form keeps the only parts that
+        # are facts — where the cut fell, how big the page is, what the caller
+        # asked for — and drops the prose.
+        def _note(keep_n: int, brief: bool) -> str:
+            if brief:
+                return ("\n\n[body truncated at {} of {} chars; your max_chars={}. Cheaper "
+                        "than raising it: search_page(pattern), or read_page(ref_id=…, "
+                        "filter=\"all\") for one region.]\n\n").format(keep_n, orig_len, budget)
+            spent = [f"{keep_n} body"]
+            if _bnr:
+                spent.append(f"{len(_bnr)} readiness banner")
+            if outline:
+                spent.append(f"{len(outline)} document outline (kept whole — it is the "
+                             f"page's section list and is emitted LAST, so a plain cut "
+                             f"would always lose it)")
+            return ("\n\n[body truncated at {} of {} chars. YOUR max_chars={} was spent as: "
+                    "{}, and this note. The text is emitted in DOCUMENT ORDER, so a page's "
+                    "header/nav/sidebar is paid for before its content — raising max_chars "
+                    "re-reads all of that too. Cheaper: search_page(pattern) returns a few "
+                    "hundred chars with each match attributed to the element holding it, and "
+                    "read_page(ref_id=…, filter=\"all\") returns one region in full and is "
+                    "NOT viewport-limited.]\n\n").format(keep_n, orig_len, budget, " + ".join(spent))
+
+        # Prefer the full explanation, but never at the price of the body it is
+        # explaining. Pricing the note against `orig_len` first makes this exact:
+        # the only part that varies is the digit count of `keep`, and keep <=
+        # orig_len, so the probe is never an under-estimate.
+        keep, brief = 0, False
+        for _brief in (False, True):
+            k = avail - len(outline) - len(_note(orig_len, _brief))
+            if k > 0:
+                keep, brief = k, _brief
+                break
+        if keep > 0:
+            return _bnr + res[:keep] + _note(keep, brief) + outline
+
+        # A heading-dense page (a spec, a long API reference) can have an outline
+        # bigger than the whole budget. Keeping it in preference to the body is
+        # right — it is the part that orients you — but returning more than was
+        # asked for is the defect this whole block exists to stop, so the outline
+        # is itself cut and MARKED in markCut's `…(+N)` form rather than silently
+        # overflowing. _bnr goes back on EVERY return path: peeling it and then
+        # forgetting to restore it once deleted the readiness banner outright.
+        msg = ("\n\n[the DOCUMENT OUTLINE is {} chars, which leaves no room for body text "
+               "inside your max_chars={}{}. The outline is the page's section list and is "
+               "kept in preference to the body. Raise max_chars, or read one region with "
+               "read_page(ref_id=…, filter=\"all\").]\n").format(
+                   len(outline), budget,
+                   f" ({len(_bnr)} of which is the page-readiness banner)" if _bnr else "")
+        room = max(0, budget - len(_bnr) - len(msg))
+        if len(outline) <= room:
+            return _bnr + msg + outline
+        cut = max(0, room - len(f"…(+{len(outline)})"))
+        return _bnr + msg + outline[:cut] + f"…(+{len(outline) - cut})"
     return res
+
+
+@mcp.tool()
+async def search_page(
+    pattern: Annotated[str, Field(description="Text to find, or a regular expression when regex=True.")],
+    tabId: Annotated[int, Field(description="Tab ID to search.")],
+    regex: Annotated[bool, Field(description="Treat pattern as a JavaScript regular expression instead of literal text.")] = False,
+    case_sensitive: Annotated[bool, Field(description="Match case exactly. Default is case-insensitive.")] = False,
+    context_chars: Annotated[int, Field(description="Characters of surrounding text to return with each match (default 150).")] = 150,
+    css_scope: Annotated[Optional[str], Field(description='Limit the search to one region, e.g. "main" or "#results". Omit to search the whole page.')] = None,
+    max_results: Annotated[int, Field(description="Maximum matches to return (default 25). The TOTAL count is reported regardless.")] = 25,
+) -> str:
+    """Search the page's visible text, like grep. Returns each match with the text
+    around it and the ref of the element holding it, plus the true total.
+
+    USE IT WHEN YOU ALREADY KNOW THE STRING, on a page too big to read: "does this
+    page mention X", "did an error appear", "where is the price" on a long listing.
+
+    DO NOT USE IT TO READ A PAGE'S FIELDS. If you are going to end up reading the
+    page anyway — a reference record, a spec header, a metadata block, a table row —
+    call `get_page_text` once instead. Measured on a 24-task eval: agents spent 20
+    calls on this tool and `query_elements` where whole-page reads would have cost
+    about 10, and roughly 40% of those narrow calls came back empty or matched only
+    decoys, each miss costing a FULL ROUND TRIP. A guess that misses is far more
+    expensive than a read that is bigger than you needed: the model turn is 92-97%
+    of a tool call, the extra characters are ~10% of prefill.
+
+    Searches rendered text only — a hidden template, a closed menu or a COLLAPSED
+    DISCLOSURE cannot produce a match, so a miss here does not mean the fact is
+    absent from the page. Reaches inside shadow roots, which page text tools
+    usually do not."""
+    b = await _bridge()
+    res = await b.call(
+        "search_dom_text", tabId=tabId, pattern=pattern, regex=regex,
+        caseSensitive=case_sensitive, contextChars=context_chars,
+        maxResults=max_results, cssScope=css_scope,
+    )
+    if not isinstance(res, dict):
+        return f"search_page returned no result: {res!r}"
+    if res.get("error"):
+        return f"search_page could not run: {res['error']}"
+    hits = res.get("hits") or []
+    total = res.get("total") or 0
+    if not total:
+        # An empty result is a real answer and must not read as a failure, so it
+        # states what was searched and the one thing that could make it wrong.
+        scope = f' within {css_scope}' if css_scope else ""
+        # PAGINATION WAS THE MISSING CAUSE, and it is the one that matters most.
+        # Measured live: after creating a record, a search for its name returned this
+        # message and the record DID exist — on page 2 of a client-paginated table
+        # ("Showing 1 to 25 of 39"). An agent that stopped here would have reported a
+        # successful run as a failure. The list named collapsed sections and closed
+        # menus, which are the causes I thought of; "did my record get created" is the
+        # question this tool gets asked most, and a paginated list is its normal shape.
+        # A MID-RENDER PAGE MAKES "not there" AND "not there yet" IDENTICAL, which is
+        # #39's `find` gap in the tool an agent reaches for to check whether its own
+        # write landed. Fetched on the miss path only — a result WITH hits needs no
+        # caveat, so the hit path pays nothing.
+        _rb = await _readiness_note(b, tabId)
+        return ((_rb + "\n" if _rb else "") + f'No match for "{pattern}"{scope}. {res.get("scanned", 0)} text block(s) were '
+                f"searched. Only text the page is RENDERING NOW is searched, so a match can "
+                f"exist and not be found: it may be on another PAGE of a paginated list or "
+                f"below a lazy-loading boundary, or inside a collapsed section, a closed menu "
+                f"or an unopened tab. If you are checking whether a record exists, filter or "
+                f"search within the app itself first, or count with query_elements — those "
+                f"reach rows this cannot.")
+    # NOT !r. Python's repr DOUBLES every backslash, so a caller who passed the
+    # regex `425 \(Too Early\)` was shown `'425 \\(Too Early\\)'` and had to wonder
+    # whether the pattern had been mangled on the way in. The matching was correct;
+    # only the echo was. Quoting it plainly shows back exactly what was sent.
+    lines = [f'{total} match(es) for "{pattern}"' + (f" within {css_scope}" if css_scope else "")
+             + (f", showing the first {len(hits)}:" if total > len(hits) else ":")]
+    # NAME THE MATCH AND WHERE IT SITS. The extension locates each match inside the
+    # window it quotes, and printing nothing threw that away: two matches inside one
+    # element are quoted from the SAME window, so they arrived byte-identical and a
+    # live agent read two correct hits as "2 positions reported twice", then
+    # concluded the rows it wanted were missing — when they were inside both
+    # windows, unmarked. The count was right the whole time; the hits were not
+    # identifiable. Suppressed when the context IS the match, where there is
+    # nothing to locate, so a one-line listing pays nothing for it.
+    _located = False
+    for h in hits:
+        ref = f' ref_{h["ref"]}' if h.get("ref") else ""
+        ctx = h.get("context", "") or ""
+        mt = h.get("match", "") or ""
+        loc = ""
+        if mt and ctx != mt and isinstance(h.get("at"), int):
+            loc = f' "{mt}"@{h["at"]}'
+            _located = True
+        lines.append(f'  <{h.get("tag", "?")}{ref}{loc}> {ctx}')
+    if _located:
+        lines.append('  (`"text"@N` is the match and its character offset in the context '
+                     "quoted on that line; ` | ` marks a boundary the page declared between "
+                     "cells, list items or blocks.)")
+    if total > len(hits):
+        lines.append(f"  … {total - len(hits)} more match(es) not shown — raise max_results "
+                     f"or narrow with css_scope.")
+    # A hit with no ref is not actionable, and the reason is not guessable: mmids are
+    # injected by the COLLECTOR, so nothing carries one until read_page has run on
+    # this document. Measured live — a first search of a Wikipedia table returned
+    # three correct hits with no refs and no explanation, which reads as "these are
+    # not things you can act on" rather than "read the page first".
+    if not any(h.get("ref") for h in hits):
+        lines.append("  (No refs yet: elements get one when read_page runs on this page. "
+                     "Call read_page first if you need to act on a match rather than read it.)")
+    return "\n".join(lines)
+
+
+
+async def _readiness_note(b, tabId: int) -> str:
+    """The page-readiness banner, for the tools that cannot carry it inline.
+
+    ONE implementation because three tools need it (#21's one-concept-one-spelling:
+    the destructive test existed twice in one function and the two copies disagreed).
+    `read_page` gets the banner prepended to its STRING listing in the extension,
+    behind a `!params?.structured` guard — so every tool that asks for structured
+    output, or returns something other than a listing, had no settling signal at all
+    and reported "nothing matched" identically to "nothing matched YET".
+
+    Fetched on FAILURE paths only, which is #38's rule for the batch fingerprint
+    applied again: take a round trip exactly where its answer can change what happens
+    next. A result with hits needs no caveat; a miss is the only place the two
+    readings are indistinguishable. ~24ms on the miss path, nothing on the hit path,
+    against the ~3.6s model turn an agent spends re-checking by hand.
+
+    Degrades to silence on an older extension build that lacks the op — the extension
+    is installed by hand, so a stale extension against a newer server is the NORMAL
+    condition (see "Protocol version"), and a new tool must not turn that into a crash.
+    """
+    try:
+        r = await b.call("page_readiness", tabId=tabId)
+    except Exception:
+        return ""
+    return r if isinstance(r, str) else ""
+
+@mcp.tool()
+async def query_elements(
+    selector: Annotated[str, Field(description='CSS selector, e.g. "table tr", "a.result", "[data-testid=row]".')],
+    tabId: Annotated[int, Field(description="Tab ID to query.")],
+    attributes: Annotated[Optional[list[str]], Field(description='Attributes to read off each match, e.g. ["href", "src", "data-id"]. href and src resolve to absolute URLs.')] = None,
+    max_results: Annotated[int, Field(description="Maximum elements to return (default 50). The TOTAL count is reported regardless, so this does not affect counting.")] = 50,
+    include_text: Annotated[bool, Field(description="Include each element's text (default True).")] = True,
+) -> str:
+    """Query the DOM by CSS selector and count what matches.
+
+    This is the deterministic way to ask questions the element listing cannot answer:
+    how many rows a table has, every href in a result list, an attribute on something
+    non-interactive. read_page lists CONTROLS, and `find` searches only what read_page
+    collected, so page prose, table cells and anything the page declares nothing about
+    are outside both. Pierces shadow roots. The total count is never capped."""
+    b = await _bridge()
+    res = await b.call(
+        "query_elements", tabId=tabId, selector=selector,
+        attributes=attributes, maxResults=max_results, includeText=include_text,
+    )
+    if not isinstance(res, dict):
+        return f"query_elements returned no result: {res!r}"
+    if res.get("error"):
+        return f"query_elements could not run: {res['error']}"
+    rows = res.get("rows") or []
+    total = res.get("total") or 0
+    if not total:
+        # STATE THE MISS, NOT A FACT ABOUT THE PAGE. This used to end "nothing on the
+        # page has that shape right now", which asserts something this tool cannot
+        # establish: it queried the RENDERED document at one instant, and a live miss
+        # on a selector whose target was plainly in the browser is what surfaced it.
+        # Same class as #33's notes, in a tool C15 does not scan because the sentence
+        # is declarative. And a mid-render page makes "no match" and "no match YET"
+        # byte-identical, which is #39's `find` gap one tool over — so the banner is
+        # fetched HERE, on the miss path only.
+        _rb = await _readiness_note(b, tabId)
+        return ((_rb + "\n" if _rb else "")
+                + f"No element matches {selector!r} in the rendered document. The selector "
+                  f"itself is valid. Causes that need different responses: the element is "
+                  f"inside a CLOSED menu, dialog or collapsed section (open it and re-query); "
+                  f"it is rendered by a frame this query did not reach; the page is still "
+                  f"building it; or the shape really is absent. `read_page` shows what IS "
+                  f"present, and `search_page(pattern)` finds it by its text if you know it.")
+    out = [f"{total} element(s) match {selector!r}"
+           + (f", showing the first {len(rows)}:" if total > len(rows) else ":")]
+    for r in rows:
+        ref = f' ref_{r["ref"]}' if r.get("ref") else ""
+        txt = (f' "{r["text"]}"' if r.get("text")
+               else (" (no text)" if include_text else ""))
+        # ensure_ascii=False: json.dumps escapes every non-ASCII character to
+        # \uXXXX, which is #11(d) exactly -- the defect that silently undid the
+        # collector's non-Latin work in the one tool that formats in Python. It
+        # was fixed for `find` and never for this renderer, so a Japanese alt or
+        # an Arabic aria-label came back as backslash escapes.
+        att = ("".join(f" {k}={json.dumps(v, ensure_ascii=False)}"
+                      for k, v in (r.get("attrs") or {}).items()))
+        out.append(f'  <{r.get("tag", "?")}{ref}>{txt}{att}')
+    if total > len(rows):
+        out.append(f"  … {total - len(rows)} more not shown (the count above is the true total).")
+    # A COUNT OF RENDERED ROWS IS THE WRONG ANSWER when the page declares more exist.
+    # This heads the result rather than trailing it: a caller who asked "how many" has
+    # their answer in the first line, and a correction underneath it would be read
+    # second or not at all.
+    _dt = res.get("declaredTotal")
+    if _dt:
+        out.insert(0, (
+            f"WARNING: {total} matched in the DOM, but the page declares {_dt} exist "
+            f"({res.get('declaredVia')}). The rest are not rendered — a paginated, "
+            f"virtualised or lazy-loaded list only puts a window in the DOM. Treat {total} "
+            f"as 'currently rendered', NOT as the total, and page/scroll or filter in the "
+            f"app to reach the others."))
+    return "\n".join(out)
+
+
+@mcp.tool()
+async def accessible_names(
+    tabId: Annotated[int, Field(description="Tab ID to read names from.")],
+    only_unnamed: Annotated[bool, Field(description="Return only the controls the listing could not name (default True). Set False to get Chrome's name for every element it names, e.g. to check one we got wrong.")] = True,
+) -> str:
+    """Ask Chrome for the accessible names of controls the listing could not name.
+
+    Use this when read_page shows rows as `(unlabeled-icon)`/`(unlabeled)` or a bare `button` with
+    no name — an icon rail, a toolbar of glyphs. Chrome computes accessible names to
+    the same spec we do, and where an element defeats our derivation it will often
+    still have one.
+
+    Requires the debugger to be ALREADY attached to this tab, which it is after any
+    trusted click, `computer` action, `javascript_tool` call or `save_as_pdf`. It will
+    NOT attach on its own: that would put Chrome's "is debugging" bar on the screen
+    for a read, and on pages where another extension blocks the attach entirely it
+    would fail rather than degrade."""
+    b = await _bridge()
+    res = await b.call("ax_names", tabId=tabId)
+    if not isinstance(res, dict):
+        return f"accessible_names returned no result: {res!r}"
+    if not res.get("attached"):
+        return ("The debugger is not attached to this tab, and this tool does not attach on "
+                "its own — Chrome's accessibility tree is only reachable over CDP. Run any "
+                "action that attaches (a computer click, javascript_tool, or save_as_pdf) and "
+                "call this again. Note the attach is refused tab-wide when another extension "
+                "has injected an iframe, which is common on login pages (see sw_info / "
+                "debug_targets).")
+    names = res.get("names") or {}
+    if not names:
+        # Say WHICH of the three ways it came back empty, rather than one sentence
+        # that covers all of them — the first live call returned this on a page full
+        # of named controls and the message gave nothing to act on.
+        _ax, _mapped = res.get("axNodes", 0), res.get("mapped", 0)
+        if not _ax:
+            return ("Chrome's accessibility tree came back empty for this tab, so there are no "
+                    "names to report. That is a CDP-side failure rather than a fact about the "
+                    "page; retry, and if it persists check debug_targets.")
+        if not _mapped:
+            return (f"Chrome returned {_ax} accessibility nodes, but no element on the page "
+                    f"carries a ref yet — refs are injected by read_page. Call read_page on "
+                    f"this tab first, then call this again.")
+        return (f"Chrome returned {_ax} accessibility nodes across {_mapped} ref'd elements but "
+                f"named none of them, which is unexpected — treat this as a bug rather than a "
+                f"fact about the page.")
+    ents = await b.call("get_interactive_elements", tabId=tabId, structured=True)
+    if not isinstance(ents, list):
+        ents = []
+    listed = {str(e.get("mmid")): e for e in ents if e.get("mmid") is not None}
+    rows = []
+    for mmid, info in names.items():
+        e = listed.get(str(mmid))
+        if e is None:
+            continue  # Chrome names plenty we do not list; those are not actionable.
+        ours = (e.get("name") or e.get("label") or e.get("text") or "").strip()
+        if only_unnamed and ours:
+            continue
+        role = f' role={info["role"]}' if info.get("role") else ""
+        was = "" if not ours else f'  (we had: "{ours}")'
+        rows.append(f'  ref_{mmid} | {e.get("tag", "?")}{role} name="{info["name"]}"{was}')
+    if not rows:
+        return ("Every control in the listing already has a name — Chrome's accessibility tree "
+                "adds nothing here. Pass only_unnamed=False to compare the names we derived "
+                "against Chrome's.")
+    head = (f"{len(rows)} control(s) Chrome can name that the listing could not:"
+            if only_unnamed else f"{len(rows)} control(s), Chrome's name against ours:")
+    return head + "\n" + "\n".join(rows[:120])
+
+
+@mcp.tool()
+async def save_as_pdf(
+    tabId: Annotated[int, Field(description="Tab ID to print.")],
+    file_name: Annotated[Optional[str], Field(description="Output filename. Defaults to the page title. '.pdf' is added if missing.")] = None,
+    landscape: Annotated[bool, Field(description="Landscape orientation.")] = False,
+    print_background: Annotated[bool, Field(description="Include background graphics and colours (default True).")] = True,
+    scale: Annotated[float, Field(description="Render scale, 0.1 to 2.0 (default 1.0).")] = 1.0,
+    paper_format: Annotated[str, Field(description="Letter, Legal, A4, A3 or Tabloid (default Letter).")] = "Letter",
+) -> str:
+    """Save the whole page as a PDF and return the file path.
+
+    This is the only way to capture a page BELOW the fold as one artifact —
+    screenshots are viewport-only. Useful for keeping a receipt, an invoice or a long
+    article as a document rather than reading it into context.
+
+    Attaches the debugger, so Chrome shows its "is debugging" bar while it runs."""
+    _PAPER = {"letter": (8.5, 11.0), "legal": (8.5, 14.0), "a4": (8.27, 11.69),
+              "a3": (11.69, 16.54), "tabloid": (11.0, 17.0)}
+    key = str(paper_format or "letter").strip().lower()
+    if key not in _PAPER:
+        return (f"Unknown paper_format {paper_format!r}. Choose one of: "
+                f"{', '.join(sorted(_PAPER))}.")
+    w, h = _PAPER[key]
+    b = await _bridge()
+    res = await b.call(
+        "print_pdf", tabId=tabId, landscape=landscape, printBackground=print_background,
+        scale=scale, paperWidth=w, paperHeight=h,
+    )
+    if not isinstance(res, dict) or not res.get("data"):
+        return f"save_as_pdf produced no document: {res!r}"
+    try:
+        raw = base64.b64decode(res["data"])
+    except Exception as e:
+        return f"save_as_pdf could not decode the document: {e}"
+    # A page TITLE becomes a filename here, so it is attacker-influenced: strip
+    # anything that could traverse out of temp/ or be read as a path at all, rather
+    # than trusting a site's <title>.
+    name = str(file_name or res.get("title") or "page")
+    # Strip only what a FILESYSTEM forbids — path separators, control characters and
+    # the Windows-reserved set. An allowlist here would have to be `\w`, which is
+    # ASCII-only, so a page titled 東京の天気 would save as "-----.pdf": the exact
+    # class of bug #21 was written to catch, and P4 caught this line on the first run.
+    name = re.sub(r'[\x00-\x1f<>:"/\\|?*]+', "-", name).strip(". -")[:120]
+    if not name or set(name) <= {"."}:
+        name = "page"
+    if not name.lower().endswith(".pdf"):
+        name += ".pdf"
+    os.makedirs(_TEMP_DIR, exist_ok=True)
+    path = os.path.join(_TEMP_DIR, name)
+    with open(path, "wb") as fh:
+        fh.write(raw)
+    return (f"Saved {len(raw):,} bytes to {path} ({paper_format}"
+            f"{', landscape' if landscape else ''}). This is the FULL page, not just "
+            f"the viewport.")
 
 
 @mcp.tool()
@@ -1291,8 +1827,32 @@ async def find(
     ],
     tabId: Annotated[int, Field(description="Tab ID to search in.")],
 ) -> str:
-    """Find elements on the page using natural language. Returns up to 20 matching
-    elements with refs usable with other tools (form_input, computer, ...)."""
+    """LEXICAL search over element labels. Returns up to 20 matches with refs.
+
+    USE IT FOR a description of the element's own wording — "Add to cart",
+    "search box", "Sign in" — including non-Latin labels and role words, which it
+    handles deliberately.
+
+    DO NOT USE IT FOR A GOAL. Measured: given a descriptor it puts the target in
+    the top 3 about 75% of the time; given a task ("book a mid-range hotel in
+    Paris") it finds the target 0% of the time, scoring exactly zero — there is no
+    lexical overlap between a goal and the control that achieves it. This docstring
+    used to say "using natural language", which invited exactly the query it cannot
+    answer.
+
+    YOU are the semantic step, and doing it here costs nothing because you are
+    already mid-turn. Translate the goal into something the document DECLARES, then
+    ask exactly — one call, no ranking:
+      "pick more than one option"  -> query_elements("select[multiple]")
+      "the required fields"        -> query_elements("[required]")
+      "what's disabled"            -> query_elements(":disabled")
+      "the row that says Ohio"     -> search_page("Ohio")
+      "how many results"           -> query_elements(".result")   # total never capped
+    query_elements also returns attributes (href, value, type) in the same call, so
+    it answers "which one" and "where does it go" together.
+
+    On a miss this reports what the page actually holds, so you can write that
+    selector without a second observation."""
     b = await _bridge()
     # detail="full" so IMAGES are in the search space. find() was interactive-only:
     # a perfect query for a photograph returned 17 anchor tags and zero images, with
@@ -1439,7 +1999,8 @@ async def find(
             # AND appears in that label, so it covered the query on its own while
             # the one distinguishing token, "state", matched nothing. An agent
             # trusting that header sets City believing it set State.
-            if (max(_hl, _hn, _hp) >= 0.5 or _hit(t, near) >= 0.5) and t not in _ROLE_TOKENS:
+            if (max(_hl, _hn, _hp) >= 0.5 or _hit(t, near) >= 0.5) \
+                    and t not in _ROLE_TOKENS and t not in _STATE_TOKENS:
                 _covText.add(t)
             if t == role or t == tag:
                 s += 1.0
@@ -1545,6 +2106,23 @@ async def find(
                 # only label is Chinese explains the query as well as a literal
                 # word match would.
                 _cov.update(t for t in tokens if hint in t or t == hint)
+        # DECLARED-STATE HINTS — see _STATE_TOKENS. Scored like a role word and
+        # credited to `_cov` only, never `_covText`, which is what keeps F29 shut:
+        # type coverage still decides the no-text-match fallback, content coverage
+        # still decides confidence. No penalty for the opposite state — a boost is
+        # enough to rank the declared one first, and penalising would push a
+        # correct element below the threshold on a query that merely guessed wrong.
+        _expanded = str(el.get("expanded") or "").casefold()
+        for hint, on in (
+            ("disabled", bool(el.get("disabled"))),
+            ("required", bool(el.get("required"))),
+            ("unselected", bool(el.get("unselected"))),
+            ("expanded", _expanded == "true"),
+            ("collapsed", _expanded == "false"),
+        ):
+            if on and hint in tokens:
+                s += 2.0
+                _cov.add(hint)
         if el.get("clickable") is False:
             s -= 1.0
         if (el.get("w") or 0) < 12 or (el.get("h") or 0) < 8:
@@ -1596,7 +2174,11 @@ async def find(
     # the ones that match. Only a query made ENTIRELY of role words may be answered
     # by type alone, which is the case F8/F14/F24 protect — "search box" reaching a
     # control whose only label is Chinese.
-    _content_tokens = [t for t in tokens if t not in _ROLE_TOKENS]
+    # State words are type-level predicates exactly as role words are: "disabled"
+    # is satisfied by every disabled control and identifies none of them, so it
+    # must not count toward CONTENT coverage or it re-opens F29 under a new name.
+    _content_tokens = [t for t in tokens
+                       if t not in _ROLE_TOKENS and t not in _STATE_TOKENS]
     # COVERAGE MUST SCALE WITH THE QUERY, AND A TWO-WORD QUERY IS NOT UNGATED.
     # `2 if len(tokens) >= 3 else 1` is a step function with a cliff at three, and
     # a live audit walked straight off it. Every one of these came back under a
@@ -1664,10 +2246,82 @@ async def find(
     strong = strong_all[:20]
     weak = ([(s, el) for s, el in scored if 0 < s < 1.0] + _demoted)[:5]
     hits = strong or weak
+    async def _readiness() -> str:
+        """The readiness banner, fetched ONLY when find is about to report a miss.
+
+        read_page has carried this since #15; find never could. The banner is
+        prepended to the STRING listing in the extension, behind a
+        `!params?.structured` guard, and find asks for structured output because
+        it scores an array — an array cannot carry a banner and JSON.stringify
+        drops properties hung off one. So the one tool an agent reaches for WHEN
+        read_page disappointed it was the one tool with no settling signal, and
+        `NO CONFIDENT MATCH` was byte-identical to "that control does not exist".
+        Measured live in #35 against a VERBATIM label match on a mid-render page.
+
+        Fetched on the failure paths ONLY, which is #38's rule for the batch
+        fingerprint applied again: a round trip is worth taking exactly where its
+        answer can change what happens next. A confident `Found N` needs no
+        caveat; a miss is the only place "not there" and "not there yet" are
+        indistinguishable. Costs ~24ms on the miss path and nothing on the hit
+        path, against the ~3.6s model turn an agent spends re-checking by hand.
+
+        Degrades to silence on an older extension build that has no such op —
+        the extension is installed by hand, so a stale extension against a newer
+        server is the NORMAL condition (see "Protocol version"), and a new tool
+        must not turn that into a crash.
+        """
+        return await _readiness_note(b, tabId)
+
+    def _page_fallback() -> str:
+        """A CENSUS of what the page holds, plus the tools that can answer exactly.
+
+        THREE ATTEMPTS, AND THE FIRST TWO WERE THE WRONG SHAPE. The miss path used
+        to say "call read_page", which spends a model turn (92-97% of a tool call,
+        #38) to fetch something find is already connected to — so it fetched the
+        listing instead. Live, that listing is VIEWPORT-SCOPED by design (#6/#26)
+        and did not contain the answer, under a footer recommending `find` as the
+        cheapest recovery: the tool that had just failed. Rebuilt from find's own
+        whole-page rows, document order then filled 8,000 chars with 81 of 186
+        sidebar nav links and still missed the target at row 100-odd.
+        Ordering a dump usefully REQUIRES KNOWING THE ANSWER, which is the thing
+        find just failed to work out. So the payload was the wrong idea twice.
+
+        What the agent needs is enough to write an EXACT query, and that is small:
+        the tag census. "6 select" plus the goal "pick more than one option at
+        once" yields `query_elements("select[multiple]")` in one call — which is
+        what this project's own agents did in 8 of 8 benchmark runs, never once
+        reaching for find. find is a LEXICAL matcher (0% on goal->element, #20);
+        the exact tools are strictly better whenever a selector or a literal can
+        be written, and the model reading this can write one.
+        """
+        if not raw:
+            return ""
+        counts = {}
+        for e in raw:
+            k = str(e.get("tag") or e.get("role") or "?").lower()
+            counts[k] = counts.get(k, 0) + 1
+        top = sorted(counts.items(), key=lambda kv: -kv[1])[:10]
+        census = ", ".join(f"{n} {t}" for t, n in top)
+        return (f"\n\nThe page holds {len(raw)} elements: {census}.\n"
+                f"find ranks by WORDS, so it cannot reach a control whose label "
+                f"shares none with your query. If you can express the target as a "
+                f"CSS selector or a literal string, these answer exactly and in one "
+                f"call: query_elements(selector) — counts and attributes, total "
+                f"never capped; search_page(pattern) — grep over rendered text. "
+                f"Otherwise read_page(ref_id=…) on a region, which is not "
+                f"viewport-limited.")
+
     if not hits:
+        # DO THE RECOVERY, DO NOT PRESCRIBE IT. This said "call read_page", which
+        # spends a model turn — #38 prices one at 92-97% of a tool call (~3.6s)
+        # against ~24ms for a bridge hop — to obtain something find is already
+        # connected to and could simply fetch.
+        _extra = _page_fallback()
         return (
-            f'No elements matched "{query}". Call read_page(filter="interactive") to see '
-            "everything that is on the page."
+            await _readiness()
+            + f'No elements matched "{query}".'
+            + (_extra or ' Call read_page(filter="interactive") to see everything '
+                         'that is on the page.')
         )
     if strong:
         # Say when the list was CUT. "Found 20 element(s)" on a table with 31
@@ -1676,9 +2330,12 @@ async def find(
         lines = [f'Found {len(strong_all)} element(s) matching "{query}"'
                  + (f' — showing the top {len(strong)}, {more} more not listed' if more else '') + ':']
     else:
-        lines = [f'NO CONFIDENT MATCH for "{query}". The {len(hits)} below matched only '
+        lines = [await _readiness()
+                 + f'NO CONFIDENT MATCH for "{query}". The {len(hits)} below matched only '
                  f"weakly — a partial word, or adjacent text rather than the element's own "
-                 f"name. Check them, or call read_page to see the page for yourself."]
+                 f"name. find is a LEXICAL matcher: it cannot connect a GOAL to the "
+                 f"control that achieves it when they share no words — so treat these "
+                 f"as unverified, and prefer the exact query named below."]
     for s, el in hits:
         ref = f"ref_{el.get('mmid')}"
         kind = el.get("role") or el.get("tag") or "element"
@@ -1756,12 +2413,38 @@ async def find(
             flags += "  (outside the current viewport — clicking or scroll_to auto-scrolls it into view)"
         if el.get("orphanWidget"):
             flags += "  (DEAD DUPLICATE — no backing form control; prefer the identical backed widget)"
-        if el.get("disabled"):
+        # SAME GUARD as section=/near= above, for the same reason. These four
+        # state flags were added without it and `(disabled)` duplicated on every
+        # disabled row (`... section=form (disabled) ... y=2291 ... (disabled)`),
+        # because the shared `line` already prints it. The comment twenty lines up
+        # describes this exact defect for section=/near=; the flags written below
+        # that comment did not inherit the fix. Guard on the literal token the
+        # line would carry, not on the prose, since the offscreen and orphan
+        # sentences deliberately add guidance the row's own token does not.
+        if el.get("disabled") and "(disabled)" not in _has:
             flags += "  (disabled)"
-        if el.get("mediaOnly"):
+        if el.get("mediaOnly") and "(image/media" not in _has:
             flags += "  (image/media — not a control)"
         lines.append(f"  {ref}  [{kind}] {ident}{flags}")
-    return "\n".join(lines)
+    # A WEAK MATCH IS WHERE THE TURN IS LOST, and this reverses a narrowing I made
+    # earlier the same day. That narrowing attached the page only to the
+    # zero-match path, reasoning that a weak match already shows rows and may be
+    # fixed by re-querying, so ~5,178 median chars was a certain cost against an
+    # unpriceable benefit. A live A/B against the model-backed arm priced it:
+    # asked "the control I would use to pick more than one option at once",
+    # Claude-in-Chrome returned the one correct <select multiple> and find
+    # returned FOUR NAV LINKS under NO CONFIDENT MATCH — and our own listing row
+    # for that element already read `multiple count=4 name="Multiple select
+    # example"`. The information was never missing; only the lexical scorer could
+    # not reach it, which is #20's measured 0% on goal->element.
+    # So the cost is a TURN (92-97% of a tool call, #38), paid on the path where
+    # the output is not merely unhelpful but MISLEADING — four plausible nav links
+    # invite acting on them. Trading ~5k characters for a model turn is the right
+    # side of that arithmetic, and the agent IS the semantic ranker this tool
+    # cannot be without a key.
+    if not strong:
+        lines.append(_page_fallback())
+    return "\n".join(l for l in lines if l)
 
 
 # ----------------------------------------------------------------------------
@@ -2205,6 +2888,18 @@ async def gif_creator(
 
 _BATCHABLE = {}  # name -> coroutine fn; populated below
 
+# THERE IS NO LIST OF "SAFE TOOLS" HERE, DELIBERATELY. One stood here -- an
+# `_OBSERVES` whitelist of read-only tools -- on the argument that a ref-free step
+# being NOT STALE does not make it SAFE. The argument is true and the whitelist was
+# still the wrong mechanism: whether a batch may continue turns on whether the step
+# addresses the OLD page, and that is decidable from the step's own input, which is
+# what `_plans_against_page` now asks (including the `computer(action="key")` case
+# the whitelist was written for, whose target is the focused element). A whitelist
+# answers a different question and has to be remembered every time a tool or a
+# parameter is added; it was not, three times in one day, each time stopping a step
+# that planned nothing against the page it replaced. The symmetry #21 names -- one
+# concept, one spelling -- is the whole fix.
+
 
 @mcp.tool()
 async def browser_batch(
@@ -2215,17 +2910,181 @@ async def browser_batch(
 ) -> list:
     """Execute a sequence of browser tool calls in ONE round trip. Each item is
     {name, input} with input exactly what you'd pass to that tool standalone.
-    Use whenever you can predict two or more steps ahead. Coordinates in this
-    batch refer to the screenshot taken BEFORE the batch."""
+    Use whenever you can predict two or more steps ahead — including
+    `navigate` followed by a read, which is one round trip, not two.
+
+    A page change does NOT end the batch wholesale. It stops the steps that NAME A
+    REF (ref / ref_id / submit_ref / coordinate, or fill_form's fields, whose keys
+    are refs), because only those were planned against the old page; those are
+    dropped and named rather than fired blind. Observations that name no ref —
+    read_page, get_url, search_page, query_elements, find — mean the same thing
+    whatever the page became, so they keep running."""
     out: list = []
+
+    # PRE-FLIGHT. A typo in `name` at index 3 used to be discovered AFTER indices
+    # 0-2 had already run, so irreversible actions landed because of a spelling
+    # mistake, and a wrong parameter name surfaced as a raw TypeError from
+    # fn(**input) naming neither the tool nor the accepted arguments. Validate the
+    # WHOLE list first: nothing executes unless every step can.
     for i, item in enumerate(actions):
-        name = item.get("name")
+        name = (item or {}).get("name")
         fn = _BATCHABLE.get(name)
         if fn is None:
-            out.append(TextContent(type="text", text=f"[{i}] ERROR: unknown or non-batchable tool {name!r}"))
-            break
+            return [TextContent(type="text", text=(
+                f"[{i}] REFUSED: unknown or non-batchable tool {name!r} — NOTHING in this batch ran. "
+                f"Batchable tools: {', '.join(sorted(_BATCHABLE))}."))]
         try:
-            res = await fn(**(item.get("input") or {}))
+            _sig = inspect.signature(fn)
+            _given = set((item.get("input") or {}).keys())
+            _accepted = set(_sig.parameters)
+            _unknown = _given - _accepted
+            if _unknown:
+                return [TextContent(type="text", text=(
+                    f"[{i}] REFUSED: {name} got unexpected argument(s) {', '.join(sorted(_unknown))} — "
+                    f"NOTHING in this batch ran. {name} accepts: {', '.join(sorted(_accepted))}."))]
+            _missing = [p for p, v in _sig.parameters.items()
+                        if v.default is inspect.Parameter.empty and p not in _given]
+            if _missing:
+                return [TextContent(type="text", text=(
+                    f"[{i}] REFUSED: {name} is missing required argument(s) {', '.join(_missing)} — "
+                    f"NOTHING in this batch ran."))]
+        except (TypeError, ValueError):
+            pass  # unintrospectable callable: fall through and let the call itself report
+
+    # PAGE-CHANGE GUARDS, both layers, mirroring what a single-step agent gets for
+    # free by re-reading between calls. Without them a batch of trusted input fires
+    # into whatever the page BECAME: limitation #10/#11/#12's signature (input
+    # landing somewhere other than the element while the tool reports success),
+    # reproduced at batch level, with this tool's own docstring stating the hazard
+    # instead of guarding it.
+    #
+    # LAYER 1 is a declaration: these tools always change the page, and the check
+    # is free. `javascript_tool` is here because arbitrary JS can rewrite the DOM,
+    # so nothing may be chained after it -- the same reason browser-use marks its
+    # `evaluate` terminating.
+    _terminates = {"navigate", "tabs_create_mcp", "tabs_close_mcp", "javascript_tool"}
+
+    # WHAT A PAGE CHANGE ACTUALLY INVALIDATES — and it is not every later step.
+    #
+    # The guard's own justification is that the remaining steps "were planned
+    # against the previous page, with refs and coordinates from before it". A call
+    # that names NO ref and NO coordinate planned nothing against it: read_page
+    # (unscoped), get_url, search_page, query_elements and find take a tabId and a
+    # selector, and mean the same thing whatever the page became.
+    #
+    # So `navigate -> read_page` — the single most common two-step sequence there
+    # is, used by every agent in the last benchmark — was ending the batch for no
+    # reason, costing one whole agent turn (~3.6s measured) per navigation. Whether
+    # a call consumes a ref is DECIDABLE FROM ITS INPUT, so this needs no list of
+    # "safe tools" that would drift the moment a parameter is added.
+    #
+    # `fields` is here because fill_form maps ref -> value: its KEYS are refs.
+    _REF_KEYS = ("ref", "ref_id", "submit_ref", "coordinate")
+    # A keystroke and typed text have no ref and still address the PREVIOUS page:
+    # their target is whatever has focus, which the page change moved. Every other
+    # `computer` action either carries a coordinate (caught above) or has no target
+    # at all (screenshot, wait, zoom).
+    _FOCUS_ACTIONS = {"type", "key"}
+
+    def _plans_against_page(item):
+        """Does this step's TARGET resolve against the page as it was when the
+        batch was planned? That is the ONLY question. It is not "can this tool
+        change state" — those two were conflated and the confusion produced THREE
+        regressions of one shape in a single day: a second `navigate`, a
+        `computer(action="wait")` and a `javascript_tool`, each stopped after a
+        page change although each plans nothing against the page it replaced. A
+        `javascript_tool` resolves its own selectors against whatever document
+        exists WHEN IT RUNS; an absolute `navigate` means the same thing wherever
+        the tab currently is. Deciding from the step's own input is what makes this
+        one rule instead of a whitelist of "safe tools" that drifts the moment a
+        parameter or a tool is added — the same asymmetry #18 and #37 record, where
+        two rules disagreeing about one concept is the bug.
+        """
+        it = item or {}
+        name = str(it.get("name") or "")
+        inp = it.get("input") or {}
+        # EXPLICIT: it names a ref or a coordinate. fill_form's `fields` maps
+        # ref -> value, so its KEYS are refs.
+        if any(inp.get(k) is not None for k in _REF_KEYS) or inp.get("fields"):
+            return True
+        # IMPLICIT: the target is carried by browser state the page change moved.
+        if name == "navigate":
+            # back/forward resolve against the tab's HISTORY, so an unexpected page
+            # really can make them mean something else. A url does not.
+            return str(inp.get("url") or "").strip().lower() in ("back", "forward")
+        if name == "computer":
+            return str(inp.get("action") or "").strip().lower() in _FOCUS_ACTIONS
+        return False
+
+    # Does ANY step from j onward name a ref? Used to skip fingerprints that cannot
+    # change what happens next — see the call sites below.
+    _ref_at = [_plans_against_page(a) for a in actions]
+    _ref_from = [False] * (len(actions) + 1)
+    for _j in range(len(actions) - 1, -1, -1):
+        _ref_from[_j] = _ref_at[_j] or _ref_from[_j + 1]
+
+    async def _fp(tab_id):
+        """url + element count + text length for one tab, or None if unavailable.
+
+        Deliberately NOT fatal: a fingerprint that cannot be taken (the gate refuses
+        it, the tab is mid-navigation) must not break a batch that would otherwise
+        work -- it degrades to Layer 1 only, which is what we had before.
+        """
+        try:
+            b = await _bridge()
+            r = await b.call("page_fingerprint", tabId=tab_id)
+            return r if isinstance(r, dict) else None
+        except Exception:
+            return None
+
+    _seen_tabs: dict = {}
+    _stale_why = None      # the page moved under the plan; set once, never cleared
+    _dropped: list = []    # ref-naming steps skipped after that, named once at the end
+    for i, item in enumerate(actions):
+        name = item.get("name")
+        fn = _BATCHABLE[name]
+        _inp = item.get("input") or {}
+        _tab = _inp.get("tabId")
+        _more = len(actions) - i - 1
+
+        # THE PAGE MOVED — and what that invalidates is decided per step, not
+        # wholesale. #38 established that staleness is decidable from a step's own
+        # input; it did not say what to do with the steps AFTER a stale one, and the
+        # answer was `break`. So a batch lost its trailing observation — including,
+        # absurdly, the `read_page` this very message tells the agent to go and
+        # perform. Measured live: a click whose own DOM change tripped the guard
+        # dropped the `get_page_text` behind it, costing a whole agent turn (~3.6s)
+        # to reissue a call the batch was already holding.
+        if _stale_why:
+            if _ref_at[i]:
+                _dropped.append(name)
+                out.append(TextContent(type="text", text=(
+                    f"[{i}] {name} SKIPPED: {_stale_why}, and this step names a ref "
+                    f"or coordinate planned against the PREVIOUS page, so it is now "
+                    f"STALE and may address something else. Nothing was dispatched. "
+                    f"Later steps that name no ref are still running.")))
+                continue
+            # NOTHING ELSE STOPS THE BATCH. There is no second question to ask:
+            # `_plans_against_page` already decided, from this step's own input,
+            # whether its target resolves against the page that changed. A step
+            # that survives that test means the same thing whatever the page
+            # became, so it runs — an absolute `navigate`, a `javascript_tool`
+            # resolving its own selectors at run time, a `computer(action="wait")`,
+            # any observation. Asking a SECOND question here ("but can this tool
+            # change state?") is what produced three regressions of one shape in a
+            # single day, and it is the same asymmetry #18 and #37 record: two
+            # rules disagreeing about one concept, with the narrower one silently
+            # overriding the one that was reasoned about.
+
+        # BASELINE, TAKEN ONLY IF SOMETHING LATER COULD BE INVALIDATED BY IT. It has
+        # to be taken BEFORE the step runs or it would include that step's own
+        # effect, so it cannot be made lazy at the comparison site — hence the
+        # look-ahead. On an all-observation batch this saves one round trip.
+        if _tab is not None and _tab not in _seen_tabs and _ref_from[i + 1]:
+            _seen_tabs[_tab] = await _fp(_tab)
+
+        try:
+            res = await fn(**_inp)
         except Exception as e:
             out.append(TextContent(type="text", text=f"[{i}] {name} ERROR: {e} — batch stopped"))
             break
@@ -2234,6 +3093,49 @@ async def browser_batch(
             out.extend(res)
         else:
             out.append(TextContent(type="text", text=f"[{i}] {name}: {res}"))
+
+        if not _more:
+            break
+        # LAYER 1, the declaration. Recorded rather than acted on immediately: the
+        # steps it invalidates are the ones naming a ref, and the check at the top
+        # of the loop is what refuses those.
+        if name in _terminates:
+            _stale_why = f"{name} always changes the page"
+            continue
+        if _stale_why or _tab is None:
+            continue
+        # LAYER 2, runtime detection — BUT ONLY WHERE THE ANSWER CAN CHANGE WHAT
+        # HAPPENS NEXT. This ran after every step, so a batch of N steps cost 2N
+        # bridge round trips and half of them were asking whether a read had changed
+        # the page. Measured on a live page: ~162ms per round trip, so a 7-step read
+        # batch spent ~1.1s establishing nothing. The fingerprint exists to protect
+        # the NEXT step's refs; when that step names none, its answer is unused.
+        if not _ref_at[i + 1]:
+            continue
+        _after = await _fp(_tab)
+        _before = _seen_tabs.get(_tab)
+        if _after and _before:
+            if _after.get("url") != _before.get("url"):
+                _stale_why = f"the page navigated to {_after.get('url')}"
+            elif abs((_after.get("elements") or 0) - (_before.get("elements") or 0)) >= 2:
+                _stale_why = (f"the DOM changed ({_before.get('elements')} -> "
+                              f"{_after.get('elements')} elements)")
+        # THE BASELINE IS NOT ADVANCED, deliberately. It used to be reset after every
+        # clean comparison, so two sub-threshold changes in a row never tripped
+        # anything. The refs in the remaining steps were planned against the page as
+        # it was when the batch STARTED, so that is the only baseline they can
+        # honestly be compared against.
+
+    # Named once at the end as well as inline, because the skips are interleaved with
+    # results that DID run and a reader scanning for "what do I still owe" should not
+    # have to reconstruct it from the body.
+    if _dropped:
+        out.append(TextContent(type="text", text=(
+            f"BATCH FINISHED WITH {len(_dropped)} STEP(S) SKIPPED: "
+            f"{', '.join(_dropped)}. Each named a ref or coordinate planned against "
+            f"the page as it was when the batch started, and {_stale_why}. Every "
+            f"other step ran and its result above is good. Re-read the page and "
+            f"reissue whichever of the skipped steps still apply.")))
     return out
 
 
@@ -2246,6 +3148,10 @@ _BATCHABLE.update(
         "read_page": read_page,
         "get_url": get_url,
         "get_page_text": get_page_text,
+        # Read-only and cheap, so they are the two most worth chaining: locate with
+        # search_page/query_elements, then act, in one round trip.
+        "search_page": search_page,
+        "query_elements": query_elements,
         "find": find,
         "form_input": form_input,
         "fill_form": fill_form,

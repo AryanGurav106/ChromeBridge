@@ -51,7 +51,7 @@ printf '%s\n' \
  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
- | .venv/Scripts/python.exe mcp_server.py 2>/dev/null    # -> 24 tools
+ | .venv/Scripts/python.exe mcp_server.py 2>/dev/null    # -> 28 tools
 ```
 
 ---
@@ -62,7 +62,7 @@ printf '%s\n' \
 ┌──────────────────────┐    stdio MCP   ┌──────────────────────┐   WebSocket    ┌──────────────────────┐
 │  Claude Code         │ ◄────────────► │  mcp_server.py       │ ◄────────────► │  Chrome extension    │
 │  (the agent — runs   │   JSON-RPC     │  (FastMCP)           │ ws://:8765-74  │  (extension/)        │
-│  on YOUR Claude      │                │   - 24 MCP tools     │  token + v1    │   - service worker   │
+│  on YOUR Claude      │                │   - 28 MCP tools     │  token + v1    │   - service worker   │
 │  subscription)       │                │   - ExtensionBridge  │                │   - PERMISSION GATE  │
 └──────────────────────┘                │   - imageId registry │                │   - side panel UI    │
                                         │   - GIF recorder     │                │   - mmid injector    │
@@ -82,7 +82,7 @@ between them.
 
 ```
 ChromeBridge/
-├── mcp_server.py               # THE entry point — FastMCP stdio server, all 24 tools
+├── mcp_server.py               # THE entry point — FastMCP stdio server, all 28 tools
 ├── .mcp.json                   # project-scope registration; PORTABLE (see "Registration")
 ├── config.py                   # paths
 ├── pyproject.toml              # packaging; console script `chromebridge`; deps read
@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 17 suites, 603 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 18 suites, 780 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -122,7 +122,7 @@ ChromeBridge/
 │   ├── audit_thresholds_static.py  # every hardcoded NUMBER, and whether one deletes
 │   ├── measure_retention.py    #   presence / answerability / findability vs tokens
 │   ├── bench_mind2web.py       #   the only out-of-sample number in the project
-│   ├── test_*.py / test_*.js   #   the 17 suites (see tools/README.md — do not duplicate it)
+│   ├── test_*.py / test_*.js   #   the 18 suites (see tools/README.md — do not duplicate it)
 │   └── diag_*.py               #   one-off LIVE probes via ExtensionDriver (needs the bridge)
 ├── temp/                       # ~1.2 GB, GITIGNORED. Frozen corpus + mind2web live here,
 │                               #   so a fresh clone cannot run the probes until it rebuilds
@@ -139,7 +139,7 @@ badge or a clone URL until one exists.
 
 ## MCP tool surface (what Claude Code sees)
 
-**24 tools** (verified over the wire with the `tools/list` smoke test above, not
+**28 tools** (verified over the wire with the `tools/list` smoke test above, not
 just `grep -c '^@mcp.tool()' mcp_server.py`). Clones Claude-in-Chrome's tool
 names/schemas, plus two ChromeBridge power-tools and three diagnostics:
 
@@ -151,6 +151,10 @@ names/schemas, plus two ChromeBridge power-tools and three diagnostics:
 | `navigate(url, tabId)` | `navigate` | `url="back"`/`"forward"` for history |
 | `read_page(tabId, filter, max_chars, ref_id, detail, delta, ledger, geometry, format)` | `get_interactive_elements` (+`get_dom_text` for `all`) | refs == mmids; `ref_id` scopes to a subtree **and is NOT viewport-limited**; `detail="full"` adds `href=`/`src=` and lists non-clickable images; **`geometry=true` adds `box(x,y,w,h)`, off by default (#26)**; **`format` defaults to `"tree"` — indented under the page's own structure, identical sibling groups collapsed POSITIONALLY. `format="flat"` is the older one-row-per-control listing, ~8% cheaper (#27)** |
 | `get_page_text(tabId)` | `get_dom_text` | `ref_id`-scoped reads render `<table>` as aligned columns (header from `<th>`) |
+| `search_page(pattern, tabId, regex, case_sensitive, context_chars, css_scope, max_results)` | `search_dom_text` | **grep over RENDERED text** — a few hundred chars where `get_page_text` costs tens of thousands. Attributes each hit to the element holding it (with its ref) and pierces shadow roots. Hidden templates and closed menus cannot match |
+| `query_elements(selector, tabId, attributes, max_results, include_text)` | `query_elements` | **CSS query + COUNTING** — the only way to ask "how many rows"; `total` is never capped. Reaches what `read_page` (controls only) and `find` (searches only what read_page collected) both exclude. `href`/`src` read off the property, so absolute |
+| `save_as_pdf(tabId, file_name, landscape, print_background, scale, paper_format)` | `print_pdf` | CDP `Page.printToPDF` to `temp/`. The only FULL-page artifact — screenshots are viewport-only |
+| `accessible_names(tabId, only_unnamed)` | `ax_names` | Chrome's OWN accessible names for controls our derivation could not name (icon rails, glyph toolbars). ATTACH-ONLY and opt-in — never attaches by itself (see #33) |
 | `page_tools(tabId)` | `page_tools` | **WebMCP**: tools the PAGE declares (`document.modelContext.getTools()`), with parsed JSON Schemas. `readOnlyHint:false` = CHANGES STATE |
 | `call_page_tool(tabId, name, args)` | `call_page_tool` | **WebMCP**: run one declared tool. Reports `navigated` (refs stale) rather than an empty success |
 | `find(query, tabId)` | structured listing + Python fuzzy scorer | no LLM in the server |
@@ -165,7 +169,7 @@ names/schemas, plus two ChromeBridge power-tools and three diagnostics:
 | `file_upload(paths, ref, tabId)` | `file_upload` | base64 over bridge, 10 MB cap |
 | `upload_image(imageId, ref\|coordinate, tabId)` | `file_upload` | from the screenshot registry |
 | `gif_creator(action, tabId)` | server-side | Pillow export to `temp/`, frames auto-captured per action |
-| `browser_batch(actions)` | server-side loop | sequential, stops on first error |
+| `browser_batch(actions)` | server-side loop | sequential; PRE-FLIGHTS every step before running any. A page change stops the steps that NAME A REF; ref-free observations keep running, so `navigate -> read_page` is one turn (#32, #38) |
 | `sw_info(tabId)` | `sw_info` | Diagnostic: worker id/age, attached tabs, last detach + reason. Ungated |
 | `debug_targets(tabId)` | `debug_targets` | Diagnostic: Chrome's own target table, read-only. Ungated — this is how limitation #12 is identified |
 
@@ -487,7 +491,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 17 suites, 603 checks, ~57s
+.venv\Scripts\python.exe tools\run_tests.py            # 18 suites, 780 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -773,7 +777,7 @@ granted in the side panel is refused with the same message the agent gets.
       origin, which trades the pre-grant injection for losing tagging on the first load of a
       newly granted site. Not obviously the better trade; decide it deliberately, do not drift
       into it.
-    - **macOS/Linux is untested end to end.** CI runs all 17 suites on Linux and nothing in the
+    - **macOS/Linux is untested end to end.** CI runs all 18 suites on Linux and nothing in the
       Python is obviously platform-locked, but nobody has driven a real Chrome from anything but
       Windows 11. Docs say "untested", not "supported" — keep it that way until someone runs it.
     - **One Chrome, one extension, one socket.** The port span stops a second session from
@@ -2077,6 +2081,1380 @@ granted in the side panel is refused with the same message the agent gets.
     RG15 (self-scoped advice), CU1–CU6 (inherited cursor), TR8d/TR8d2 (collapse direction), TB13/TB13b
     (declared units).
 
+31. **WHAT BROWSER-USE DECLARES THAT WE DID NOT — four adoptions, one of them a
+    leak.** Read browser-use v0.13.8's serializer end to end against ours. Their
+    existence rule is the opposite of #28's (three heuristics that ADMIT — an
+    English `search|magnify|query` wordlist over class/id/**any `data-*` value**,
+    a 10–50px "icon" rule firing on any element with a `class`, and label/span
+    promotion — then two geometric passes that DELETE: paint-order occlusion on an
+    opacity threshold their source calls `"highly vibes based"`, and 99%
+    bbox containment). None of that is worth having and none was taken. What they
+    have and we did not is a set of things **the document states out loud**.
+    - **`type=password` values were printed into the listing.** `currentValue` fell
+      through to `el.value` for every `<input>`; `grep -n password background.js`
+      returned one hit, an unrelated comment. Every other tool assumes the listing
+      is safe to carry, and this is the one field where that is false — we act in
+      the user's real logged-in Chrome, so a read over a half-filled login form put
+      the secret in the model's context, the transcript, and reach of any injection
+      on the page, for a value **no tool needs**: `form_input` writes passwords and
+      never reads one back. Now `(password — filled, contents withheld)`, because
+      omitting the field renders an occupied box identically to an empty one.
+      W24 asserts over the WHOLE listing rather than the one entry, since a future
+      hoist onto a wrapper row would satisfy a per-field check and still leak.
+    - **What a field ACCEPTS.** `(required)` said a field must be filled and nothing
+      said with what, so a pattern-guarded or range-bounded input was discoverable
+      only by writing to it and reading the rejection — brute force against facts
+      the page had already published. Now `pattern= minlength= maxlength= min= max=
+      step= accept= inputmode= list= multiple` plus ARIA `valuemin/valuemax/valuenow`.
+      `format=` is the one SYNTHESIZED value and is a spec fact, not a widget
+      reading: HTML fixes each date/time input's wire format regardless of display,
+      so a German picker showing 29.08.2026 still takes 2026-08-29. **NOT taken:
+      their second branch, which reads `data-date-format` and jQuery datepicker
+      class names — the guess #24 deleted.**
+    - **A `<select>`'s options, inline.** The most explicitly declared enumeration in
+      HTML, previously reachable only by getting a write WRONG: the labels lived in a
+      function-local sample inside `fillDropdown`, capped at 6×40 chars, surfacing in
+      the failure message or after a pick had committed. `count=` is the true total
+      and is never cut, so the bounded text is not a silent loss.
+    - **Scroll DISTANCE.** The off-viewport note gave a direction with no magnitude,
+      so nothing distinguished a 200px scroll from a twelve-screen one. Now reports
+      viewport-heights below/above, in the unit the scroll action takes, derived from
+      document scroll geometry rather than from the entries so it stays right when
+      every off-viewport control sits in one band.
+
+    **PRICED BEFORE SHIPPING** (`tools/measure_adopted.py`, 26 frozen sites, both
+    variants on the SAME page load so run-order drift cannot align with variant
+    order): constraints+options cost **median 0.00%, mean 0.19%, worst 4.19%** of
+    listing chars — free on pages that declare nothing, and the worst case is the MUI
+    datepicker demo, which is exactly where `format=`/`min=`/`max=` is worth most.
+    **The first run of that script reported +0 on all 26 sites**, including a
+    `<select>` demo, and a too-clean number gets re-derived rather than believed
+    (#16): rows are INDENTED in the tree format and the `^ref_` anchor matched
+    nothing. Fold counting used `^\s*` already and was unaffected.
+
+    **A fifth change came out of my own fixture failing.** W25 exists because #19
+    says the render is the untested link — and it caught this change, not a previous
+    one: six inputs of DIFFERENT type (date, range, two passwords, text) folded into
+    one `6× input` and the constraints vanished into the fold. `shapeOf` keys on
+    tag + role + class but not `type`, and since the header states a type only when
+    every member shares one, the differing case printed **no type at all** — #27's
+    own complaint ("dropping the one property that decides how you interact with
+    them") surviving as silence rather than as a wrong label. `type` is now part of
+    the shape for `input`/`button` only, where HTML's enum decides what the control
+    IS; elsewhere it is a MIME hint or a list marker. **Cost: +0 fold groups and
+    +0.01% chars across 26 sites** — i.e. inert on this corpus, which contains no
+    form with mixed-type sibling inputs. Recorded as measured-harmless, NOT as
+    measured-valuable: #25's rule is that an ablation measures the code against the
+    sample and cannot measure the sample.
+
+    **CLOSED SHADOW ROOTS ARE CLOSED — limitation #2's last open case, and we now
+    beat their answer rather than copying it.** A closed root is unreachable from any
+    page-context walk: `el.shadowRoot` is null and there is no other handle. Their
+    answer is CDP `DOM.getDocument{pierce:true}`, which is more capable AND less
+    available — #12 refuses the attach tab-wide whenever another extension injects an
+    iframe, i.e. on exactly the password-manager login pages where the form must be
+    read. Two routes were rejected before the third: `chrome.dom.openOrClosedShadowRoot`
+    exists but only in the ISOLATED world, and the collector must run in MAIN, which
+    is how it reads `__abClickBound` (#18 measured that as 60% of the accuracy gap);
+    and redefining `Element.prototype.shadowRoot` would make all ~15 traversal sites
+    pierce for free while silently changing how a page feature-detects its OWN
+    encapsulation — S14d is the control that pins we did not do that.
+    What works is the trick already in the file: `listener_tag.js` wraps
+    `attachShadow` at document_start in MAIN world, so nothing can create a closed
+    root without handing us a reference. Nine traversal sites read
+    `|| el.__abClosedRoot`. **No debugger, so it works where theirs cannot.**
+
+    **THE NOVELTY FLAG, because `delta` is a mode and a flag is not.** browser-use
+    marks new elements with a `*[index]` prefix computed against the previous step's
+    node-id set. `delta=true` answers the same question but must be ASKED for, refuses
+    on scoped reads and navigations, and #30 found it inert for its entire life. A
+    per-row `(just appeared)` cannot fail that way and composes with folding, scoping
+    and both formats. Two deliberate divergences: the seen-set is MONOTONIC (an element
+    that scrolls away and back is not new — the question is "did my action create
+    this"), and only UNSCOPED reads seed it or emit it, since a scoped read would make
+    the next whole-page read announce the rest of the document as new. Nothing is
+    marked on a first read. `_line_ident` strips the flag, or every created element
+    would surface once as ADDED and again as ADDED+GONE the following read.
+
+    **AND THE FIXTURE HARNESS WAS LOADING NOTHING — 25 pages across 5 suites.**
+    Playwright's `add_init_script` only affects documents created AFTER it, and
+    `page.set_content` reuses the existing `about:blank`. So every fixture written as
+    `add_init_script(listener_tag.js)` then `set_content(...)` ran the tagger on
+    nothing and tested an untagged page, green throughout. Found only because S14 read
+    as broken when it was the harness that was — the same way #29's three vacuous
+    fixtures were found, which is why this one is a TEST and not a paragraph: **C14**
+    parses every `test_*.py` and fails on the pattern. It found 14 pages my first
+    hand-fix missed, in suites I had not touched. Nothing broke when all 25 began
+    tagging, which is its own small finding: no existing check depended on it.
+
+    Suites: 622 checks. New series — W22–W22d (declared constraints, with the
+    no-declaration negative control that keeps the cost at zero), W23/W23b (select
+    options), W24/W24b (password withheld but still distinguishable from empty),
+    W25 (the render link), W26–W26e (novelty, incl. the pre-existing-control and
+    quiet-on-re-read controls that make the flag mean anything), S14–S14d (closed
+    shadow roots, with the page-contract control), C14 (the vacuous-fixture tripwire).
+
+32. **THREE CAPABILITIES WITH NO EQUIVALENT, AND THE BATCH THAT FIRED BLIND.** The
+    second half of the browser-use port. #31 took what their SERIALIZER declares;
+    this takes what their TOOL SURFACE can ask that ours could not, and fixes the one
+    place we were strictly worse than their agent loop.
+    **`evaluate` was NOT ported, and should not be:** `javascript_tool` is the same
+    `Runtime.evaluate` plus `replMode` (top-level await, CSP-proof), so a second tool
+    would be a worse duplicate. The gaps were the questions with no answer at all.
+    - **`search_page` — grep over rendered text.** "Does this page mention X" cost a
+      whole `get_page_text`: up to 30,000 characters into context for one yes/no.
+      This was an inconsistency inside our OWN surface as much as a gap —
+      `read_console_messages` takes `pattern`, `read_network_requests` takes
+      `urlPattern`, and page text was the one buffer with no filter. Each hit is
+      attributed to the element that OWNS the text and carries its ref, from DIRECT
+      text-node children only: attributing to the nearest ancestor would report every
+      match once per level of nesting, and a page's outermost div owns all of it.
+      **Better than theirs on two axes:** it walks the composed tree (open roots and
+      the closed ones #31 captured) where theirs is a plain `TreeWalker` over
+      `document.body`, and it skips what the page is not rendering, so it cannot
+      answer with a hidden template or a closed menu's contents (Q2 is that control).
+    - **`query_elements` — CSS query and COUNTING.** "How many rows does this table
+      have" had no primitive at all: `find` scores over the COLLECTOR's entries, so
+      prose, table cells and everything the existence rules legitimately exclude are
+      outside its search space, and the 150-entry cap actively hides the answer. The
+      only route was `javascript_tool`, which #14 and #24 both treat as a
+      design-failure signal. `total` is reported separately and is **never capped**,
+      because counting is the point (Q6b). Pierces shadow roots; `href`/`src` are read
+      off the PROPERTY so they come back absolute.
+    - **`save_as_pdf`** — the only FULL-page artifact. `captureScreenshot` is
+      hardcoded `captureBeyondViewport:false` and screenshots live only in the
+      server's in-memory registry, so nothing could capture below the fold as a file.
+      ~30 lines over the debugger every trusted-input path already attaches.
+    - **`browser_batch` had no page-change guard**, which is browser-use's single most
+      transferable idea and the one place their loop was plainly better. Its own
+      docstring stated the hazard rather than guarding it. Now both of `multi_act`'s
+      layers: a STATIC set (`navigate`, `tabs_create_mcp`, `tabs_close_mcp`,
+      `javascript_tool` — arbitrary JS can rewrite the DOM, the same reason they mark
+      `evaluate` terminating), and RUNTIME detection via the `page_fingerprint` op
+      that already existed, comparing URL and element count around every step. On a
+      stop it NAMES the actions that did not run and says the refs are stale.
+      Plus a PRE-FLIGHT: a typo in `name` at index 3 used to be found after 0-2 had
+      already run, so irreversible actions landed because of a spelling mistake.
+      **A fingerprint that cannot be taken degrades to Layer 1** rather than breaking
+      a batch that would otherwise work.
+
+    **THE FIXTURES CAUGHT TWO OF MY OWN, both the "verify in both directions" kind
+    (#15).** B8 is the control that a settled page trips NEITHER guard — a guard
+    firing on everything is indistinguishable from one that works and would make the
+    tool useless. And B5b failed on wording: the stop message never used the word
+    **stale**, which is the vocabulary the rest of the surface uses for exactly this
+    (`refStalenessNote`, WebMCP's `navigated`), so an agent grepping its own context
+    for it would find nothing.
+
+    **P4 CAUGHT A DEFECT IN THE CODE I WROTE TO SUPPORT THIS.** `save_as_pdf` turns a
+    page TITLE into a filename, and my first sanitizer was `[^\w.()-]+` — ASCII-only,
+    so 東京の天気 would have saved as `-----.pdf`. Exactly the class #21 built that
+    auditor for, caught on the first run. It strips only what a FILESYSTEM forbids now
+    (path separators, control characters, the Windows-reserved set), which keeps every
+    script intact while still refusing traversal.
+
+    **All three ops are gated by omission from `UNGATED_OPS`** — they read page
+    content or render it to a file — and all three are named in
+    `test_permissions.js`'s GATED list, which is what proves the default held rather
+    than being assumed. **Note that suite currently reports `8 not-applicable (gate
+    off)`:** `ALLOW_ALL_ORIGINS = true` in `background.js` is set for stress testing,
+    so the consent half of it is dormant and CLAUDE.md's "default deny, per origin"
+    is not true of the loaded extension. The suite says so on every run rather than
+    passing silently, which is the right behaviour — but it is a deliberate decision
+    that should be re-made rather than drifted past.
+
+    **THE LIVE PASS FOUND TWO DEFECTS THAT 636 GREEN CHECKS DID NOT, both in
+    `search_page`, and both are the fixture-encodes-what-you-thought-of lesson.**
+    Verified against a real Wikipedia GDP table and a local probe page.
+    - **Context was empty whenever the match FILLED its own element.** Own-text is the
+      right ATTRIBUTION unit — attributing to the nearest ancestor would report every
+      match once per level of nesting — but it is usually the wrong CONTEXT unit,
+      because on any table or link list the element's whole text IS the match. Three
+      correct hits came back as three bare words `Luxembourg`, with `context_chars=60`
+      doing nothing, on exactly the page shape the tool exists for. The fixture passed
+      because it searched a sentence inside a `<p>`. Now it climbs to the nearest
+      ancestor containing MORE than the match — exact, not a size threshold — so a
+      table cell shows its ROW and a link shows its sentence, bounded at 4 hops so a
+      short page cannot walk to `<body>` and quote everything (Q1b).
+    - **A hit had no ref and no way to learn why.** mmids are injected by the
+      COLLECTOR, so nothing carries one until `read_page` has run on that document —
+      a first search returns correct hits that all read as un-actionable. It says so
+      now, rather than leaving the agent to infer that grep results cannot be clicked.
+
+    **Live-verified end to end**, on a build reloaded mid-session: every constraint on
+    its row (`pattern="[0-9]{5}" maxlength=5 inputmode=numeric`, `format=YYYY-MM-DD
+    min=… max=…`, `min=1 max=9 step=2`) with the un-declared field emitting nothing;
+    `value="(password — filled, contents withheld)"` beside an empty confirm field, so
+    filled and blank stay distinguishable and the secret appears in neither the listing
+    nor the 83 KB PDF; `count=4 options="Alabama | Alaska | Arizona | Arkansas"`; a
+    button inside a CLOSED shadow root listed with a ref and clicked, no debugger
+    attached; `(just appeared)` on the one element a click created and on none of the
+    eight that predated it; `query_elements` counting **238** Wikipedia table rows while
+    showing 3; a `display:none` canary correctly NOT matched; both batch guards firing
+    (`navigate always changes the page`, and an undeclared click caught at `30 -> 32
+    elements`) each naming the actions that did not run; a typo'd tool name refusing
+    with NOTHING executed; and — the control that matters most — a four-step read-only
+    batch running all four steps without tripping either guard.
+
+    Suites: 648 checks, and the runner's own drift note is what flagged every stale
+    count in this file. New — `tools/test_batch.py` (B1–B9, pre-flight and both
+    guards, with the settled-page and well-formed-batch controls), Q1–Q7b in
+    `test_widgets.py` (search and query, incl. Q1b for the context climb and the
+    hidden-text and invalid-selector controls), 5 router checks in `test_ops.js`
+    because #19 is explicit that the router is where features ship inert, and 3
+    additions to the GATED list.
+
+33. **OVER-FILTERING: MEASURED, AND IT IS NOT THE PROBLEM. What is, is that our
+    NOTES GUESS.** A live head-to-head against Claude-in-Chrome on a real app raised
+    the question this entry answers: are we missing controls because our existence
+    rule is too strict?
+
+    **The measurement that had never been run.** Every accuracy number in this project
+    compares ChromeBridge to the Chrome AX tree or MindAct's `cleaned_html`; nobody had
+    run **browser-use's own admission rule** over the same pages. Ported
+    `ClickableElementDetector.is_interactive` to JS and ran both across 18 frozen
+    sites. They admit 11,510, we list 7,995 — and the delta decomposes as:
+
+    | their rule admitting what we do not | share |
+    |---|---|
+    | `cursor-pointer` | **53.6%** |
+    | `icon-size-rule` (10–50px + any `class`) | **30.9%** |
+    | `interactive-tag` | 7.8% |
+    | `js-click-listener` | 1.9% |
+    | everything else | ~6% |
+
+    **84.5% of the gap is their two junk rules.** The icon rule's own samples convict
+    it: Hacker News' rank number `td "1."`, a datepicker separator `span "MM/"`,
+    `code "name"`. The `cursor-pointer` bulk is inherited-cursor descendants — the
+    thing #30 removed and measured at ZERO identity loss across 22 sites. Meanwhile
+    **we list 825 elements they would never admit**, and on `mdn_select` 1,184 against
+    their 782. Conclusion: do not loosen the collector; it would import their noise.
+
+    **AND I WAS WRONG ONCE ON THE WAY THERE, which is why the rule exists.** A second
+    probe reported 538 unexplained misses including GitHub's entire top nav
+    (`Platform`, `Pricing`, `Sign in`). All of them ARE listed — the probe compared
+    ELEMENT identity where the listing carries CONCEPT identity under a collapsed
+    sibling's ref. Third measurement bug of the session, after a `^ref_` anchor that
+    matched nothing in the indented tree and an mmid-PRESENCE filter that mistook
+    `_walkInject`'s stamping for "we listed it". #16's rule keeps paying for itself:
+    a result that flatters or damns the system gets re-derived before it is believed.
+
+    **THE REAL DEFECT IS THAT NOTES PICK A CAUSE.** Three incidents now share the
+    shape — #14's stale-ref message asserting "a navigation invalidated your refs"
+    (BBC hit it with no navigation), #23's cross-extension message asserting a
+    recovery was impossible that an agent had just performed, and now the aria-hidden
+    note. Live, on a real app, it fired at **257 elements** and concluded *"Nothing
+    here indicates an open dialog, so this is most likely a CLOSED menu/panel"* while
+    its own output listed an **open `role=menu` two rows below**. Two bugs in one:
+    `dialogOpen` does not cover a menu/listbox/popover, so the branch condition was
+    wrong; and the note then guessed. The comment directly above that block already
+    said *"state the FACT, list causes as causes, and never assert a recovery the tool
+    has not verified"* — the rule was written down and the code under it did the
+    opposite. It now looks for the popup surface in what it is ALREADY printing (a
+    declared role, rendered, in the listing), names it when present, and otherwise
+    gives three causes that need three different responses.
+
+    **C15 is the tripwire, and it found three more.** It flags hedged-assertion
+    vocabulary inside emitted strings, excluding enumerations and notes that declare
+    themselves heuristics. Fixed: `fill_form`'s stale-ref message asserting *"the page
+    probably navigated"* — **#14's exact sentence surviving in a second function**,
+    when a client-side re-render or a frame reload do it equally; the partly-filled
+    refusal blaming a mid-fill re-render when a disabled control or a rewritten value
+    do it too; and the covered-element message saying *"the blocker is probably what
+    you need to handle first"* when the three shapes it can be — modal, toast, sticky
+    bar — need OPPOSITE responses. Verified in both directions: C15 passes clean and
+    FAILS on a planted single-cause note. One false positive taught it a rule worth
+    keeping — `PROBABLY DECORATION — a size/shape/label heuristic (never a spec rule)
+    judged them non-content` is the honest form, and flagging it would push the
+    codebase to delete the word rather than the guess.
+
+    **THE ACQUISITION GAP, closed where it can be.** We derive AccName in JavaScript,
+    which is where #28's separator bug (`<span>4</span><span>9秒39</span>` reading as
+    the wrong NUMBER) and #29's shadow-text fix came from. Chrome implements the same
+    spec correctly and will hand the result over — over CDP only. `accessible_names`
+    is **attach-only and opt-in**: it never attaches by itself, because paying an
+    infobar on every read to improve a minority of rows is the wrong trade, and
+    because #12 refuses the attach outright on exactly the password-manager pages
+    where a login form most needs naming. When the debugger is ALREADY attached (any
+    trusted click, `computer`, `javascript_tool`, `save_as_pdf`) the data is two CDP
+    calls away. The join is by `backendNodeId` from ONE `DOM.getDocument{pierce:true}`
+    — a `DOM.resolveNode` per node would be a round trip each and unusable at a few
+    hundred — and `pierce` means a name can come back for an element only reachable
+    in a closed shadow root. It reports only controls the listing ALREADY carries,
+    since Chrome names plenty we do not list and those are not actionable; default
+    `only_unnamed=True` answers the question that motivated it (a live run hit **8
+    buttons with no accessible name of any kind**), and `only_unnamed=False` compares
+    Chrome's name against ours where we want to check one.
+
+    Suites: 649 checks. New — C15 (the note tripwire, with its planted-violation
+    control). Probes: `scratchpad/admission_ab.py` ports their rule for the A/B.
+
+34. **TWO PROTECTIONS THAT CANCELLED EACH OTHER, AND A BUG THAT TURNED OUT NOT TO
+    EXIST.** Both came out of testing the #33 work live rather than from a suite.
+
+    - **`Accessibility.getFullAXTree` returns an EMPTY node list — not an error —
+      until `Accessibility.enable` has run.** The first live call to
+      `accessible_names` reported "Chrome returned no accessible names for any element
+      on this page" on a page with 54 named controls. Nothing offline can catch this:
+      every suite injects page functions directly and none speaks CDP. The op now
+      enables `DOM` and `Accessibility` first and returns `axNodes` / `mapped` counts,
+      so the three ways it can come back empty — a dead CDP domain, no `read_page` yet,
+      a broken backendNodeId join — are distinguishable instead of one sentence
+      covering all three.
+      **What it then measured is the useful part: our derivation agrees with Chrome on
+      49 of 54 names exactly.** The five differences are one shape — Chrome's name
+      absorbs a nested button's `aria-label` ("Why this deadline: …") where ours stops
+      at the link's own text. Per AccName 2F Chrome is right and we stop short. That is
+      now a measured characterisation of the gap rather than an assumed one, and it is
+      a completeness difference on one shape, not a general weakness.
+
+    - **`_truncate`'s two payload protections cancelled, and the listing vanished.**
+      #13's fallback drops the legend when a plain slice would return no rows — but its
+      guard asked whether the RAW SLICE reaches a row, while `_whole_members` (added
+      later, for half-written rows) then removes that row when the cut left it
+      incomplete. So on a page whose first row is large: the guard sees a row, declines
+      to drop the legend, and the slicer deletes the only row there was. Reproduced
+      offline on an app-shell page whose opening row is 865 chars — **at
+      `max_chars=1200` it returned 646 chars of legend and ZERO rows, without even
+      spending the budget it had.** T1–T21 all passed throughout, because none of them
+      has a first row long enough to trigger it. The guard is now evaluated on what
+      will actually be RETURNED. And when not even the first row fits, it says
+      `NOTHING could be shown` and names the blocker — **my first version of that
+      message blamed the SHORTEST row, which was false**: rows print in document order
+      and the loop stops at the first that does not fit, so quoting a size that plainly
+      fits inside the stated budget reads as a bug in the tool. It names the first row
+      now (T22/T23).
+
+    - **`(current)` on three rows at once is NOT a defect.** A live agent reported two
+      `(current)` rows in one tab strip and I repeated it as a bug and ranked it for
+      fixing. Reproduced three ways: a `<span>` inside a current `<a>` yields ONE
+      `(current)` (the collapse absorbs it), a logo link with no `aria-current` is
+      correctly NOT marked, and two rows appear only when the page genuinely sets
+      `aria-current` on two elements. The app really does declare three. The listing is
+      reporting what the page says, and picking which one is "really" current would be
+      exactly the heuristic #27/#28 removed. Recorded as investigated-and-rejected so
+      nobody re-opens it.
+
+    **Still open from the same live run, unfixed and ranked:** the app-shell container
+    row is `find`'s FIRST match on component-heavy apps — ~2,500 characters of sidebar,
+    dashboard and activity feed as one "match", pushing the real answer to second place
+    (worse than #33 recorded, which had it merely competing); and `computer` screenshots
+    still intermittently take ~46s against a 60s timeout.
+
+    Suites: 654 checks. New — T22/T23 (first-row truncation), AH1–AH3 (the aria-hidden
+    note, with the no-popup control).
+
+35. **A REPEAT OF THE SAME LIVE TASK, WITH THE OTHER TOOL AS A DRIFT CONTROL — and
+    the control is what stopped me claiming a win.** Same investor-creation task on the
+    same app, both agents in parallel again so conditions matched the baseline.
+
+    | | baseline | rerun |
+    |---|---|---|
+    | ChromeBridge | 2m08s / 27 calls | **2m03s / 26 calls** |
+    | Claude-in-Chrome (control, UNCHANGED code) | 3m25s / 29 calls | **2m38s / 24 calls** |
+
+    **The control improved by 47s and 5 calls without a line of its code changing** —
+    last run it lost 30s to a CDP screenshot timeout that did not recur. That is the
+    drift floor, and our 5s / 1-call gain sits well inside it. **The fixes bought no
+    measurable speed.** Run alone, ChromeBridge would have "improved" and I would have
+    reported it. Two more facts worth not spinning: they used FEWER calls than us this
+    time (24 vs 26), and at ~25 calls of mostly navigation neither representation is the
+    bottleneck. What DID change is capability — `query_elements` unblocked the task
+    twice where `find` returned `NO CONFIDENT MATCH` for a query that was a verbatim
+    match for the button's own label.
+
+    **THE CONTAINER-ROW FIX FROM #34 HAD NOT LANDED, and only the live run said so.**
+    The blob was still `find`'s FIRST result at ~1,300 chars. The fix keys on
+    `subtreeName`, whose contributor count looks at ONE level — and my fixture gave the
+    shell several direct children while real apps are `<div id=root><div class=layout>
+    …everything…</div></div>`, one contributing child, count 1, label kept. The fixture
+    encoded the shape I thought of. It now descends while exactly one child contributes
+    text, stopping at the child with its OWN direct text — which is precisely the
+    demoqa react-select case the contributor count was written to protect (verified on
+    all three shapes). **Confirmed live after reload:** the identical query now returns
+    `ref_64 | button "Investor Relations Hub"` first and the blob does not appear at
+    all, where it previously led with ~1,300 characters of sidebar, dashboard and
+    calendar grid.
+
+    **TWO DEFECTS THE RUN FOUND, both fixed in their GENERAL form rather than patched.**
+    - **A message named a tool that does not exist.** `fill_form` said "re-observe with
+      `get_dom_fields`" — not a tool, not an op, not anything. The general problem is
+      that the extension writes agent-facing prose while only the SERVER knows the tool
+      vocabulary, so any message can name something the reader cannot act on, and
+      renaming a tool silently invalidates every message that mentions the old name.
+      **C16** validates all THREE reference shapes against the real tool list — bare
+      after an instruction, backticked, and call form. That matters: a survey found ZERO
+      bad references in the backtick and call forms, the two I checked first, while the
+      live leak was the bare form. **The planted control failed twice before it fired**
+      — my first two versions derived the candidate set from router `case` names, and
+      `get_dom_fields` is a PHANTOM that is not an op either. Restricted to snake_case,
+      because `click` and `screenshot` are tool names AND ordinary English and nothing
+      mechanical separates "take a screenshot" from a reference.
+    - **`search_page` false-negatived the record it had just created** — page 2 of a
+      client-paginated table. The wording was the small half; the sharp half is that
+      **`query_elements` counting RENDERED rows is a wrong answer**, and counting is
+      that tool's whole purpose. ARIA declares exactly this — `aria-rowcount` on a grid,
+      `aria-setsize` on a set member — so the result now LEADS with a warning naming
+      both numbers when they disagree (heading it, not trailing it: a caller who asked
+      "how many" reads the first line). **Stated rather than buried: the table that
+      caused the defect declares NEITHER**, rendering "Showing 1 to 25 of 39" as text —
+      and parsing that is a wordlist while detecting pagination controls is a guess, so
+      neither belongs in this path. The undeclared case is covered by the message, which
+      now names pagination and lazy-loading among its causes and points at filtering in
+      the app, which is what the agent had to work out unaided. Q8b is the control that
+      a table declaring nothing acquires no caveat.
+
+    **What the run confirmed working:** #33's aria-hidden note named the popup surface
+    from its own output — *"An open role=menu IS listed below, which is consistent with
+    (a)"*, then the same for `role=dialog`. And `fill_form`'s submit detected the button
+    changing to "Segmenting…" and told the agent to WAIT rather than declaring success
+    or failure, which is the right answer to an async write.
+
+    **Confirmed still open, as predicted before the run:** `find` has no readiness
+    signal, so it failed on that verbatim label match while the page was mid-render with
+    nothing to distinguish "not there" from "not there yet". `read_page` has the banner;
+    the tool you reach for WHEN read_page disappointed you does not.
+
+    Suites: 659 checks. New — C16 (tool-reference validity, fired on all three shapes),
+    Q8/Q8b (declared total vs rendered count, with the declares-nothing control).
+
+36. **EIGHT AGENTS, THIRTY-TWO SITES, ONE MEASUREMENT HARNESS — and the harness had
+    the same defect it was finding.** Every review before this asked a live agent to
+    do a task and report what hurt. This one ran the collector over 32 frozen sites
+    and handed each reviewer the same mechanical record — the listing, the entry and
+    row counts, the drop-reason histogram, unrecorded drops, and a screenshot — so
+    the human half of the job was the part no metric does: read the listing beside
+    the pixels and ask whether an agent could act on this page. `tools/inspect_site.py`.
+
+    **THE HEADLINE IS A NEGATIVE RESULT AND IT IS THE IMPORTANT ONE.**
+    `lost_identities` — a rendered, genuinely-visible, not-declared-hidden control
+    whose name appears nowhere in the listing or the structured array — was **EMPTY
+    ON ALL 32 SITES**: component libraries, RTL Arabic, Japanese, Korean, Cyrillic,
+    data grids, canvas apps, framesets. 57 marked cuts, 0 unmarked, 0 mid-grapheme,
+    and zero `\uXXXX` escapes or mojibake across ~44,000 characters of non-Latin
+    listing. #34's app-shell container blob was gone on every site.
+    **Two caveats the reviewers raised themselves, and they are right:**
+    `dom_controls_rendered` counts only form tags, so on div-built apps the
+    guarantee is much weaker than the number looks (vscode.dev: 13 candidates for
+    114 entries); and java_api's is **vacuous** — the probe runs in the frameset
+    document, where there are no controls at all.
+
+    **THE VISIBILITY TEST IS THE WHOLE MEASUREMENT, so it is spelled out in the
+    tool.** A bare `checkVisibility()` does NOT check `visibility:hidden` or
+    opacity. The first version of the probe used it and reported **3.81% identity
+    loss across 12 sites**; with the options passed, the same probe reports
+    **0.00%**, and every element it had "found" was one the collector had correctly
+    dropped as not-visible. #16's rule again: a result that damns the system gets
+    re-derived before it is believed.
+
+    **SIX PRODUCT DEFECTS, each general and each pinned.**
+    - **`<fieldset disabled>` was invisible to `(disabled)`.** `el.disabled`
+      reflects only the element's OWN attribute, and HTML's actually-disabled state
+      is inherited from an ancestor fieldset. On Bootstrap's own Disabled-forms
+      example, 3 controls **and the submit button** were presented as live. The
+      legend makes absence load-bearing, so this is the worst direction to be wrong
+      in. `:disabled` is the selector that implements the spec rule (W27–W27d, with
+      the fieldset-enabled control).
+    - **`(active)` was emitted and never in the legend.** habr's only state token
+      was `(active)` while the legend enumerated four notations appearing nowhere —
+      #13's `section=` defect in a second place (LG1/LG1b).
+    - **A menubar read as an open menu.** My own #33 fix mapped any `role=menuitem`
+      to "something is open" with no menubar check, so on vscode.dev it told the
+      agent to dismiss something on a page with nothing open. It would have fired on
+      every menubar page, and C15 cannot catch it because the sentence is
+      declarative (AH4).
+    - **A data-table hint printed a capped number as the total** — headlessui said
+      6 where the tree printed 12, primevue 6 against 17. The comment directly above
+      it documents fixing the identical symptom once already.
+    - **The `options=` separator occurs inside real option text.** python.org ships
+      options literally named `"Greek | Ελληνικά"`, so splitting on ` | ` gives 26
+      phantom options against `count=13`. Each option is quoted separately now.
+    - **`find` printed the app-shell blob** — confirmed gone on all 32.
+
+    **AND TWO IN THE HARNESS I HAD WRITTEN THAT MORNING, both the shape it was
+    finding.** `PERMITTED` restated `test_ledger.py`'s `SPEC_DELETES` and had
+    already drifted by `outside-viewport`, producing a false "a rule started
+    deleting again" on **six sites across four agents**; it now READS the tripwire
+    rather than restating it (#21's one-concept-two-spellings, where the concept
+    already had three). And the unrecorded-drop list was capped at 8 with no total,
+    so a reviewer read **8** where the real number was **500** on syncfusion and
+    **352** on primevue — a capped number presented as a total, which is exactly the
+    product defect it had just caught two rows above.
+
+37. **THE REVIEW'S RESIDUAL LIST, WORKED DOWN — and every one of them turned out to
+    be a rule the codebase already states somewhere else.** Nine defects, no new
+    vocabulary, no new thresholds. Each was found by measuring the site the reviewer
+    named rather than by reading the code, and three of them were NOT the defect as
+    reported: what was actually wrong sat one layer down.
+
+    **`innerText` IS NOT "WHAT IS RENDERED", and that cost eBay a quarter of its
+    listing.** HTML defines the `innerText` getter to fall back to `textContent`
+    when the element is **not being rendered** — so `_contentName`, which reads each
+    element child's innerText and believed it was reading the screen, read a
+    `display:none` child and got its entire subtree. Measured: eBay's nav `<li>` has
+    three children — a link (6 chars), an expander (14) and
+    `div.vl-flyout-nav__flyout` with `display:none`, whose innerText returns **339
+    characters of CLOSED MEGA-MENU**. One fold line of **3,392 characters, 26.3% of
+    the whole listing**, presenting a menu nobody can see as the nav item's
+    identity. The missing spaces were the tell: textContent does not insert the line
+    breaks innerText does. Every collapsed accordion, closed dropdown panel and
+    hidden tab panel on the web donates its text the same way.
+    One helper (`_namable`) now answers "may this contribute to a name" for both
+    `_contentName` and `_deepText`: not rendered (with `visibilityProperty`, since
+    the BARE call misses `visibility:hidden` — the same hole #36's probe fell into),
+    or a `<style>`/`<script>`/`<template>`/`<noscript>`. **Priced by ablation:
+    eBay 13,009 → 9,772 chars (−24.9%)**, and `lost_identities` stayed 0 across 26
+    sites — the number that decides whether removing text is safe.
+    **`opacityProperty` is deliberately not passed:** opacity:0 content is still in
+    the accessibility tree, so excluding it would be our judgement, not the page's.
+    **AND HALF OF THAT HELPER MEASURED AS DEAD WEIGHT — asked because the question
+    was put directly: are these general fixes, or site-specific patches?** Ablating
+    the `<style>/<script>/<template>/<noscript>` tag list changes the corpus by
+    **ZERO bytes** (grafana byte-identical at 6,771 with and without, deterministic
+    over three runs), because those elements carry `display:none` from the UA
+    stylesheet and the visibility test already rejects them — including the SVG
+    `<style>` that motivated it. So the grafana fix is the composed-walk routing,
+    NOT the list, and an earlier 6,882 reading that suggested otherwise did not
+    reproduce. By #27's precedent that would make it dead code to delete. It is kept
+    for the case the corpus does not contain and #25 warns about: a page that
+    RENDERS its own stylesheet (`style { display: block }`, which CSS-teaching and
+    live-editor pages do), where the visibility test correctly says "rendered" and
+    the text still is not a name, because AccName excludes style and script content
+    however it is painted. NR2c pins exactly that and **fails with the list
+    ablated**, so it is a spec rule with a test rather than a list someone thought of.
+
+    **A `<style>`'S CSS IN THE SLOT THE LEGEND CALLS "IDENTITY".** Grafana's nav item
+    listed as `109:".cls-1{fill: currentColor;} AI & machine learning"`. An SVG
+    element has **no `innerText` at all**, so the name path fell through to raw
+    `textContent` and swallowed the inline stylesheet. Filtering that child was not
+    enough — the offender is a DESCENDANT of it — so the non-HTML case goes through
+    the composed walk, which applies the rule at every level. **Raw `textContent` is
+    now never a name.**
+
+    **A SHADOW HOST HAD NO NAME OF ITS OWN.** #29 taught the child loop to cross a
+    shadow boundary and never asked the same question of the node being NAMED, whose
+    light children are empty. Measured on caniuse: every `<ciu-version-support>` cell
+    renders "4 - 28 : Not supported" from its shadow root and listed as a bare
+    `ref_149 | ciu-version-support`, with the version and the verdict — the entire
+    content of a support matrix — on no row at all. The reviewer read this as
+    cross-parent folding separating the browser name from its version cell; the tree
+    had them correctly nested the whole time, and what was missing was the name.
+    Now `ciu-version-support "29 - 56 : Not supported See notes: 1"`, and "which
+    browsers don't support this" is answerable. **+19.8% on that page, and worth it.**
+
+    **THE TREE'S STRUCTURE WALK WAS LIGHT-DOM-ONLY WHILE COLLECTION IS COMPOSED —
+    and a fixture I wrote for something else is what found it.** Six walks in
+    `_treeLines` climbed `parentElement`, which stops dead at a shadow boundary
+    (`parentNode` there is a DocumentFragment), so shadow content could never nest
+    under its host and an identical host/child pair could never collapse. One of the
+    six already did the composed walk by hand — #21's one-concept-two-spellings, in
+    the same function. All five others now use the existing `composedParent`, which
+    crosses shadow hosts AND frame boundaries.
+
+    **#18'S ASYMMETRY, THIRD INSTANCE: the off-viewport tally re-asked "is this a
+    control" with a TAG LIST.** One line above a drop that used the collector's own
+    rule, `_real` was `a|button|input|select|textarea|INTERACTIVE_ROLES` — a fourth
+    opinion. Measured on Syncfusion's data grid: **544 elements dropped
+    `outside-viewport`, 449 of them `td[role=gridcell]`/`th[role=columnheader]`**
+    parked off the right edge of a wide grid, and the page's only spatial note read
+    *"4 interactive element(s) are outside the viewport HORIZONTALLY"* — under-
+    reporting by ~125x, silently, with half the grid's columns in the missing set.
+    Everything reaching that line has already passed `isInteractive`, which since #28
+    admits only what the document declares, so the second vote removed the report
+    rather than any noise. **If it was worth dropping it is worth counting.** Now
+    "520 more … BELOW" and "24 … HORIZONTALLY".
+
+    **AND THEN THE ADVICE HAD TO CHANGE TOO.** "Scroll sideways and re-observe" is
+    only a recovery if the DOCUMENT scrolls; Syncfusion's off-screen columns live in
+    the grid's own scroller, the document is exactly one viewport wide, and a window
+    scroll returns an identical listing. That is the #23/#33 defect — a tool
+    asserting a recovery it has not verified. Both axes now check
+    `scrollWidth/scrollHeight` against the client box, the same source as the
+    viewport-heights magnitude already printed beside them, and say so when the page
+    cannot move: reach them by ref, because acting on a ref scrolls its own
+    container into view.
+
+    **`title` IS AN ACCNAME SOURCE; THE HTML `name` ATTRIBUTE IS NOT ONE AT ALL.**
+    `name` is the key the form posts under, and it was ordered FIRST — so a field
+    that declares its label lost it to an ASCII identifier. Measured on Naver:
+    `<input name="query" title="검색어를 입력해 주세요.">` listed as `name="query"`, so
+    the only label a Korean reader sees was replaced by a developer token and an
+    agent searching in Korean found nothing. Second half of the same fix: the
+    `hasText` guard that stops a link being named after its tooltip (AccName 2F,
+    correct) was applied to form controls too — where the element's own text is
+    NEVER its name, because a `<select>`'s innerText is its option list. So every
+    titled `<select>` on the web had its title suppressed by exactly the content the
+    spec forbids using.
+
+    **A ROW LISTED THE SAME REF TWICE.** The collapse loop walks
+    `Array.from(keep)`, a snapshot its own body deletes from, so an element already
+    folded away was still processed and deposited its ref onto a THIRD node's list,
+    which the survivor later absorbed wholesale. Traced on nytimes, chain
+    3146 > 3147 > 3148: (1) 3146 absorbs 3147, (2) 3147 — **already gone from
+    `keep`** — folds into 3148, (3) 3146 absorbs 3148 and its list, giving
+    `[3147, 3148, 3147]`. Printed as `ref_3146 ref_3147 ref_3147 ref_3148`, 8 rows
+    on nytimes and 3 on Yahoo Japan. Nothing was lost; the row claimed more distinct
+    targets than exist. Fixed at the cause with a `keep.has(el)` guard, and the emit
+    dedupes as an INVARIANT rather than as the fix (#28's FIRST-REASON-WINS shape).
+
+    **"ICON" WAS A CLAIM ABOUT THE ELEMENT AND NOTHING TESTED IT.** The one row that
+    prints no identity said `(unlabeled-icon)`, asserting a shape — small,
+    glyph-bearing — that was never checked, and three reviewers found it wrong on
+    three pages: Excalidraw's decorative logo, tldraw's **EMPTY 1280x1600 toast
+    container** (an "icon" the size of the viewport), and six 4px vscode splitter
+    hairlines. Whether an element renders graphics IS checkable — an `<svg>`,
+    `<img>`, `<canvas>` or `<picture>` in its subtree, a CSS background-image, or an
+    icon font's generated `::before`/`::after` glyph — so the marker now states only
+    what is known, `(unlabeled)` otherwise, and the legend names whichever token
+    actually appears (#13). The icon FOLD is keyed on it too, so a palette of glyphs
+    is never pooled with a run of nameless containers: two different things needing
+    two different recoveries.
+
+    **`near=` FIRED BACKWARDS, FROM THREE PASSES THAT DID NOT KNOW ABOUT EACH OTHER.**
+    The hint is documented as "a HINT for unnamed fields" and was computed for FORM
+    fields only, so it never reached the rows printed with no identity at all — an
+    unnamed `<button>` is an unnamed field in every sense the legend means. It now
+    reads the `iconOnly` outcome instead of re-deriving "does this have a name" a
+    second way. Meanwhile the hint it DID produce frequently distinguished nothing:
+    on DataTables six column headers each carried `near="Name Position Office Age
+    Start date Salary"` — one table row repeated six times, 12% of that listing —
+    and six pager buttons each carried the pager's own roster beside labels that
+    were already "1".."6". Three rules, all decidable from the data:
+    (a) the duplicate-label pass counts **distinct SPOTS, not entries**, since #28
+    stopped the container rules deleting and one control is now routinely three
+    nested entries with the same label; (b) it assigns nothing when every member's
+    candidate hint is the same string; (c) one final pass over every source — a hint
+    shared by two or more rows that HAVE their own identity is dropped from all of
+    them, while a row with no identity keeps whatever it can get. **DataTables
+    7,207 → 6,369 chars (−11.6%), and the three hints that survive all do work**
+    (`near="CardView Plus"` vs `near="Editor Plus"`).
+
+    **THE OVERFLOW LIST WAS NOT IN THE ORDER IT CLAIMED.** `OMITTED BUT ACTIONABLE`
+    said "same order as the page" while being sorted by y then x, so a two-column
+    layout came out zipped: on the Java API docs
+    `555:"AbstractTypeVisitor6" 163:"javax.imageio" 557:"AbstractTypeVisitor7"
+    165:"javax.imageio.event"`. Document order is available — `out` arrives in
+    composed-tree walk order and the sort replaces it — so it is captured before the
+    sort and the list says `document order`. And an entry with no resolvable name
+    emitted a **bare integer**, half the list addressing nothing the reader could
+    identify; it now falls back to the tag and role, which cost a word and are the
+    same vocabulary the rows above use.
+
+    **ONE ADDITION, because it was the last thing the page declares that we threw
+    away.** The collector already RESOLVES `aria-describedby` / `aria-errormessage`
+    — #29 used them to keep help text OUT of `value=`, replacing two English
+    class-name substrings — and then discarded the text. So a form could state the
+    rule a field enforces, or why the last submit was rejected, and the listing
+    showed a field with no explanation while `fill_form`'s failure path went hunting
+    for the same nodes. Now `help=` and, while the field is `aria-invalid`, `error=`
+    — labelled separately because the two need different responses, and gated on the
+    invalid state because a stale error node is present in the DOM at all times.
+    **Priced by ablation across 8 sites: +0.87% worst case (a Bootstrap forms demo,
+    which is where it is worth most), 0.00% median** — the same shape as #31's
+    constraints.
+
+    **MEASUREMENT NOTES.** `lost_identities` is **0 on all 26 replayable sites** in
+    the final state, which is the number that licenses removing text from names.
+    A 30-site before/after showed −25.3% total, and **that attribution was wrong**:
+    the baseline was the last COMMIT, which predates a session of uncommitted work,
+    so headlessui's −83.8% (a 22,319-character `div` label — an entire documentation
+    page as one element's name) belongs to the earlier container-label fix, not to
+    this one. Targeted ablation is what separated them. Two sites remain
+    non-deterministic on replay and were not chased (`wikipedia_ar` moved 3.8% with
+    the code held constant); they are among the 18 named in #16.
+
+    Suites: 693 checks. New series — NR1–NR2b (non-rendered nodes contribute no
+    name, with the rendered-sibling and sr-only controls), SH1/SH1b (a host is named
+    by its shadow content, and not twice), TA1–TA1c (title over the wire key, with
+    the no-title control), UI1–UI1c (icon is a fact, and the legend follows),
+    NB1/NB1b (`near=` where it is needed, gone where it distinguishes nothing),
+    HD1–HD1d (help=/error=, with the declares-nothing and stale-error controls),
+    DR1 (no repeated ref), OV1–OV1c (count what the drop removes; advise only a
+    scroll the page can perform), CT1/CT1b (document order, typed refs).
+
+38. **THE BROWSER IS 4% OF A TOOL CALL — so the lever is turns, not tokens.** A
+    live head-to-head against Claude-in-Chrome (3 tasks, both arms launched
+    together so drift could not align with the arm) raised the question this entry
+    answers: where does the time actually go?
+
+    **THE DECOMPOSITION, by differencing so my own model turn cancels.** Three
+    batches on one live page: `turn + 1 read_page + js` = 4,253 ms, `turn + 7
+    read_page + js` = 6,193 ms, `turn + 7 get_url + js` = 5,909 ms. `get_url` does
+    no page work at all — it is ungated and reads tab info — so the three solve to:
+
+    | term | cost | share of a tool call |
+    |---|---|---|
+    | model turn | ~3.6 s (benchmark subagents: 7–13 s) | **92–97%** |
+    | bridge round trip | ~162 ms | ~4% |
+    | DOM collection | 40 ms this page; 239 ms median heavy; 1,640 ms worst (java_api, 5,850 entries) | ~1% |
+
+    **I published 283 ms for the round trip first and it was wrong** — the batch
+    takes a `page_fingerprint` after every step, so a 7-step batch is 16 bridge ops,
+    not 7. Re-derived at 162 ms. #16's rule, on my own number.
+
+    **What this means for a year of representation work, stated plainly:** the
+    subagents spent ~12k tokens per call, of which our listing is 1–3k. Halving the
+    listing saves ~10% of prefill; halving the TURNS saves ~50% of everything.
+    #26's −37% was real and bought correctness and reach — it is simply not the
+    axis that moves wall clock. The same arithmetic answers the browser-use
+    question: a tight loop with a small model has a `T_turn` of maybe 300–800 ms
+    against our 3.6 s, and nothing in the collector touches that.
+
+    **TWO CHANGES, both decided from each call's own input rather than a tool list.**
+    - **A page change stops the steps that NAME A REF, not all of them.** The
+      guard's own justification is that the remaining steps "were planned against
+      the previous page, with refs and coordinates from before it" — and
+      `read_page(tabId=…)`, `get_url`, `search_page`, `query_elements` and `find`
+      plan nothing against it. So `navigate -> read_page`, the commonest two-step
+      sequence there is and used by every agent in the benchmark, was ending the
+      batch for no reason and costing one whole agent turn per navigation. Whether a
+      call consumes a ref is decidable from its input (`ref`, `ref_id`,
+      `submit_ref`, `coordinate`, and `fields` because fill_form's KEYS are refs),
+      so this needs no list of "safe tools" to drift the moment a parameter is
+      added. The stop now fires AT the ref step rather than at the navigation, and
+      says the earlier steps ran so their output is good.
+    - **The fingerprint is a round trip, so it is taken only where its answer can
+      change what happens next.** Layer 2 ran after every step; a batch of N cost
+      2N bridge ops and half were asking whether a READ had changed the page. Now
+      taken only when the next step names a ref. **Measured in the suite: four
+      observations take 0 fingerprints, where the old path took 4.**
+      Second-order and deliberate: the baseline is **no longer advanced** after a
+      clean comparison. It used to reset every step, so two sub-threshold changes in
+      a row tripped nothing; the refs were planned against the page as it was when
+      the batch started, and that is the only baseline they can honestly be compared
+      against. B10c pins that a change early in a batch is still caught at the ref
+      step.
+
+    **FOUR TESTS ENCODED THE IMPLEMENTATION AND HAD TO BE REWRITTEN — the honest
+    kind.** B5/B5b/B6/B7 used a ref-free `fake_tool` as the stand-in for "an action
+    that must be blocked", which was only ever true because the old rule stopped
+    EVERYTHING. Their invariant — a step planned against the old page must not fire
+    — is unchanged and is what they assert now, against a new `fake_act(tabId, ref)`
+    recorder. Same shape as #30's TR8d. **B10b is the half that makes B10 mean
+    anything:** "we never fingerprint" would also pass B10 while deleting the guard,
+    leaving the suite green over a tool that fires blind — the exact defect
+    `test_batch.py` was written for. Verified by ablation: with the ref test forced
+    to `True`, B5c/B5d/B10 fail and B10b still passes.
+
+    **LIVE-VERIFIED, and the verification corrected my own estimate.** One batch of
+    `navigate -> read_page -> query_elements` ran all three steps where the old rule
+    dropped the last two: three turns collapsed to one. The boolean-attribute fix
+    landed in the same call (`<input ref_780> disabled="" type="checkbox"`, while
+    the two disabled only by fieldset inheritance correctly printed nothing).
+    **But lever 2 is worth far less than I claimed.** Measured through the new
+    `sw_info` readout — `bridge_ms_total` 613.9 -> 714.1 minus the probe's own
+    3.1ms = **97.1ms for four reads, 24.3ms each, zero fingerprints**. The old path
+    would have added five fingerprints at ~2-3ms, i.e. ~110ms. So the COUNT halves
+    and the TIME falls ~12%, not the ~50% "half the round trips" implies: a
+    fingerprint is an order of magnitude cheaper than a read_page. Lever 1 is the
+    whole win, because it saves model TURNS (~3.6s) rather than milliseconds.
+    Stated so it is not quoted wrongly later: the ~162ms/op derived on Windows and
+    the ~24ms here are NOT the same quantity — that was end-to-end differencing
+    including Python-side work, this is the WebSocket leg alone, on another OS.
+    **And the stale-schema trap was visible for once:** after the reconnect
+    `sw_info` carried the bridge-timing block; before it, the loaded description
+    ended at "destroys every trusted-input session". Changing a docstring is what
+    makes #27's silent failure detectable from inside.
+    One honest consequence of lever 1: reading immediately after a navigation can
+    catch an unsettled page, and it did — the readiness banner fired with "1 network
+    request(s) in flight", which is #15 working rather than a regression.
+
+    **Also: the first full-suite run on macOS.** CLAUDE.md has said "macOS/Linux is
+    untested end to end" since #17; the suites now run 18/18 green on Darwin 25.6
+    (Python 3.12, Playwright 1.63) in 37.5s against ~80s on Windows. That is the
+    SUITES, not a real Chrome — the extension side is still Windows-only in
+    practice, and the claim in the docs should stay "untested" until someone drives
+    a live browser here.
+
+    Suites: 703 checks. New — B5c/B5d (ref-free steps survive a navigation; a ref
+    step after them does not), B10/B10b/B10c (the fingerprint is skipped, the
+    control proves it is not skipped when a ref follows, and an early change is
+    still caught).
+
+39. **A CLEAN HEAD-TO-HEAD SAYS WE ARE A TIE — and the run's real yield was a
+    tool of ours that had been lying since #32.** The previous comparison (#38's
+    sibling run) was unusable twice over: six agents shared one Chrome and
+    corrupted each other's tab groups, and I had written the tasks myself, on
+    home ground. Both were fixed mechanically rather than by resolving to do
+    better. Tasks were written by an agent told only "write four two-hop browser
+    tasks", with no knowledge that any toolset was under test; ground truth came
+    from an independent headless Chromium; runs were SERIAL, one agent at a time,
+    with the arm order rotated per task (#19's interleaving, applied to a
+    drift-vs-contamination tension rather than to a threshold sweep).
+
+    | task | ChromeBridge | Claude-in-Chrome |
+    |---|---|---|
+    | PEP index -> PEP 693 / 2023-10-02 | 5 / 33.7s | 7 / 53.3s |
+    | IANA -> RFC 7725 / Feb 2016 | 5 / 40.7s | 6 / 79.6s |
+    | SI base unit -> mole / 6.02214076x10^23 | 5 / 43.1s | 5 / 54.9s |
+    | nginx -> gzip_comp_level / 1 | 5 / 43.7s | 6 / 67.5s |
+    | **total** | **20 / 161s** | **24 / 255s** |
+
+    8/8 correct on both arms, zero cross-talk. **And the 20-vs-24 is not a
+    product difference.** We pay one `ToolSearch`; the other arm pays
+    `ToolSearch` PLUS a skill invocation its own server instructions require.
+    Net of fixed setup the browser work is **12 calls against 13** — one call, on
+    one task, where it needed a second batch. Wall clock (23s/task) sits inside
+    the 47s/task drift floor #35 measured and resolves nothing. The honest
+    headline is a TIE, with marginally lower fixed overhead on our side.
+    **#38's lever is confirmed and is not an advantage:** both arms batched
+    `navigate` + a read on every page, and both speculatively predicted the
+    hop-2 URL. The other arm never had the restriction #38 removed, so that work
+    closed a gap rather than opening a lead.
+    **The instrument has a ceiling, and it should be said before anyone runs it
+    again:** every task collapsed to ~1 batch per arm. When both sides solve
+    everything in one round trip there is nothing left for the representation to
+    differ about. A comparison that can discriminate needs a second hop that
+    genuinely cannot be guessed.
+
+    **`search_page` HAD BEEN MUTILATING EVERY SENTENCE CONTAINING A LINK.** Found
+    because an agent noticed a conspicuous `(number elided)` on Wikipedia and
+    blamed MathML; MathML was not the cause and the real one is far broader. The
+    walk collected DIRECT TEXT NODES ONLY and used that string BOTH to match
+    against and to quote back. #32's reason for own-text was attribution and it
+    is still right — attributing to the nearest ancestor reports every match once
+    per level of nesting, and a page's outermost div owns all of it. Searching
+    and SHOWING a mutilated string is what was wrong. Wikipedia's lead sentence
+    arrived as `"The (symbol ) is a , the in the (SI) for ."` — every linked term
+    gone, no marker, still reading as a finished sentence. Measured across five
+    real pages: **8-16% of text-bearing elements holed** (Wikipedia 16.3%, nginx
+    14.9%, peps 14.4%, HN 10.3%, MDN 8.4%), worst single loss 349 chars, and
+    MDN's related-elements list came back as `", , , , , , and element"`. Two
+    failures, the second far worse: a phrase spanning an inline boundary could
+    not match AT ALL, and context for a match in surrounding prose came back
+    holed. That is #22's silent-cut class punched through the MIDDLE of a
+    sentence instead of at the end, landing on exactly the content words.
+    **The repair already existed and could never fire:** the ancestor climb is
+    gated on the match FILLING its element, which is precisely the case this bug
+    is not.
+    Fixed with a POST-ORDER pass that builds each node's rendered text once from
+    its children's already-computed text — O(n), where per-node `innerText` forces
+    thousands of layouts and a per-node deep walk is O(n^2). Attribution is
+    preserved exactly by dropping a match that lies entirely inside one element
+    child's SPAN, so the child reports it and no ancestor repeats it, while a
+    match straddling children belongs to the node where it first becomes whole.
+    Spans make that exact rather than a heuristic, and repeats of one string
+    attribute individually instead of all-or-nothing. Inline-vs-block joining
+    reads `display` off computed style — a DECLARED value, so a
+    `<span style="display:block">` breaks and a `<div style="display:inline">`
+    does not — the same move as #27's cursor:pointer and #29's measured glyph
+    width replacing a font-name list.
+    **Two defects of my own, both caught by RUNNING it, neither by review:**
+    `join(' ')` corrupted inline content, turning `6.02214076x10<sup>23</sup>`
+    into `6.022 10 23` (innerText does not space-separate inline boxes; the
+    inter-word spaces already live in the source whitespace between tags, so text
+    pieces collapse runs and are NOT trimmed); and the depth-14 bound began
+    DELETING text rather than skipping a match, because the walk now builds the
+    text — real pages nest well past 14, and that is how the first version
+    returned "6.022 10". Runtime is bounded by `scanned` instead. Both are the
+    silent-loss class I was fixing, reintroduced by the fix.
+    Cost: **2-3ms either way**, interleaved on the same page load — nothing
+    against a ~24ms bridge hop. Against innerText ground truth on the live page
+    the new walk matches on **7/7 patterns while the old under-counts on 2**.
+    Fixtures Q1c-Q1f; **Q1c and Q1d fail against the pre-fix code** (Q1c's old
+    output is literally `'The is a for amount of substance.'`), Q1e and Q1f pass
+    both ways as controls that attribution did not start double-reporting and
+    that block siblings do not fuse into a false `"alphabeta"`.
+
+    **`find` HAD NO READINESS SIGNAL — located, not guessed.** #35 predicted this
+    and the live run hit it: a VERBATIM label match failed on a mid-render page,
+    and `NO CONFIDENT MATCH` is byte-identical to "that control does not exist".
+    Cause: `readinessNote` is prepended to the STRING listing behind a
+    `!params?.structured` guard, and `find` asks for structured output because it
+    scores an array — an array cannot carry a banner and JSON.stringify drops
+    properties hung off one. So the tool an agent reaches for WHEN read_page
+    disappointed it was the one tool with no settling signal. A `page_readiness`
+    op now exposes the note alone, fetched on the two FAILURE paths only, which
+    is #38's rule reapplied: take a round trip exactly where its answer can
+    change what happens next. A confident `Found N` needs no caveat. Gated by
+    omission and listed in `test_permissions.js`'s GATED set — **and the suite
+    reported `8 not-applicable (gate off)`, so it proved nothing until
+    `ALLOW_ALL_ORIGINS` was armed for the run (22/22) and restored.** A green
+    suite that cannot exercise the claim is not evidence for it.
+
+    **DECLARED STATE IS NOW QUERYABLE, and it is not the wordlist class #24
+    deleted.** The listing prints `(disabled)`, `(required)`, `(unselected)`,
+    `(expanded)`/`(collapsed)` and the legend defines each, so an agent asking
+    for "the disabled select menu" is typing OUR OWN notation back at us — and
+    `find` scored it against page TEXT, where a state flag appears nowhere. The
+    live run showed the other arm answering exactly that query in one call while
+    ours returned `NO CONFIDENT MATCH` and ranked the ENABLED select first.
+    The distinction that licenses this: #24's deleted wordlists read PAGE TEXT,
+    guessing an author's words in languages nobody enumerated; this reads the
+    QUERY and maps it to a flag the collector derived structurally. The set is
+    exactly the strings we emit — which is why "greyed", "mandatory", "inactive"
+    and "blank" are deliberately absent, and why "open"/"closed" are absent for a
+    second reason: they are ordinary English an agent would write about page
+    content. **ENGLISH ONLY, unlike the role-word table's ~20 languages** — a
+    role word describes THE PAGE, which may be in any language; a state word
+    describes OUR OUTPUT, which we print in English.
+    State tokens get the role-word treatment exactly: credited to `_cov`, never
+    `_covText`, and excluded from `_content_tokens`. That keeps F29 shut by
+    construction — a state word is satisfied by every control that declares it
+    and identifies none of them, so counting it as CONTENT coverage would re-open
+    under a new name the thing F29 closed.
+    **Priced exactly rather than noisily.** A corpus A/B could not resolve it:
+    `measure_retention` warns that two identical runs differ by up to 2.8pp in
+    findability MRR. Instrumenting the boost instead gave an exact answer —
+    **0 firings across 12 sites**, so MRR 0.969 is unchanged by construction, not
+    by a measurement inside its own noise floor. The corollary is #25's rule
+    restated: the corpus contains no state-word queries, so it demonstrates
+    no-regression and NOTHING about value. The value evidence is the live case
+    and F34. Fixtures F34-F36; **F34/F34b fail against the pre-change scorer**,
+    F35 (a state the element does not declare must not boost it) and F36 (a state
+    word must not buy confidence for an element nothing else in the query
+    matches) pass both ways as controls.
+
+    **THE DRIFT CHECK #30 ADDED COULD NOT FIRE.** It searched CLAUDE.md for
+    `17 suites, (\d+) checks` while the file has said 18 since the batch suite
+    landed, so it matched nothing and reported nothing on every run since — the
+    exact silent no-op it was written to end, inside the tool written to end it.
+    The suite count is out of the pattern now, and a missing anchor prints a
+    notice rather than passing quietly: a detector that cannot fire is worth less
+    than none, because it also asserts that nothing is wrong.
+
+    **THREE MEASUREMENT BUGS OF MY OWN THIS ROUND, all mine, all caught by
+    re-deriving (#16):** a `^ref_` anchor that matched nothing because tree rows
+    are indented; an "over-count" in the new search walk that was my ground truth
+    using case-sensitive `indexOf` against a case-INSENSITIVE tool (re-derived
+    with matching flags, the new walk is exact on 7/7 and the OLD one is the
+    under-counter); and a hypothesis that bare `checkVisibility()` was leaking
+    `visibility:hidden` text into the new walk — tested against a handful of
+    PHRASES, it changed nothing, so it was not shipped as the explanation of the
+    bug it was proposed for. **That conclusion was right about the cause and
+    wrong as a general claim, and the correction is the lesson:** re-measured
+    later over common tokens across five pages, the bare call admits **87 phantom
+    matches, 1.39%** — my phrases simply never landed near hidden text, which is a
+    sample artefact (#25) in a probe I wrote myself. The bare call checks LAYOUT
+    only and reports a `visibility:hidden` element as visible (#36 priced that
+    hole at 3.81% phantom identities elsewhere). Harmless while this walk only
+    SKIPPED matches; load-bearing once it BUILDS text, because an unrendered child
+    then contributes to its ancestors — `"visible sibling GHOSTWORD tail"` came
+    back as the context of a sentence whose middle word is not on screen. Now
+    `{visibilityProperty: true}`, matching `_namable`; `opacityProperty` stays off
+    for #37's reason (opacity:0 is still in the accessibility tree, opacity is a
+    gradient rather than a declaration of absence, and #15 records the readiness
+    banner stuck on by exactly that reading). Q2b/Q2c, both of which fail against
+    the bare call.
+
+    **A MISS NOW ROUTES TO A TOOL THAT CAN ANSWER — after three wrong shapes,
+    two of which only failed LIVE.** Both failure paths ended in "call read_page",
+    spending a model turn (92-97% of a tool call, #38) to obtain something find is
+    already connected to. The fixes, in order, and why each was wrong:
+    - **Attach the fetched listing.** Narrowed first to the zero-match path on a
+      cost estimate (median compact listing 5,178 chars, p90 11,175, against a
+      benefit no ruler here prices). Then widened to the weak path on a live A/B:
+      asked *"the control I would use to pick more than one option at once"*, the
+      model-backed arm returned the one correct `<select multiple>` while find
+      returned FOUR NAV LINKS — and our own row for that element already read
+      `multiple count=4 name="Multiple select example"`. The information was never
+      missing; only the lexical scorer could not reach it (#20's measured 0% on
+      goal->element). **Then it failed live:** a whole-page listing is
+      VIEWPORT-SCOPED by design (#6/#26), so the attached page did not contain the
+      answer — 3.9 viewports down — under a footer naming `find` as the "cheapest
+      recovery", i.e. the tool that had just failed.
+    - **Dump find's own whole-page rows** (not viewport-limited, reusing each
+      entry's `line` so #14's formatter drift is impossible). Failed live too:
+      document order spent 8,000 chars on 81 of 186 sidebar nav links and the
+      target sat past the cut.
+    - **The shared defect, and the lesson:** ordering a dump usefully REQUIRES
+      KNOWING THE ANSWER, which is exactly what find just failed to work out. A
+      payload cannot fix a ranking failure.
+    **What shipped is a CENSUS plus the exact tools.** "The page holds 186
+    elements: 154 a, 14 button, 6 select…" is small, always fits, and is the INPUT
+    to writing an exact query rather than an attempt to guess its output. Verified
+    end to end: census says 6 select -> `query_elements("select[multiple]")` ->
+    `<select ref_707> multiple=""`, one element, the right one.
+    **The honest remaining gap:** this does not close the turn difference. A
+    goal->element query still costs find + one exact call where the model-backed
+    arm costs one, and closing that needs a model in the server, which the
+    zero-key architecture forbids. What it changes is that the second call is now
+    small and exact instead of a full listing read, and that the first call stops
+    returning plausible junk — four nav links invite acting on them, which is
+    worse than an honest refusal.
+    **AND THE TOOL THIS ROUTES TO IS THE ONE AGENTS ALREADY PREFER:** across 8
+    benchmark runs this project's own agents used `query_elements` and
+    `search_page` throughout and reached for `find` **zero times**. An agent that
+    skips find and writes a selector directly is at ONE call — parity. find is the
+    fallback for not knowing what to query, and that is where the turn is lost.
+    F37-F37f; F37/F37b fail against the pre-change code, F37f (an empty page still
+    answers in words) is the degradation control. **F37d passed for the wrong
+    reason twice** — first with a query that scored a CONFIDENT match, then with
+    one that fell into the ZERO-match branch rather than the weak one.
+
+    Suites: 721 checks. New — Q1c-Q1f (rendered-text search, with the
+    attribution and block-fusion controls), Q2b/Q2c (visibility:hidden text
+    contributes nothing, and does not leak into a visible parent), F34-F36 (declared state in a query,
+    with the wrong-state and no-content controls), F37-F37d (the miss path, with
+    the degradation and narrowing controls), `page_readiness` router checks
+    in `test_ops.js` (both directions, since #15's lesson is that a probe which
+    never fires looks identical to "all settled") and its GATED entry.
+
+40. **A TEN-TASK HEAD-TO-HEAD, PRE-REGISTERED, CAME BACK A TIE — and the two
+    defects it found were one of ours and one of theirs, costing about the same.**
+    #39 reported 8/8 on wall clock from two four-task sets and I stood behind it.
+    This is the bigger instrument, and it says the arms are level. Ten tasks, 20
+    runs, strictly serial with the arm order rotated per task; tasks written by an
+    agent told only "write ten two-hop browser tasks" with no knowledge that any
+    toolset was under test; ground truth READ or PERFORMED by an independent
+    headless Chromium, never taken from the task writer.
+
+    **THE THRESHOLD WAS FIXED BEFORE ANY DATA EXISTED**, because earlier the same
+    day I had called a genuine 8/8 "drift" and then had to reverse it. At n=10 a
+    two-tailed sign test gives p=0.002 at 10/10, **0.021 at 9/10**, and 0.109 at
+    8/10 — so 9/10 was declared the bar and anything below it a tie, whatever the
+    totals looked like.
+
+    | | ChromeBridge | Claude-in-Chrome |
+    |---|---|---|
+    | correct | **10/10** | **10/10** |
+    | tool calls | **75** | **75** |
+    | wall clock | 864.5s | 846.0s |
+    | paired calls | 6/9 decided, p=0.51 | |
+    | paired seconds | 6/10, p=0.75 | |
+
+    Dead level on calls, 0.98x on time. **Reported as a tie, and it supersedes
+    #39's speed claim.** Ten harder, more varied tasks is the better instrument
+    than two sets of four.
+
+    **TWO TASKS SHAPED THE WHOLE RESULT, IN OPPOSITE DIRECTIONS, AND NEARLY
+    CANCELLED.** E2 cost us +9 calls to a `navigate` bug; E10 cost them +8 to a
+    stale-tab-URL bug of their own, where `get_page_text` rejected a live https
+    page as `chrome://` three times. Both products have a tab-URL race and each
+    pays for it about once in ten. That symmetry is the honest summary of the
+    quantitative half.
+
+    **`navigate` REPORTED SUCCESS FOR A NAVIGATION THAT NEVER HAPPENED — ours,
+    and the #10/#11/#12 family again.** The wait resolved on the first
+    `onUpdated` carrying `status === "complete"` for the tab, **including one
+    belonging to the previous document**. A fresh about:blank MCP tab is already
+    complete, so against a slow host the old event won the race, the wait fell
+    through before the new load committed, and the result line was then built
+    from `t2.url` — whatever the tab still said. It returned
+    `Navigated to about:blank, title: about:blank` while `get_url` confirmed the
+    tab had never moved. Hit E2 and E5, ~9 calls, and in the first benchmark I
+    had explained the same symptom away as cross-talk between parallel agents;
+    it reproduced with nothing else running. **Deterministic against a free dyno,
+    not at all against example.com**, which is why it read as intermittent.
+    Fixed by waiting for the navigation ACTUALLY ASKED FOR and, when it does not
+    arrive, saying so instead of printing a success sentence. **Live, the fix did
+    not just make the report honest — the first navigate now COMMITS**, because
+    falling through early was itself what left the tab behind.
+
+    **THE SAME BUG ONE STEP REMOVED:** `back`/`forward` at the end of a tab's
+    history is a silent no-op, and the old line reported it as a navigation to
+    the page it had never left.
+
+    **THREE MISTAKES OF MINE IN THE FIX, each caught by something other than
+    reading:**
+    - The first version depended on the listener's third argument, which the
+      SUITE'S MOCK DOES NOT PASS (Chrome always does). It did not fail a test —
+      it waited out the full 15s timeout on every navigate and **made the suite
+      30s slower while staying green**, which is the quieter half of #19's
+      stub-shares-your-assumptions trap. The op now reads three sources and falls
+      back to asking the tab; the mock now passes the tab, as Chrome does.
+    - Then `back` did the same thing, because I required a URL change for a
+      navigation that has no knowable destination.
+    - **C15 refused my own message twice** — first for naming the one cause I had
+      measured as THE cause, then for the word "probably". The tripwire #33 built
+      for exactly this, firing on its author.
+
+    **`(read-only)` — the third declared writability state, and the one the
+    listing never printed.** It is not the same as disabled: a readonly field
+    still submits, still focuses, and its contents are REAL contents, so an agent
+    offered only "(disabled) or nothing" cannot tell a field it may read from one
+    it may not. E3 asked exactly that and `read_page` could answer half.
+    `el.readOnly` plus `aria-readonly`, never the CSS `:read-only` pseudo-class,
+    which matches every non-editable element on the page — a `<div>` is
+    `:read-only`. Printed only when the field is not disabled, since a disabled
+    field cannot be written either and two markers read as two obstacles.
+    **AND I BROKE THE FOLD RULE ON THE VERY NEXT STATE I ADDED.** Live, five
+    minutes after shipping it: `19:"Disabled input"(disabled) 21:"Readonly
+    input"` — the flag printed on loose rows and vanished inside a fold, leaving
+    a read-only field indistinguishable from a writable one, while the legend
+    (gated on the flag being SET rather than PRINTED) documented a notation the
+    body never used. The comment directly above that fold's flag list reads
+    "FOLDING MUST NOT DELETE STATE", five lines up.
+
+    **WHAT THE EVAL FOUND ON THE OTHER ARM, mostly reported by ITS OWN agents
+    unprompted** — recorded because it is the qualitative half the tie conceals:
+    its listing carries no `disabled`/`readonly`/`checked` state and printed all
+    four checkboxes and radios as `"on"`, with a placeholder rendered identically
+    to a real value (their agent noted this "would have led to reporting
+    'Disabled input' as text sitting in a field" — the defect our #6
+    name/value/placeholder split exists to prevent); its `read_page` OMITTED
+    every form control on the form page; its `get_page_text` collapsed empty
+    table cells so columns could not be mapped, and its agent wrote that "a text
+    extractor that rendered tables as aligned columns would have made this a
+    4-call task" — a description of #26's table work; and its ref-click and
+    `form_input` both reported success having done nothing, the latter writing
+    into a DISABLED field, which is what our #24 readback verdict exists for.
+    Ours answered E3, E8 and E9 straight from the listing, and E10 (Japanese) in
+    5 calls to their 13.
+
+    **STILL OPEN from this eval:** an agent reported `get_page_text` truncating
+    at 2075 of 2556 chars when the default is 30,000 — the numbers do not match
+    the code, so it needs a live reproduction before anything is changed rather
+    than a speculative raise. And on E6 their agent wished for aligned-table
+    rendering while OURS reached for `javascript_tool` instead of using it, which
+    is #26's own warning about a capability the agent cannot discover.
+
+    Suites: 736 checks. New — N1-N4 (navigate: commit, non-commit, reload, dead
+    history, with the committed-navigation control), W28-W28g (read-only on a
+    row, on a custom widget, in the legend, inside a FOLD, with the writable and
+    disabled controls), plus the `onUpdated` mock now passing the tab.
+
+41. **THE RERUN: THE FIX WORKED, THE HEAD-TO-HEAD IS STILL A TIE, AND ONE TASK
+    GOT WORSE.** #40's eval found a `navigate` false success costing ~9 calls
+    across two tasks. Fixed, then the same 10 tasks re-run on the same design —
+    serial, order rotated, the OTHER arm's code unchanged so it measures drift
+    directly, which is the control #35 wanted and neither earlier benchmark had.
+
+    | | before | after | |
+    |---|---|---|---|
+    | CB calls | 75 | **60** | **-20%** |
+    | CB seconds | 864.5 | **658.8** | **-24%** |
+    | CIC calls (control) | 75 | 73 | -3% |
+    | CIC seconds (control) | 846.0 | 923.3 | **+9%** |
+
+    The control got 9% SLOWER on unchanged code, so conditions were not kinder;
+    the -20%/-24% came anyway. It is concentrated exactly where predicted:
+    **R2 15->5 calls, R5 13->7** — the two navigate-bug tasks — plus R4 and R7
+    improving with the listing work.
+    **The head-to-head remains a TIE for the third consecutive benchmark**:
+    60 v 73 calls, 6/7 decided pairs, **p=0.125**, against a bar of 9/10 fixed
+    before any data existed. p=0.13 is not 0.02 and the goalposts do not move.
+    **Correctness across all four benchmarks today: 30/30 on each arm, 60 runs.**
+    That metric is saturated because BOTH ARMS ARE THE SAME MODEL — the ceiling
+    is Claude's, not the tool's. What differs is how much verification the agent
+    must do to stay at it, and that shows up in the call column.
+
+    **ONE TASK GOT WORSE, 5 -> 8 CALLS, AND IT WAS A REAL DEFECT OF OURS.**
+    `name=` carried THREE provenances with nothing to tell them apart: a real
+    accessible name from title/alt; a submit or reset input's VALUE (which
+    HTML-AAM makes the accessible name — correct); and the HTML `name` attribute,
+    which #37 established is not an AccName source at all but the key the form
+    POSTS under. Live: `<input type="reset" name="submitbutton" value="cancel">`
+    listed as `name="cancel"` — right, but indistinguishable from the
+    `name`-attribute fallback producing `name="username"` one row above, and an
+    agent asked for the word PRINTED on the button spent three calls proving it.
+    Same remedy as #23's `data-testid`, reusing the same `__abSynthAttr`
+    mechanism: keep using it and SAY WHERE IT CAME FROM. NP2 is the control that
+    makes the marker worth having — a reset input's value must NOT be marked, or
+    every form row wears it and it means nothing.
+
+    **A VARIANT PRICED AND NOT SHIPPED, WHICH IS THE POINT OF RECORDING IT.**
+    Four live failures (E4, E9, R4, R9) were the same shape: a form below the
+    fold on a nav-heavy page, costing one scoped re-read each. The cause is NOT
+    the entry cap, which protects form tags — it is `keepForFind =
+    (structured || !!scopeMmid) && …`, so an unscoped STRING listing drops every
+    off-viewport control. #26 measured four variants of that trade and rejected
+    widening it, but **none of them is the one these failures point at**: it
+    tested "every offscreen row" (+51% tokens), never "offscreen FORM CONTROLS
+    only", which is a far smaller set.
+    Measured, interleaved base/variant/base on the same page load (drift floor
+    **0.0%**): **5 of 8 pages pay +0.0%** because they have no off-viewport form
+    controls at all; **median +1.1%**; worst **+54.9%** (eviltester, +21 rows) —
+    and the pages that pay are exactly the pages where it would save a call.
+    By #38's arithmetic that reads Pareto-positive: ~770 tokens against ~12,000
+    and 3.6s for the turn it saves.
+    **NOT SHIPPED.** #26's rule for this change is explicit — measure recall AND
+    tokens together and keep it only if Pareto-positive — and the recall half was
+    not run. Shipping on the arithmetic alone would be reasoning, and reasoning
+    without measurement has been wrong repeatedly in this log. The cost side is
+    done; whoever picks it up starts half-measured.
+
+    **A DEFECT THAT DISSOLVED ON INVESTIGATION.** An agent reported
+    `get_page_text` truncating at 2,075 of 2,556 chars; the default is 30,000, so
+    the numbers did not match the code. They were right about the symptom: the
+    agent had LOWERED max_chars by hand, and ~2,000 of that page's 2,556
+    characters are the site's nav and tag cloud, which the text emits in document
+    order before any content. So the cut landed on the value being read. Not a
+    truncation bug — a budget spent on chrome. The note said only "raise
+    max_chars", which re-reads all of that chrome again; it now names
+    `search_page` and a scoped read, the same correction find's miss path got.
+
+    **AND THE FIRST SHAPE OF THAT FIX WAS WRONG TWICE, both found by running it.**
+    It emitted a 70-character SENTENCE per row, which on a form of unlabelled
+    fields repeats down the whole listing and — because fold members carry short
+    tokens, not sentences — could not travel into a fold at all. Measured live on
+    eviltester: `10x input ... 1794:"username" 1798:"password"`, every label a
+    POST key, none marked, while the loose rows above them were. It is `(post-key)`
+    now, one notation in both places with a legend line gated on it appearing.
+    FOLDING MUST NOT DELETE STATE is the third notation to need that rule applied.
+    **A live agent also reported the marker firing on an `input[type=reset]` whose
+    name is correctly its VALUE — it is not; the reset and submit rows are clean
+    and the agent misattributed a marker from a neighbouring row.** Verified by
+    reading the actual rows rather than accepting the report, which is the same
+    discipline #16 applies to a flattering result applied to a damning one.
+
+    Suites: 744 checks. New — NP1-NP4b (name provenance, with the reset-value and
+    labelled-field controls that keep the marker meaningful) and NP5-NP5c (it
+    survives folding, with both controls repeated inside the fold).
+
+42. **THE 24-TASK EVAL'S DEFECT LIST, WORKED DOWN — and TWO OF MY OWN DIAGNOSES
+    WERE WRONG IN A WAY ONLY RUNNING THE CODE EXPOSED.** Fifteen defects from
+    `defects_found.md`, each fixed in its general form with a control that fails
+    against the pre-fix code. The two retractions are the part worth reading.
+
+    **D30 RETRACTED: `search_page`'s count was never wrong.** Two live agents
+    reported it "silently missing rows and double-reporting others", I corroborated
+    it on a second page, and ranked it top of the list. Reproduced offline: a `<pre>`
+    holding one SIGQUIT and one SIGUSR1 returns `total=2` with two DISTINCT matches —
+    correct every time. What was actually wrong is that both hits were quoted from a
+    window larger than the element, so their `context` strings came back BYTE-
+    IDENTICAL and nothing said where in the window each match sat. Two correct hits
+    that cannot be told apart read as one position reported twice, and the rows the
+    agent wanted were inside both windows, unmarked. Fixed by reporting the match and
+    its offset (`"SIGQUIT"@77`), suppressed when the context IS the match so a
+    one-line listing pays nothing. **My first probe print truncated the contexts to
+    88 chars, which is what made them look identical for the wrong reason** — #16's
+    rule landing on me, with the twist that the result DAMNED the system and I
+    believed it because two agents agreed with each other.
+
+    **D19 RETRACTED, AND THE REAL DEFECT WAS THE EVIDENCE ITSELF.** D19 reasoned:
+    after a scroll, all 17 form controls came back flagged `(just appeared)`, "which
+    PROVES they had genuinely not been collected before". That inference is worthless.
+    `out` is VIEWPORT-FILTERED on an unscoped STRING read (`keepForFind` requires
+    `structured || scopeMmid`) and the novelty seen-set was seeded from `out`, so
+    nothing below the fold was ever seeded and ANY pre-existing control was announced
+    `(just appeared)` the moment the page scrolled to it. Measured on a two-control
+    page: mmids 6 and 7 are stamped at the FIRST read while the seen-set holds 1 of 7.
+    That contradicts the flag's own contract, written two comments above the bug —
+    "an element that scrolls out of view and back is not new". Seeded from the mmid
+    REGISTRY now (what the collection walk stamped, which is not viewport-bounded).
+    **What remains of D19 is UNDIAGNOSED rather than confirmed**: whether demoqa's
+    form controls were in the DOM at that read cannot be answered by this flag either
+    way, and I had ranked it as proven. W26f pins the false positive; W26g is the
+    control that a genuinely created element is still flagged.
+
+    **THE CLIMB, REWRITTEN ONCE RATHER THAN PATCHED A THIRD TIME.** Three separate
+    live failures came out of one condition: `search_page` climbed to an ancestor for
+    context only when `full.trim() === m[0].trim()`, i.e. when the match EXACTLY
+    FILLED its element. A metadata block puts the label and a colon in one element, so
+    the match is one character short and the climb was SKIPPED — `<dt>Published:</dt>`
+    searched for "Published" returned the bare label at `context_chars=300`, and
+    `<a>Errata-ID: 1543</a>` searched for "1543" returned a 15-char window at 600.
+    Equality was never the test; what decides it is whether the element's own text can
+    SUPPLY the context the caller asked for. And because the walk is POST-ORDER the
+    answer is free: a hit records its offset and each ancestor re-slices it from text
+    already built, with the offset translated arithmetically by `add()` rather than
+    searched for — no `innerText` (which would undo the white-space and visibility
+    rules the walk applies) and no `indexOf` (which finds the wrong occurrence when a
+    string repeats). The 4-hop bound is kept. **D15 fell out of the same rewrite:** a
+    climb to a table row used to fuse label, value and rank into `المساحة 1862 كم² (178)`,
+    one string a reader can take for a single quantity. Block boundaries are recorded
+    where the page's own computed `display` is non-inline — so `<dt>/<dd>`, `<li>`,
+    `<td>` and a `<span style="display:block">` all separate while a
+    `<div style="display:inline">` does not — and rendered into the CONTEXT ONLY, so
+    what is matched against is unchanged. The separator absorbs the join's existing
+    space, skips a boundary INSIDE the match so `context` always contains `match`
+    verbatim, and the offset is advanced by the net change. Q1i–Q1m; the control runs
+    the same fixtures against the old gate and returns literally `'Published:'`.
+
+    **D6, FIVE SIGHTINGS, AND THE NUMBERS WERE ARITHMETICALLY FINE.** `get_page_text`
+    was reported four times as "cutting below the stated budget". Measured: it rebound
+    `max_chars` to `max_chars - len(banner)` and printed that reduced figure back as
+    "the N requested" (passed 1600, told 1303), and the note reserved a literal 120
+    characters for itself while being ~560. But the shortfall agents saw was real and
+    explainable: they compared the printed BODY figure (7,420) against the budget they
+    passed (9,000), and the outline, the banner and the note had taken the rest with
+    nothing naming them. An agent wrote "the shortfall is the one number in the run I
+    cannot account for." The caller's number is never rebound now and the note itemises
+    every deduction, so the parts add up to what was passed; the note also degrades to
+    a brief form rather than crowding out the body it is explaining. **T24 fired during
+    development against my own intermediate state** (a ~560-char note inside a 400-char
+    budget returned 748) and is kept as a guard, but it is T25 — the reconciliation
+    check — that fails against the pre-fix code, on all ten cases.
+
+    **THE `_OBSERVES` WHITELIST, DELETED: THREE REGRESSIONS OF ONE SHAPE IN A DAY.**
+    A second `navigate`, a `computer(action="wait")` and a `javascript_tool` were each
+    stopped after a page change although each plans nothing against the page it
+    replaced. I had added a whitelist of read-only tools on the argument that a
+    ref-free step being NOT STALE does not make it SAFE — true, and still the wrong
+    mechanism, because whether a batch may continue turns on whether the step
+    ADDRESSES the old page, which is decidable from the step's own input. That now
+    includes the implicit targets the whitelist existed for: a keystroke goes to
+    whatever has FOCUS, and `back`/`forward` resolve against history. Everything else
+    runs. The control loads a pre-fix copy by path and shows all three batches dying
+    at `navigate` — including `computer(screenshot)`, which can address nothing —
+    while post-fix only the keystroke is suppressed and the read behind it still runs.
+    **The first attempt at that control silently ran against the FIXED module**,
+    because `test_batch.py` puts the repo root at `sys.path[0]` and PYTHONPATH loses
+    to it: everything came back green and proved nothing. B5f/B5f2/B5h, and four
+    checks that encoded the whitelist were rewritten to assert their invariant.
+
+    **D28, THREE SITES: a title that is the URL is not a title.** Chrome fills
+    `tab.title` with a display form of the url — the scheme stripped — until the
+    document sets one, so `navigate` printed
+    `title: nginx.org/en/docs/http/ngx_http_proxy_module.html` for a page whose
+    `<title>` is `Module ngx_http_proxy_module`. Once correct and incorrect in the
+    SAME batch on the SAME tab, which rules out the site and leaves timing: #40 fixed
+    the COMMIT, this is the same race one field over. The fallback is DETECTABLE
+    rather than guessed, so it waits ~600ms for the real title and otherwise says the
+    page has not supplied one — substituting the url is the worst available answer
+    because it is indistinguishable from a page that genuinely declares none.
+    **The mock could not reproduce it**: it always set a distinct title. N7/N7b/N7c,
+    where N7c is the control that the brief WAIT is what recovers the title rather
+    than the detection merely suppressing it — and it failed first because a global
+    countdown was spent during tab RESOLUTION, so the real title landed before the
+    commit and `tabs.update` then overwrote it, modelling the opposite of the live
+    order.
+
+    **D31: advice that had been seen to fail twice.** The #40 non-commit message
+    offered "retry the same url" to a freshly created tab where retrying failed BOTH
+    times and navigating the site ROOT first succeeded. That is the #23/#33 class — a
+    tool asserting a recovery it has not verified — inside the message written to end
+    that class. The tab being at `about:blank` is a fact held right there, so the
+    branch costs nothing (N8, with N8b the control that a non-commit from a real page
+    does not get fresh-tab advice).
+
+    **D16: `Main heading` named the COOKIE BANNER.** On gov.uk both headings are
+    `<h2>`, so #30's declared-rank rule found a tie and fell back to document order —
+    and a consent overlay is injected at the top of the document. The single line an
+    agent reads to decide whether it is even on the right page named the overlay, on
+    most of the regulated web. #30 established that position states nothing and then
+    used position as the tie-break; `<main>` is HTML's own declaration of the dominant
+    content, so a heading inside it outranks one outside at the SAME level. No class
+    names, no wordlist, and zero behaviour change on a page that declares no `<main>`.
+    MH3b is the control that rank still wins ACROSS the boundary — a real `<h1>`
+    outside `<main>` must not lose to an `<h2>` inside it, or this would be a landmark
+    preference rather than a tie-break.
+
+    **SEVEN SMALLER ONES, each the same rule as something already in this log.**
+    `fill_form` called the SAME radio a radio on failure and a checkbox on success, in
+    one function, with `_isRadio` already computed two lines up (#21's one concept,
+    two spellings). `query_elements` concatenated a resolved URL and its raw attribute
+    inside one pair of quotes, so the quoted value was not a URL — two facts are two
+    fields. Its renderer also passed every attribute through `json.dumps` without
+    `ensure_ascii=False`, escaping non-Latin values to `\\uXXXX` — #11(d) exactly,
+    fixed for `find` and never here. `search_page` echoed the caller's pattern through
+    Python `repr`, doubling every backslash, in two places. A disabled `<option>` was
+    invisible, read via `:disabled` so an `<optgroup disabled>` is caught too (the
+    same spec rule W27 needed for `<fieldset>`), with the marker OUTSIDE the quotes so
+    the text stays exactly what `form_input` must be passed. `get_page_text` emitted
+    an "Other Alt Texts" header with an empty list. `query_elements` rendered an
+    element with NO text identically to a text-extraction failure, and asserted
+    "nothing on the page has that shape right now" — a fact about the PAGE that a
+    query of the rendered document at one instant cannot establish, in a tool C15 does
+    not scan because the sentence is declarative. And readiness now reaches
+    `query_elements` and `search_page` on their MISS paths, through ONE hoisted helper
+    rather than a third copy — #39's `find` gap, two tools over.
+
+    **NOT FIXED, deliberately:** D21 (the viewport-scoped listing missing a below-fold
+    form) stays unshipped for the reason #41 recorded — the cost half is measured at
+    median +1.1% and the RECALL half is not, and #26's rule for that change is to
+    measure both and keep it only if Pareto-positive.
+
+    Suites: 780 checks. New — T24/T25 (budget reconciliation), Q1i–Q1m (the climb,
+    declared columns, match offsets, with the context-contains-match invariant),
+    C17 (the render link for the offset), W23d–W23f (disabled options, with the
+    selectable control), W26f/W26g (novelty across a scroll, with the created-element
+    control), N7–N8b (title provenance and fresh-tab advice, with both controls),
+    MH3/MH3b (heading tie-break, with the rank-still-wins control), B5f/B5f2/B5h
+    (addresses-the-old-page, with the screenshot control), C18/C19 (query_elements'
+    two silences).
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -2110,6 +3488,30 @@ granted in the side panel is refused with the same message the agent gets.
 | A repeated record prints as `N× …, identical siblings — one line per POSITION` | That IS the record: `#1`/`#2`/`#3` are its fields, in document order, every member keeping its own ref |
 | Rows have no `box(...)` any more | By design since #26 — geometry is opt-in. Pass `read_page(geometry=true)`. Spatial STATE (`(below-fold)`, `(off to the side)`, `(occluded/blocked)`) still prints unconditionally |
 | A scoped read returns below-fold rows but the unscoped one does not | By design since #26 — `ref_id` scoping is not viewport-limited, the whole-page listing is. The off-viewport hint names the region refs to scope to |
+| A row reads `(unlabeled)` where it used to say `(unlabeled-icon)` | By design since #37 — "icon" is printed only when the element really renders graphics (an svg/img/canvas/picture descendant, a CSS background-image, or an icon font's ::before glyph). `(unlabeled)` means a real control with no resolvable name and nothing to look at; both are in the legend, but only the one that appears |
+| A note says "the PAGE does not scroll sideways/vertically" | By design since #37 — the off-viewport controls are clipped inside a region that scrolls on its own, so a window scroll returns an identical listing. Reach them by ref; acting on a ref scrolls its own container into view. Derived from `scrollWidth`/`scrollHeight` vs the client box, not guessed |
+| The off-viewport count is far larger than it used to be | Fixed in #37 — it was re-asking "is this a control" with a tag list one line below a drop that used the collector's own rule (#18's asymmetry, third instance). Syncfusion reported 4 where 544 had been dropped |
+| A field row carries `help=` or `error=` | By design since #37 — the page's own `aria-describedby`, and its `aria-errormessage` while the field is `aria-invalid`. Authored text, not derived; a field that declares neither pays nothing |
+| A batch kept going after a `navigate` | By design since #38 — a page change stops the steps that NAME a ref (`ref`, `ref_id`, `submit_ref`, `coordinate`, or fill_form `fields`); an observation plans nothing against the old page, so `navigate -> read_page` is one turn. The stop fires at the ref step and says the earlier ones ran |
+| A batch seems to take fewer round trips than steps | By design since #38 — the `page_fingerprint` guard is only taken when the NEXT step names a ref. Four observations take zero. B10b is the control that it IS taken when a ref follows |
+| `search_page` context has a gap, or a sentence reads oddly | Fixed in #39 — it collected DIRECT TEXT NODES only, so every inline element was elided unmarked (Wikipedia's lead read `"The (symbol ) is a , the in the (SI) for ."`). It builds rendered text post-order now. If it recurs, check that the span test still attributes a match to the DEEPEST element containing it — that is what stops an ancestor re-reporting a child's hit |
+| A phrase that is plainly on the page returns no `search_page` match | Before #39 a phrase straddling a text node and an inline element could not match at all, because neither string held the whole phrase. Pinned by Q1d. If it recurs on a custom element, check the shadow branch — a host renders its shadow content, which REPLACES the light children |
+| `find` returns a miss with a `PAGE IS STILL SETTLING` banner on top | By design since #39 — `find` could never see readiness (the banner is prepended to the STRING listing and `find` asks for structured output), so `NO CONFIDENT MATCH` and "not there yet" were byte-identical. Fetched on the FAILURE paths only, so a confident `Found N` costs no extra round trip |
+| `find` ranks a `(disabled)` / `(required)` element first | By design since #39 — the words the legend prints are queryable, scored like a role word. They are credited to type coverage only, never CONTENT coverage, so a state word alone can never make a match confident (F36). English only: a state word names OUR output, not the page |
+| A docstring/description change seems to have no effect, but behaviour changes DO land | **RE-MEASURED and the old advice here was WRONG.** This row used to say descriptions are cached for the session's lifetime and that only a NEW session can test prose. Tested directly: edit a docstring, `/mcp` reconnect, then spawn a subagent and have it read the description back — it receives the NEW text (`bridge_ms_total` resetting to ~0 is what proves the stdio process actually respawned rather than the client merely re-handshaking). So a reconnect is enough for subagents, which is what every live fan-out uses. The earlier claim was recorded from one observation and then quoted forward for several entries without being re-run — the same "listed from reading rather than running" failure #25 names. **Still verify rather than assume, in BOTH directions:** `tools/list` against a fresh process proves the SERVER changed, and a throwaway subagent reading the description back proves the AGENT sees it. Whether the parent session's own already-loaded schema refreshes is untested and did not matter |
+| `navigate` says NAVIGATION DID NOT COMMIT | Working as designed since #40. The tab really did not move — anything you read now belongs to the OLD page. Retry the same url (the second attempt usually commits), then confirm with `get_url`. Before #40 this printed `Navigated to <the page it failed to leave>`, which is how two eval runs lost ~9 calls |
+| `navigate("back")` says BACK DID NOT MOVE | By design since #40 — a tab the agent opened starts with no history, so goBack is a silent no-op. Navigate by url instead |
+| A field row says `(read-only)` | By design since #40 — `readonly`/`aria-readonly`, which is NOT `(disabled)`: the field still submits and its value is real contents, but a write will fail. It survives folding (W28g); if it ever stops appearing inside a fold, the member flag list dropped it — the same bug the comment above that list warns about |
+| A field row ends in `(post-key)` | By design since #41 — the identity shown is that field's HTML `name` attribute, i.e. what it POSTS under, not a visible label; the control has no accessible name. An `input[submit]`/`input[reset]` is NOT marked, because HTML-AAM makes its `value` the real name (NP2). It survives folding (NP5); if it stops appearing inside a fold, the member flag list dropped it — the third notation to need that rule |
+| A `search_page` hit reads `<pre ref_12> "SIGQUIT"@77 — …` | By design since #42 — the match and its character offset INSIDE the quoted context. Two matches in one element are quoted from the same window, so without it they arrive byte-identical and read as one position reported twice. Suppressed when the context IS the match, so a one-line listing pays nothing |
+| `search_page` context contains ` \| ` | By design since #42 — a boundary the page DECLARED between cells, list items or blocks, read off computed `display` and rendered into the context only. What is matched against is unchanged, and a boundary inside the match is skipped so the context always contains the match verbatim |
+| `search_page` context is now much longer than the element it names | By design since #42 — the climb fires whenever the element's own text cannot supply the `context_chars` you asked for, not only when the match exactly fills it. The old condition skipped every `<dt>Published:</dt>` and `<a>Errata-ID: 1543</a>`, which is how metadata blocks are marked up |
+| `get_page_text`'s truncation note itemises `N body + M banner + K outline` | By design since #42 — the numbers were arithmetically fine and could not be RECONCILED, which is why four agents reported it as cutting below the budget. The parts plus the note now equal what came back, and the figure quoted as `max_chars=` is the caller's own (T25) |
+| An `options=` entry ends in `(disabled)` | By design since #42 — read via `:disabled`, so an `<optgroup disabled>` is caught too, the same spec rule `(disabled)` needs for `<fieldset>`. The marker sits OUTSIDE the quotes so the quoted text stays exactly the string to pass to `form_input` |
+| `(just appeared)` no longer fires when you scroll to a control | Fixed in #42 — the seen-set was seeded from the VIEWPORT-FILTERED `out`, so any below-fold control was announced new the moment the page scrolled to it, contradicting the flag's own contract. Seeded from the mmid registry now. **If you are using the flag as evidence an element was absent from the DOM, do not** — that inference is what made D19's diagnosis wrong |
+| `navigate` says the page has not supplied a `<title>` | By design since #42 — Chrome fills `tab.title` with the url minus its scheme until the document sets one, so the old line printed `title: nginx.org/en/docs/…` for a page whose title is `Module ngx_http_proxy_module`. It waits ~600ms and then says so, because substituting the url is indistinguishable from a page that genuinely declares none |
+| `Main heading` changed on a page with a cookie banner | Fixed in #42 — both headings are usually `<h2>`, so the declared-rank rule tied and fell back to document order while the consent overlay is injected at the top. `<main>` breaks the tie; rank still wins ACROSS the boundary (MH3b), and a page with no `<main>` is unchanged |
+| A batch kept going after `javascript_tool` or a second `navigate` | By design since #42 — the `_OBSERVES` whitelist is gone. A step is stopped only if it ADDRESSES the previous page, decided from its own input: a ref/coordinate, `back`/`forward`, or `computer(action="key"/"type")` whose target is the focused element. A whitelist had to be remembered every time a tool or parameter was added, and was not, three times in one day |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---

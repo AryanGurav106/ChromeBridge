@@ -83,7 +83,13 @@ const listeners = {
   netCompleted: [], netError: [], navCommitted: [],
 };
 function emitTabsUpdated(tabId, info) {
-  for (const fn of [...listeners.tabsUpdated]) { try { fn(tabId, info); } catch (e) {} }
+  // Chrome's onUpdated passes (tabId, changeInfo, TAB). The mock passed only two
+  // arguments, so code reading `tab.url` saw undefined — which is how a navigate
+  // that waits for the destination to commit sat out its full 15s timeout here
+  // while the suite stayed green and merely got slower. A stub that drops an
+  // argument the real API always supplies tests a shape the browser never sends.
+  const tab = state.tabs.find((x) => x.id === tabId) || null;
+  for (const fn of [...listeners.tabsUpdated]) { try { fn(tabId, info, tab); } catch (e) {} }
 }
 function emitTabsRemoved(tabId) {
   for (const fn of [...listeners.tabsRemoved]) { try { fn(tabId); } catch (e) {} }
@@ -150,6 +156,18 @@ const chromeMock = {
     get: async (id) => {
       const t = state.tabs.find((t) => t.id === id);
       if (!t) throw new Error(`No tab with id: ${id}.`);
+      // A title that arrives a beat after the commit, which is the live shape:
+      // the navigation is real, the url is right, the document has not set its
+      // <title> yet.
+      // ARMED BY tabs.update, not global: a countdown consumed by ANY get was
+      // spent during tab RESOLUTION, so the real title landed before the
+      // commit and tabs.update then overwrote it with the fallback -- the
+      // fixture modelling the opposite of the live order. Scoping it to gets
+      // AFTER the commit is the shape being reproduced: the document sets
+      // its <title> a beat after the navigation lands.
+      if (t._titleIn > 0 && --t._titleIn === 0) {
+        t.title = "Module ngx_http_proxy_module";
+      }
       return t;
     },
     update: async (id, props) => {
@@ -157,7 +175,25 @@ const chromeMock = {
       if (!t) throw new Error(`No tab with id: ${id}.`);
       log({ kind: "tabs.update", id, props: { ...props } });
       if (props.active) state.tabs.forEach((x) => { x.active = x.id === id; });
-      if (props.url) { t.url = props.url; t.title = "loaded:" + props.url; scheduleComplete(id); }
+      if (props.url) {
+        // state.navStalls reproduces the LIVE failure: the tab emits a completion
+        // for the document it is already on and never moves. Measured twice in the
+        // 10-task eval against a slow host, from a fresh about:blank tab.
+        if (!state.navStalls) {
+          t.url = props.url;
+          // CHROME FILLS tab.title WITH A DISPLAY FORM OF THE URL (scheme stripped)
+          // until the document sets one. The mock always set a distinct title, so
+          // the live defect -- `title: nginx.org/en/docs/...` for a page whose
+          // <title> is `Module ngx_http_proxy_module` -- could not be reproduced
+          // here at all. Three unrelated sites hit it; one of them reported
+          // correctly and incorrectly in the same batch on the same tab.
+          t.title = state.titleFallback
+            ? String(props.url).replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+            : "loaded:" + props.url;
+          t._titleIn = state.titleArrivesAfter || 0;
+        }
+        scheduleComplete(id);
+      }
       return t;
     },
     create: async (props) => {
@@ -253,7 +289,15 @@ const chromeMock = {
     onErrorOccurred: { addListener: (fn) => listeners.netError.push(fn) },
   },
   webNavigation: {
-    onCommitted: { addListener: (fn) => listeners.navCommitted.push(fn) },
+    onCommitted: {
+      addListener: (fn) => listeners.navCommitted.push(fn),
+      // Chrome has this; the mock did not, so navigate's cleanup was silently
+      // swallowed by its try/catch and every call leaked a listener here.
+      removeListener: (fn) => {
+        const i = listeners.navCommitted.indexOf(fn);
+        if (i >= 0) listeners.navCommitted.splice(i, 1);
+      },
+    },
     getAllFrames: async ({ tabId }) => state.frames[tabId] || [],
   },
 };
@@ -322,6 +366,9 @@ function resetState() {
   state.groups = new Set();
   state.storage = {};
   state.frames = {};
+  state.navStalls = false;
+  state.titleFallback = false;
+  state.titleArrivesAfter = 0;
   state.nextTabId = 500;
   state.nextGroupId = 700;
   priv.attachedTabs.clear();
@@ -941,6 +988,137 @@ const FIELDS3 = () => ([
       r2.ok && allOf((e) => e.kind === "tabs.goBack").length === 1, JSON.stringify(r2));
   });
 
+  await test("navigate resolves on COMMIT, not on full page load", async () => {
+    resetState();
+    // THE LATENCY FIX, PINNED. The wait used to require status === "complete" —
+    // every image and subresource — so a slow or erroring host never satisfied it
+    // and navigate burned the whole 15s cap before reporting a failure while the
+    // load was still in flight. Measured live through sw_info's bridge timer:
+    // ~15,000ms per navigate, against ~357ms once it waits for the commit, and a
+    // slow host went from "fails, then succeeds on retry" to 1,799ms first try.
+    // `navStalls` keeps tabs.update from ever firing `complete`, so ONLY a
+    // webNavigation commit can end this wait.
+    state.navStalls = true;
+    state.tabs[0].url = "about:blank";
+    // NET leak, not absolute: resetState() does not clear the listener arrays, so
+    // earlier navigate tests in this file contribute a baseline. What must hold is
+    // that THIS call leaves none of its own behind.
+    const _before = listeners.navCommitted.length;
+    const p = callOp("navigate", { tabId: 1, url: "https://slow.example/page" });
+    await new Promise((r) => setTimeout(r, 20));
+    // The commit arrives while the page is still loading.
+    state.tabs[0].url = "https://slow.example/page";
+    listeners.navCommitted.slice().forEach((fn) =>
+      fn({ frameId: 0, tabId: 1, url: "https://slow.example/page" }));
+    const r = await p;
+    check("N5 a commit ends the wait even though the page never reports complete",
+      r && r.ok !== false && /^Navigated to https:\/\/slow\.example\/page/.test(String(r.result)),
+      String(r.result).slice(0, 120));
+    check("N5b ...and the commit listener is removed, not leaked",
+      listeners.navCommitted.length === _before,
+      `before=${_before} after=${listeners.navCommitted.length}`);
+  });
+
+  await test("navigate reports a navigation that did NOT commit", async () => {
+    resetState();
+    // THE CONTROL FIRST. A check that only asserts the failure message would also
+    // pass over a navigate hardwired to report failure, which is useless.
+    let r = await callOp("navigate", { tabId: 1, url: "https://example.com/ok" });
+    check("N1 a navigation that COMMITS still reports success",
+      r.ok && /Navigated to https:\/\/example\.com\/ok/.test(String(r.result)),
+      String(r.result).slice(0, 110));
+
+    resetState();
+    state.navStalls = true;          // the tab never leaves about:blank
+    state.tabs[0].url = "about:blank";
+    r = await callOp("navigate", { tabId: 1, url: "https://slow.example/page" });
+    check("N2 a navigation that does NOT commit says so instead of reporting success",
+      r.ok && /DID NOT COMMIT/.test(String(r.result)), String(r.result).slice(0, 140));
+    check("N2b ...and names BOTH where the tab is and where it was asked to go",
+      /about:blank/.test(String(r.result)) && /slow\.example/.test(String(r.result)),
+      String(r.result).slice(0, 180));
+    check("N2c ...and never prints the success sentence alongside it",
+      !/^Navigated to/.test(String(r.result)), String(r.result).slice(0, 80));
+
+    // RELOAD: re-navigating to the current URL cannot be detected by a URL change,
+    // so the arrival test must not treat it as a failure.
+    resetState();
+    state.tabs[0].url = "https://example.com/here";
+    r = await callOp("navigate", { tabId: 1, url: "https://example.com/here" });
+    check("N3 re-navigating to the CURRENT url is a reload, not a failure",
+      r.ok && /^Navigated to/.test(String(r.result)), String(r.result).slice(0, 110));
+  });
+
+  await test("navigate never substitutes the url for a page title", async () => {
+    // D28, three unrelated sites, and once right and wrong in ONE batch on ONE tab
+    // -- which rules out the site and leaves timing. #40 fixed the COMMIT; this is
+    // the same race surviving one field over. Substituting the url is the worst
+    // available answer because it is indistinguishable from a page that genuinely
+    // declares no title.
+    resetState();
+    state.titleFallback = true;
+    let r = await callOp("navigate", { tabId: 1, url: "https://nginx.org/en/docs/a.html" });
+    check("N7 a title that is just the url is NOT reported as the page's title",
+      r.ok && !/title: nginx\.org/.test(String(r.result))
+        && /has not supplied a <title>/.test(String(r.result)),
+      String(r.result).slice(0, 150));
+
+    // THE CONTROL. Without it N5 would also pass over a navigate that stopped
+    // reporting titles altogether.
+    resetState();
+    r = await callOp("navigate", { tabId: 1, url: "https://example.com/p" });
+    check("N7b CONTROL: a real title is still reported",
+      r.ok && /title: loaded:https:\/\/example\.com\/p/.test(String(r.result)),
+      String(r.result).slice(0, 150));
+
+    // ...and the SECOND control: the brief wait must actually be what recovers the
+    // title, not merely the detection suppressing it. Here the document sets its
+    // title a beat after the commit, which is the live shape.
+    resetState();
+    state.titleFallback = true;
+    state.titleArrivesAfter = 2;
+    r = await callOp("navigate", { tabId: 1, url: "https://nginx.org/en/docs/b.html" });
+    check("N7c ...and a title that arrives a beat late is picked up, not discarded",
+      r.ok && /title: Module ngx_http_proxy_module/.test(String(r.result)),
+      String(r.result).slice(0, 150));
+  });
+
+  await test("a non-commit from a fresh tab names the recovery that works", async () => {
+    // D31. The generic "retry the same url" was offered to a freshly created tab
+    // and FAILED BOTH TIMES; navigating the site root first and then the deep url
+    // is what succeeded. A tool asserting a recovery it has not verified is the
+    // #23/#33 class, here inside the message written for #40 to end that class.
+    resetState();
+    state.navStalls = true;
+    state.tabs[0].url = "about:blank";
+    let r = await callOp("navigate", { tabId: 1, url: "https://deep.example/a/b/c.html" });
+    check("N8 a non-commit from about:blank names the root-first recovery",
+      r.ok && /DID NOT COMMIT/.test(String(r.result))
+        && /SITE ROOT/.test(String(r.result)),
+      String(r.result).slice(0, 220));
+
+    // THE CONTROL: a non-commit from a page that HAS navigated is a different
+    // situation and must not be given the fresh-tab advice.
+    resetState();
+    state.navStalls = true;
+    state.tabs[0].url = "https://example.com/here";
+    r = await callOp("navigate", { tabId: 1, url: "https://other.example/x" });
+    check("N8b CONTROL: a non-commit from a real page does NOT claim a fresh tab",
+      r.ok && /DID NOT COMMIT/.test(String(r.result))
+        && !/SITE ROOT/.test(String(r.result))
+        && !/about:blank/.test(String(r.result)),
+      String(r.result).slice(0, 200));
+  });
+
+  await test("history navigation that cannot move says so", async () => {
+    resetState();
+    // goBack in the mock does not change the URL — which is exactly what Chrome
+    // does at the start of a tab's history.
+    const r = await callOp("navigate", { tabId: 1, url: "back" });
+    check("N4 a back that does not move is reported, not dressed as a navigation",
+      r.ok && /DID NOT MOVE/.test(String(r.result)), String(r.result).slice(0, 120));
+  });
+
   // ---- network capture buffers
   // ---- read_page detail levels: the op router is the ONLY untested link in the
   // chain. Every other detail-level test injects the collector directly, so a
@@ -1040,6 +1218,63 @@ const FIELDS3 = () => ([
       !!a && a[5] === "tree", JSON.stringify(a));
   });
 
+  // THE ROUTER IS THE UNTESTED LINK (#19), and it has now shipped two features
+  // inert — detail="brief" and delta. Every offline test of these two functions
+  // injects them directly, so an option that never reached the page would look
+  // perfect there and do nothing in production. These check the wiring only.
+  await test("search_dom_text / query_elements / print_pdf router wiring", async () => {
+    resetState();
+    // Scoped per-test, like the collector's own argsOf above: these assert on a
+    // DIFFERENT injected function, so sharing one helper would silently read the
+    // wrong call whenever a test ran both.
+    const lastArgs = (fnName) => {
+      const e = [...callLog].reverse().find((l) => l.kind === "exec" && l.name === fnName);
+      return e ? e.args : null;
+    };
+    let a;
+    callLog.length = 0;
+    await callOp("search_dom_text", { tabId: 1, pattern: "hello" });
+    a = lastArgs("_searchTextPage");
+    check("search_page: pattern is forwarded and the options default sanely",
+      !!a && a[0] === "hello" && a[1] && a[1].regex === false
+        && a[1].caseSensitive === false && a[1].cssScope === null, JSON.stringify(a));
+
+    callLog.length = 0;
+    await callOp("search_dom_text", {
+      tabId: 1, pattern: "\\d+", regex: true, caseSensitive: true,
+      contextChars: 40, maxResults: 5, cssScope: "main",
+    });
+    a = lastArgs("_searchTextPage");
+    check("search_page: every option reaches the page function",
+      !!a && a[0] === "\\d+" && a[1].regex === true && a[1].caseSensitive === true
+        && a[1].contextChars === 40 && a[1].maxResults === 5 && a[1].cssScope === "main",
+      JSON.stringify(a));
+
+    callLog.length = 0;
+    await callOp("query_elements", { tabId: 1, selector: "table tr" });
+    a = lastArgs("_queryElementsPage");
+    check("query_elements: selector forwarded, includeText defaults true",
+      !!a && a[0] === "table tr" && a[1] && a[1].includeText === true
+        && a[1].attributes === null, JSON.stringify(a));
+
+    callLog.length = 0;
+    await callOp("query_elements", {
+      tabId: 1, selector: "a", attributes: ["href"], maxResults: 3, includeText: false,
+    });
+    a = lastArgs("_queryElementsPage");
+    check("query_elements: attributes/maxResults/includeText=false all forwarded",
+      !!a && a[1].attributes && a[1].attributes[0] === "href"
+        && a[1].maxResults === 3 && a[1].includeText === false, JSON.stringify(a));
+
+    // A missing selector must not become the string "undefined" and match nothing
+    // in a way that reads as "the page has none of these".
+    callLog.length = 0;
+    await callOp("query_elements", { tabId: 1 });
+    a = lastArgs("_queryElementsPage");
+    check("query_elements: a missing selector falls back to '*', never 'undefined'",
+      !!a && a[0] === "*", JSON.stringify(a));
+  });
+
   await test("read_network_requests", async () => {
     resetState();
     const fire = (arr, d) => arr.forEach((fn) => fn(d));
@@ -1092,6 +1327,32 @@ const FIELDS3 = () => ([
   // calls them directly, which is exactly the gap CLAUDE.md #19 describes: a param
   // that never reaches the page would look perfect there and be inert in
   // production. These assert the wiring, not the WebMCP logic.
+  await test("page_readiness router wiring (both directions)", async () => {
+    resetState();
+    // #19: the op router is the untested link, and a new op is exactly where a
+    // feature ships inert. BOTH directions, because #15's lesson is that a probe
+    // which never fires is indistinguishable from "everything is settled" — a
+    // one-sided test would pass over an op hardwired to return "".
+    currentStubs["_readinessPage"] = () => ({ ready: "complete", imgs: 0, prog: 0, busy: 0 });
+    let r = await callOp("page_readiness", { tabId: 1 });
+    check("page_readiness: a SETTLED page yields no banner (negative control)",
+      r && r.ok !== false && r.result === "", JSON.stringify(r));
+
+    currentStubs["_readinessPage"] = () => ({ ready: "loading", imgs: 3, prog: 1, busy: 2 });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("page_readiness: an UNSETTLED page yields a banner",
+      r && r.ok !== false && String(r.result).includes("STILL SETTLING"), JSON.stringify(r));
+    check("page_readiness: the banner names every signal that fired",
+      String(r.result).includes('readyState="loading"')
+        && String(r.result).includes("3 image(s)")
+        && String(r.result).includes("1 progress indicator")
+        && String(r.result).includes("2 region(s) marked aria-busy"), JSON.stringify(r));
+    // find() prepends this verbatim to a miss, so it must stay a plain string.
+    // An object here would stringify into the agent's result as "[object Object]".
+    check("page_readiness: returns a bare string, not a wrapper object",
+      typeof r.result === "string", typeof r.result);
+  });
+
   await test("page_tools / call_page_tool reach the page with the right arguments", async () => {
     resetState();
     currentStubs["_pageToolsPage"] = () => ({ supported: true, tools: [{ name: "t1" }] });

@@ -164,6 +164,10 @@ async def main():
             f' style="display:block;width:60px;height:18px">[{i}]</a>' for i in range(12))
         _cpg = await browser.new_page(viewport={"width": 900, "height": 900})
         await _cpg.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await _cpg.goto("about:blank")
         await _cpg.set_content("<!doctype html><meta charset=utf-8>"
                                f"<body style='margin:0'><div>{_cs}</div></body>")
         await _cpg.wait_for_timeout(150)
@@ -311,6 +315,10 @@ async def main():
         # control never merges into its child, because there the tag IS the fact.
         cp = await browser.new_page(viewport={"width": 900, "height": 700})
         await cp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await cp.goto("about:blank")
         await cp.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'><div id=nav>"
             "<span id=a onclick='void 0' style='display:block;width:200px;height:30px'>"
@@ -351,6 +359,10 @@ async def main():
         # bounds the maximum depth, which a skipped level passes.
         wp = await browser.new_page(viewport={"width": 900, "height": 700})
         await wp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await wp.goto("about:blank")
         await wp.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'><main>"
             # TWO bare wrappers as SIBLINGS, each branching. Both conditions are
@@ -466,6 +478,10 @@ async def main():
         # never for a declared control, whose name is its identity not a summary.
         rp = await browser.new_page(viewport={"width": 900, "height": 700})
         await rp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await rp.goto("about:blank")
         await rp.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<div id=shell onclick='void 0' style='width:400px'>"
@@ -699,6 +715,64 @@ async def main():
               and _lr.index(f"ref_{_realm}") < _lr.index(f"ref_{_wrapm}"),
               f"a=ref_{_realm} wrapper=ref_{_wrapm} row={_lr[:60]!r}")
         await cp.close()
+
+        # ---- FF1-FF3: THE TWO FOLD RENDERERS MUST AGREE.
+        #
+        # There were two hand-maintained member-flag lists, one per format, and they
+        # had drifted in BOTH directions: the TREE (the default since #27) dropped
+        # `(read-only)` and `(post-key)`, while FLAT dropped `(just appeared)`.
+        # CLAUDE.md #40 and #41 each close by stating their new notation survives
+        # folding, each pinned by a fixture -- and W28g and NP5 exercise the FLAT fold
+        # only, so both claims were false in the format agents actually get.
+        # Reproduced live: a readonly input holding "locked" printed as `7:"b"` in the
+        # tree, byte-identical to the writable field beside it.
+        #
+        # SEVEN members, because the fold threshold is 6 and my first version of this
+        # fixture had five -- nothing folded, and the check passed vacuously (#21: a
+        # detector that cannot fire is worth nothing).
+        fp = await browser.new_page(viewport={"width": 1280, "height": 1600})
+        await fp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        STATEFUL = ('<!doctype html><meta charset=utf-8><body><form>'
+                    '<div><input type="text" name="a" pattern="[0-9]{5}" disabled></div>'
+                    '<div><input type="text" name="b" readonly value="locked"></div>'
+                    '<div><input type="text" name="c" maxlength="4" required></div>'
+                    '<div><input type="text" name="d"></div>'
+                    '<div><input type="text" name="e" maxlength="9"></div>'
+                    '<div><input type="text" name="f" maxlength="8"></div>'
+                    '<div><input type="text" name="g" maxlength="7"></div>'
+                    '</form></body>')
+        # A SEPARATE PAGE PER FORMAT, because both must be a FIRST read. Reading the
+        # same page twice made the second carry `(just appeared)` on every member
+        # (#31's novelty flag, which seeds on the first unscoped read) and restarted
+        # the comparison at different mmids -- so the first version of FF2 failed on
+        # my fixture rather than on the code.
+        flat = await listing(fp, STATEFUL, fmt="flat")
+        fp2 = await browser.new_page(viewport={"width": 1280, "height": 1600})
+        await fp2.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        tree = await listing(fp2, STATEFUL, fmt="tree")
+
+        def fold_members(txt):
+            """The member run of the fold line, which is what both formats share."""
+            for ln in txt.splitlines():
+                if "\u00d7 input" in ln and "via its ref" in ln:
+                    return ln.split("via its ref):", 1)[-1].strip()
+            return ""
+
+        mf, mt = fold_members(flat), fold_members(tree)
+        check("FF1 both formats actually fold these seven inputs",
+              bool(mf) and bool(mt), f"flat={mf[:50]!r} tree={mt[:50]!r}")
+        # The invariant, and the reason this is one check rather than one per
+        # notation: a NEW flag cannot reach one format and miss the other.
+        check("FF2 ...and their fold MEMBER TOKENS are byte-identical",
+              mf == mt, f"flat={mf[:110]!r}\n            tree={mt[:110]!r}")
+        # FF3 is the control that FF2 is not satisfied by both formats printing
+        # nothing: the state must really be present. read-only and post-key are the
+        # two that were actually missing from the tree.
+        check("FF3 ...and the states that were dropped are present in BOTH",
+              all(t in mf and t in mt for t in ("(read-only)", "(post-key)",
+                                                "(disabled)", "(required)")),
+              f"tree={mt[:140]!r}")
+        await fp.close(); await fp2.close()
 
         await browser.close()
 

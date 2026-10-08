@@ -575,8 +575,18 @@ def main(argv: list[str] | None = None) -> int:
             and not getattr(args, "skip", None) and not args.skip_browser:
         try:
             _md = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-            _stated = {int(m) for m in re.findall(r"17 suites, (\d+) checks", _md)}
-            if _stated and checks and _stated != {checks}:
+            # THE SUITE COUNT IS NOT PART OF THE PATTERN. This read `17 suites,
+            # (\d+) checks` and CLAUDE.md has said 18 since the batch suite landed,
+            # so it matched NOTHING and reported NOTHING for every run since — the
+            # exact silent no-op #30 wrote this check to end, reappearing inside the
+            # check itself. A detector that cannot fire is worth less than none,
+            # because it is also a claim that nothing is wrong. Hence the second
+            # branch: if the anchor is gone, say so instead of passing quietly.
+            _stated = {int(m) for m in re.findall(r"\d+ suites, (\d+) checks", _md)}
+            if not _stated:
+                print("  note: CLAUDE.md has no 'N suites, M checks' line any more —"
+                      " this drift check is inert until one is restored")
+            elif checks and _stated != {checks}:
                 print(f"  note: CLAUDE.md says {'/'.join(str(s) for s in sorted(_stated))}"
                       f" checks, this run counted {checks} — update the two"
                       f" current-state lines (the per-section 'Suites: N checks'"

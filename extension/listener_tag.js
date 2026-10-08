@@ -43,6 +43,51 @@
   } catch (e) {}
 })();
 
+// CLOSED SHADOW ROOTS, with no debugger attach — limitation #2's last open case.
+//
+// A closed root is unreachable from any page-context walk: `el.shadowRoot` is null
+// and there is no other handle. browser-use solves this with CDP
+// `DOM.getDocument{pierce:true}`, which is strictly more capable AND strictly less
+// available: limitation #12 means the attach is refused tab-wide whenever another
+// extension has injected an iframe, i.e. on exactly the password-manager login
+// pages where an agent most needs to read the form. `chrome.dom.openOrClosedShadowRoot`
+// would also work but only from the ISOLATED world, and the collector must run in
+// MAIN — that is how it reads `__abClickBound` above, which #18 measured as 60% of
+// the accuracy gap.
+//
+// The same trick as the wrap above closes it for free: attachShadow cannot create a
+// root without calling this, and at document_start in MAIN world nothing beats us to
+// it, so we hold a reference to every closed root the page will ever make.
+//
+// TWO DELIBERATE CHOICES:
+//  - `Element.prototype.shadowRoot` is NOT redefined, though it would make all ~15
+//    existing traversal sites pierce with no other change. That getter returning
+//    null is how a page feature-detects its OWN encapsulation, and silently changing
+//    an observable page behaviour is a different and much worse class of risk than
+//    adding an invisible expando. The wrap above is semantics-preserving; that would
+//    not be.
+//  - The reference lands on a non-enumerable expando, so no selector, serializer or
+//    property enumeration sees it. It does make the page's closed root reachable to
+//    other script IN THAT PAGE — but that is the page's own same-origin data, which
+//    it created and can already reach through the closure that made it.
+(() => {
+  try {
+    const orig = Element.prototype.attachShadow;
+    if (!orig || orig.__abWrapped) return;
+    const wrapped = function (init) {
+      const root = orig.apply(this, arguments);
+      try {
+        if (init && init.mode === 'closed' && !this.__abClosedRoot) {
+          Object.defineProperty(this, '__abClosedRoot', { value: root, configurable: true });
+        }
+      } catch (e) {}
+      return root;
+    };
+    try { Object.defineProperty(wrapped, '__abWrapped', { value: true }); } catch (e) {}
+    Element.prototype.attachShadow = wrapped;
+  } catch (e) {}
+})();
+
 // --------------------- console capture (read_console_messages) --------------
 // Wrap console.* from document_start into a bounded page-global ring buffer the
 // background's read_console_messages op reads via chrome.scripting. No debugger

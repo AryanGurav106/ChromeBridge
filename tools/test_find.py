@@ -46,12 +46,21 @@ def check(name, ok, detail=""):
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"  - {detail}" if detail else ""))
 
 
-def page(*entries):
-    """Install a fake bridge returning these structured entries."""
+def page(*entries, listing=None):
+    """Install a fake bridge returning these structured entries.
+
+    `listing` models the OTHER half of the real op's contract: with
+    structured=True the bridge hands back entries, otherwise a formatted listing
+    STRING. The fake used to return entries whatever was asked, which is exactly
+    the stub-shares-your-assumptions trap #19 records — find's miss path reads the
+    string form, and against this fake it would have seen a Python list.
+    """
     class FB:
         connected = True
 
         async def call(self, op, **kw):
+            if op == "get_interactive_elements" and not kw.get("structured"):
+                return listing if listing is not None else ""
             return list(entries)
     ms.STATE["bridge"] = FB()
 
@@ -389,6 +398,112 @@ async def main():
     out = await run("zzzq nonexistent widget")
     check("F9 a genuine miss says so and points at read_page",
           "No elements matched" in out and "read_page" in out, out[:96])
+
+    # F32/F33: THE APP-SHELL CONTAINER. Its accessible name is the whole page
+    # concatenated, so it matched any query and — because find prints the collector's
+    # `line` — printed the whole blob. The scorer already refused to match on it
+    # (`_borrowed`), and #29 already stopped the TREE printing it, so this was the two
+    # halves of one tool disagreeing: ranked WITHOUT the label, rendered WITH it.
+    # Measured live on a component-heavy app: find("Investor Relations Hub sidebar
+    # link") returned the shell FIRST, ~2,500 chars of sidebar/dashboard/calendar,
+    # pushing the real button to second place.
+    _blob = "Toggle Sidebar Home Control Center Calendar Investor Relations Hub RevOps Hub"
+    page(el(mmid="80", tag="div", label=_blob, text=_blob, subtreeName=True,
+            line='ref_80 | div (container — the text here belongs to the elements inside it)', y=0),
+         el(mmid="81", tag="button", label="Investor Relations Hub",
+            text="Investor Relations Hub",
+            line='ref_81 | button "Investor Relations Hub"', y=358))
+    out = await run("Investor Relations Hub sidebar link")
+    _first = next((l for l in out.splitlines() if "ref_8" in l), "")
+    check("F32 the real control outranks the app-shell container whose name is the "
+          "whole page",
+          "ref_81" in _first, f"first result: {_first.strip()[:90]}")
+    check("F33 ...and if the container appears at all, its borrowed text is not "
+          "printed as its identity",
+          _blob not in out, f"blob_printed={_blob in out}")
+
+    # ---- F34-F37: DECLARED STATE IS QUERYABLE. The listing prints `(disabled)`
+    # and the legend defines it, but find scored only page TEXT, so a query naming
+    # a state could be answered only by reading a listing first — a whole model
+    # turn to recover something the entry already carried. Measured in the live
+    # head-to-head, where the other arm's model-backed find answered it in one
+    # call and ours could not.
+    SEL_OK = el(mmid="40", tag="select", name="Country", y=100)
+    SEL_OFF = el(mmid="41", tag="select", name="Region", disabled=True, y=140)
+    REQ = el(mmid="42", tag="input", name="Email", required=True, y=180)
+    page(SEL_OK, SEL_OFF, REQ)
+
+    out = await run("disabled select menu")
+    _first = next((l for l in out.splitlines()[1:] if l.strip()), "")
+    check("F34 a declared state in the query ranks the element that declares it",
+          "ref_41" in _first, f"first result: {_first.strip()[:90]}")
+    check("F34b ...confidently, not demoted to a weak match",
+          "NO CONFIDENT MATCH" not in out, out.splitlines()[0][:90])
+
+    # NEGATIVE CONTROL. Without it, "always boost" would pass F34 just as well.
+    out = await run("required select menu")
+    _first = next((l for l in out.splitlines()[1:] if l.strip()), "")
+    check("F35 a state the element does not declare does not boost it",
+          "ref_41" not in _first, f"first result: {_first.strip()[:90]}")
+
+    # F29 GUARD, UNDER A NEW NAME. A state word is a type-level predicate — every
+    # disabled control satisfies it and none is identified by it — so crediting it
+    # as CONTENT coverage would re-open exactly what F29 closed: a confident answer
+    # carried by a word that distinguishes nothing, while the tokens that actually
+    # name the target match nothing at all.
+    out = await run("disabled passport number field")
+    check("F36 a state word does not buy confidence for an element nothing else "
+          "in the query matches",
+          "NO CONFIDENT MATCH" in out or "No elements matched" in out,
+          out.splitlines()[0][:110])
+
+    # ---- F37: A MISS ROUTES TO A TOOL THAT CAN ANSWER. Three shapes were tried
+    # and the first two were wrong, each only visible live. "Call read_page" spends
+    # a model turn (92-97% of a tool call, #38) to get something find is already
+    # connected to. Fetching the listing instead returned a VIEWPORT-SCOPED page
+    # (#6/#26) that did not contain the answer, under a footer naming `find` as the
+    # cheapest recovery — the tool that had just failed. Dumping find's own
+    # whole-page rows then spent 8,000 chars on 81 of 186 sidebar nav links and
+    # still missed the target. Ordering a dump usefully requires KNOWING the
+    # answer, which is what find just failed at.
+    # The census is small, always fits, and is what lets the model write an exact
+    # query: "6 select" + "pick more than one option" -> select[multiple].
+    page(el(mmid="1", tag="select", name="Default select example"),
+         el(mmid="2", tag="select", name="Multiple select example", y=50),
+         el(mmid="3", tag="a", name="Docs", y=80))
+
+    out = await run("zzqqx nothing like this at all")
+    check("F37 a total miss reports what the page HOLDS, not just that it missed",
+          "3 elements" in out and "2 select" in out, out.replace("\n", " ")[:150])
+    check("F37b ...and names the tools that can answer exactly",
+          "query_elements" in out and "search_page" in out, out.replace("\n", " ")[:150])
+    check("F37c ...and explains that find ranks by WORDS, so the miss is informative",
+          "WORDS" in out, out.replace("\n", " ")[:150])
+
+    # THE WEAK PATH GETS IT TOO — this is where the turn is actually lost. A weak
+    # match returns plausible-looking junk (live: four nav links for "the control I
+    # would use to pick more than one option at once", while the correct
+    # <select multiple> was listed with `multiple count=4`), which is worse than
+    # nothing because it invites acting on it.
+    # A genuinely WEAK match needs one shared content word out of many, so the
+    # coverage gate demotes it rather than finding nothing at all. (Without this
+    # page the query falls into the ZERO-match branch and the check passes for the
+    # wrong reason — which is exactly what happened on the first run.)
+    page(el(mmid="1", tag="button", name="Passport Office Directory"),
+         el(mmid="2", tag="select", name="Country", y=50))
+    out = await run("passport number entry for an international travel document")
+    check("F37d a WEAK match is routed too, so the miss costs no extra turn",
+          "NO CONFIDENT MATCH" in out and "query_elements" in out,
+          out.splitlines()[0][:100])
+    check("F37e ...and says WHY a lexical matcher missed, not just that it did",
+          "LEXICAL" in out, out.splitlines()[0][:120])
+
+    # DEGRADATION CONTROL: nothing collected at all -> no census to report, and the
+    # tool must still return a sentence rather than a bare header.
+    page()
+    out = await run("anything")
+    check("F37f an empty page still answers in words, not an empty string",
+          out.strip() != "" and "No elements matched" in out, out[:110])
 
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} find checks passed.")

@@ -15,6 +15,7 @@ Run:  python tools/test_widgets.py
 
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -341,6 +342,12 @@ async def main():
         # output, which is also what let find answer a city query with the State field.
         dp = await browser.new_page(viewport={"width": 900, "height": 700})
         await dp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # A NEW DOCUMENT IS REQUIRED HERE. add_init_script only affects documents
+        # created AFTER it, and set_content reuses the existing about:blank — so
+        # without this goto, listener_tag.js never runs and every fixture below is
+        # testing an untagged page. Found while adding S14: the attachShadow wrap
+        # read as broken when it was the harness that was. C13 now enforces it.
+        await dp.goto("about:blank")
         await dp.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'><form>"
             "<label>State</label>"
@@ -396,6 +403,12 @@ async def main():
         # agent must act on is the one with pointer-events:none.
         bp = await browser.new_page(viewport={"width": 900, "height": 700})
         await bp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # A NEW DOCUMENT IS REQUIRED HERE. add_init_script only affects documents
+        # created AFTER it, and set_content reuses the existing about:blank — so
+        # without this goto, listener_tag.js never runs and every fixture below is
+        # testing an untagged page. Found while adding S14: the attachShadow wrap
+        # read as broken when it was the harness that was. C13 now enforces it.
+        await bp.goto("about:blank")
         await bp.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<input type=checkbox id=live style='pointer-events:none;width:16px;height:16px'>"
@@ -438,6 +451,12 @@ async def main():
         #    pages have more than 60 characters in them.
         vp = await browser.new_page(viewport={"width": 900, "height": 700})
         await vp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # A NEW DOCUMENT IS REQUIRED HERE. add_init_script only affects documents
+        # created AFTER it, and set_content reuses the existing about:blank — so
+        # without this goto, listener_tag.js never runs and every fixture below is
+        # testing an untagged page. Found while adding S14: the attachShadow wrap
+        # read as broken when it was the harness that was. C13 now enforces it.
+        await vp.goto("about:blank")
         await vp.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<div style='width:300px'><input id=so role=combobox aria-label=Search"
@@ -485,6 +504,12 @@ async def main():
         # framework FAMILY, not one site.
         ap = await browser.new_page(viewport={"width": 900, "height": 700})
         await ap.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # A NEW DOCUMENT IS REQUIRED HERE. add_init_script only affects documents
+        # created AFTER it, and set_content reuses the existing about:blank — so
+        # without this goto, listener_tag.js never runs and every fixture below is
+        # testing an untagged page. Found while adding S14: the attachShadow wrap
+        # read as broken when it was the harness that was. C13 now enforces it.
+        await ap.goto("about:blank")
         await ap.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<nav><div aria-selected=true style='width:80px;height:24px;cursor:pointer'>Products</div>"
@@ -541,6 +566,12 @@ async def main():
         # (fix #1) stops firing where it is needed.
         cp = await browser.new_page(viewport={"width": 800, "height": 600})
         await cp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # A NEW DOCUMENT IS REQUIRED HERE. add_init_script only affects documents
+        # created AFTER it, and set_content reuses the existing about:blank — so
+        # without this goto, listener_tag.js never runs and every fixture below is
+        # testing an untagged page. Found while adding S14: the attachShadow wrap
+        # read as broken when it was the harness that was. C13 now enforces it.
+        await cp.goto("about:blank")
         await cp.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<label><input type=checkbox id=cb style='width:16px;height:16px'> Email me</label>"
@@ -588,6 +619,12 @@ async def main():
         # which is what carries an invisible string into the confident results.
         np = await browser.new_page(viewport={"width": 900, "height": 700})
         await np.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # A NEW DOCUMENT IS REQUIRED HERE. add_init_script only affects documents
+        # created AFTER it, and set_content reuses the existing about:blank — so
+        # without this goto, listener_tag.js never runs and every fixture below is
+        # testing an untagged page. Found while adding S14: the attachShadow wrap
+        # read as broken when it was the harness that was. C13 now enforces it.
+        await np.goto("about:blank")
         await np.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<div><!-- promo code discount coupon -->"
@@ -646,6 +683,12 @@ async def main():
         # menuitem is categorically not one of a combobox's values.
         mp = await browser.new_page(viewport={"width": 1000, "height": 800})
         await mp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # A NEW DOCUMENT IS REQUIRED HERE. add_init_script only affects documents
+        # created AFTER it, and set_content reuses the existing about:blank — so
+        # without this goto, listener_tag.js never runs and every fixture below is
+        # testing an untagged page. Found while adding S14: the attachShadow wrap
+        # read as broken when it was the harness that was. C13 now enforces it.
+        await mp.goto("about:blank")
         await mp.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'><main>"
             "<ul role=menu style='position:sticky;z-index:1'>"
@@ -689,6 +732,12 @@ async def main():
         # deleted on evidence rather than on the argument.
         tp2 = await browser.new_page(viewport={"width": 900, "height": 700})
         await tp2.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # A NEW DOCUMENT IS REQUIRED HERE. add_init_script only affects documents
+        # created AFTER it, and set_content reuses the existing about:blank — so
+        # without this goto, listener_tag.js never runs and every fixture below is
+        # testing an untagged page. Found while adding S14: the attachShadow wrap
+        # read as broken when it was the harness that was. C13 now enforces it.
+        await tp2.goto("about:blank")
         await tp2.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<div role=tablist><div role=tab aria-controls=pa style='width:90px;height:26px'>A-one</div>"
@@ -749,6 +798,12 @@ async def main():
         # agreed with us".
         wp = await browser.new_page(viewport={"width": 800, "height": 600})
         await wp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # A NEW DOCUMENT IS REQUIRED HERE. add_init_script only affects documents
+        # created AFTER it, and set_content reuses the existing about:blank — so
+        # without this goto, listener_tag.js never runs and every fixture below is
+        # testing an untagged page. Found while adding S14: the attachShadow wrap
+        # read as broken when it was the harness that was. C13 now enforces it.
+        await wp.goto("about:blank")
         await wp.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<div id=d onclick='void 0' style='width:300px;height:30px'>Search products</div>"
@@ -778,6 +833,1204 @@ async def main():
               _ri.get("ok") is True and _ri.get("actual") == "hello",
               f"ok={_ri.get('ok')} actual={_ri.get('actual')!r}")
         await wp.close()
+
+        # ---- W22-W25: what the DOCUMENT declares about a field, adopted from
+        # browser-use's serializer. Every assertion below is about an attribute the
+        # page wrote; none of it is inferred, so this stays inside the rule #27/#28
+        # set for the existence path.
+        #
+        # NOT VACUOUS — verified by running each against the pre-change collector:
+        # W22/W22b/W22c and W23 report `constraints`/`options` as None (the fields
+        # did not exist), and W24 finds the literal secret inside the listing JSON.
+        # W22d and W23b are the negative controls: without them, emitting the block
+        # unconditionally would pass every positive check while taxing every row on
+        # every page, which is the cost that has to stay at zero for pages that
+        # declare nothing.
+        cp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await cp.set_content(
+            "<form>"
+            "<label for=zip>Postcode</label>"
+            "<input id=zip name=ZIP pattern='[0-9]{5}' maxlength=5 inputmode=numeric required>"
+            "<label for=dob>Date of birth</label>"
+            "<input id=dob type=date min='2020-01-01' max='2030-12-31'>"
+            "<label for=vol>Volume</label><input id=vol type=range min=0 max=11 step=1>"
+            "<label for=pw>Password</label><input id=pw type=password value='hunter2-SECRET'>"
+            "<label for=pw2>Confirm</label><input id=pw2 type=password>"
+            "<label for=st>State</label>"
+            "<select id=st><option>Alabama</option><option>Alaska</option><option>Arizona</option></select>"
+            # W23d/W23e: the live shape -- a prompt option carrying BOTH `selected`
+            # and `disabled`, so it is the load-time selection AND the one entry
+            # that cannot be chosen. The <optgroup disabled> is the INHERITED case,
+            # which `o.disabled` does not report and `:disabled` does.
+            "<select id=pick aria-label='Pick one'>"
+            "<option selected disabled>Please select an option</option>"
+            "<option>Option 1</option>"
+            "<optgroup disabled label='Later'><option>Option 2</option></optgroup>"
+            "</select>"
+            "<label for=plain>Nickname</label><input id=plain>"
+            "</form>"
+        )
+        await cp.wait_for_timeout(120)
+        craw = await cp.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        crow = await cp.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()")
+        cjson = json.dumps(craw, default=str)
+
+        def one(el_id):
+            for e in craw:
+                if (e.get("id") or "") == el_id or el_id in json.dumps(e, default=str):
+                    return e
+            return {}
+
+        _zip = next((e for e in craw if (e.get("name") or "") == "Postcode"), {})
+        check("W22 a pattern-guarded field publishes what it ACCEPTS"
+              " (pattern/maxlength/inputmode), not just (required)",
+              all(t in (_zip.get("constraints") or "")
+                  for t in ("pattern=", "[0-9]{5}", "maxlength=5", "inputmode=numeric")),
+              f"constraints={_zip.get('constraints')!r}")
+
+        _dob = next((e for e in craw if (e.get("name") or "") == "Date of birth"), {})
+        check("W22b a date input carries the WIRE format the HTML spec fixes for its"
+              " type, which is not always what the widget displays",
+              "format=YYYY-MM-DD" in (_dob.get("constraints") or "")
+              and "min=2020-01-01" in (_dob.get("constraints") or ""),
+              f"constraints={_dob.get('constraints')!r}")
+
+        _vol = next((e for e in craw if (e.get("name") or "") == "Volume"), {})
+        check("W22c a range input publishes its bounds and step",
+              all(t in (_vol.get("constraints") or "") for t in ("min=0", "max=11", "step=1")),
+              f"constraints={_vol.get('constraints')!r}")
+
+        # NEGATIVE CONTROL. The whole argument for this feature is that it is free
+        # on controls that declare nothing; an unconditional block would pass W22
+        # and quietly add a tax to every row of every listing.
+        _plain = next((e for e in craw if (e.get("name") or "") == "Nickname"), {})
+        check("W22d ...and a field that declares no constraints emits NOTHING",
+              bool(_plain) and not (_plain.get("constraints") or ""),
+              f"constraints={_plain.get('constraints')!r}")
+
+        _st = next((e for e in craw if (e.get("name") or "") == "State"), {})
+        check("W23 a <select> publishes every option it declares, with a true count",
+              "count=3" in (_st.get("options") or "")
+              and all(t in (_st.get("options") or "") for t in ("Alabama", "Alaska", "Arizona")),
+              f"options={_st.get('options')!r}")
+        check("W23c ...each option quoted separately, because ' | ' occurs INSIDE real "
+              "option text (python.org ships 'Greek | Ελληνικά')",
+              '"Alabama"' in (_st.get("options") or "")
+              and (_st.get("options") or "").strip().endswith("]"),
+              f"options={_st.get('options')!r}")
+        check("W23b ...and a non-select carries no option list",
+              not (_zip.get("options") or ""),
+              f"options={_zip.get('options')!r}")
+
+        # A DISABLED OPTION IS DECLARED AND DECIDES WHAT A WRITE CAN DO. Live, a
+        # prompt select printed `options=["Please select an option", "Option 1",
+        # "Option 2"]` while the first was unselectable -- "which option cannot be
+        # chosen" was unanswerable from the listing and cost a query_elements call.
+        _pk = next((e for e in craw if (e.get("name") or "") == "Pick one"), {})
+        _po = _pk.get("options") or ""
+        check("W23d a disabled option is marked, and the mark is OUTSIDE the quotes "
+              "so the text stays exactly what form_input must be passed",
+              '"Please select an option" (disabled)' in _po, f"options={_po!r}")
+        check("W23e ...including one disabled by its <optgroup>, which `o.disabled` "
+              "does not report and `:disabled` does",
+              '"Option 2" (disabled)' in _po, f"options={_po!r}")
+        check("W23f CONTROL: a selectable option carries no mark — without this, "
+              "marking every option would satisfy W23d/W23e and mean nothing",
+              '"Option 1"' in _po and '"Option 1" (disabled)' not in _po,
+              f"options={_po!r}")
+
+        # W24 is the one check here that is about a secret rather than a convenience,
+        # so it asserts over the WHOLE listing rather than one entry's value field —
+        # a future hoist that carried the password onto a wrapper row would satisfy a
+        # per-field assertion and still leak.
+        check("W24 a filled password's contents appear NOWHERE in the listing",
+              "hunter2-SECRET" not in cjson and "hunter2-SECRET" not in str(crow),
+              f"leaked={'hunter2-SECRET' in cjson}")
+        _pw = next((e for e in craw if (e.get("name") or "") == "Password"), {})
+        _pw2 = next((e for e in craw if (e.get("name") or "") == "Confirm"), {})
+        check("W24b ...but a filled password is still distinguishable from an empty"
+              " one, because withholding both would report an occupied box as blank",
+              "filled" in (_pw.get("value") or "") and not (_pw2.get("value") or ""),
+              f"filled={_pw.get('value')!r} empty={_pw2.get('value')!r}")
+
+        # THE RENDER IS A SEPARATE LINK, and CLAUDE.md #19 records `detail='brief'`
+        # shipping with the collector correct and the row unchanged. Assert the text
+        # the agent actually reads, not just the field behind it.
+        check("W25 the rendered row carries them, not just the structured entry",
+              "format=YYYY-MM-DD" in str(crow) and "count=3" in str(crow)
+              and "maxlength=5" in str(crow),
+              f"row_sample={str(crow)[:120]!r}")
+        await cp.close()
+
+        # ---- W26-W26d: (just appeared). browser-use marks novelty with a `*` prefix
+        # computed from the previous step's node-id set; this is the same idea against
+        # the mmid registry, and it is the one representational thing they had that we
+        # answered only through `delta` — a MODE the agent must know to request, which
+        # #30 found inert for its entire life. A per-row flag cannot fail silently.
+        #
+        # NOT VACUOUS — against the pre-change collector every one of these fails:
+        # W26b finds no marker at all (the field did not exist). W26/W26c/W26d are the
+        # controls that make the flag worth having: an always-on marker would pass
+        # W26b and be pure noise, which is the #15 failure this suite exists to catch.
+        np_ = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await np_.set_content(
+            "<button id=go>Go</button><div id=slot></div>"
+            "<script>document.getElementById('go').onclick=function(){"
+            "document.getElementById('slot').innerHTML="
+            "'<button id=fresh>Fresh action</button>';};</script>"
+        )
+        await np_.wait_for_timeout(100)
+        CALL = "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"
+        CALLS = "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()"
+
+        first = await np_.evaluate(CALL)
+        check("W26 the FIRST read marks nothing — everything would qualify, and an"
+              " always-on flag is noise the reader learns to skip",
+              "just appeared" not in str(first),
+              f"marked={'just appeared' in str(first)}")
+
+        await np_.click("#go")
+        await np_.wait_for_timeout(120)
+        second = await np_.evaluate(CALL)
+        check("W26b a control the click CREATED is flagged on the row that carries it",
+              "Fresh action" in str(second) and "(just appeared)" in str(second),
+              f"present={'(just appeared)' in str(second)}")
+
+        # THE CONTROL THAT MATTERS. Marking the new button is easy; not marking the
+        # button that was there all along is what makes the flag mean anything.
+        _rows = [ln for ln in str(second).splitlines() if "ref_" in ln]
+        _go = next((ln for ln in _rows if '"Go"' in ln), "")
+        _fresh = next((ln for ln in _rows if "Fresh action" in ln), "")
+        check("W26c ...and the pre-existing control is NOT flagged",
+              bool(_go) and "just appeared" not in _go and "just appeared" in _fresh,
+              f"go={_go[:70]!r}")
+
+        # A re-read with nothing changed must go quiet again, or the flag decays into
+        # a permanent decoration of whatever the last action happened to create.
+        third = await np_.evaluate(CALL)
+        check("W26d ...and a re-read with no further change goes quiet",
+              "just appeared" not in str(third),
+              f"still_marked={'just appeared' in str(third)}")
+
+        # A SCOPED read must neither emit the flag nor poison the set: it collects one
+        # subtree, so seeding from it would make the next whole-page read announce the
+        # entire rest of the document as new.
+        _sid = None
+        for e in await np_.evaluate(CALLS):
+            if "Fresh action" in json.dumps(e, default=str):
+                _sid = e.get("mmid")
+        scoped = await np_.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false, '" + str(_sid) + "'); })()")
+        after = await np_.evaluate(CALL)
+        check("W26e a scoped read neither flags nor poisons the seen-set",
+              "just appeared" not in str(scoped) and "just appeared" not in str(after),
+              f"scoped={'just appeared' in str(scoped)} after={'just appeared' in str(after)}")
+
+        # W26f: THE FALSE POSITIVE THAT MADE THE FLAG LIE ABOUT THE DOM. `out` is
+        # VIEWPORT-FILTERED on an unscoped string read, so nothing below the fold was
+        # ever seeded and every such control was announced `(just appeared)` the
+        # moment the page scrolled to it -- contradicting the flag's own contract,
+        # that an element scrolling into view is not new. Measured on a page whose
+        # form sits below the fold: mmids 6 and 7 are stamped at the FIRST read while
+        # the seen-set holds 1 of 7.
+        #
+        # It was not merely noise. The flag firing on 17 form controls after a scroll
+        # was taken as PROOF that they had not been in the DOM, which sent an
+        # investigation at the readiness probe instead of here.
+        sp = await browser.new_page(viewport={"width": 900, "height": 600})
+        await sp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await sp.goto("about:blank")
+        await sp.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<button id=top>Top button</button><div style='height:1600px'>spacer</div>"
+            "<form><button id=below>Submit the form</button>"
+            "<input id=name aria-label='Full name'></form></body>")
+        await sp.wait_for_timeout(120)
+        await sp.evaluate(CALL)                      # seeds, page at the top
+        await sp.evaluate("window.scrollTo(0, 1700)")
+        await sp.wait_for_timeout(120)
+        scrolled = str(await sp.evaluate(CALL))
+        check("W26f a control that was below the fold all along is NOT flagged when "
+              "the page scrolls to it",
+              "Submit the form" in scrolled
+              and "(just appeared)" not in scrolled,
+              f"rows={[l.strip() for l in scrolled.splitlines() if 'Submit' in l or 'Full name' in l]}")
+
+        # THE CONTROL, on the same page: a genuinely created element must still be
+        # flagged, or W26f could be satisfied by deleting the flag outright.
+        await sp.evaluate("document.querySelector('form')"
+                          ".insertAdjacentHTML('beforeend', '<button>Brand new</button>')")
+        await sp.wait_for_timeout(80)
+        after = str(await sp.evaluate(CALL))
+        _row = lambda txt, body: next((l for l in body.splitlines() if txt in l), "")
+        check("W26g CONTROL: a control created after that read IS still flagged, "
+              "while the one that merely scrolled into view stays unflagged",
+              "(just appeared)" in _row("Brand new", after)
+              and "(just appeared)" not in _row("Submit the form", after),
+              f"new={_row('Brand new', after).strip()!r} "
+              f"old={_row('Submit the form', after).strip()!r}")
+        await sp.close()
+        await np_.close()
+
+        # ---- Q1-Q7: search_page and query_elements, the two capabilities that had no
+        # equivalent at all. NOT VACUOUS against the pre-change tree: both functions
+        # did not exist, so every check below throws rather than fails.
+        SEARCH = extract("_searchTextPage")
+        QUERY = extract("_queryElementsPage")
+        qp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await qp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await qp.goto("about:blank")
+        await qp.set_content(
+            # A BASE URL IS REQUIRED FOR Q7. set_content lands on about:blank, which
+            # has no path, so a relative href cannot be resolved and `el.href` hands
+            # back the raw attribute — the property read would look broken while
+            # being correct. This is the fixture stating what the page must have,
+            # not a workaround.
+            "<base href='https://example.test/shop/'>"
+            "<main><h1>Order 4471</h1>"
+            "<p>Your total is 249.99 EUR, shipped Tuesday.</p>"
+            "<table><tr><td>Widget</td><td>19.99</td></tr>"
+            "<tr><td>Gizmo</td><td>230.00</td></tr>"
+            "<tr><td>Shipping</td><td>0.00</td></tr></table>"
+            "<a href='/receipt.pdf'>Receipt</a><a href='/again'>Reorder</a>"
+            "<p style='display:none'>SECRET hidden marker 9999</p>"
+            # Q2b: visibility:hidden, which a BARE checkVisibility() does not
+            # catch (#36). Harmless while the walk only skipped matches; load
+            # bearing now that it BUILDS text, because an unrendered subtree would
+            # otherwise contribute to its ancestors' context.
+            "<p style='visibility:hidden'>PHANTOM marker 8888</p>"
+            "<p>visible sibling <span style='visibility:hidden'>GHOSTWORD</span> tail</p>"
+            # Q1c-Q1f: PROSE WITH INLINE MARKUP — the shape the own-text walk
+            # mutilated. The <a> and <b> must sit INSIDE a sentence whose
+            # remaining words are plain text nodes, because that is the only
+            # arrangement where the old code produced a holed string; a link on
+            # its own line was always findable and would make these vacuous.
+            "<p id='prose'>The <a href='/m'>mole</a> is a <b>base unit</b> for "
+            "amount of substance.</p>"
+            # Two BLOCK children, so their text must not fuse into "alphabeta".
+            "<ul><li>alpha</li><li>beta</li></ul>"
+            "</main><footer><p>249.99 appears here too</p></footer>"
+            "<div id=h></div>"
+            "<script>var r=document.getElementById('h').attachShadow({mode:'closed'});"
+            "r.innerHTML='<p>inside closed root: token ZX9</p>';</script>"
+        )
+        await qp.wait_for_timeout(150)
+
+        async def search(pat, **kw):
+            return await qp.evaluate(
+                "(function(){ " + SEARCH + "; return _searchTextPage("
+                + json.dumps(pat) + ", " + json.dumps(kw) + "); })()")
+
+        async def query(sel, **kw):
+            return await qp.evaluate(
+                "(function(){ " + QUERY + "; return _queryElementsPage("
+                + json.dumps(sel) + ", " + json.dumps(kw) + "); })()")
+
+        r = await search("249.99")
+        check("Q1 search_page finds text and returns the true total across the page",
+              r.get("total") == 2 and any("249.99" in (h.get("context") or "") for h in r["hits"]),
+              f"total={r.get('total')} hits={len(r.get('hits') or [])}")
+
+        # CONTEXT MUST BEAT THE ELEMENT THE MATCH LIVES IN. Found live on a Wikipedia
+        # GDP table: every hit was an <a> whose entire text was the match, so the
+        # context window had nothing to add and three correct hits came back as three
+        # bare words — on exactly the page shape ("where is the value") this tool is
+        # for. The climb takes the nearest ancestor that contains MORE than the match.
+        r = await search("Gizmo")
+        check("Q1b a match that fills its own element takes context from the row above it",
+              bool(r["hits"]) and "230.00" in r["hits"][0]["context"],
+              f"context={r['hits'][0]['context']!r}" if r.get("hits") else "no hits")
+
+        # ---- Q1c-Q1f: the own-text walk mutilated every sentence containing an
+        # inline element. It collected DIRECT TEXT NODES ONLY and used that string
+        # both to match against and to quote back, so Wikipedia's lead sentence
+        # came back as "The (symbol ) is a , the in the (SI) for ." — every linked
+        # term gone, no marker, still reading as a finished sentence. Measured at
+        # 8-16% of text-bearing elements across five real pages. The ancestor climb
+        # that would have repaired it is gated on the match FILLING its element,
+        # which is exactly the case this is not.
+        r = await search("for amount", contextChars=80)
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1c context keeps the words that sit in inline children",
+              "mole" in ctx and "base unit" in ctx, f"context={ctx!r}")
+
+        # A phrase that STRADDLES a text node and an element could not match at
+        # all: "mole" lived in the <a> and " is a " in the parent's text, so
+        # neither string ever contained the whole phrase.
+        r = await search("mole is a")
+        check("Q1d a phrase spanning an inline boundary is findable",
+              r.get("total") == 1, f"total={r.get('total')}")
+
+        # ATTRIBUTION IS UNCHANGED, and this is what proves the fix did not buy
+        # correct text by reporting every match once per level of nesting (#32).
+        r = await search("base unit")
+        check("Q1e a match inside a child is still reported ONCE, by the child",
+              r.get("total") == 1 and (r["hits"][0]["tag"] == "b"),
+              f"total={r.get('total')} tag={r['hits'][0]['tag'] if r.get('hits') else None}")
+
+        # SEPARATOR CONTROL. Joining children with nothing would fuse two block
+        # siblings into "alphabeta" and invent a match that is on no screen.
+        r = await search("alphabeta")
+        check("Q1f block-level siblings do not fuse into a false match",
+              r.get("total") == 0, f"total={r.get('total')}")
+
+        # ---- Q1g/Q1h: CSS WHITE-SPACE IS A DECLARATION, AND `\n` MUST SURVIVE IT.
+        # Every text node used to go through /\s+/g, so a <pre> came back as one
+        # unbroken line. Measured live on an RFC: a regex ending `[^\n]*` matched
+        # from its heading to the END OF THE DOCUMENT, because no newline survived
+        # for it to stop at -- and the "context" was then the whole 26KB body no
+        # matter how small context_chars was. Every RFC, man page and code block on
+        # the web is a <pre>.
+        pre = await browser.new_page(viewport={"width": 1280, "height": 1600})
+        await pre.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await pre.goto("about:blank")
+        await pre.set_content(
+            "<!doctype html><meta charset=utf-8><body>"
+            "<pre>5.2.  The 425 Status Code\nIntermediaries MUST forward it.</pre>"
+            "<p>wrapped  prose   collapses   runs</p></body>")
+        await pre.wait_for_timeout(150)
+
+        async def psearch(pat, **kw):
+            o = dict(regex=True, contextChars=40, **kw)
+            return await pre.evaluate(
+                "(function(){ " + SEARCH + "; return _searchTextPage("
+                + json.dumps(pat) + ", " + json.dumps(o) + "); })()")
+
+        r = await psearch(r"5\.2\.\s+The 425[^\n]*")
+        hit = (r.get("hits") or [{}])[0].get("match", "")
+        check("Q1g a newline-anchored regex stops at the <pre>'s own line break",
+              r.get("total") == 1 and hit.strip() == "5.2.  The 425 Status Code",
+              f"total={r.get('total')} match={hit[:70]!r}")
+        # THE CONTROL: collapsing must still happen where the page did NOT declare
+        # whitespace significant, or this fix would simply stop normalising prose.
+        r = await psearch(r"wrapped prose collapses runs")
+        check("Q1h CONTROL: ordinary prose still collapses its whitespace runs",
+              r.get("total") == 1, f"total={r.get('total')}")
+        await pre.close()
+
+        # ---- Q1i-Q1m: THE CLIMB, which produced THREE separate live failures from
+        # one condition. It fired only when `full.trim() === m[0].trim()` -- when the
+        # match EXACTLY FILLED its element -- which is almost never true of the shape
+        # it most needs to handle. A metadata block puts the label and a colon in one
+        # element, so the match is one character short of filling it and the climb was
+        # skipped: `<dt>Published:</dt>` searched for "Published" returned the bare
+        # label at context_chars=300, and `<a>Errata-ID: 1543</a>` searched for "1543"
+        # returned a 15-char window at context_chars=600. Both are how every spec
+        # header and registry record on the web is marked up.
+        meta = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await meta.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await meta.goto("about:blank")
+        await meta.set_content(
+            "<!doctype html><meta charset=utf-8><body>"
+            "<dl><dt>Published:</dt><dd>2026-10-02</dd>"
+            "<dt>Errata-ID: 1543</dt><dd>Verified</dd></dl>"
+            # Q1j: declared columns. The climb used to reach the row and then quote
+            # it through innerText with every boundary collapsed, so label, value and
+            # rank arrived as `المساحة 1862 كم² (178)` -- one string a reader can take
+            # for a single quantity.
+            "<table><tr><td>Area</td><td>1862</td><td>(178)</td></tr></table>"
+            # Q1k: two matches inside ONE element, with a context window bigger than
+            # the element, so both windows cover all of it.
+            "<pre>SIGQUIT      3           3\nSIGUSR1     10          30\n</pre>"
+            "</body>")
+        await meta.wait_for_timeout(150)
+
+        async def msearch(pat, **kw):
+            return await meta.evaluate(
+                "(function(){ " + SEARCH + "; return _searchTextPage("
+                + json.dumps(pat) + ", " + json.dumps(kw) + "); })()")
+
+        r = await msearch("Published", contextChars=300)
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1i a label that NEARLY fills its element still reaches its value",
+              "2026-10-02" in ctx, f"context={ctx!r}")
+
+        r = await msearch("1543", contextChars=300)
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1i2 ...and so does a value sharing its element with a label",
+              "Verified" in ctx, f"context={ctx!r}")
+
+        r = await msearch("Area", contextChars=300)
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1j a row's declared columns are separated, not fused into one string",
+              "Area | 1862 | (178)" in ctx, f"context={ctx!r}")
+
+        # TWO MATCHES IN ONE ELEMENT MUST BE TELLABLE APART. Reported live as a
+        # counting bug ("4 matches are 2 positions reported twice") and re-derived
+        # offline as not one: the total was right every time and the two hits were
+        # distinct. What was missing is that nothing said WHERE in the quoted window
+        # each match sat, so two correct hits came back byte-identical and the agent
+        # concluded the rows it wanted were absent -- when they were inside both
+        # windows, unmarked.
+        r = await msearch("SIGQUIT|SIGUSR1", regex=True, contextChars=120)
+        hs = r.get("hits") or []
+        check("Q1k two matches inside one element are distinguishable",
+              r.get("total") == 2 and len(hs) == 2
+              and hs[0].get("at") != hs[1].get("at")
+              and all(h.get("at") is not None for h in hs),
+              f"total={r.get('total')} ats={[h.get('at') for h in hs]}")
+        check("Q1k2 ...and `at` really points at the match inside the quoted context",
+              all(h["context"][h["at"]:h["at"] + len(h["match"])] == h["match"] for h in hs),
+              "; ".join(f"at={h.get('at')} slice="
+                        f"{h['context'][h.get('at', 0):h.get('at', 0) + len(h['match'])]!r}"
+                        for h in hs))
+
+        # THE INVARIANT THE COLUMN SEPARATOR MUST NOT BREAK: whatever is rendered
+        # into the context, the match is still in there verbatim. A caller that
+        # cannot find the match inside the text quoted back at it has to doubt both.
+        bad = []
+        for pat, kw in (("Published", {"contextChars": 300}), ("Area", {"contextChars": 300}),
+                        ("1862", {"contextChars": 40}), ("Verified", {"contextChars": 200})):
+            rr = await msearch(pat, **kw)
+            for h in (rr.get("hits") or []):
+                if h["match"] not in h["context"]:
+                    bad.append(f"{pat}: {h['context']!r}")
+        check("Q1m CONTROL: context always contains the match verbatim",
+              not bad, "; ".join(bad))
+        await meta.close()
+
+        # THE CONTROL THAT MAKES IT TRUSTWORTHY. A grep that reads hidden templates
+        # answers "does this page say X" with text no user can see.
+        r = await search("SECRET hidden marker")
+        check("Q2 ...and does NOT match text the page is not rendering",
+              r.get("total") == 0, f"total={r.get('total')}")
+
+        r = await search("PHANTOM marker")
+        check("Q2b ...including text hidden by visibility, not just display",
+              r.get("total") == 0, f"total={r.get('total')}")
+
+        # The sharper half: an invisible span INSIDE a visible sentence must not
+        # reach that sentence's context either. A bare visibility test lets the
+        # ancestor inherit text no one can see.
+        r = await search("visible sibling", contextChars=60)
+        _c = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q2c ...and an invisible child does not leak into a visible parent",
+              "GHOSTWORD" not in _c, f"context={_c!r}")
+
+        r = await search("token ZX9")
+        check("Q3 ...and reaches inside a CLOSED shadow root",
+              r.get("total") == 1, f"total={r.get('total')}")
+
+        r = await search("[0-9]+\\.[0-9]{2}", regex=True, cssScope="table")
+        check("Q4 regex + css_scope confine the search to one region",
+              r.get("total") == 3, f"total={r.get('total')} (19.99, 230.00, 0.00)")
+
+        r = await search("249.99", contextChars=5)
+        check("Q5 context is bounded and marked when it is cut",
+              bool(r["hits"]) and "…" in r["hits"][0]["context"]
+              and len(r["hits"][0]["context"]) < 40,
+              f"context={r['hits'][0]['context']!r}" if r.get("hits") else "no hits")
+
+        r = await query("table tr")
+        check("Q6 query_elements counts what the listing cannot — table rows",
+              r.get("total") == 3, f"total={r.get('total')}")
+
+        # COUNTING MUST SURVIVE THE CAP, or the one question this tool exists for
+        # is the one it cannot answer on a big page.
+        r = await query("td", maxResults=2)
+        check("Q6b ...and the total is the TRUE count even when rows are capped",
+              r.get("total") == 6 and r.get("shown") == 2,
+              f"total={r.get('total')} shown={r.get('shown')}")
+
+        r = await query("a", attributes=["href"])
+        hrefs = [(x.get("attrs") or {}).get("href", "") for x in r["rows"]]
+        # The count is coupled to the fixture (3 links: receipt, reorder, and the
+        # one inside Q1c's prose sentence). The INVARIANT is the `startswith` —
+        # every href resolved through the property, so a relative attribute like
+        # '/m' comes back absolute rather than raw.
+        check("Q7 attributes are read off the property, so href comes back absolute",
+              len(hrefs) == 3 and all(h.startswith("http") for h in hrefs),
+              f"hrefs={hrefs}")
+
+        r = await query("th|||bad")
+        check("Q7b an invalid selector is reported, not silently answered as 'none found'",
+              bool(r.get("error")), f"error={r.get('error')!r}")
+
+        # ---- QB1-QB1d: PRESENT-AND-EMPTY IS NOT ABSENT.
+        # `getAttribute` returns null for a missing attribute and "" for one present
+        # with no value, and the attribute reader collapsed both into silence — so
+        # asking for an attribute an element HAS printed nothing, which reads as a
+        # negative. That is every HTML boolean (disabled/checked/selected/readonly/
+        # required/multiple/hidden/open/...), because HTML serialises them as the bare
+        # name. Measured live on Bootstrap's Disabled-forms example: `disabled` on the
+        # checkbox that provably carries it returned nothing while `type` and `id`
+        # printed normally, and a live agent read that as "no control carries its own
+        # disabled attribute". QB1c is the other direction — an element WITHOUT the
+        # attribute must still print nothing, or the fix has just inverted the lie.
+        # A SEPARATE PAGE, not the shared fixture above: #14's lesson that adding to a
+        # global fixture silently captures unrelated checks.
+        qb = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await qb.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await qb.goto("about:blank")
+        await qb.set_content(
+            "<main>"
+            "<input id=a type=text disabled>"
+            "<input id=b type=checkbox checked>"
+            "<input id=c type=text>"
+            "<img id=d src='data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==' alt=''>"
+            "<img id=e src='data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==' alt='A chart'>"
+            "</main>")
+        await qb.wait_for_timeout(150)
+
+        async def qbq(sel, **kw):
+            return await qb.evaluate(
+                "(function(){ " + QUERY + "; return _queryElementsPage("
+                + json.dumps(sel) + ", " + json.dumps(kw) + "); })()")
+
+        r = await qbq("#a", attributes=["disabled", "type"], include_text=False)
+        _at = (r["rows"][0].get("attrs") or {}) if r.get("rows") else {}
+        check("QB1 a boolean attribute the element HAS is reported, not silently dropped",
+              "disabled" in _at and _at.get("type") == "text", f"attrs={_at}")
+
+        r = await qbq("#b", attributes=["checked"], include_text=False)
+        _at = (r["rows"][0].get("attrs") or {}) if r.get("rows") else {}
+        check("QB1b ...and the same for `checked`, the other most-asked boolean",
+              "checked" in _at, f"attrs={_at}")
+
+        r = await qbq("#c", attributes=["disabled"], include_text=False)
+        _at = (r["rows"][0].get("attrs") or {}) if r.get("rows") else {}
+        check("QB1c CONTROL: an element WITHOUT the attribute still reports nothing",
+              "disabled" not in _at, f"attrs={_at}")
+
+        # alt="" is the page DECLARING an image decorative. Collapsing it into "no alt"
+        # erases the distinction the caller asked about, and it is not a boolean.
+        r = await qbq("#d", attributes=["alt"], include_text=False)
+        _d = (r["rows"][0].get("attrs") or {}) if r.get("rows") else {}
+        r = await qbq("#e", attributes=["alt"], include_text=False)
+        _e = (r["rows"][0].get("attrs") or {}) if r.get("rows") else {}
+        check("QB1d an explicitly EMPTY alt (declared decorative) is distinguishable "
+              "from a described image",
+              "alt" in _d and _d.get("alt") == "" and _e.get("alt") == "A chart",
+              f"decorative={_d} described={_e}")
+        await qb.close()
+
+        # Q8/Q8b: A RENDERED COUNT IS THE WRONG ANSWER when the page declares more.
+        # Live defect: a record created seconds earlier was reported as absent because
+        # the table showed "1 to 25 of 39" and the row was on page 2. ARIA declares this
+        # (aria-rowcount / aria-setsize) and nothing else is read — no pagination control
+        # is detected and no "Showing N of M" text is parsed, because those are a guess
+        # and a wordlist. Q8b is the control: a table declaring nothing must NOT acquire
+        # a warning, or every ordinary count grows a caveat that means nothing.
+        await qp.goto("about:blank")
+        await qp.set_content(
+            "<table role='grid' aria-rowcount='39'><tbody>"
+            + "".join(f"<tr role='row'><td>Row {i}</td></tr>" for i in range(4))
+            + "</tbody></table>")
+        await qp.wait_for_timeout(120)
+        r = await query("tr[role=row]")
+        check("Q8 a grid declaring aria-rowcount reports the declared total, not just "
+              "what is rendered",
+              r.get("total") == 4 and r.get("declaredTotal") == 39
+              and r.get("declaredVia") == "aria-rowcount",
+              f"total={r.get('total')} declared={r.get('declaredTotal')}")
+
+        await qp.set_content(
+            "<table><tbody>" + "".join(f"<tr><td>Row {i}</td></tr>" for i in range(4))
+            + "</tbody></table>")
+        await qp.wait_for_timeout(120)
+        r = await query("tr")
+        check("Q8b ...and a table that declares nothing gets no warning",
+              r.get("total") == 4 and not r.get("declaredTotal"),
+              f"total={r.get('total')} declared={r.get('declaredTotal')}")
+        await qp.close()
+
+        # ---- W27-W27c: <fieldset disabled> disables its DESCENDANTS.
+        # `el.disabled` is the IDL reflection of the element's OWN attribute; HTML's
+        # "actually disabled" state also covers every descendant of a disabled fieldset,
+        # and `:disabled` is the selector implementing it. Found on Bootstrap's own
+        # Disabled-forms example: of four controls inside one, `el.disabled` was true for
+        # ONE — the checkbox with its own attribute — while the text input, the select
+        # and THE SUBMIT BUTTON were all presented as live. The legend makes absence
+        # load-bearing ("(disabled) — inert; clicking does nothing right now"), so an
+        # agent had every reason to fill and submit a form where nothing lands.
+        # W27c is the control: enabling the fieldset must clear every flag, or the rule
+        # is just "always disabled" and means nothing.
+        dp2 = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await dp2.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await dp2.goto("about:blank")
+        FS = ("<form><fieldset {D}><legend>Group</legend>"
+              "<label for=t>Text</label><input id=t>"
+              "<label for=s>Pick</label><select id=s><option>One</option></select>"
+              "<button type=submit>Send</button></fieldset></form>"
+              "<label for=free>Outside</label><input id=free>")
+        await dp2.set_content(FS.replace("{D}", "disabled"))
+        await dp2.wait_for_timeout(140)
+        off = str(await dp2.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false,null,'compact',false,false,'flat'); })()"))
+        rows = {ln.split('|')[1].strip().split(' ')[0]: ln
+                for ln in off.splitlines() if ln.startswith("ref_")}
+        _txt = next((l for l in off.splitlines() if 'name="Text"' in l), "")
+        _sub = next((l for l in off.splitlines() if '"Send"' in l), "")
+        _out = next((l for l in off.splitlines() if 'name="Outside"' in l), "")
+        check("W27 a control inside <fieldset disabled> is flagged (disabled), not "
+              "presented as live",
+              "(disabled)" in _txt, f"row={_txt.strip()[:80]}")
+        check("W27b ...including the SUBMIT button, which is the one that costs most",
+              "(disabled)" in _sub, f"row={_sub.strip()[:80]}")
+        check("W27c ...while a control OUTSIDE the fieldset is not flagged",
+              bool(_out) and "(disabled)" not in _out, f"row={_out.strip()[:80]}")
+
+        # THE OTHER DIRECTION. A rule that flags everything is indistinguishable from
+        # one that works, so the same markup with the fieldset ENABLED must be clean.
+        await dp2.set_content(FS.replace(" {D}", ""))
+        await dp2.wait_for_timeout(140)
+        on = str(await dp2.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false,null,'compact',false,false,'flat'); })()"))
+        check("W27d ...and with the fieldset enabled, nothing is flagged at all",
+              "(disabled)" not in on, f"flags={on.count('(disabled)')}")
+        await dp2.close()
+
+        # ---- W28-W28d: READ-ONLY IS THE THIRD DECLARED WRITABILITY STATE, and it
+        # was the one the listing never printed. It is NOT the same as disabled: a
+        # readonly field still submits, still focuses, and its contents are real
+        # contents — so an agent told only "(disabled) or nothing" cannot tell a
+        # field it may read from one it may not. Found in the 10-task eval, where
+        # the question "disabled or read-only?" could be half-answered from the
+        # listing and needed query_elements for the rest.
+        dp3 = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await dp3.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await dp3.goto("about:blank")
+        await dp3.set_content(
+            "<form>"
+            "<label for=r>Locked</label><input id=r readonly value='kept text'>"
+            "<label for=d>Off</label><input id=d disabled>"
+            "<label for=n>Open</label><input id=n>"
+            "<label for=a>Widget</label><div id=a role='textbox' aria-readonly='true'>x</div>"
+            "</form>")
+        await dp3.wait_for_timeout(140)
+        ro = str(await dp3.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false,null,'compact',false,false,'flat'); })()"))
+        _lock = next((l for l in ro.splitlines() if 'name="Locked"' in l), "")
+        _off = next((l for l in ro.splitlines() if 'name="Off"' in l), "")
+        _open = next((l for l in ro.splitlines() if 'name="Open"' in l), "")
+        _wid = next((l for l in ro.splitlines() if 'name="Widget"' in l), "")
+        check("W28 a readonly input is flagged (read-only)",
+              "(read-only)" in _lock, f"row={_lock.strip()[:90]}")
+        check("W28b ...and keeps its value, because readonly contents are real contents",
+              "kept text" in _lock, f"row={_lock.strip()[:90]}")
+        # A disabled field cannot be written EITHER, so printing both would read as
+        # two separate obstacles when there is one.
+        check("W28c a DISABLED field says (disabled) and not also (read-only)",
+              "(disabled)" in _off and "(read-only)" not in _off, f"row={_off.strip()[:90]}")
+        check("W28d a writable field is flagged neither (the negative control)",
+              bool(_open) and "(read-only)" not in _open and "(disabled)" not in _open,
+              f"row={_open.strip()[:90]}")
+        check("W28e aria-readonly on a custom widget counts too",
+              "(read-only)" in _wid, f"row={_wid.strip()[:90]}")
+        check("W28f the legend names the notation, since it appears",
+              "(read-only) —" in ro, "legend line absent")
+        await dp3.close()
+
+        # W28g: FOLDING MUST NOT DELETE THE STATE EITHER. Found live, immediately
+        # after shipping the marker: identical sibling inputs fold, and the member
+        # format carried (disabled) but not (read-only), so the listing read
+        # `19:"Disabled input"(disabled) 21:"Readonly input"` and the second field
+        # was indistinguishable from a writable one — while the legend, gated on the
+        # flag being SET rather than PRINTED, still documented the notation.
+        dp4 = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await dp4.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await dp4.goto("about:blank")
+        await dp4.set_content(
+            "<form>"
+            "<label for=f1>A</label><input id=f1>"
+            "<label for=f2>B</label><input id=f2 readonly value='v'>"
+            "<label for=f3>C</label><input id=f3>"
+            "<label for=f4>D</label><input id=f4>"
+            "</form>")
+        await dp4.wait_for_timeout(140)
+        fold = str(await dp4.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false,null,'compact',false,false,'flat'); })()"))
+        _line = next((l for l in fold.splitlines() if '"B"' in l), "")
+        check("W28g a folded readonly member keeps its (read-only) flag",
+              "(read-only)" in _line, f"line={_line.strip()[:140]}")
+        await dp4.close()
+
+        # ---- NP1-NP4: `name=` HAS THREE PROVENANCES AND THE ROW NAMED NONE.
+        # It can be a real accessible name (title/alt, or a submit/reset input's
+        # VALUE per HTML-AAM), or the HTML `name` attribute, which is not an
+        # AccName source at all (#37) — it is the key the form posts under.
+        # Measured live: <input type=reset name=submitbutton value=cancel> listed
+        # as name="cancel" (correct — the value IS the name), indistinguishable
+        # from the name-attribute fallback one row above, which cost an agent
+        # three calls to disambiguate.
+        np = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await np.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await np.goto("about:blank")
+        await np.set_content(
+            "<form>"
+            "<input type=reset name=submitbutton value=cancel>"      # value IS the name
+            "<input type=text name=username>"                        # name ATTRIBUTE fallback
+            "<label for=lbl>Real Label</label><input id=lbl name=ignored>"  # a real label wins
+            "</form>")
+        await np.wait_for_timeout(140)
+        npo = str(await np.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false,null,'compact',false,false,'flat'); })()"))
+        _rst = next((l for l in npo.splitlines() if '"cancel"' in l), "")
+        _usr = next((l for l in npo.splitlines() if '"username"' in l), "")
+        _lbl = next((l for l in npo.splitlines() if '"Real Label"' in l), "")
+        check("NP1 a name from the HTML name attribute is ATTRIBUTED as such",
+              "(post-key)" in _usr, f"row={_usr.strip()[:120]}")
+        # THE CONTROL THAT MAKES IT MEAN SOMETHING. A reset input's value IS its
+        # accessible name per HTML-AAM, so it must NOT carry the marker — otherwise
+        # the marker says nothing and every form row wears it.
+        check("NP2 a reset input's VALUE is a real accessible name, so it is NOT marked",
+              bool(_rst) and "(post-key)" not in _rst, f"row={_rst.strip()[:120]}")
+        check("NP3 a properly labelled field is not marked either",
+              bool(_lbl) and "(post-key)" not in _lbl, f"row={_lbl.strip()[:120]}")
+        check("NP4 ...and the real label still wins over the name attribute",
+              'name="Real Label"' in _lbl, f"row={_lbl.strip()[:120]}")
+        check("NP4b the legend names the notation, since it appears",
+              "(post-key) —" in npo, "legend line absent")
+        await np.close()
+
+        # NP5: FOLDING MUST NOT DELETE IT — third notation to need this rule, after
+        # (read-only) and the state flags before it. Found live on eviltester, where
+        # `10x input ... 1794:"username" 1798:"password"` carried POST keys as labels
+        # with nothing saying so, while the loose rows above them were marked.
+        np2 = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await np2.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await np2.goto("about:blank")
+        await np2.set_content(
+            "<form>" + "".join(f"<input type=text name=f{i}>" for i in range(6))
+            + "<input type=reset name=submitbutton value=cancel>"
+            + "<label for=L2>Proper Label</label><input id=L2 name=ignored></form>")
+        await np2.wait_for_timeout(140)
+        npf = str(await np2.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false,null,'compact',false,false,'flat'); })()"))
+        _fold = next((l for l in npf.splitlines() if "\u00d7 input" in l), "")
+        check("NP5 a folded POST-key member keeps its (post-key) marker",
+              '"f0"(post-key)' in _fold, f"fold={_fold.strip()[:160]}")
+        # The two controls that make the marker mean something, INSIDE the fold.
+        check("NP5b ...while a folded reset keeps its VALUE-derived name unmarked",
+              '"cancel"(post-key)' not in _fold, f"fold={_fold.strip()[:160]}")
+        check("NP5c ...and a folded labelled field is unmarked too",
+              '"Proper Label"(post-key)' not in _fold, f"fold={_fold.strip()[:160]}")
+        await np2.close()
+
+        # ---- LG1/LG1b: a legend line must describe the listing it is attached to.
+        # `activeHint` returns pressed/active/open/on as well as the four the line used
+        # to enumerate, so on habr the ONLY state token in the body was `(active)` while
+        # the legend documented four notations that appeared nowhere. #13's `section=`
+        # defect in a second place. LG1b is the control: the line must still name the
+        # ordinary tokens when those are what is present.
+        lgp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await lgp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await lgp.goto("about:blank")
+        await lgp.set_content("<main><button data-state='active'>Filter</button>"
+                              "<button>Other</button></main>")
+        await lgp.wait_for_timeout(120)
+        _lg = str(await lgp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _line = next((l for l in _lg.splitlines() if "already active" in l), "")
+        check("LG1 the state legend names the token actually present, not a fixed four",
+              "(active)" in _line and "(checked)" not in _line, f"legend={_line.strip()[:80]}")
+
+        await lgp.set_content("<main><a href=/a aria-current='page'>Home</a>"
+                              "<input type=checkbox checked><a href=/b>Other</a></main>")
+        await lgp.wait_for_timeout(120)
+        _lg2 = str(await lgp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _line2 = next((l for l in _lg2.splitlines() if "already active" in l), "")
+        check("LG1b ...and still names the ordinary tokens when those are the ones there",
+              "(current)" in _line2 and "(checked)" in _line2 and "(active)" not in _line2,
+              f"legend={_line2.strip()[:80]}")
+        await lgp.close()
+
+        # ---- AH1-AH3: the aria-hidden note must not PICK a cause.
+        # Live on a real app it fired at 257 elements and concluded "Nothing here
+        # indicates an open dialog, so this is most likely a CLOSED menu/panel" while
+        # its own output listed an OPEN role=menu two rows below. Two bugs: dialogOpen
+        # does not cover a menu, so the branch condition was wrong; and the note then
+        # guessed. Same shape as #14's stale-ref message and #23's cross-extension one.
+        # Pinned in BOTH directions, because a note that always claims an open popup
+        # is as wrong as one that never does.
+        AH_HIDDEN = ("<div aria-hidden='true'>"
+                     "<button>Hidden alpha</button><button>Hidden beta</button>"
+                     "<button>Hidden gamma</button><button>Hidden delta</button></div>")
+        ahp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await ahp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await ahp.goto("about:blank")
+        await ahp.set_content(
+            "<main><button>Real one</button><button>Real two</button>"
+            "<div role='menu'><div role='menuitem'>Add investor</div>"
+            "<div role='menuitem'>Add via CSV</div></div></main>" + AH_HIDDEN)
+        await ahp.wait_for_timeout(150)
+        with_menu = str(await ahp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        check("AH1 the note enumerates causes instead of selecting one",
+              "most likely" not in with_menu and "(a)" in with_menu and "(b)" in with_menu,
+              f"has_note={'aria-hidden' in with_menu} picks_one={'most likely' in with_menu}")
+        check("AH2 ...and when an open menu IS listed, it says so",
+              "open role=menu IS listed below" in with_menu,
+              with_menu[with_menu.find("consistent with"):][:60] if "consistent with" in with_menu else "NOT NAMED")
+
+        # THE CONTROL. Same drops, no popup on the page: the note must still appear
+        # and must NOT claim something is open.
+        await ahp.set_content(
+            "<main><button>Real one</button><button>Real two</button>"
+            "<button>Real three</button></main>" + AH_HIDDEN)
+        await ahp.wait_for_timeout(150)
+        no_menu = str(await ahp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        check("AH3 ...and with no popup on the page it claims none, while still noting the drop",
+              "aria-hidden" in no_menu and "IS listed below" not in no_menu
+              and "most likely" not in no_menu,
+              f"claims_open={'IS listed below' in no_menu} has_note={'aria-hidden' in no_menu}")
+
+        # AH4: A MENUBAR IS NOT AN OPEN MENU. Its items are permanently in the tree, so
+        # they are not evidence that anything is open. Measured on vscode.dev, where this
+        # clause — added by the AH1/AH2 fix — read the title-bar menubar as an open menu
+        # and told the agent to dismiss something on a page with nothing open. The note
+        # exists to stop exactly that, so the regression was in its own fix.
+        await ahp.set_content(
+            "<main><div role='menubar'><div role='menuitem'>Application Menu</div></div>"
+            "<button>Real one</button><button>Real two</button></main>" + AH_HIDDEN)
+        await ahp.wait_for_timeout(150)
+        menubar = str(await ahp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        check("AH4 a role=menubar's item is NOT reported as an open popup",
+              "aria-hidden" in menubar and "IS listed below" not in menubar,
+              f"claimed_open={'IS listed below' in menubar}")
+        await ahp.close()
+
+        # ---- NR1-NR1d: A NON-RENDERED NODE CONTRIBUTES NOTHING TO A NAME.
+        # `innerText` is documented as "what is rendered" and everything here believed
+        # it — but HTML defines the getter to fall back to textContent when the element
+        # is NOT being rendered, so `_contentName` read a display:none child and got its
+        # whole subtree. Measured on eBay: a nav <li> with a closed mega-menu panel
+        # listed as `404:"Motors Expand: Motors Parts and accessoriesAll parts and
+        # accessories…"` — 3,392 characters in one fold line, 26.3% of the listing,
+        # describing a menu nobody can see. NR1c/NR1d are the controls in the other
+        # direction (#15): a rule that drops all descendant text is indistinguishable
+        # from one that works, and the sr-only pattern the collector depends on is
+        # CLIPPED, not hidden, so it must survive.
+        nrp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await nrp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await nrp.goto("about:blank")
+        await nrp.set_content(
+            "<main><ul>"
+            "<li id=a onclick='void 0'><span>Motors</span>"
+            "  <div style='display:none'><a href=/p>Car and truck parts</a>"
+            "  <a href=/q>Wheels tires and parts</a></div></li>"
+            "<li id=b onclick='void 0'><span>Fashion</span>"
+            "  <div style='visibility:hidden'><a href=/r>Handbags</a></div></li>"
+            "<li id=c onclick='void 0'><span>Deals</span> <span>today only</span></li>"
+            "<li id=d onclick='void 0'><span>Help</span>"
+            "  <span style='position:absolute;width:1px;height:1px;overflow:hidden;"
+            "clip:rect(0 0 0 0)'>and contact</span></li>"
+            "</ul></main>")
+        await nrp.wait_for_timeout(150)
+        nr = str(await nrp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        check("NR1 a display:none panel's text is not part of its container's name",
+              "Car and truck parts" not in nr and "Motors" in nr,
+              f"leaked={'Car and truck parts' in nr}")
+        check("NR1b ...nor is a visibility:hidden one's",
+              "Handbags" not in nr and "Fashion" in nr,
+              f"leaked={'Handbags' in nr}")
+        check("NR1c CONTROL: text from a RENDERED child is still part of the name",
+              "today only" in nr, "the rendered sibling's text was dropped too")
+        check("NR1d CONTROL: clipped sr-only text is rendered, so it still names",
+              "and contact" in nr, "sr-only label lost")
+
+        # NR2: STYLE AND SCRIPT TEXT IS NOT CONTENT. An SVG element has no innerText at
+        # all, so the name path fell through to textContent and swallowed the inline
+        # stylesheet. Measured on Grafana: `109:".cls-1{fill: currentColor;} AI &
+        # machine learning"` in the slot the legend calls the element's IDENTITY.
+        await nrp.set_content(
+            "<main><a href=/ai id=z><svg width=16 height=16>"
+            "<style>.cls-1{fill: currentColor;}</style><path d='M0 0h4v4H0z'/></svg>"
+            "<span>AI and machine learning</span></a>"
+            "<button>Run<script>var x=1;</script></button></main>")
+        await nrp.wait_for_timeout(150)
+        nr2 = str(await nrp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        check("NR2 an inline <svg><style>'s CSS never lands in an accessible name",
+              "cls-1" not in nr2 and "currentColor" not in nr2
+              and "AI and machine learning" in nr2, f"leaked={'cls-1' in nr2}")
+        check("NR2b ...and neither does <script> text",
+              "var x=1" not in nr2 and "Run" in nr2, f"leaked={'var x=1' in nr2}")
+
+        # NR2c IS THE ONLY REASON `_NAME_SKIP` EXISTS, and it was measured before it
+        # was kept: ablating the tag list changes the corpus listing by ZERO bytes
+        # (grafana byte-identical, 6771 both ways), because `<style>` and `<script>`
+        # carry `display:none` from the UA stylesheet and the visibility test already
+        # rejects them. What it covers is the case the corpus does not contain — a page
+        # that RENDERS its own stylesheet, which CSS-teaching and live-editor pages do
+        # with `style { display: block }`. There the visibility test says "rendered" and
+        # is right, and the text still is not a name: per AccName, style and script
+        # content is never a text alternative however it is painted. So the list stays
+        # as a SPEC rule with a fixture, not as a list someone thought of — and #25's
+        # warning applies in the usual direction: an ablation measures the code against
+        # the sample, and this sample has no such page.
+        await nrp.set_content(
+            "<style>#vis style{display:block}</style>"
+            "<main><a href=/x id=vis><style>.cls-1{fill:currentColor}</style>"
+            "<span>Themes</span></a></main>")
+        await nrp.wait_for_timeout(150)
+        nr3 = str(await nrp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        check("NR2c a RENDERED <style> is still not a name (the spec rule, not the "
+              "visibility test)",
+              "cls-1" not in nr3 and "Themes" in nr3, f"leaked={'cls-1' in nr3}")
+        await nrp.close()
+
+        # ---- SH1/SH1b: A HOST'S CONTENT IS ITS SHADOW CONTENT. #29 taught the child
+        # loop to cross a shadow boundary; the node being NAMED was never asked the same
+        # question, so a host whose entire content lives in its shadow root came back
+        # with no name at all. Measured on caniuse: every <ciu-version-support> cell
+        # rendered "4 - 28 : Not supported" and listed as a bare
+        # `ref_149 | ciu-version-support`, making the support matrix unreadable.
+        # SH1b pins the other half: the name came from descendants, so it must be
+        # flagged as such, or the tree prints it twice once the child row is kept.
+        shp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await shp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await shp.goto("about:blank")
+        await shp.set_content("<main><div id=host tabindex=0></div></main>")
+        await shp.evaluate(
+            "(function(){ const h = document.getElementById('host');"
+            " const r = h.attachShadow({mode:'open'});"
+            " r.innerHTML = '<div>4 - 28 : Not supported</div>'; })()")
+        await shp.wait_for_timeout(150)
+        sh = str(await shp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        check("SH1 a shadow host is named by the content it renders",
+              "4 - 28 : Not supported" in sh, f"listing={sh[-200:]}")
+        # ...and it is not then printed TWICE. When the shadow child is interactive in
+        # its own right both are entries naming the same thing; whether the collapse
+        # merges them or only one is collected, the reader must see the identity once.
+        await shp.set_content("<main><div id=host2 tabindex=0></div></main>")
+        await shp.evaluate(
+            "(function(){ const h = document.getElementById('host2');"
+            " const r = h.attachShadow({mode:'open'});"
+            " r.innerHTML = '<div tabindex=0>4 - 28 : Not supported</div>'; })()")
+        await shp.wait_for_timeout(150)
+        sh2 = str(await shp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _n = sum(1 for l in sh2.splitlines()
+                 if "|" in l and "4 - 28 : Not supported" in l)
+        check("SH1b ...and the host and its shadow child do not print it twice",
+              _n == 1, f"rows_naming_it={_n}")
+        await shp.close()
+
+        # ---- TA1/TA1b: `title` IS AN ACCNAME SOURCE; THE HTML `name` ATTRIBUTE IS NOT.
+        # `name` is the key the form posts under, and ordering it first meant a field
+        # that DECLARES its label lost it to an ASCII identifier. Measured on Naver:
+        # `<input name="query" title="검색어…">` listed as name="query", so the only
+        # label a Korean reader sees was replaced by a developer token. TA1b is the
+        # control — with no title the wire key is still better than nothing.
+        tap = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await tap.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await tap.goto("about:blank")
+        await tap.set_content(
+            "<main><form><input name='query' title='검색어'>"
+            "<input name='user-name'>"
+            "<select name='ver' title='Python version'>"
+            "<option>3.14</option><option>3.13</option></select></form></main>")
+        await tap.wait_for_timeout(150)
+        ta = str(await tap.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        check("TA1 a declared title outranks the HTML name attribute",
+              '"검색어"' in ta and 'name="query"' not in ta,
+              f"row={next((l for l in ta.splitlines() if 'input' in l), '')[:90]}")
+        check("TA1b CONTROL: with no title the name attribute is still used",
+              "user-name" in ta, "the wire-key fallback was lost")
+        check("TA1c a <select>'s own option text never suppresses its title",
+              "Python version" in ta,
+              f"row={next((l for l in ta.splitlines() if 'select' in l), '')[:90]}")
+        await tap.close()
+
+        # ---- UI1-UI1c: "ICON" IS A CLAIM, AND NOTHING TESTED IT. The one row that
+        # prints no identity said `(unlabeled-icon)`, asserting a shape that was never
+        # checked — and three reviewers found it wrong on three pages (a decorative
+        # logo, an EMPTY 1280x1600 toast container, 4px splitter hairlines). Whether an
+        # element renders graphics IS checkable, so the marker now states only what is
+        # known. UI1c pins the legend to the token actually emitted (#13).
+        uip = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await uip.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await uip.goto("about:blank")
+        await uip.set_content(
+            "<main><button id=g style='width:32px;height:32px'>"
+            "<svg width=16 height=16><path d='M0 0h4v4H0z'/></svg></button>"
+            "<button id=e style='width:300px;height:60px'></button></main>")
+        await uip.wait_for_timeout(150)
+        ui = str(await uip.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _rows = [l for l in ui.splitlines() if "(unlabeled" in l and "|" in l]
+        check("UI1 a control that really renders a glyph is called an icon",
+              any("(unlabeled-icon)" in l for l in _rows), f"rows={_rows}")
+        check("UI1b ...and one that renders nothing is not",
+              any(l.strip().endswith("(unlabeled)") or "(unlabeled)" in l for l in _rows)
+              and sum("(unlabeled-icon)" in l for l in _rows) == 1, f"rows={_rows}")
+        check("UI1c the legend names both tokens, because both appear",
+              "- (unlabeled-icon)" in ui and "- (unlabeled) " in ui,
+              f"icon_line={'- (unlabeled-icon)' in ui} plain_line={'- (unlabeled) ' in ui}")
+        await uip.close()
+
+        # ---- NB1-NB1c: `near=` FIRES WHERE IT IS NEEDED, NOT WHERE IT IS NOT.
+        # The hint was computed for form fields only, so it reached rows that already
+        # had a name and never the rows printed with no identity at all. And three
+        # separate passes could hand the SAME string to several rows: on DataTables six
+        # column headers each carried `near="Name Position Office Age Start date
+        # Salary"` and six pager buttons each carried `near="<<<123456>>>"` — a roster
+        # quoted next to labels that were already "1".."6".
+        nbp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await nbp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await nbp.goto("about:blank")
+        await nbp.set_content(
+            "<main><h3>Billing</h3><button id=ic style='width:28px;height:28px'></button>"
+            "<table><tr><th>Name</th><th>Office</th><th>Age</th></tr></table></main>")
+        await nbp.wait_for_timeout(150)
+        nb = str(await nbp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _icrow = next((l for l in nb.splitlines() if "(unlabeled" in l and "|" in l), "")
+        check("NB1 an unnamed control gets the nearby-text hint",
+              "near=" in _icrow, f"row={_icrow.strip()[:100]}")
+        check("NB1b a hint shared by two or more NAMED rows is dropped from all of them",
+              sum(1 for l in nb.splitlines() if 'near=' in l and '| th' in l) == 0,
+              f"th_rows_with_near={[l.strip()[:70] for l in nb.splitlines() if 'near=' in l and '| th' in l]}")
+        await nbp.close()
+
+        # ---- HD1-HD1d: THE PAGE'S OWN DESCRIPTION OF A FIELD. The collector already
+        # RESOLVED aria-describedby / aria-errormessage (#29 used them to keep help
+        # text out of `value=`) and then discarded the text, so a form could state the
+        # rule a field enforces, or why the last submit was rejected, and the listing
+        # showed a field with no explanation. HD1c/HD1d are the controls: a field that
+        # declares nothing pays nothing, and a STALE error node — present in the DOM at
+        # all times — is only reported while the field is marked invalid, which is what
+        # ARIA says aria-errormessage means.
+        hdp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await hdp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await hdp.goto("about:blank")
+        await hdp.set_content(
+            "<main><form>"
+            "<label for=p>Password</label><input id=p type=password aria-describedby=ph>"
+            "<div id=ph>Must be at least 8 characters</div>"
+            "<label for=c>Card</label>"
+            "<input id=c aria-invalid=true aria-errormessage=ce aria-describedby=ch>"
+            "<div id=ch>16 digits, no spaces</div><div id=ce>That card number is invalid</div>"
+            "<label for=q>Quiet</label><input id=q>"
+            "<label for=s>Stale</label><input id=s aria-errormessage=se>"
+            "<div id=se>Old error</div>"
+            "</form></main>")
+        await hdp.wait_for_timeout(150)
+        hd = str(await hdp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _row = lambda nm: next((l for l in hd.splitlines() if f'name="{nm}"' in l), "")
+        check("HD1 a field's aria-describedby text is surfaced as help=",
+              'help="Must be at least 8 characters"' in _row("Password"),
+              f"row={_row('Password').strip()[:110]}")
+        check("HD1b an INVALID field also reports its declared error message",
+              'error="That card number is invalid"' in _row("Card")
+              and 'help="16 digits, no spaces"' in _row("Card"),
+              f"row={_row('Card').strip()[:130]}")
+        check("HD1c CONTROL: a field that declares neither pays nothing",
+              bool(_row("Quiet")) and "help=" not in _row("Quiet")
+              and "error=" not in _row("Quiet"), f"row={_row('Quiet').strip()[:90]}")
+        check("HD1d CONTROL: an error node is not reported unless aria-invalid is true",
+              bool(_row("Stale")) and "Old error" not in _row("Stale"),
+              f"row={_row('Stale').strip()[:90]}")
+        await hdp.close()
+
+        # ---- DR1: A ROW MUST NOT LIST THE SAME REF TWICE. The collapse loop walked a
+        # snapshot of `keep` that its own body mutates, so an element already folded
+        # away was still processed and deposited its ref onto a third node's list, which
+        # the survivor then absorbed. Traced on nytimes (8 rows) and Yahoo Japan (3):
+        # `ref_3146 ref_3147 ref_3147 ref_3148`. Nothing was lost, but the row claims
+        # more distinct targets than exist.
+        drp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await drp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await drp.goto("about:blank")
+        await drp.set_content(
+            "<main><a href=/x style='display:block'><div style='display:block'>"
+            "<span style='display:block'>Inside the War on Hezbollah</span>"
+            "</div></a></main>")
+        await drp.wait_for_timeout(150)
+        dr = str(await drp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _bad = [l for l in dr.splitlines()
+                if len(re.findall(r"ref_(\d+)", l)) > 1
+                and len(set(re.findall(r"ref_(\d+)", l))) != len(re.findall(r"ref_(\d+)", l))]
+        check("DR1 no row repeats a ref", not _bad, f"rows={_bad[:2]}")
+        await drp.close()
+
+        # ---- OV1/OV1b: COUNT WHAT THE DROP REMOVES, AND ONLY ADVISE A SCROLL THE PAGE
+        # CAN PERFORM. The off-viewport tally re-asked "is this a control" with a TAG
+        # LIST while the drop above it used the collector's own rule — #18's asymmetry,
+        # third instance. Measured on Syncfusion: 544 dropped, 449 of them
+        # td[role=gridcell]/th[role=columnheader] off the right edge, and the page's
+        # only spatial note read "4 ... outside the viewport HORIZONTALLY".
+        ovp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await ovp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await ovp.goto("about:blank")
+        await ovp.set_content(
+            "<main><button>Anchor</button>"
+            "<table style='position:absolute;left:2200px;top:20px'><tr>"
+            "<td role=gridcell tabindex=0>Trustworthiness</td>"
+            "<td role=gridcell tabindex=0>Perfect</td></tr></table></main>")
+        await ovp.wait_for_timeout(150)
+        ov = str(await ovp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        check("OV1 off-viewport gridcells are counted, not filtered out by a tag list",
+              "outside the viewport HORIZONTALLY" in ov
+              and "2 interactive element(s) are outside" in ov,
+              f"note={next((l for l in ov.splitlines() if 'HORIZONTALLY' in l), 'NONE')[:120]}")
+        check("OV1b ...and the page does scroll sideways here, so that is the advice",
+              "scroll sideways and re-observe" in ov, "wrong recovery for a scrolling page")
+
+        # The same cells clipped inside a region that scrolls on its own: the WINDOW has
+        # nowhere to go, so "scroll sideways" is a false trail of the #23/#33 kind.
+        await ovp.set_content(
+            "<main><button>Anchor</button>"
+            "<div style='width:300px;overflow-x:auto'>"
+            "<div style='width:2600px;position:relative;height:40px'>"
+            "<table style='position:absolute;left:2200px;top:0'><tr>"
+            "<td role=gridcell tabindex=0>Trustworthiness</td>"
+            "<td role=gridcell tabindex=0>Perfect</td></tr></table>"
+            "</div></div></main>")
+        await ovp.wait_for_timeout(150)
+        ov2 = str(await ovp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        check("OV1c a page that cannot scroll sideways is not told to",
+              "HORIZONTALLY" in ov2 and "scroll sideways and re-observe" not in ov2
+              and "does not scroll sideways" in ov2,
+              f"note={next((l for l in ov2.splitlines() if 'HORIZONTALLY' in l), 'NONE')[:140]}")
+        await ovp.close()
+
+        # ---- CT1/CT1b: THE OVERFLOW LIST IS IN THE ORDER IT CLAIMS, AND EVERY REF IS
+        # TYPED. It said "same order as the page" while being sorted by y then x, so a
+        # two-column layout came out zipped: on the Java API docs
+        # `555:"AbstractTypeVisitor6" 163:"javax.imageio" 557:"AbstractTypeVisitor7"`.
+        # And an entry with no resolvable name emitted a BARE integer, so half the list
+        # was numbers addressing nothing the reader could identify.
+        ctp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await ctp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await ctp.goto("about:blank")
+        # Small type so both columns FIT the viewport: the listing is viewport-scoped,
+        # so links pushed below the fold are dropped before the cap and there is no
+        # overflow list to inspect at all (the first version of this fixture measured
+        # nothing for exactly that reason).
+        _sty = "display:block;font-size:7px;line-height:8px;margin:0"
+        _colA = "".join(f"<a href=/a{i} style='{_sty}'>alpha{i}</a>" for i in range(100))
+        _colB = "".join(f"<a href=/b{i} style='{_sty}'>bravo{i}</a>" for i in range(100))
+        await ctp.set_content(
+            "<main style='display:flex;margin:0'>"
+            f"<div style='width:300px'>{_colA}</div>"
+            f"<div style='width:300px'>{_colB}</div>"
+            "<div><button style='width:30px;height:30px'></button></div></main>")
+        await ctp.wait_for_timeout(200)
+        ct = str(await ctp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _tail = next((l for l in ct.splitlines() if "OMITTED BUT ACTIONABLE" in l), "")
+        _ids = [int(m) for m in re.findall(r"(?:^|\s)(\d+):", _tail)]
+        check("CT1 the overflow list is emitted in document order, as it says",
+              "document order" in _tail and len(_ids) > 5
+              and _ids == sorted(_ids), f"first={_ids[:8]} sorted={_ids == sorted(_ids)}")
+        _body = _tail.split("): ", 1)[-1]
+        _bare_refs = re.findall(r"(?:^|\s)(\d+)(?=\s|$)", _body)
+        check("CT1b every overflow ref carries a label or at least its tag",
+              bool(_tail) and not _bare_refs, "bare_refs=" + str(_bare_refs[:5]))
+        await ctp.close()
 
         await browser.close()
 

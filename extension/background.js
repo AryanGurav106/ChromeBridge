@@ -1203,8 +1203,10 @@ async function clickTrusted(tabId, selector, frameIdOverride = null) {
   if (rect.blockedBy) {
     return { ok: false, msg:
       `Element ${selector} is COVERED by ${rect.blockedBy} — did not click. Something is on top of ` +
-      `it at the click point (a modal, consent layer, toast or sticky bar that appeared after you ` +
-      `last read the page). Re-observe: the blocker is probably what you need to handle first. ` +
+      `it at the click point. The three shapes this takes need OPPOSITE responses, and this ` +
+      `cannot tell them apart: a modal or consent layer must be dismissed, a toast will clear ` +
+      `on its own if you wait, and a sticky bar means the target must be scrolled out from ` +
+      `under it. Re-observe and decide from what the blocker is. ` +
       `Nothing was clicked, so no action was taken on your behalf.` };
   }
   const dbg = { tabId };
@@ -2125,11 +2127,18 @@ async function setCheckboxState(tabId, selector, text) {
     return (e2.tagName === 'INPUT' && (e2.type || '').toLowerCase() === 'radio') || e2.getAttribute('role') === 'radio';
   }, [rt.selector], rt.frameId)) === true; } catch (e) {}
   const _target = (target === undefined && _isRadio) ? true : target;
+  // ONE CONCEPT, ONE SPELLING (#21). `_isRadio` was computed two lines up and
+  // used only to pick a default, while every message below hardcoded the word
+  // "checkbox" -- so the SAME radio was named a radio by the failure path
+  // ("no radio in this group is labelled ...") and a checkbox by the success
+  // path ("checkbox now checked"), in one function. They are different
+  // controls: a radio is one of a group and cannot be unchecked by clicking it.
+  const _kind = _isRadio ? 'radio' : 'checkbox';
   if (_target === undefined) {
     return {
       ok: false,
       actual: st.cur ? 'checked' : 'unchecked',
-      msg: `cannot interpret ${JSON.stringify(String(text || ''))} as a checkbox state. ` +
+      msg: `cannot interpret ${JSON.stringify(String(text || ''))} as a ${_kind} state. ` +
            `Pass true/false (or "checked"/"unchecked"), or "toggle" to invert it. ` +
            `Left as-is (currently ${st.cur ? 'checked' : 'unchecked'}).`,
     };
@@ -2156,8 +2165,8 @@ async function setCheckboxState(tabId, selector, text) {
   return {
     ok: !!ok,
     actual: now ? 'checked' : 'unchecked',
-    msg: ok ? `checkbox now ${now ? 'checked' : 'unchecked'}`
-            : `checkbox click did not change state (still ${now ? 'checked' : 'unchecked'})`,
+    msg: ok ? `${_kind} now ${now ? 'checked' : 'unchecked'}`
+            : `${_kind} click did not change state (still ${now ? 'checked' : 'unchecked'})`,
   };
 }
 
@@ -4093,7 +4102,8 @@ function _domTextPage(scopeMmid) {
       try { all = root.querySelectorAll('*'); } catch (e) { return; }
       for (const el of all) {
         try { if (el.matches(q)) res.push(el); } catch (e) {}
-        if (el.shadowRoot) walk(el.shadowRoot);
+        const _wsr = el.shadowRoot || el.__abClosedRoot;
+        if (_wsr) walk(_wsr);
       }
     };
     walk(document);
@@ -4409,7 +4419,10 @@ function _domTextPage(scopeMmid) {
       let els;
       try { els = root.querySelectorAll('*'); } catch (e) { return; }
       for (const el of els) {
-        if (!el.shadowRoot) continue;
+        // `|| __abClosedRoot`: listener_tag.js captures CLOSED roots at
+        // attachShadow time, so this reaches them with no debugger attach.
+        const _esr = el.shadowRoot || el.__abClosedRoot;
+        if (!_esr) continue;
       // The light-DOM path filters hidden content; this one did not, so a CLOSED
       // dialog's text was reported inside "complete visible text" while
       // read_page correctly raised no modal banner — the two halves of one tool
@@ -4418,7 +4431,7 @@ function _domTextPage(scopeMmid) {
       try { const _r = el.getBoundingClientRect(); if (_r.width < 1 || _r.height < 1) continue; } catch (e) {}
         let t = '';
         try {
-          t = Array.from(el.shadowRoot.children)
+          t = Array.from(_esr.children)
                 .map((c) => (c.innerText || '').trim()).filter(Boolean).join('\n').trim();
         } catch (e) {}
         // Skip what the base text already covers (slotted content) and noise.
@@ -4441,7 +4454,7 @@ function _domTextPage(scopeMmid) {
                 ? ' "' + el.getAttribute('aria-label') + '"' : '');
           parts.push(`[${who}] ${t}`);
         }
-        visit(el.shadowRoot, depth + 1);
+        visit(_esr, depth + 1);
       }
     };
     // SCOPE IT. This walked `document` unconditionally, so a read scoped to one
@@ -4581,10 +4594,58 @@ function _domTextPage(scopeMmid) {
   // the two tools disagreed about the same editor and only the structured one was
   // clean. Same structural rule: a run of >=3 consecutive integers, each alone on
   // its line, is a gutter — ordinary prose does not do that.
-  return text + " Other Alt Texts in the page: " + alts + outline;
+  // GATE THE HEADER ON ITS CONTENT, #13's rule. A page with no alt text still
+  // got "Other Alt Texts in the page: " followed by nothing, which reads as a
+  // section that failed to load rather than one that does not exist.
+  return text + (alts ? " Other Alt Texts in the page: " + alts : "") + outline;
 }
 
 function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry, format) {
+  // ONE MEMBER TOKEN FOR BOTH FOLD RENDERERS.
+  //
+  // There were two, hand-maintained, and they had drifted in BOTH directions:
+  // the TREE (the default format since #27) was missing `(read-only)` and
+  // `(post-key)`, while the FLAT one was missing `(just appeared)`. #40 and #41
+  // each close by stating that their new notation survives folding, each pinned
+  // by a fixture — and W28g and NP5 both exercise the FLAT fold only, so both
+  // claims were false in the format agents actually get. Reproduced exactly: six
+  // sibling inputs, tree prints `7:"b"` for a readonly field holding "locked",
+  // byte-identical to the writable `11:"d"` beside it.
+  //
+  // This is #21's one-concept-two-spellings with the concept already at two
+  // copies, and #22's answer applied again: collapse to ONE helper so a NEW
+  // notation cannot reach one format and miss the other. It is an inner closure,
+  // not a top-level sibling, because `_collectInteractivePage` is injected via
+  // `runInTab` -> `executeScript({func})`, which stringifies this function and
+  // nothing else (C11).
+  //
+  // constraints/options/describedBy are the collector's PRE-RENDERED strings
+  // (leading space included, '' when the element declares nothing), the same
+  // ones `_fmtLine` prints, so an element that declares nothing pays nothing.
+  // No new bound is introduced: #24 leaves exactly one, the caller's max_chars.
+  const _memberTok = (me) => {
+    const lab = (me.name || me.label || me.text || '').trim();
+    const fl = (me.disabled ? '(disabled)' : '')
+             + (me.required ? '(required)' : '')
+             // Not printed when disabled: a disabled field cannot be written
+             // either, so both would read as two separate obstacles.
+             + ((!me.disabled && me.readonly) ? '(read-only)' : '')
+             + (me.synth === 'name-attr' ? '(post-key)' : '')
+             + (me.constraints || '') + (me.options || '') + (me.describedBy || '')
+             + (me.active ? `(${me.active})` : '')
+             + (me.collapsed ? '(collapsed)' : '')
+             + (me.hasPopup ? '(opens menu)' : '')
+             + (me.newTab ? '(new tab)' : '')
+             + (me.isNew ? '(just appeared)' : '')
+             + (me.clickable === false ? '(occluded)' : '')
+             + (me.offscreen ? ((me.y || 0) < 0 ? '(above-fold)' : '(below-fold)') : '');
+    // GEOMETRY REACHES FOLDED MEMBERS TOO. With geometry=true the loose rows
+    // gained box() and the folded ones silently did not, so on OpenStreetMap
+    // "Zoom In" — which exists ONLY inside a fold — had no coordinate at either
+    // detail level.
+    const bx = geometry ? `@(${me.x},${me.y})` : '';
+    return `${me.mmid}:${JSON.stringify(lab)}${bx}${me.href ? '→' + me.href : ''}${fl}`;
+  };
   // DROP LEDGER. The collector could not explain its own omissions: ~17 bare
   // `return`s in the element loop and four destructive post-passes removed
   // elements with no record of which rule fired. Every investigation therefore
@@ -4748,7 +4809,10 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         if (!el.hasAttribute('mmid')) el.setAttribute('mmid', `${++window.__mmidCounter}`);
         mmidReg.set(el.getAttribute('mmid'), el);
       }
-      if (el.shadowRoot) _walkInject(el.shadowRoot);
+      // `|| __abClosedRoot` throughout: listener_tag.js stashes every CLOSED root
+      // at attachShadow time, so the walk reaches them with no debugger attach.
+      const _sr0 = el.shadowRoot || el.__abClosedRoot;
+      if (_sr0) _walkInject(_sr0);
       // SAME-ORIGIN IFRAMES: contentDocument is reachable -> recurse like a
       // shadow root, so embedded same-origin apps (editors, legacy widgets,
       // srcdoc frames) are listed like any other page region. Cross-origin
@@ -5224,6 +5288,49 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   // honours checkVisibility so a hidden subtree contributes nothing, matching
   // innerText. Used only as a fallback where innerText came back empty — it does
   // not reproduce innerText's CSS-aware line breaking and must not replace it.
+  //
+  // WHAT MAY CONTRIBUTE TO A NAME, asked once. Two rules, both the spec's:
+  //
+  // (a) A NON-RENDERED NODE CONTRIBUTES NOTHING. AccName excludes hidden nodes,
+  //     and everything here believed it did — because `innerText` is "what is
+  //     rendered". IT IS NOT, on the one element where it matters: HTML defines
+  //     the innerText getter to fall back to `textContent` when the element is
+  //     NOT being rendered. So `_contentName` read a `display:none` child's
+  //     innerText and got its ENTIRE subtree. Measured on eBay: the nav item
+  //     `<li>` has three children — a link (6 chars), an expander (14) and
+  //     `div.vl-flyout-nav__flyout` with `display:none`, whose innerText returns
+  //     339 characters of CLOSED MEGA-MENU. Result: `404:"Motors Expand: Motors
+  //     Parts and accessoriesAll parts and accessories…"` — one fold line of
+  //     3,392 characters, 26.3% of the whole listing, describing a menu nobody
+  //     can see and presenting it as the nav item's identity. The missing spaces
+  //     are the tell: textContent does not insert the line breaks innerText does.
+  //     Every collapsed accordion, closed dropdown panel and hidden tab panel on
+  //     the web donates its text the same way.
+  //     `visibilityProperty` is passed because `visibility:hidden` is hidden per
+  //     the spec and the BARE call does not check it — the same bare-call hole
+  //     that once produced a phantom 3.81% identity-loss number in a probe.
+  //     `opacityProperty` is deliberately NOT passed: opacity:0 content is still
+  //     in the accessibility tree, and excluding it would be our judgement, not
+  //     the page's declaration.
+  //
+  // (b) STYLE AND SCRIPT TEXT IS NOT CONTENT. `<style>`/`<script>` are never
+  //     rendered, so (a) covers them wherever a style is resolvable — but SVG
+  //     elements have no `innerText` at all, so `_contentName` fell through to
+  //     `textContent` and swallowed the stylesheet. Measured on Grafana: a nav
+  //     item's name came back `".cls-1{fill: currentColor;} AI & machine
+  //     learning"` — CSS from an inline `<svg><style>` in the slot the legend
+  //     calls the element's IDENTITY. Named by tag because that is what the
+  //     document declares, and `.toUpperCase()` because an SVG element's
+  //     tagName is lower-case while an HTML one is upper-case.
+  const _NAME_SKIP = { STYLE: 1, SCRIPT: 1, TEMPLATE: 1, NOSCRIPT: 1, HEAD: 1 };
+  const _namable = (n) => {
+    try {
+      if (!n || n.nodeType !== 1) return true;
+      if (_NAME_SKIP[String(n.tagName || '').toUpperCase()]) return false;
+      if (n.checkVisibility && !n.checkVisibility({ visibilityProperty: true })) return false;
+    } catch (e) {}
+    return true;
+  };
   const _deepText = (node, depth) => {
     const d = depth || 0;
     if (d > 6) return '';
@@ -5236,9 +5343,9 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         for (const n of an) s += _deepText(n, d + 1);
         if (s) return s;
       }
-      try { if (node.checkVisibility && !node.checkVisibility()) return ''; } catch (e) {}
+      if (!_namable(node)) return '';
       let s = '';
-      const sr = node.shadowRoot;
+      const sr = node.shadowRoot || node.__abClosedRoot;
       if (sr) {
         for (const c of sr.childNodes) s += _deepText(c, d + 1);
         return s;
@@ -5277,10 +5384,24 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   };
   const _contentName = (node) => {
     try {
+      // A HOST'S CONTENT IS ITS SHADOW CONTENT. #29 taught the child loop below to
+      // cross a shadow boundary; the node being NAMED was never asked the same
+      // question, and for a host its light childNodes are empty — so the name came
+      // back "". Measured on caniuse: every `<ciu-version-support>` support cell
+      // rendered "4 - 28 : Not supported" from its shadow root and listed as a bare
+      // `ref_149 | ciu-version-support`, with the version and the verdict — the
+      // entire content of a support matrix — reachable nowhere on that row.
+      if (node.shadowRoot || node.__abClosedRoot) {
+        const _own = _deepText(node).replace(/\s+/g, ' ').trim();
+        if (_own) return _own;
+      }
       const parts = [];
       for (const n of node.childNodes) {
         if (n.nodeType === 3) parts.push(n.nodeValue || '');
         else if (n.nodeType === 1) {
+          // See `_namable`: a non-rendered child contributes nothing, and its
+          // innerText is NOT what is on screen — it is textContent.
+          if (!_namable(n)) continue;
           // "EMPTY" IS THE WRONG TRIGGER. `innerText` stops at every shadow
           // boundary, so a node that mixes light text with a custom element returns
           // PART of what is on screen — and the deep walk was gated on the result
@@ -5293,11 +5414,21 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           // labels and the help text — every one verified visible with a real rect.
           // The test is now structural: if this subtree CONTAINS a shadow root, the
           // shallow read cannot have seen all of it, so use the composed walk.
-          let t = (n.innerText != null ? n.innerText : n.textContent) || '';
+          // RAW textContent IS NEVER A NAME. `innerText` does not exist on an SVG
+          // (or MathML) element, so this fell through to `textContent`, which
+          // includes every descendant's text — `<style>` and `<script>` among them.
+          // Measured on Grafana: a nav item's div child holds an inline
+          // `<svg><style>.cls-1{fill: currentColor;}</style>…</svg>`, and its row
+          // read `109:".cls-1{fill: currentColor;} AI & machine learning"`. Filtering
+          // only this child was not enough — the offender is a DESCENDANT of it — so
+          // the non-HTML case goes through the composed walk, which applies
+          // `_namable` at every level instead of only at the top.
+          let t = (typeof n.innerText === 'string') ? n.innerText : _deepText(n);
+          t = t || '';
           let _hasShadow = false;
           try {
-            _hasShadow = !!n.shadowRoot
-              || Array.prototype.some.call(n.querySelectorAll('*'), (x) => !!x.shadowRoot);
+            _hasShadow = !!(n.shadowRoot || n.__abClosedRoot)
+              || Array.prototype.some.call(n.querySelectorAll('*'), (x) => !!(x.shadowRoot || x.__abClosedRoot));
           } catch (e) {}
           if (!t.trim() || _hasShadow) {
             const _d = _deepText(n);
@@ -5609,11 +5740,12 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       try {
         const kids = el.querySelectorAll('*');
         for (const n of kids) {
-          if (n.shadowRoot) {
+          const _nsr = n.shadowRoot || n.__abClosedRoot;
+          if (_nsr) {
             // NOTE: ':scope > *' does NOT match on a ShadowRoot (it's a
             // DocumentFragment, not an element) — iterate .children directly.
             let t = '';
-            for (const c of n.shadowRoot.children) {
+            for (const c of _nsr.children) {
               const ct = (c.innerText || '').trim();
               if (ct) t = t ? t + ' ' + ct : ct;
             }
@@ -6325,9 +6457,28 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // in both, and it is what keeps the count honest if the keep rule ever
     // widens again.
     if (visible && !inViewport && !inModal && !keepForFind) {
-      const _bfRole = el.getAttribute('role');
-      const _real = ['a','button'].includes(tagL) || formyTags.has(tagL) ||
-                    (_bfRole && strongInteractiveRoles.has(_bfRole));
+      // COUNT WHAT THE DROP REMOVES — #18'S ASYMMETRY, THIRD INSTANCE.
+      //
+      // This was `['a','button'].includes(tagL) || formyTags.has(tagL) ||
+      // strongInteractiveRoles.has(role)` — a TAG LIST, a fourth opinion about
+      // what a control is, sitting one line above a drop that used a different
+      // one. #18 measured that exact disagreement between `isInteractive` and
+      // `keepForFind` at 60% of the whole accuracy gap and replaced the tag list
+      // with a real signal; the counter kept its copy.
+      //
+      // Everything reaching this line has already passed `isInteractive`, which
+      // since #28 admits only what the DOCUMENT declares — so a second, narrower
+      // vote here does not remove noise, it removes the report. Measured on
+      // Syncfusion's data grid: 544 elements dropped `outside-viewport`, 449 of
+      // them `td[role=gridcell]` and `th[role=columnheader]` parked off the right
+      // edge of a wide grid. Neither role is in INTERACTIVE_ROLES, so the whole
+      // set scored 4, and the page's only spatial note read "4 interactive
+      // element(s) are outside the viewport HORIZONTALLY" — under-reporting by
+      // ~125x, silently, with half the grid's columns in the missing set.
+      //
+      // If it was worth dropping it is worth counting: the element exists, the
+      // agent cannot see it, and the count is the only thing that says so.
+      const _real = true;
       // WHERE, not just how many. "76 more elements are BELOW the viewport" tells
       // the agent to scroll and re-read the whole page — measured at 76 of 173
       // gold-path steps, a full extra listing each. Naming the REGIONS costs a few
@@ -6551,8 +6702,9 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
             if (parseFloat(c.borderTopWidth || '0') > 0 && c.borderTopStyle !== 'none') return true;
             // Shadow hosts paint via their SHADOW children (sl-dialog's host is
             // bare; its rgba backdrop lives inside the shadow root).
-            if (n.shadowRoot && (depth || 0) < 2) {
-              for (const sc of n.shadowRoot.children) if (paintsPixels(sc, (depth || 0) + 1)) return true;
+            const _psr = n.shadowRoot || n.__abClosedRoot;
+            if (_psr && (depth || 0) < 2) {
+              for (const sc of _psr.children) if (paintsPixels(sc, (depth || 0) + 1)) return true;
             }
             return false;
           } catch (e) { return true; }
@@ -6711,10 +6863,40 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         // The HTML `name` attribute is a form-submission key: meaningful
         // identity for form fields (saucedemo's "user-name"), junk on buttons
         // (OSM's name="button") — honor it for form tags only.
-        const hasText = !!(el.innerText || '').trim();
-        accessibleName = ((formyTags.has(tagL) ? el.getAttribute('name') : '') ||
-                          (!hasText ? (el.getAttribute('title') || el.getAttribute('alt')) : '') ||
-                          '').trim();
+        //
+        // AND IT IS THE LAST RESORT, NOT THE FIRST. `title` is a real AccName
+        // source (step 2I); the HTML `name` attribute is not a source at all — it
+        // is the wire key the form posts under. Ordering the wire key first meant
+        // a field that DECLARES its label lost it to an ASCII identifier: measured
+        // on Naver, `<input name="query" title="검색어">` listed as name="query",
+        // so the one label a Korean-reading user sees was replaced by a developer
+        // token and an agent searching for the search box in Korean found nothing.
+        //
+        // The `hasText` guard is right for a CONTENT element — AccName 2F says
+        // visible text outranks title, which is why a Discourse link stopped being
+        // named after its tooltip — and wrong for a form control, where the
+        // element's own text is never its name: a `<select>`'s innerText is its
+        // OPTION LIST, so any titled select on the web had `title` suppressed by
+        // the very content AccName forbids using.
+        const hasText = !formyTags.has(tagL) && !!(el.innerText || '').trim();
+        // THREE PROVENANCES, ONE FIELD, AND NO WAY TO TELL THEM APART. `name=` can
+        // hold a real accessible name (title/alt, or — per HTML-AAM — a submit or
+        // reset input's VALUE), or the HTML `name` attribute, which #37 established
+        // is NOT an AccName source at all: it is the key the form POSTS under.
+        // Measured live: `<input type="reset" name="submitbutton" value="cancel">`
+        // listed as `name="cancel"`, which is correct (the value IS the name here),
+        // but an agent asked for the word PRINTED on the button could not tell that
+        // from the `name`-attribute fallback that produces `name="username"` one row
+        // above — and spent three calls on query_elements proving it.
+        // Same remedy as #23's data-testid: keep using it (it beats nothing on an
+        // unlabelled control) and SAY WHERE IT CAME FROM. The mechanism already
+        // exists; this is a third source flowing into it.
+        const _titleAlt = ((!hasText ? (el.getAttribute('title') || el.getAttribute('alt')) : '') || '').trim();
+        const _nameAttr = ((formyTags.has(tagL) ? el.getAttribute('name') : '') || '').trim();
+        accessibleName = (_titleAlt || _nameAttr || '').trim();
+        if (!_titleAlt && _nameAttr) {
+          try { el.__abSynthAttr = 'name-attr'; } catch (e) {}
+        }
         // Framework templating bugs leak literal "undefined"/"null" into name
         // attributes (seen in the wild: name="undefined" on a Ryanair email
         // field) — actively misleading as an identity. Treat as unnamed so the
@@ -6861,6 +7043,19 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           // A button-like input has no contents; its value is the label, and is
           // reported as the accessible name above.
           if (tagL === 'input' && BUTTONISH_INPUT.has((el.getAttribute('type') || '').toLowerCase())) return '';
+          // A PASSWORD FIELD'S CONTENTS ARE NEVER REPORTED. Every other tool in
+          // this project assumes the listing is safe to carry; this is the one
+          // field where that is false. ChromeBridge acts inside the user's real,
+          // logged-in Chrome, so a read over a half-filled login form shipped the
+          // secret into the model's context, into the transcript, and into reach
+          // of any injection on the page — for a value no tool needs, since
+          // form_input WRITES passwords and never has to read one back.
+          // Report WHETHER it is filled, not what with: omitting the field
+          // entirely would render an occupied box identically to an empty one,
+          // and "the password is already typed" is a fact the agent acts on.
+          if (tagL === 'input' && (el.getAttribute('type') || '').toLowerCase() === 'password') {
+            return (el.value || '') ? '(password — filled, contents withheld)' : '';
+          }
           // A checkbox/radio has no CONTENTS — it has a checked state, which the
           // (checked) flag already carries. `el.value` is "on" by DOM default even
           // when the page set nothing, so it made an unchecked box read as ON and
@@ -7145,6 +7340,36 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         if (!_realThin) _note(el, 'was:sliver-decoration');
       }
     }
+    // "ICON" IS A CLAIM ABOUT THE ELEMENT, AND NOTHING TESTED IT. The only row
+    // that prints no identity at all printed `(unlabeled-icon)`, asserting a shape
+    // — small, glyph-bearing — that was never checked. Three reviewers checked it
+    // on three pages and it was wrong on all of them: Excalidraw's decorative
+    // logo, tldraw's EMPTY 1280x1600 toast container (an "icon" the size of the
+    // viewport), and six 4px vscode splitter hairlines. An agent reading "icon"
+    // reasonably screenshots a 20px square looking for a glyph.
+    //
+    // Whether an element renders graphics IS checkable, so check it: an <svg>,
+    // <img>, <canvas> or <picture> in its subtree, a CSS background-image, or an
+    // icon font's generated glyph (::before/::after content, which is how Font
+    // Awesome and every webfont icon set paints). Otherwise the row says only what
+    // is known — that the control has no resolvable name.
+    let iconGraphic = false;
+    if (iconOnly) {
+      try {
+        iconGraphic = !!(el.querySelector && el.querySelector('svg, img, canvas, picture, image'))
+          || /url\(|image-set\(/i.test(cs.backgroundImage || '')
+          || (function () {
+              try {
+                const _w = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+                for (const _pe of [':before', ':after']) {
+                  const _c = _w.getComputedStyle(el, _pe).content || '';
+                  if (_c && _c !== 'none' && _c !== 'normal' && _c !== '""' && _c !== "''") return true;
+                }
+              } catch (e2) {}
+              return false;
+            })();
+      } catch (e) {}
+    }
     // Parent-child dedup: if an ancestor with the SAME trimmed label is already
     // in the listing, this child is just a redundant inner node (e.g. a <span>
     // inside the <a> we already listed). The click target is the outer one.
@@ -7381,7 +7606,16 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // adjacent text, never claimed as the real name): the preceding inline
     // text ("Date:" before the input) or the nearest preceding heading.
     let nearLabel = '';
-    if (!accessibleName && (formyTags.has(tagL) || ceRoot || codeEditor)) {
+    // ...AND FOR THE ROWS THAT HAVE NO IDENTITY AT ALL. The gate was form fields
+    // only, so the hint reached rows that were already named (the duplicate-label
+    // pass adds one where >=3 controls share a label) and never reached the rows
+    // printed as `(unlabeled)` — an unnamed <button> or <a> is an unnamed field in
+    // every sense the legend means, and it is the one row where a nearby-text hint
+    // is the only identity available. Measured on DataTables: 18 of 28 `near=`
+    // occurrences sat on already-named rows and ZERO on the 9 unnamed-icon rows.
+    // `iconOnly` is decided above, so this reads the outcome rather than
+    // re-deriving "does this element have a name" a second way (#21).
+    if (!accessibleName && (formyTags.has(tagL) || ceRoot || codeEditor || iconOnly)) {
       try {
         // (trailing "#" = the permalink anchor doc generators append to headings)
         const short = (s) => { s = (s || '').replace(/\s+/g, ' ').replace(/\s*#\s*$/, '').trim(); return (s && s.length <= 60) ? s : ''; };
@@ -7598,10 +7832,44 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // nothing. The pointer-events observation is still recorded — it demotes the
     // element (`was:pointer-events-none`, visible in the ledger) — which is the
     // right home for an inference: prominence, never a claim about state.
-    const disabled = el.disabled === true || el.getAttribute('aria-disabled') === 'true';
+    // `:disabled`, NOT `el.disabled`. The IDL property reflects the element's OWN
+    // content attribute; HTML's "actually disabled" state also covers every descendant
+    // of a `<fieldset disabled>` (bar the first legend's), and `:disabled` is the
+    // selector that implements it. Measured on Bootstrap's own Disabled-forms example:
+    // of four controls in a disabled fieldset, `el.disabled` was true for ONE — the
+    // checkbox carrying its own attribute — while `:disabled` matched all four,
+    // INCLUDING THE SUBMIT BUTTON. So three controls and the submit were presented as
+    // live, and the legend makes absence load-bearing ("(disabled) — inert; clicking
+    // does nothing right now"), so an agent had every reason to fill and submit a form
+    // where every write and the submit are no-ops.
+    // `<fieldset disabled>` is a DECLARATION — exactly the kind #24/#27/#28 say to read
+    // — and this predicate was under-reading it. Wrapped because `:disabled` throws on
+    // an element type the selector engine will not match.
+    const disabled = (() => {
+      try { if (el.matches && el.matches(':disabled')) return true; } catch (e) {}
+      return el.disabled === true || el.getAttribute('aria-disabled') === 'true';
+    })();
+    // READ-ONLY IS A DECLARED STATE, AND IT WAS THE ONE MISSING FROM THE SET.
+    // The listing already prints (disabled) and (required); readonly is the third
+    // thing HTML says about whether a field can be written, and it means something
+    // DIFFERENT from disabled — a readonly field still submits its value, still
+    // takes focus, and its contents are real contents. Found in the 10-task eval:
+    // asked which inputs cannot be typed into and whether each is disabled or
+    // read-only, read_page could answer only half, and query_elements had to cover
+    // the rest. The other arm could not answer either half from its listing.
+    // `el.readOnly` is the IDL property (input/textarea only); aria-readonly is the
+    // widget equivalent for a custom control. NOT the CSS `:read-only` pseudo-class,
+    // which matches every non-editable element on the page — a <div> is :read-only.
+    const readonly = (() => {
+      try {
+        if (el.readOnly === true) return true;
+        return el.getAttribute('aria-readonly') === 'true';
+      } catch (e) { return false; }
+    })();
     const _entry = {
       mmid: _mmid,
       tag: tagL,
+      readonly,
       type: el.getAttribute('type'),
       // A contenteditable/code-editor root with no explicit role IS a textbox.
       role: el.getAttribute('role') || ((ceRoot || codeEditor) ? 'textbox' : null),
@@ -7686,8 +7954,12 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           if (el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')
               || (el.getAttribute('title') || '').trim()
               || (el.labels && el.labels.length)) return false;
-          for (const n of el.childNodes) {
-            if (n.nodeType === 3 && /[\p{L}\p{N}]/u.test(n.nodeValue || '')) return false;
+          {
+            // Composed, for the same reason as the descent below.
+            const _r0 = el.shadowRoot || el.__abClosedRoot;
+            for (const n of (_r0 ? _r0.childNodes : el.childNodes)) {
+              if (n.nodeType === 3 && /[\p{L}\p{N}]/u.test(n.nodeValue || '')) return false;
+            }
           }
           // MORE THAN ONE CONTRIBUTOR, or nothing was CONCATENATED. "Has element
           // children" was too broad and I caused a false negative with it: demoqa's
@@ -7703,19 +7975,190 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           // magnitude: one contributor means no concatenation happened at all, while
           // demoqa's page shell and Dzen's 4,000-char rows have dozens. "More than
           // one" is a structural fact; "more than N characters" would be a guess.
-          let _contrib = 0;
+          // A SINGLE WRAPPER IS NOT A DECISION, SO LOOK THROUGH IT. Counting
+          // contributors at ONE level only asks whether THIS element concatenated
+          // several things — but an app shell is almost always `<div id=root><div
+          // class=layout>…everything…</div></div>`, one contributing child, so the
+          // count was 1 and the whole page's text stayed on the row. Measured live
+          // twice: the shell ranked FIRST in `find` at ~1,300 chars, and on a dialog
+          // read it consumed a third of max_chars and pushed 22 of 25 dialog rows out.
+          // My offline fixture passed because I gave it several direct children,
+          // which is the shape I happened to think of and not the shape apps have.
+          //
+          // Descend while exactly one child contributes text: that level chose
+          // nothing, so the question is unchanged one level down. Stop at the child
+          // that has its OWN direct text — there the name really is that node's text
+          // rather than a summary of unrelated things, which is the demoqa
+          // react-select case the contributor count was written to protect (CV/W15).
           try {
-            for (const c of el.children) {
-              const _ct = (c.innerText != null ? c.innerText : c.textContent) || '';
-              if (/[\p{L}\p{N}]/u.test(_ct)) _contrib++;
-              if (_contrib > 1) break;
+            let _n = el;
+            for (let _d = 0; _d < 8; _d++) {
+              const _kids = [];
+              // COMPOSED CHILDREN, because that is where the name came from. A
+              // shadow host has no light children, so this returned "nothing below
+              // contributes" and reported a name assembled from shadow descendants
+              // as the host's OWN — which then printed twice on caniuse, once on
+              // the host row and once on the shadow child's row beneath it.
+              const _sr = _n.shadowRoot || _n.__abClosedRoot;
+              for (const c of (_sr ? _sr.children : _n.children)) {
+                const _ct = (c.innerText != null ? c.innerText : c.textContent) || '';
+                if (/[\p{L}\p{N}]/u.test(_ct)) _kids.push(c);
+                if (_kids.length > 1) break;
+              }
+              if (_kids.length > 1) return true;      // a real concatenation happened
+              if (_kids.length === 0) return false;   // nothing below contributes
+              for (const t of _kids[0].childNodes) {
+                if (t.nodeType === 3 && /[\p{L}\p{N}]/u.test(t.nodeValue || '')) return false;
+              }
+              _n = _kids[0];
             }
           } catch (e2) { return false; }
-          return _contrib > 1;
+          return false;
         } catch (e) { return false; }
       })(),
       active: activeHint(el),
       required,
+      // WHAT THE FIELD WILL ACCEPT, as the document declares it. `(required)` said
+      // a field must be filled and nothing said what with, so a pattern-guarded or
+      // range-bounded input could only be discovered by writing to it and reading
+      // the rejection — a brute-force loop against facts the page had already
+      // published. Every entry here is an attribute the author wrote; nothing is
+      // inferred from class names, size or vocabulary, so this adds no heuristic to
+      // a path #27/#28 cleared of them.
+      //
+      // `format=` is the one SYNTHESIZED value, and it is a spec fact rather than a
+      // reading of the widget: HTML fixes the `.value` wire format of each date/time
+      // input type regardless of how the browser chooses to render it, so a German
+      // date picker showing 29.08.2026 still takes 2026-08-29. That mismatch between
+      // what is displayed and what is accepted is exactly what an agent gets wrong.
+      // Deliberately NOT ported from browser-use: their second branch reads
+      // `data-date-format` and jQuery datepicker class names, which is the guess
+      // #24 deleted.
+      //
+      // Absent on the large majority of controls, so it is free on the pages that
+      // declare nothing.
+      // WHAT THE PAGE SAYS ABOUT THIS FIELD, IN THE FIELD'S OWN WORDS. The
+      // collector already RESOLVES aria-describedby / aria-errormessage — #29 used
+      // them to keep help text OUT of `value=`, replacing two English class-name
+      // substrings — and then threw the text away. So a form could say "Password
+      // must be at least 8 characters" or, after a failed submit, "This card number
+      // is invalid", and the listing showed a field with no explanation while
+      // `fill_form`'s failure path had to go hunting for the same nodes.
+      //
+      // Both are pointers the AUTHOR wrote, so this adds no heuristic. Per ARIA,
+      // aria-errormessage is only meaningful while aria-invalid is true — a stale
+      // error node is present in the DOM at all times — so the invalid state gates
+      // it, and it is labelled `error=` rather than `help=` because the two need
+      // different responses. `markCut` because a describedby target is an arbitrary
+      // ELEMENT, not necessarily a sentence: pages point it at whole panels.
+      describedBy: (() => {
+        try {
+          const _read = (attr) => {
+            const ids = (el.getAttribute(attr) || '').trim();
+            if (!ids) return '';
+            const doc = el.getRootNode ? el.getRootNode() : document;
+            const parts = [];
+            for (const id of ids.split(/\s+/)) {
+              if (!id) continue;
+              let n = null;
+              try { n = doc.getElementById ? doc.getElementById(id) : null; } catch (e2) {}
+              if (!n) { try { n = document.getElementById(id); } catch (e2) {} }
+              if (!n || !_namable(n)) continue;
+              const t = ((n.innerText != null ? n.innerText : _deepText(n)) || '')
+                .replace(/\s+/g, ' ').trim();
+              if (t) parts.push(t);
+            }
+            return parts.join(' ');
+          };
+          const _invalid = (el.getAttribute('aria-invalid') || '') === 'true';
+          const _err = _invalid ? _read('aria-errormessage') : '';
+          const _help = _read('aria-describedby');
+          // A description that only restates the name is not a description.
+          const _same = (s) => !s || s === accessibleName || s === label;
+          const out = [];
+          if (_err && !_same(_err)) out.push(` error=${JSON.stringify(markCut(_err, 300))}`);
+          if (_help && !_same(_help) && _help !== _err) {
+            out.push(` help=${JSON.stringify(markCut(_help, 300))}`);
+          }
+          return out.join('');
+        } catch (e) { return ''; }
+      })(),
+      constraints: (() => {
+        try {
+          const _isField = (tagL === 'input' || tagL === 'textarea' || tagL === 'select');
+          const _hasAriaRange = el.hasAttribute('aria-valuemin') || el.hasAttribute('aria-valuemax')
+                             || el.hasAttribute('aria-valuenow');
+          if (!_isField && !_hasAriaRange) return '';
+          const p = [];
+          const _ty = (el.getAttribute('type') || '').toLowerCase();
+          const _FMT = { date: 'YYYY-MM-DD', month: 'YYYY-MM', week: 'YYYY-Www',
+                         time: 'HH:MM', 'datetime-local': 'YYYY-MM-DDTHH:MM' };
+          if (tagL === 'input' && _FMT[_ty]) p.push(`format=${_FMT[_ty]}`);
+          for (const a of ['pattern', 'minlength', 'maxlength', 'min', 'max', 'step',
+                           'accept', 'inputmode', 'list',
+                           'aria-valuemin', 'aria-valuemax', 'aria-valuenow']) {
+            const v = el.getAttribute(a);
+            if (v == null || v === '') continue;
+            // Quote only what needs it, so numeric bounds stay readable as numbers.
+            p.push(`${a.replace(/^aria-/, '')}=${/^[\w.:+-]+$/.test(v) ? v : JSON.stringify(v)}`);
+          }
+          if (el.hasAttribute('multiple')) p.push('multiple');
+          return p.length ? ' ' + p.join(' ') : '';
+        } catch (e) { return ''; }
+      })(),
+      // A <select>'s OPTIONS, inline. This is the most explicitly declared
+      // enumeration in HTML and it was reachable only by getting a write WRONG:
+      // the option labels lived in a function-local sample inside fillDropdown,
+      // capped at six, and surfaced in the failure message or after a pick had
+      // already committed. So "which shipping options exist" required deliberately
+      // choosing a bad one, and form_input matches on option TEXT, meaning the
+      // agent had to already know the string it was hunting for.
+      //
+      // `count=` is the true total and is never cut, so the list being bounded is
+      // not a silent loss — the count says how many exist and markCut's marker says
+      // how much of the text was dropped. Genuinely unbounded content keeps a
+      // generous MARKED bound, which is #24's one surviving bound and for its stated
+      // reason: so a 200-country list cannot evict every other row from max_chars.
+      options: (() => {
+        try {
+          if (tagL !== 'select') return '';
+          const opts = el.options ? Array.from(el.options) : [];
+          if (!opts.length) return '';
+          // A DISABLED OPTION IS DECLARED, AND IT DECIDES WHAT A WRITE CAN DO.
+          // The first <option> of a prompt select often carries BOTH `selected` and
+          // `disabled` -- it is the load-time selection AND the one entry that
+          // cannot be chosen -- and nothing in the row said so, making "which option
+          // cannot be chosen" unanswerable from the listing. Same class as #40's
+          // (read-only): not a new capability, the page's own statement about what a
+          // write may legally do.
+          //
+          // `:disabled` rather than `o.disabled`, because the IDL attribute reflects
+          // only the option's OWN attribute while HTML inherits the state from
+          // `<optgroup disabled>`. That is the identical spec rule W27 needed for
+          // `<fieldset disabled>`, where reading the own-attribute presented three
+          // dead controls and a dead submit button as live.
+          //
+          // The marker sits OUTSIDE the quotes so the quoted string stays exactly
+          // the option's text -- it is what form_input is passed, and corrupting it
+          // would trade one silent failure for another.
+          const labels = opts.map((o) => {
+            const t = ((o.text || o.value || '') + '').trim();
+            if (!t) return null;
+            let off = false;
+            try { off = o.matches(':disabled'); } catch (e) { off = !!o.disabled; }
+            return JSON.stringify(t) + (off ? ' (disabled)' : '');
+          }).filter(Boolean);
+          if (!labels.length) return '';
+          // EACH OPTION IS QUOTED SEPARATELY, because ` | ` occurs INSIDE real option
+          // text. python.org's language picker ships options literally named
+          // "Greek | Ελληνικά" and "Spanish | español", so a single joined string split
+          // on the separator yields 26 phantom options against a stated count=13 — and
+          // an agent passing "Ελληνικά" to form_input passes a string that is not an
+          // option. `count=` was the only thing making that recoverable. Quoting each
+          // one removes the ambiguity instead of relying on the reader to notice it.
+          return ` count=${opts.length} options=[${markCut(labels.join(', '), 600)}]`;
+        } catch (e) { return ''; }
+      })(),
       unselected,
       disabled,
       synth: (function () { try { return el.__abSynthAttr || ''; } catch (e) { return ''; } })(),
@@ -7751,6 +8194,8 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       backedBy: _backing && _backing.mmid ? _backing.mmid : null,   // checkable evidence, not a verdict
       orphanWidget: false,              // set by that post-pass
       iconOnly,  // strong control with no resolvable text label (render with a hint)
+      iconGraphic,  // ...and it really does render graphics, so "icon" is a fact
+
       offscreen: !inViewport,  // included but currently outside viewport (typically modal scroll content)
       href: WANT_URLS ? (BRIEF ? _briefUrl(_hrefOf(el)) : _hrefOf(el)) : '',
       src: WANT_URLS ? (BRIEF ? _briefUrl(_srcOf(el)) : _srcOf(el)) : '',
@@ -7952,16 +8397,41 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   // ("More info" ×4 on dashboard stat cards) are indistinguishable by name —
   // give each a near= hint from its card's heading/short text.
   {
+    // COUNT SPOTS, NOT ELEMENTS. "Three controls share this label" was counted
+    // over entries, and since #28 stopped the container rules deleting, one
+    // control is routinely three nested entries with the same label — so a
+    // pagination button labelled "1" looked like three ambiguous controls and
+    // earned a hint. Measured on DataTables: rows 1-6 of the pager each carried
+    // `near="«‹123456›»"`, the pager's own text, next to labels that were already
+    // "1".."6". Distinct geometry is the same test the tree uses to decide two
+    // rows are one spot, so the two agree by construction.
     const byLab = new Map();
     for (const e of out) {
       const l = e.name || e.text || '';
-      if (l && l.length <= 20) byLab.set(l, (byLab.get(l) || 0) + 1);
+      if (!l || l.length > 20) continue;
+      if (!byLab.has(l)) byLab.set(l, new Set());
+      byLab.get(l).add(`${e.x},${e.y},${e.w},${e.h}`);
     }
+    // A DISAMBIGUATOR THAT DOES NOT DISTINGUISH IS PURE COST — and it reads as
+    // information, which is worse than costing nothing. The hint is the nearest
+    // ancestor's heading or short text, and for controls that share a CONTAINER
+    // rather than sitting in sibling cards that text is the same string for every
+    // member. Measured on DataTables: six column headers each carried
+    // `near="Name Position Office Age Start date Salary"` — one row of the table
+    // repeated six times, 12% of that listing, distinguishing nothing. The same
+    // pass on the same page produced `near="CardView Plus"` / `near="Editor Plus"`,
+    // which is exactly what it is for.
+    //
+    // So compute every member's hint first and keep them only if they differ. That
+    // is decidable from the strings themselves — no threshold, and no rule about
+    // which ancestors are "cards".
+    const groups = new Map();
     for (const e of out) {
       const l = e.name || e.text || '';
-      if (!l || l.length > 20 || (byLab.get(l) || 0) < 3 || e.near || e.groupKey) continue;
+      if (!l || l.length > 20 || ((byLab.get(l) && byLab.get(l).size) || 0) < 3 || e.near || e.groupKey) continue;
       const n = mmidReg.get(e.mmid);
       if (!n) continue;
+      let hint = '';
       let anc = n.parentElement;
       for (let d = 0; d < 3 && anc && anc !== document.body; d++, anc = anc.parentElement) {
         let t = '';
@@ -7973,7 +8443,36 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
             if (at && at.length <= 50 && at !== l) t = at;
           }
         } catch (e2) {}
-        if (t && t !== l) { e.near = t; break; }
+        if (t && t !== l) { hint = t; break; }
+      }
+      if (!hint) continue;
+      if (!groups.has(l)) groups.set(l, []);
+      groups.get(l).push([e, hint]);
+    }
+    for (const [, members] of groups) {
+      const distinct = new Set(members.map((m) => m[1]));
+      if (distinct.size < 2) continue;   // one string for all of them: says nothing
+      for (const [e, hint] of members) e.near = hint;
+    }
+    // THE SAME TEST, ONCE, OVER EVERY SOURCE OF `near`. Three passes can set it
+    // (the label-less field walk, the numeric-name rule, this one) and each was
+    // free to hand the same string to several rows. The numeric rule takes the
+    // PARENT's text, which for a pager is the pager: DataTables' page buttons
+    // came out `button "1" near="«‹123456›»"`, `button "2" near="«‹123456›»"`,
+    // six rows quoting the roster they are members of, beside labels that were
+    // already "1".."6".
+    //
+    // A row that HAS its own identity only benefits from a hint that separates it
+    // from the others carrying that hint, so a hint shared by two or more named
+    // rows is dropped from all of them — no magnitude, just "does it distinguish".
+    // A row with NO identity keeps whatever it can get: there the hint is not a
+    // disambiguator, it is the only thing the listing can say, which is what the
+    // legend means by "a HINT for unnamed fields".
+    {
+      const shared = new Map();
+      for (const e of out) if (e.near) shared.set(e.near, (shared.get(e.near) || 0) + 1);
+      for (const e of out) {
+        if (e.near && (shared.get(e.near) || 0) >= 2 && (e.name || e.text)) e.near = '';
       }
     }
   }
@@ -8201,6 +8700,24 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   let mainHeading = '';
   try {
     const hs = _allComposed('h1, h2, h3, h4, h5, h6, [role="heading"]');
+    // A RANK TIE IS BROKEN BY <main>, NOT BY DOCUMENT ORDER. Measured on gov.uk:
+    // the page heading and the consent banner's heading are BOTH <h2>, so the
+    // declared-rank rule found a tie and fell back to position -- and a consent
+    // overlay is injected at the top of the document, so the one line an agent
+    // reads to decide whether it is even on the right page said
+    // `Main heading: "Cookies on GOV.UK"` while the page's actual subject,
+    // "UK bank holidays", sat one line below it in the same call's outline. That is
+    // most of the regulated web.
+    //
+    // #30 established that position states nothing, and then used position as the
+    // tie-break. <main> is a DECLARATION -- HTML defines it as the dominant content
+    // of the document -- so a heading inside it outranks one outside at the same
+    // level. No class names, no wordlist, and no behaviour change at all on a page
+    // that declares no <main>, where every candidate scores the same and document
+    // order decides exactly as before.
+    let hasMain = false;
+    try { hasMain = _allComposed('main, [role="main"]').length > 0; } catch (e) {}
+    let bestIn = false;
     let bestLv = 99;
     for (const h of hs) {
       const hr = h.getBoundingClientRect();
@@ -8216,8 +8733,15 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         // with an <h2> rather than being ranked below every real heading.
         lv = m ? parseInt(m[1], 10) : 2;
       }
-      if (lv < bestLv) { bestLv = lv; mainHeading = t; }
-      if (bestLv === 1) break;      // nothing can outrank a declared level 1
+      let inMain = false;
+      try { inMain = !!(h.closest && h.closest('main, [role="main"]')); } catch (e) {}
+      if (lv < bestLv || (lv === bestLv && inMain && !bestIn)) {
+        bestLv = lv; bestIn = inMain; mainHeading = t;
+      }
+      // Stop only when nothing REMAINING could beat this: a declared level 1 that
+      // is already inside <main> (or on a page with no <main> to lose to). Breaking
+      // on level alone would keep a banner's h1 over the article's h1.
+      if (bestLv === 1 && (bestIn || !hasMain)) break;
     }
   } catch (e) {}
   // STANDALONE MEDIA (detail='full' only). A plain <img> is not interactive, so
@@ -8433,8 +8957,80 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   //
   // find needs the line attached rather than read out of the listing, because it
   // ranks OFFSCREEN elements too and the string listing is viewport-scoped.
+  // WHAT APPEARED SINCE THE LAST READ, marked on the row that carries it.
+  // `delta=true` already answers "what changed", but as a MODE: the agent has to
+  // know to ask for it, it refuses on scoped reads and on navigations, and #30
+  // found it had been inert for its whole life because the server split on a
+  // marker string the extension never emits. A per-row flag cannot fail that way —
+  // if it stops appearing that is visible on every read — and it composes with
+  // folding, scoping and both formats instead of replacing the listing.
+  //
+  // Identity is the mmid, the same basis browser-use uses (a backendNodeId set from
+  // the previous step). mmids are additive and stick to the element, so "never
+  // collected before" is exactly "new to this document".
+  //
+  // TWO DELIBERATE DIFFERENCES FROM THEIRS:
+  //  - The seen-set is MONOTONIC, not the previous step's set. An element that
+  //    scrolls out of view and back is not new, and the question an agent actually
+  //    asks is "did my last action create this", not "was this in the last frame".
+  //    Theirs re-marks on scroll; the viewport-scoped listing would make that far
+  //    noisier here than it is for them.
+  //  - Only UNSCOPED reads seed the set, and only unscoped reads emit the flag. A
+  //    scoped read collects one subtree, so letting it seed would make the next
+  //    whole-page read announce the entire rest of the document as new — a false
+  //    positive on a flag whose entire value is that it is rare.
+  // Nothing is marked on the FIRST read, where everything qualifies and the flag
+  // would be pure noise — the #15 lesson about an always-on warning.
+  if (!scopeMmid) {
+    try {
+      const _prior = window.__abSeenMmids;
+      // SEEDED FROM WHAT WAS STAMPED, NOT FROM WHAT WAS PRINTED. `out` is
+      // VIEWPORT-FILTERED on an unscoped string read (keepForFind requires
+      // `structured || scopeMmid`), so nothing below the fold was ever seeded and
+      // every such control was announced `(just appeared)` the moment the page
+      // scrolled to it — breaking this flag's own stated contract two comments up,
+      // that an element which scrolls into view is not new. Measured: a page whose
+      // form sits below the fold stamps mmids 6 and 7 on it at the FIRST read while
+      // the seen-set holds 1 of 7, and the second read then flags both.
+      //
+      // That false positive is not merely noise: it was read as PROOF that 17 form
+      // controls had not been in the DOM, which sent an investigation at the
+      // readiness probe instead of here. The registry is the right source because
+      // it answers the question the flag asks — what existed in this document when
+      // I last looked — and it is stamped by the collection walk, which is not
+      // viewport-bounded.
+      let _now;
+      try {
+        _now = new Set(Array.from(window.__mmidReg.keys()).map(String));
+      } catch (e) { _now = null; }
+      if (!_now || !_now.size) _now = new Set(out.map((e) => String(e.mmid)));
+      if (_prior) { for (const e of out) if (!_prior.has(String(e.mmid))) e.isNew = true; }
+      if (_prior) { for (const m of _now) _prior.add(m); } else { window.__abSeenMmids = _now; }
+    } catch (e) {}
+  }
   if (structured) {
-    try { out.forEach((e) => { e.line = _fmtLine(e); }); } catch (e) {}
+    try {
+      out.forEach((e) => {
+        // SCORING AND DISPLAY MUST AGREE ABOUT WHAT AN ELEMENT IS CALLED. #29 stopped
+        // the TREE printing a container's borrowed label, and the find scorer already
+        // refuses to match on it (`_borrowed` in mcp_server.py) — but the `line`
+        // attached here was still built from the raw entry, so find RANKED the element
+        // without the blob and then PRINTED the blob. Measured live on a component-heavy
+        // app: `find("Investor Relations Hub sidebar link")` returned the app shell as
+        // its FIRST result, ~2,500 characters of sidebar, dashboard, calendar and
+        // activity feed rendered as one "match", pushing the real button to second.
+        // That is #21's "one concept spelled two ways" between the two halves of one
+        // tool.
+        // NOT dropped to a bare `div`: the tree can do that because the children are
+        // printed directly beneath, and find returns a ranked SUBSET where they may not
+        // be. A fragment of a page-wide concatenation identifies nothing either, so the
+        // row states what it is instead of quoting part of it.
+        e.line = e.subtreeName
+          ? _fmtLine(Object.assign({}, e, { name: '', label: '', text: '' }))
+            + ' (container — the text here belongs to the elements inside it)'
+          : _fmtLine(e);
+      });
+    } catch (e) {}
     return out;
   }
   // Spatial reading order — direction-aware: RTL pages (Arabic/Hebrew/Persian)
@@ -8446,6 +9042,16 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     } catch (e) { return false; }
   })();
   const readingOrder = (a, b) => (a.y - b.y) || (_rtl ? (b.x - a.x) : (a.x - b.x));
+  // DOCUMENT ORDER, CAPTURED BEFORE THE SORT. `out` arrives in composed-tree walk
+  // order, which is the page's own order; the sort below replaces it with a
+  // top-to-bottom-then-left-to-right one. That is right for the listing and wrong
+  // for anything that CLAIMS document order — the cap's overflow list said "same
+  // order as the page" while emitting `555:"AbstractTypeVisitor6" 163:"javax.imageio"
+  // 557:"AbstractTypeVisitor7" 165:"javax.imageio.event"` on the Java API docs, two
+  // side-by-side columns zipped together because their rows share a y. Reading that
+  // as the page's order gets the sequence wrong for every multi-column layout.
+  const _docPos = new Map();
+  out.forEach((e, i) => { if (!_docPos.has(String(e.mmid))) _docPos.set(String(e.mmid), i); });
   out.sort(readingOrder);
   // Cap the listing for token efficiency, but NEVER silently. The old code did
   // a blind out.slice(0,150) while the banner still reported out.length "on
@@ -8489,6 +9095,8 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     try {
       const _shownIds = new Set(shown.map((e) => String(e.mmid)));
       _capTail = out.filter((e) => !_shownIds.has(String(e.mmid)))
+        // In the order the header promises. See `_docPos`.
+        .sort((a, b) => (_docPos.get(String(a.mmid)) || 0) - (_docPos.get(String(b.mmid)) || 0))
         .map((e) => {
           // markCut, not a bare ellipsis. This built `lab.slice(0,40) + '…'`, which
           // says a cut happened but not how big it was — and the whole point of the
@@ -8500,7 +9108,15 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           // screenful. Sixth home for this bug; markCut exists so a new bounded
           // field cannot reintroduce the silence by hand-rolling the cut.
           const lab = (e.name || e.label || e.text || '').trim();
-          return e.mmid + (lab ? ':' + JSON.stringify(markCut(lab, 40)) : '');
+          // A BARE REF IS NOT ACTIONABLE INFORMATION. An entry with no resolvable
+          // name emitted just its number, so the overflow read `171 172:"152 - 154 :
+          // Supported" 204 205:"26.5 - TP : Supported"` — every other token an
+          // integer with nothing saying what it addresses. The tag and role are
+          // always available and cost a word, and they are the same vocabulary the
+          // rows above use.
+          if (lab) return e.mmid + ':' + JSON.stringify(markCut(lab, 40));
+          const _k = (e.role && e.role !== e.tag) ? `${e.tag}[${e.role}]` : e.tag;
+          return e.mmid + ':' + (_k || '?');
         });
     } catch (e) {}
   }
@@ -8548,7 +9164,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       `below, so nothing here is unreachable.` +
       (_capTail.length ? `
 OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
-        `same order as the page): ${_capTail.join(' ')}` : '')
+        `document order): ${_capTail.join(' ')}` : '')
     : "";
   // The listing is viewport-only. If real controls (form fields, links, buttons)
   // sit below the fold, the agent otherwise has NO signal they exist and gives up
@@ -8559,15 +9175,64 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
   // elements are BELOW the current viewport" is true of the document and
   // meaningless about the one subtree the agent asked for — an agent reading a
   // single-element scoped result flagged it as momentarily confusing.
+  // CAN THE PAGE ACTUALLY SCROLL THAT WAY? Advice to scroll is only a recovery if
+  // the document scrolls; when the content is clipped by an INNER scroller the
+  // window has nowhere to go, and "scroll sideways and re-observe" is a false
+  // trail of the kind #23 and #33 both record. Measured on Syncfusion's grid: the
+  // off-screen columns live inside the grid's own horizontal scroller, the
+  // document is exactly one viewport wide, and a window scroll returns the
+  // identical listing. Derived from the document's own scroll geometry — the same
+  // source as the viewport-heights magnitude below — not from the entries.
+  const _docScrolls = (axis) => {
+    try {
+      const de = document.scrollingElement || document.documentElement;
+      return axis === 'x' ? de.scrollWidth > de.clientWidth + 4
+                          : de.scrollHeight > de.clientHeight + 4;
+    } catch (e) { return true; }
+  };
   const sideNote = (dialogOpen || scopeMmid || !sideCount) ? "" :
     `
 [${sideCount} interactive element(s) are outside the viewport HORIZONTALLY (a carousel, ` +
-    `a wide table, or side-scrolling columns) — scroll sideways and re-observe, or reach them by ref via find.]`;
+    `a wide table, or side-scrolling columns) — ` +
+    (_docScrolls('x')
+      ? `scroll sideways and re-observe, or reach them by ref via find.]`
+      : `the PAGE does not scroll sideways, so they are clipped inside a region that ` +
+        `scrolls on its own. Reach them by ref (find searches the whole page, and ` +
+        `acting on a ref scrolls its own container into view) rather than by scrolling the window.]`);
   const belowFoldNote = (dialogOpen || scopeMmid) ? "" : (belowFoldCount > 0 || aboveFoldCount > 0)
     ? `\n[${belowFoldCount > 0 ? `${belowFoldCount} more interactive element(s) are BELOW the current viewport` : ''}` +
       `${belowFoldCount > 0 && aboveFoldCount > 0 ? '; ' : ''}` +
       `${aboveFoldCount > 0 ? `${aboveFoldCount} interactive element(s) are ABOVE the viewport` + ((window.scrollY || document.documentElement.scrollTop || 0) > 1 ? ` (you have scrolled past them)` : ` (nothing has been scrolled — these sit at negative coordinates, e.g. an off-screen skip-link)`) : ''}` +
-      ` — if you don't see your target, scroll ${belowFoldCount > 0 ? 'down' : 'up'} and re-observe.` +
+      (_docScrolls('y')
+        ? ` — if you don't see your target, scroll ${belowFoldCount > 0 ? 'down' : 'up'} and re-observe.`
+        : ` — the PAGE itself does not scroll vertically, so these are clipped inside a region` +
+          ` that scrolls on its own: reach them by ref (find searches the whole page) rather` +
+          ` than by scrolling the window.`) +
+      // HOW FAR, not just which way. A direction with no magnitude cannot be
+      // budgeted: nothing here distinguished a 200px scroll from a twelve-screen
+      // one, so "scroll down and re-observe" was equally the correct next move and
+      // a dozen wasted round trips. Reported in viewport-heights because that is
+      // the unit the scroll action takes, and derived from the document's own
+      // scroll geometry rather than from the entries — so it stays right when every
+      // off-viewport control happens to sit in one band.
+      // `innerHeight` is read directly rather than through the outer vh const, for
+      // the reason the (below-fold) block records: reaching across scopes for those
+      // is the swallowed ReferenceError R8 exists to catch.
+      (() => {
+        try {
+          const _de = document.scrollingElement || document.documentElement;
+          const _h = _de.clientHeight || innerHeight || 1;
+          const _top = _de.scrollTop || 0;
+          const _below = Math.max(0, (_de.scrollHeight - _h) - _top) / _h;
+          const _above = _top / _h;
+          if (_below < 0.05 && _above < 0.05) return '';
+          const _f = (n) => n.toFixed(1);
+          return ` The page holds ${_f(_below)} more viewport-height(s) below the current`
+               + ` position and ${_f(_above)} above`
+               + (_above < 0.05 ? ' (you are at the top of the page)'
+                  : _below < 0.05 ? ' (you are at the bottom of the page)' : '') + '.';
+        } catch (e) { return ''; }
+      })() +
       // NAME THE REGIONS. A bare count leaves only one move: scroll and re-read
       // the whole page. Saying which landmarks hold the off-viewport controls lets
       // the agent read ONE of them by ref instead — cheaper than a full re-listing,
@@ -8741,14 +9406,18 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     const iconSig = new Map();
     for (const e of shown) {
       if (!e.iconOnly || inCompact.has(e.mmid) || e.section === 'dialog') continue;
-      const k = `${e.tag}|${e.section || ''}`;
+      // Keyed on whether the members really are icons, so the header's word
+      // "icon" stays true and a palette of glyphs is never pooled with a run of
+      // nameless empty containers — two different things needing two different
+      // recoveries (screenshot the glyphs; the containers have nothing to see).
+      const k = `${e.tag}|${e.section || ''}|${e.iconGraphic ? 'g' : ''}`;
       if (!iconSig.has(k)) iconSig.set(k, []);
       iconSig.get(k).push(e);
     }
     for (const [k, members] of iconSig) {
       if (members.length < 8) continue;
       compactBlocks.set('ico:' + k,
-        `${members.length}× unlabeled ${members[0].tag} icon buttons (a glyph grid/palette — take ONE computer screenshot to identify them, then click by ref; reading order): ${members.map(m => `${m.mmid}@(${m.x},${m.y})`).join(' ')}`);
+        `${members.length}× unlabeled ${members[0].tag}${members[0].iconGraphic ? ' icon buttons (a glyph grid/palette — take ONE computer screenshot to identify them, then click by ref' : ' controls with no name and no icon (nothing here says what they are — screenshot to see them'}; reading order): ${members.map(m => `${m.mmid}@(${m.x},${m.y})`).join(' ')}`);
       members.forEach(m => { m.groupKey = 'ico:' + k; inCompact.add(m.mmid); });
     }
     // REPEATED RECORDS (MDR/DEPTA-style, generalised from the grid and
@@ -8956,35 +9625,10 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
         return (isFinite(pn) && isFinite(qn)) ? pn - qn : 0;
       });   // below this, folding costs more than it saves
       const m0 = members[0];
-      const items = members.map((m) => {
-        // markCut already bounded these and stamped the residual count. A second
-        // bound cuts the MARKER in half: '…(+1' is valid syntax and reads as one
-        // missing character when sixteen are missing. Never re-clip a marked string.
-        const lab = (m.name || m.label || m.text || '').trim();
-        // FOLDING MUST NOT DELETE STATE. The member format carried only
-        // disabled/required/active, so every other flag vanished the moment an
-        // element was folded — and its ABSENCE reads as "normal". Live: a
-        // `(collapsed)` disclosure button disappeared into an 8-member fold; 61 of
-        // 100 rows in one scoped read were below the fold with no marker while the
-        // header said "(100 on screen)"; and a fold mixed an in-viewport author
-        // link with an off-screen one under identical labels. These are exactly the
-        // flags that change what an agent does next, so they travel with the member.
-        const flags = (m.disabled ? '(disabled)' : '') + (m.required ? '(required)' : '')
-                    + (m.active ? `(${m.active})` : '')
-                    + (m.collapsed ? '(collapsed)' : '')
-                    + (m.hasPopup ? '(opens menu)' : '')
-                    + (m.newTab ? '(new tab)' : '')
-                    + (m.clickable === false ? '(occluded)' : '')
-                    + (m.offscreen ? ((m.y || 0) < 0 ? '(above-fold)' : '(below-fold)') : '');
-        // GEOMETRY REACHES FOLDED MEMBERS TOO. With geometry=true the loose rows
-        // gained box() and the folded ones silently did not, so on OpenStreetMap
-        // "Zoom In" — which exists ONLY inside a fold — had no coordinate at either
-        // detail level, and the only way to get one was a second scoped read per
-        // element. The unlabelled-icon fold already carried `@(x,y)`; this is the
-        // same notation, so one fold format does not contradict the other.
-        const _mb = geometry ? `@(${m.x},${m.y})` : '';
-        return `${m.mmid}:${JSON.stringify(lab)}${_mb}${m.href ? '→' + m.href : ''}${flags}`;
-      }).join(' ');
+      // Both fold renderers now share ONE member token (see `_memberTok` at the
+      // top of this function). The two had drifted in opposite directions and
+      // each format was silently missing notations the other printed.
+      const items = members.map(_memberTok).join(' ');
       const kind = m0.role || m0.tag;
       const where = m0.section ? ` in section=${m0.section}` : '';
       // The header no longer claims "same shape (~WxH px)". Members are grouped
@@ -9041,7 +9685,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     const branch = new Map();
     for (const el of ent.keys()) {
       let prev = el;
-      for (let n = el.parentElement; n && n !== document.documentElement; n = n.parentElement) {
+      for (let n = composedParent(el); n && n !== document.documentElement; n = composedParent(n)) {
         if (!branch.has(n)) branch.set(n, new Set());
         branch.get(n).add(prev);
         prev = n;
@@ -9122,7 +9766,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
         let kc = 0;
         for (const other of keep) {
           if (other === el) continue;
-          for (let n = other.parentElement; n; n = n.parentElement) {
+          for (let n = composedParent(other); n; n = composedParent(n)) {
             if (n === el) { kc++; break; }
             if (keep.has(n)) break;
           }
@@ -9137,12 +9781,12 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
         // both branch, but the page divides once. The OUTER one survives, because
         // that is the node the author wrote.
         let anc = null;
-        for (let n = el.parentElement; n; n = n.parentElement) { if (keep.has(n)) { anc = n; break; } }
+        for (let n = composedParent(el); n; n = composedParent(n)) { if (keep.has(n)) { anc = n; break; } }
         if (anc) {
           let sib = 0;
           for (const other of keep) {
             if (other === el || other === anc) continue;
-            for (let n = other.parentElement; n; n = n.parentElement) {
+            for (let n = composedParent(other); n; n = composedParent(n)) {
               if (n === anc) { sib++; break; }
               if (keep.has(n)) break;
             }
@@ -9212,6 +9856,18 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     while (folded) {
       folded = false;
       for (const el of Array.from(keep)) {
+        // THE SNAPSHOT GOES STALE INSIDE THE PASS. `Array.from(keep)` is taken once
+        // per sweep and the body deletes from `keep`, so an element already folded
+        // away was still walked — and it then deposited its own ref onto a THIRD
+        // node's list, which the survivor later absorbed wholesale. Traced on
+        // nytimes, chain 3146 > 3147 > 3148:
+        //   (1) 3146 (a control) absorbs 3147            -> also(3146) = [3147]
+        //   (2) 3147, ALREADY GONE from keep, folds into 3148 -> also(3148) = [3147]
+        //   (3) 3146 absorbs 3148 and its list           -> [3147, 3148, 3147]
+        // printed as `ref_3146 ref_3147 ref_3147 ref_3148` — 8 rows on nytimes,
+        // 3 on Yahoo Japan. Nothing was lost, but a row that lists the same ref
+        // twice tells the reader there are more distinct targets than there are.
+        if (!keep.has(el)) continue;
         const pe = ent.get(el);
         if (!pe) continue;
         // EITHER DIRECTION. A generic wrapper is spliced out in favour of the deeper
@@ -9226,7 +9882,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
           const acc = [];
           for (const other of keep) {
             if (other === el) continue;
-            for (let n = other.parentElement; n; n = n.parentElement) {
+            for (let n = composedParent(other); n; n = composedParent(n)) {
               if (n === el) { acc.push(other); break; }
               if (keep.has(n)) break;
             }
@@ -9388,8 +10044,14 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
           // element, and leaving it last printed `ref_18 ref_17` for an <a> at 17
           // wrapping a span at 18 -- contradicting the legend's own "outermost
           // first". Sorting all of them together is correct in both directions.
+          // Deduped as an INVARIANT, not as the fix: the stale-snapshot cause is
+          // handled at the top of the fold loop, and this guarantees the printed
+          // row is right even if another accumulation path appears. Same shape as
+          // #28's FIRST-REASON-WINS — first occurrence keeps its position.
+          const _seen = new Set();
           const _ids = [el].concat(_also).sort(docOrder)
-            .map((n) => (ent.get(n) || {}).mmid).filter((m) => m != null);
+            .map((n) => (ent.get(n) || {}).mmid)
+            .filter((m) => m != null && !_seen.has(String(m)) && _seen.add(String(m)));
           if (_ids.length > 1) {
             _row = _row.replace(/^ref_\d+(?::\d+)? \| /,
               () => _ids.map((r) => 'ref_' + r).join(' ') + ' | ');
@@ -9451,6 +10113,24 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       if (d > 3) return '~';
       let k = (el.tagName || '').toLowerCase();
       try { const r = el.getAttribute('role'); if (r) k += '[' + r + ']'; } catch (err) {}
+      // TYPE IS PART OF THE SHAPE for the two tags where HTML's type enum decides
+      // what the control IS. Without it a date picker, a range slider and two
+      // password boxes fold into one `6× input` — and since the header only states
+      // a type when every member shares one, the differing case printed no type at
+      // all. That is #27's own complaint ("dropping the one property that decides
+      // how you interact with them") surviving as silence rather than as a wrong
+      // label: the fix there taught the header not to LIE about the type, not to
+      // stop merging controls that do not share one.
+      // Same class of signal as `role`, one line above: a declared attribute, not a
+      // guess. Restricted to input/button because elsewhere `type` is a MIME hint
+      // or a list marker and says nothing about how the thing is operated.
+      try {
+        const _tg = (el.tagName || '').toLowerCase();
+        if (_tg === 'input' || _tg === 'button') {
+          const t = el.getAttribute('type');
+          if (t) k += '{' + String(t).toLowerCase() + '}';
+        }
+      } catch (err) {}
       try {
         const c = el.getAttribute('class');
         if (c) k += '.' + String(c).trim().split(/\s+/).sort().join('.');
@@ -9652,17 +10332,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
         if (members.length >= 6) {
           const e0 = ent.get(members[0]);
           if (!e0) { for (const m of members) _units.push({ at: m, node: m }); continue; }
-          const items = members.map((m) => {
-            const me = ent.get(m);
-            const lab = (me.name || me.label || me.text || '').trim();
-            const fl = (me.disabled ? '(disabled)' : '') + (me.required ? '(required)' : '')
-                     + (me.active ? `(${me.active})` : '') + (me.collapsed ? '(collapsed)' : '')
-                     + (me.hasPopup ? '(opens menu)' : '') + (me.newTab ? '(new tab)' : '')
-                     + (me.clickable === false ? '(occluded)' : '')
-                     + (me.offscreen ? ((me.y || 0) < 0 ? '(above-fold)' : '(below-fold)') : '');
-            const bx = geometry ? `@(${me.x},${me.y})` : '';
-            return `${me.mmid}:${JSON.stringify(lab)}${bx}${me.href ? '→' + me.href : ''}${fl}`;
-          }).join(' ');
+          const items = members.map((m) => _memberTok(ent.get(m))).join(' ');
           const _t0 = members.every((m) => ent.get(m).type === e0.type) && e0.type ? `[${e0.type}]` : '';
           _foldGroups++;
           _units.push({ at: members[0], lines: [
@@ -9761,7 +10431,10 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       identity = (e.label && e.label.length > e.text.length && e.label.indexOf(e.text) >= 0)
         ? ` "${e.label}"` : ` "${e.text}"`;
     }
-    if (!identity && e.iconOnly) identity = " (unlabeled-icon)";
+    // See the collector: "icon" is only printed when the element actually renders
+    // graphics. Everything else that reaches here is a control with no resolvable
+    // name, which is all the row can honestly claim.
+    if (!identity && e.iconOnly) identity = e.iconGraphic ? " (unlabeled-icon)" : " (unlabeled)";
     else if (!identity && e.label) identity = ` "${e.label}"`;
     // near= is ALWAYS a supplement, never a replacement — an earlier ordering
     // bug let it suppress the element's own visible text (lobste.rs tag "web"
@@ -9775,12 +10448,36 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     const rl  = (e.role && e.role !== e.tag) ? ` role=${e.role}` : "";
     const sec = e.section ? ` section=${e.section}` : "";
     const req = e.required ? " (required)" : "";
+    // Both are pre-rendered by the collector (leading space included, '' when the
+    // element declares nothing), so a control that says nothing about itself pays
+    // nothing here.
+    const con = e.constraints || "";
+    // The page's own description of the field (aria-describedby) and, while the
+    // field is aria-invalid, its declared error message. Pre-rendered with the
+    // leading space and empty when the page declares neither, so a form that says
+    // nothing pays nothing.
+    const dsc = e.describedBy || "";
+    const opt = e.options || "";
     const uns = e.unselected ? " (unselected)" : "";
     const dis = e.disabled ? " (disabled)" : "";
+    // Printed only when the field is NOT disabled: a disabled field cannot be
+    // written either, so saying both would read as two separate obstacles.
+    const ro = (!e.disabled && e.readonly) ? " (read-only)" : "";
     const sy  = !e.synth ? ""
+      // A SHORT TOKEN WITH A LEGEND LINE, like (disabled)/(required)/(read-only).
+      // The first version was a 70-character sentence per row, which on a form
+      // where most fields are unlabelled repeats itself down the whole listing —
+      // and could not be carried into a fold, where members get tokens. One
+      // notation, both places.
+      : e.synth === 'name-attr' ? ` (post-key)`
       : e.synth === 'icon-class'
         ? ` (name read off an icon-library class name, not an accessible name)`
         : ` (name taken from ${e.synth} — an automation hook, not an accessible name)`;
+    // Spelled out rather than browser-use's bare `*` prefix, and NOT "(new)":
+    // fold members already carry "(new tab)", and two flags one word apart on the
+    // same row is the kind of ambiguity the name/value/placeholder split exists to
+    // remove. It is rare by construction, so the extra characters cost nothing.
+    const nw  = e.isNew ? " (just appeared)" : "";
     const nt  = e.newTab ? " (opens NEW tab)" : "";
     const tp  = e.topNav ? " (REPLACES the whole page, destroying this frame and every f-ref in it)" : "";
     // SHORT TAGS, explained once in the legend. These parentheticals used to
@@ -9842,7 +10539,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     // untouched. Only the exact numbers move behind `geometry=true`, and x/y/w/h
     // stay in the structured array unconditionally for find, delta and computer.
     const box = geometry ? ` | box(${e.x},${e.y},${e.w},${e.h})` : '';
-    return `ref_${e.mmid} | ${tagtype}${identity}${act}${rl}${sec}${req}${uns}${dis}${orph}${bak}${nt}${tp}${sy}${ed}${pop}${col}${cnv}${xf}${sr}${med}${box}${occ}${clip}${off}`;
+    return `ref_${e.mmid} | ${tagtype}${identity}${con}${dsc}${opt}${act}${rl}${sec}${req}${uns}${dis}${ro}${orph}${bak}${nw}${nt}${tp}${sy}${ed}${pop}${col}${cnv}${xf}${sr}${med}${box}${occ}${clip}${off}`;
   }
   // ROLELESS OVERLAYS: some consent layers (Ryanair's CMP) are plain divs —
   // no role=dialog anywhere, so the modal banner can't anchor. The occlusion
@@ -9964,7 +10661,16 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
   // hasn't rendered (bot-gated or still hydrating) — without this note, an
   // empty listing is indistinguishable from "a page with no controls".
   let blankNote = '';
-  if (out.length === 0) {
+  // NOT ON A SCOPED READ. Every sentence below is about the PAGE — bot-gated,
+  // still booting, an inaccessible frame — and none of it is true of a container
+  // the caller deliberately scoped to. A <table>, <p> or <ul> having zero controls
+  // is CORRECT, not a symptom, and the scoped-zero branch further down already
+  // explains the real reason. Measured live on curl's comparison table: a scoped
+  // read of a 92x10 <table> returned "The app may still be loading or its UI may
+  // live in an inaccessible frame", which is a wrong cause stated confidently
+  // (#33's rule) about a page that had finished loading and a container that
+  // cannot hold controls.
+  if (out.length === 0 && !scopeMmid) {
     let txtLen = 0;
     try { txtLen = ((document.body && document.body.innerText) || '').trim().length; } catch (e) {}
     blankNote = txtLen < 80
@@ -10183,12 +10889,67 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
            + ` hidden is how focus-trap libraries do that — dismiss it and re-read to see`
            + ` the page again. This is page STATE, not the page's contents.`);
     } else if (_ah >= 3 && _ahN >= 3) {
+      // A DIALOG IS NOT THE ONLY THING THAT TRAPS FOCUS, and this branch used to
+      // read "Nothing here indicates an open dialog, so this is most likely a CLOSED
+      // menu/panel" — a single cause, asserted, exactly what the comment above this
+      // block forbids. Measured live on a real app: it fired at 257 elements and
+      // concluded "closed menu" while its OWN output listed an open role=menu two
+      // rows below. `dialogOpen` covers dialogs; a menu, listbox or popover marks the
+      // page aria-hidden the same way and did not count as evidence.
+      // So: look for the popup surface in what we are ALREADY printing (a declared
+      // role, rendered, in the listing), name it when it is there, and when it is not,
+      // give the causes as causes. An omission note may state a fact and enumerate
+      // possibilities; it may not pick one for the reader.
+      // DETECT THE POPUP BY ITS ITEMS, not its container. A `role=menu` / `listbox`
+      // is a CONTAINER and is not itself an interactive entry, so it is usually not
+      // in the listing at all — the menuitems and options are. The first version
+      // looked only for the container roles and therefore never fired, which the
+      // fixture caught: it reported "NOT NAMED" on a page with an open menu two rows
+      // above the note. Both are checked now, items first because they are the ones
+      // that reliably get listed.
+      const _pop = (() => {
+        try {
+          const ITEM = { menuitem: 'menu', menuitemcheckbox: 'menu', menuitemradio: 'menu',
+                         option: 'listbox', treeitem: 'tree' };
+          const CONTAINER = new Set(['menu', 'listbox', 'tree', 'dialog', 'alertdialog']);
+          for (const e of shown) {
+            if (!e || e.offscreen) continue;
+            const r = String(e.role || '');
+            if (CONTAINER.has(r)) return r;
+            if (ITEM[r]) {
+              // A MENUBAR'S ITEMS ARE ALWAYS PRESENT, so they are not evidence that
+              // anything is OPEN. Measured on vscode.dev: the page has exactly one
+              // `role=menubar` (the title-bar hamburger) whose child `role=menuitem`
+              // is permanently in the tree with `aria-expanded` null — and this clause
+              // read it as an open menu and told the agent to dismiss something, on a
+              // page with nothing open. That is the cause-picking defect this whole
+              // note was rewritten to stop, reintroduced by my own fix for it, and
+              // C15 cannot catch it because the sentence is declarative rather than
+              // hedged. It would have fired on every menubar page.
+              // The ancestry is checked in the page rather than inferred from the
+              // entry, because `shown` carries no parent link and a menubar item and
+              // a popup item are identical at entry level.
+              try {
+                const _n = mmidReg.get(String(e.mmid));
+                if (_n && _n.closest && _n.closest('[role="menubar"]')) continue;
+              } catch (e2) {}
+              return ITEM[r];
+            }
+          }
+        } catch (e) {}
+        return '';
+      })();
       L.push(`  - NOTE: ${_ah} interactive element(s) are NOT listed because an`
            + ` ancestor is aria-hidden="true"${_ahN ? ` (${_ahN} of them carry their own label or text)` : ''}.`
-           + ` Nothing here indicates an open dialog, so this is most likely a CLOSED`
-           + ` menu/panel kept in the DOM, or a library's own duplicate markup. Do not go`
-           + ` hunting for something to dismiss: if you are missing a specific element,`
-           + ` read_page(ledger=true) names what was dropped and why, and find() reaches`
+           + ` That attribute is the page declaring them absent from the accessibility tree;`
+           + ` WHY it did is not knowable from here, and the usual causes need different`
+           + ` things from you: (a) something IS open — a dialog, menu or popover — and a`
+           + ` focus trap marked the rest of the page hidden while it is, so dismissing or`
+           + ` completing it brings the page back; (b) a CLOSED menu/panel kept in the DOM,`
+           + ` which needs nothing; (c) a library's duplicate markup, e.g. mobile and`
+           + ` desktop copies of one nav, which also needs nothing.`
+           + (_pop ? ` An open role=${_pop} IS listed below, which is consistent with (a).` : '')
+           + ` read_page(ledger=true) names exactly what was dropped, and find() reaches`
            + ` elements this viewport-scoped listing omits. This is page STATE, not the`
            + ` page's contents.`);
     } else if (_ah >= 25) {
@@ -10214,10 +10975,48 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     if (has(e => e.near))        L.push(`  - near="..." — nearest visible text: a HINT for unnamed fields, never the real name.`);
     if (has(e => e.value))       L.push(`  - value="..." — CURRENT CONTENTS; empty/absent means blank.`);
     if (has(e => e.placeholder)) L.push(`  - placeholder="..." — a format HINT, not a value.`);
-    if (has(e => e.active))      L.push(`  - (current)/(selected)/(checked)/(expanded) — already active; don't re-click unless deselecting.`);
+    // NAME THE TOKENS ACTUALLY PRESENT, not a fixed four. `activeHint` also returns
+    // `pressed`, and the `data-state` branch returns `active`, `open` and `on` — so on
+    // habr the ONLY state token in the body was `(active)` while this line enumerated
+    // four notations that appeared nowhere. The legend then documents what is absent
+    // and omits what is there, which is #13's `section=` defect in a second place:
+    // a legend line must describe the listing it is attached to.
+    if (has(e => e.active)) {
+      const _seen = [];
+      try {
+        for (const e of shown) {
+          if (e && e.active && _seen.indexOf(String(e.active)) < 0) _seen.push(String(e.active));
+        }
+      } catch (e) {}
+      L.push(`  - ${_seen.map((s) => `(${s})`).join('/') || '(current)'} — already active;`
+             + ` don't re-click unless deselecting.`);
+    }
     if (has(e => e.required))    L.push(`  - (required) — must be filled for submission.`);
+    if (has(e => e.constraints)) L.push(`  - pattern=/min=/max=/step=/maxlength=/format=… — what the field ACCEPTS, declared by the page. format= is the wire format the HTML spec fixes for that input type, which is NOT always what the widget displays (a date shown 29.08.2026 still takes 2026-08-29).`);
+    if (has(e => e.describedBy)) L.push(`  - help=/error= — the page's own description of that field (aria-describedby) and, while it is marked invalid, its declared error message (aria-errormessage). Authored text, not derived: help= usually states the rule the field enforces, and error= is why the last attempt was rejected.`);
+    if (has(e => e.options))     L.push(`  - count=/options= — every <option> the <select> declares, in document order; count is the true total even when the text is cut.`);
+    if (has(e => e.options && e.options.indexOf('(disabled)') >= 0)) L.push(`  - (disabled) after an option — that option is declared unselectable (its own attribute, or an <optgroup disabled> around it); the quoted text beside it is still the exact string to pass for the others.`);
     if (has(e => e.unselected))  L.push(`  - (unselected) — still showing placeholder text; pick a real option with fill_form.`);
     if (has(e => e.disabled))    L.push(`  - (disabled) — inert; clicking does nothing right now.`);
+    // Gated on the notation APPEARING, like every other legend line (#13): a legend
+    // that enumerates notations the listing does not use is what once ate ~610 of
+    // 900 chars on a three-element page.
+    if (has(e => e.synth === 'name-attr'))
+      // SAY WHAT ABSENCE MEANS. On a form of unlabelled fields this marker lands on
+      // nearly every row — 13 of 15 on one real page — and two independent live
+      // agents then generalised its warning to the two rows WITHOUT it, which were
+      // the rows they needed to trust (an input[reset] whose name is correctly its
+      // value per HTML-AAM). A notation that is dense enough to look universal has
+      // to state its own negative, the way the (occluded/blocked) line already does.
+      L.push(`  - (post-key) — the identity shown is this field's HTML name attribute, ` +
+             `i.e. what it POSTS under, NOT a visible label. Do not quote it to a user ` +
+             `as the field's caption. A row WITHOUT this marker has a real accessible ` +
+             `name (a label, aria-label, title, or — for submit/reset — its value, ` +
+             `which IS the word painted on the button), so that one can be quoted.`);
+    if (has(e => !e.disabled && e.readonly))
+      L.push(`  - (read-only) — cannot be typed into, but NOT disabled: it still ` +
+             `holds a real value and still submits. Writing to it will fail.`);
+    if (has(e => e.isNew))       L.push(`  - (just appeared) — not present the last time this page was read, so your last action created it. Absence of the flag on a first read means nothing to compare against, not that the page is unchanged.`);
     if (has(e => e.newTab))      L.push(`  - (opens NEW tab) — link leaves this tab.`);
     if (has(e => e.topNav))      L.push(`  - (REPLACES the whole page) — in-frame link with target="_top"/"_parent": navigates the TOP document, invalidating every ref here.`);
     // Short per-row tags, explained here ONCE instead of re-stating a full
@@ -10236,8 +11035,13 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       L.push(`  - (rich-text-editor) / (code-editor) — use form_input, not computer.`);
     if (has(e => e.scrollRegion))
       L.push(`  - (scrollable-region) — content scrolls independently of the page.`);
-    if (has(e => e.iconOnly))
-      L.push(`  - (unlabeled-icon) — real control, no text label; screenshot if its purpose is unclear.`);
+    // NAME THE TOKEN THAT IS ACTUALLY THERE — #13's rule, and the same defect the
+    // state legend had: a legend line for a notation the listing never emits is
+    // pure cost, and worse, it teaches the reader a vocabulary the rows do not use.
+    if (has(e => e.iconOnly && e.iconGraphic))
+      L.push(`  - (unlabeled-icon) — real control, no text label, renders an icon; screenshot if its purpose is unclear.`);
+    if (has(e => e.iconOnly && !e.iconGraphic))
+      L.push(`  - (unlabeled) — real control with no resolvable name and no icon of its own; screenshot to see what it is.`);
     if (has(e => e.clickable === false))
       L.push(`  - (occluded/blocked) — painted over; may not receive clicks. Its ABSENCE is not a guarantee: a transparent layer intercepts clicks without painting anything, and only the action reports that (it refuses and names the blocker rather than clicking it).`);
     if (has(e => e.role === 'combobox' || e.tag === 'select'))
@@ -10324,6 +11128,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     if (!scopeMmid) {
       try {
         const _dt = [];
+        let _dtTotal = 0;
         for (const t of document.querySelectorAll('table')) {
           const rs = t.querySelectorAll('tr').length;
           const cs = t.querySelector('tr') ? t.querySelector('tr').children.length : 0;
@@ -10333,13 +11138,28 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
           // response announced "6 data table(s)" and then listed SEVEN tables — the
           // missing one a genuine 62-row, 4-header data table. Two counts of the same
           // thing in one output, with nothing to say which is right.
-          if (rs >= 2 && mm) _dt.push(`ref_${mm} (${rs}x${cs})`);
-          if (_dt.length >= 6) break;
+          // COUNT ALL, SHOW SOME — and never print the shown count as the total. The
+          // loop used to `break` at 6 and then print `_dt.length`, so this line said
+          // "6 data table(s)" while the tree printed 12 (headlessui) and 17 (primevue):
+          // the SAME two-counts-of-one-thing defect the comment above records fixing
+          // for the column test, left in place one line below it. It was also an
+          // unmarked cut, which is the class #22/#24 exist to prevent.
+          if (rs >= 2 && mm) {
+            _dtTotal++;
+            if (_dt.length < 6) _dt.push(`ref_${mm} (${rs}x${cs})`);
+          }
         }
-        if (_dt.length) {
-          L.push(`  - ${_dt.length} data table(s), NOT in the rows above: ${_dt.join(', ')}` +
-                 ` — read one with read_page(ref_id=…, filter="all") and the cells come back as` +
-                 ` aligned columns with their header.`);
+        if (_dtTotal) {
+          // "NOT in the rows above" was also wrong in the TREE format, where this
+          // hint prints BEFORE the rows. Say why the tables need naming at all
+          // instead of claiming a position they do not have.
+          L.push(`  - ${_dtTotal} data table(s) on this page`
+                 + (_dtTotal > _dt.length ? `, first ${_dt.length} by document order` : '')
+                 + `: ${_dt.join(', ')}`
+                 + (_dtTotal > _dt.length ? ` …(+${_dtTotal - _dt.length} more)` : '')
+                 + ` — a <table> is not interactive, so it has no row of its own. Read one`
+                 + ` with read_page(ref_id=…, filter="all") and the cells come back as`
+                 + ` aligned columns with their header.`);
         }
       } catch (e) {}
     }
@@ -10622,6 +11442,555 @@ function _clickEffectPage(sel) {
   };
 }
 
+// GREP OVER THE PAGE'S TEXT — the cheapest question the tool surface could not ask.
+// Deciding "does this page mention X" cost a whole get_page_text: up to 30,000
+// characters into the model's context for one yes/no. This is also an inconsistency
+// inside our OWN surface as much as a gap against browser-use — read_console_messages
+// takes `pattern` and read_network_requests takes `urlPattern`; page text was the one
+// buffer with no filter at all.
+//
+// A match is attributed to the element that OWNS the text and carries its ref when it
+// has one, so a hit is actionable rather than just a quote. Text is taken from DIRECT
+// text-node children only: attributing to the nearest ancestor instead would report
+// every match once per level of nesting, and a page's outermost div owns all of it.
+//
+// browser-use's equivalent is a plain TreeWalker over document.body with no
+// visibility filter and no shadow piercing. This walks the composed tree — open roots
+// and the closed ones listener_tag.js captured — and skips what the page is not
+// rendering, so it cannot answer with a hidden template or a closed menu's contents.
+function _searchTextPage(pattern, opts) {
+  const o = opts || {};
+  // THE CALLER'S OWN BOUND, HONOURED. This silently clamped to 1000, so asking for
+  // 4500 returned the same window as asking for 1200 and nothing distinguished "the
+  // parameter was reduced" from "the section genuinely ends here". Measured live: an
+  // agent retried with a larger context_chars, got an identically-cut answer, and
+  // fell back to get_page_text -- one call spent learning that a parameter it had
+  // passed was being ignored. #24's rule is that the only bound is the caller's own,
+  // explicit and reported; the per-hit ellipses below carry the true residual in
+  // markCut's `…(+N)` form, so nothing here is cut in silence. `max_results` still
+  // bounds how many hits come back, and that one the caller also chooses.
+  const CTX = Math.max(0, o.contextChars == null ? 150 : o.contextChars);
+  const MAX = Math.max(1, Math.min(200, o.maxResults == null ? 25 : o.maxResults));
+  let re;
+  try {
+    const flags = o.caseSensitive ? 'g' : 'gi';
+    re = o.regex
+      ? new RegExp(pattern, flags)
+      : new RegExp(String(pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
+  } catch (e) {
+    return { error: 'invalid pattern: ' + (e && e.message) };
+  }
+  let root = document;
+  if (o.cssScope) {
+    try {
+      const s = document.querySelector(o.cssScope);
+      if (!s) return { error: 'css_scope matched no element: ' + o.cssScope };
+      root = s;
+    } catch (e) { return { error: 'invalid css_scope: ' + (e && e.message) }; }
+  }
+  const hits = [];
+  let total = 0, scanned = 0;
+  // Elements whose text is never page content even when rendered. Same list and
+  // same reason as _namable (#37 NR2c): a page that renders its own stylesheet
+  // (`style { display: block }`, which CSS-teaching and live-editor pages do)
+  // passes the visibility test, and its CSS still is not text the page says.
+  const SKIP = { STYLE: 1, SCRIPT: 1, TEMPLATE: 1, NOSCRIPT: 1, HEAD: 1 };
+
+  // POST-ORDER, AND IT RETURNS THE NODE'S RENDERED TEXT.
+  //
+  // This used to collect DIRECT TEXT NODES ONLY and skip element children, then
+  // use that string BOTH to match against and to show as context. Attribution
+  // was the reason (#32) and the reason is still right — attributing to the
+  // nearest ancestor reports every match once per level of nesting, and a page's
+  // outermost div owns all of it. What was wrong was searching and quoting a
+  // MUTILATED string: every inline element was elided with no marker, so on
+  // Wikipedia's lead sentence
+  //     "The mole (symbol mol) is a unit of measurement, the base unit in the
+  //      International System of Units (SI) for amount of substance."
+  // the tool saw, and showed, "The (symbol ) is a , the in the (SI) for ." —
+  // grammatically plausible, silently missing every linked term, which on prose
+  // is exactly the content words. Measured at 8-16% of text-bearing elements
+  // across five real pages (Wikipedia 16.3%, nginx 14.9%, peps 14.4%, HN 10.3%,
+  // MDN 8.4%, worst single loss 349 chars; MDN's related-elements list arrived as
+  // ", , , , , , and element"). Two failures: a phrase spanning an inline
+  // boundary could not match AT ALL, and context for a match in the surrounding
+  // prose came back holed. The second is the dangerous one, being #22's
+  // silent-cut class punched through the MIDDLE of a sentence rather than at the
+  // end, where nothing marks it and the sentence still reads as finished.
+  // The repair path already existed and could never fire: the ancestor climb
+  // below is gated on the match FILLING its element, which is precisely the case
+  // this bug is not.
+  //
+  // So: build each node's rendered text ONCE from its children's already-computed
+  // text (post-order, O(n) total — innerText per node forces layout thousands of
+  // times and a per-node deep walk is O(n^2)), match against that, and keep #32's
+  // attribution by DROPPING a match that lies entirely inside one element child's
+  // span. The child reports it, the ancestor does not, and a match that straddles
+  // children belongs to the node where it first becomes whole. Spans make that
+  // exact rather than a heuristic, and repeats of the same string attribute
+  // individually instead of all-or-nothing.
+  // Returns { t, inline }: the node's rendered text, and whether it lays out
+  // INLINE. The caller needs both, because innerText concatenates inline boxes
+  // with no separator and breaks at block ones — joining everything with a space
+  // corrupted "6.02214076×10<sup>23</sup>" into "6.022 10 23", and joining
+  // everything with nothing fuses "<li>a</li><li>b</li>" into "ab" and invents
+  // matches that span a block boundary. `display` is a DECLARED value read off
+  // computed style, not a tag list, so a <span style="display:block"> breaks and
+  // a <div style="display:inline"> does not — the page's own statement about how
+  // it lays out, in the same spirit as #27's cursor:pointer and #29's measured
+  // glyph width replacing a font-name list.
+  // THE CLIMB, REWRITTEN ONCE RATHER THAN PATCHED A THIRD TIME.
+  //
+  // It used to fire only when `full.trim() === m[0].trim()` — when the match
+  // EXACTLY FILLED its element — and then re-derived the ancestor's text with
+  // innerText and located the match with indexOf. Three distinct live failures
+  // came out of that one condition, two of them on the shape it most needed to
+  // handle, a metadata block:
+  //   `<dt>Published:</dt><dd>2023-10-02</dd>`  searching "Published" -> the
+  //     match is one colon short of filling <dt>, so the climb was SKIPPED and
+  //     the context was the bare label. The value is in the sibling and never
+  //     came back, at context_chars=300.
+  //   `<a>Errata-ID: 1543</a>` searching "1543" -> same, window computed inside
+  //     a 15-character string, at context_chars=600.
+  // Equality was never the right test. What decides whether to climb is whether
+  // the element's own text can SUPPLY the context the caller asked for, which is
+  // what `_wants` asks. And because the walk is POST-ORDER, the answer arrives
+  // for free: a hit records its offset, and each ancestor in turn re-slices it
+  // from text that is already built, with the offset translated by add() rather
+  // than searched for. No innerText (which would undo the white-space and
+  // visibility rules this walk applies), no indexOf (which finds the wrong
+  // occurrence when the string repeats), and the 4-hop bound is kept as `hops`.
+  const SEP = ' | ';
+  const _wants = (p, src) =>
+    p.hops < 4 && (p.at < CTX || src.length - (p.at + p.len) < CTX);
+  const _ctx = (p, src, bnds) => {
+    const s2 = Math.max(0, p.at - CTX);
+    const e2 = Math.min(src.length, p.at + p.len + CTX);
+    // A boundary INSIDE the match is not rendered, so `context` always contains
+    // `match` verbatim — an invariant worth keeping, since a caller that cannot
+    // find the match inside the text quoted back at it has to doubt both.
+    const marks = [];
+    for (const b of (bnds || [])) {
+      if (b > s2 && b < e2 && !(b > p.at && b < p.at + p.len)) marks.push(b);
+    }
+    marks.sort((a, b) => a - b);
+    let body = src.slice(s2, e2);
+    let atLocal = p.at - s2;
+    // Inserted from the END so that every offset still to be processed stays
+    // valid in the string being spliced. The separator ABSORBS the single space
+    // the block join already put there, or the boundary reads as `230.00  | Sh`
+    // with a doubled gap. `atLocal` is advanced by the NET change, which is what
+    // keeps `at` pointing at the match after the columns are rendered in.
+    for (let k = marks.length - 1; k >= 0; k--) {
+      const off = marks[k] - s2;
+      let lead = 0;
+      while (off - lead > 0 && body.charAt(off - lead - 1) === ' ') lead++;
+      body = body.slice(0, off - lead) + SEP + body.slice(off);
+      if (off <= atLocal) atLocal += SEP.length - lead;
+    }
+    const pre = s2 > 0 ? '…(+' + s2 + ')' : '';
+    p.hit.context = pre + body + (e2 < src.length ? '…(+' + (src.length - e2) + ')' : '');
+    // WHERE THE MATCH IS INSIDE THE STRING WE JUST QUOTED. Without it, two
+    // matches in one element come back with byte-identical context and nothing
+    // distinguishes them: a live agent read two correct hits in one <pre> as
+    // "2 positions reported twice" and concluded the rows it wanted were missing,
+    // when they were inside both windows, unmarked. The count was right the whole
+    // time; the hits were simply not identifiable.
+    p.hit.at = pre.length + atLocal;
+  };
+
+  const walk = (node, depth) => {
+    const NONE = { t: '', inline: true, pend: null, bounds: [] };
+    // DEPTH NO LONGER TRUNCATES TEXT. The old bound of 14 was safe when this
+    // function only skipped MATCHES below it; now that the walk BUILDS the text,
+    // the same bound silently deleted whatever lived deeper — and real pages nest
+    // far past 14 (Wikipedia's own formatted numbers do), which is how the first
+    // version of this fix returned "6.022 10" for 6.02214076×10^23. Runtime is
+    // bounded by `scanned` instead, which counts work rather than shape; the depth
+    // cap that remains exists only to stop a pathological or cyclic tree.
+    if (depth > 60 || scanned > 40000) return NONE;
+    let inline = true;
+    let wsKeepNL = false;   // CSS white-space preserves newlines here
+    let wsKeepAll = false;  // ...and spaces/tabs too (pre, pre-wrap, break-spaces)
+    try {
+      if (SKIP[String(node.tagName || '').toUpperCase()]) return NONE;
+      // A non-rendered subtree must contribute NOTHING, or hidden text leaks back
+      // into an ancestor's context and Q2 stops meaning anything.
+      // `visibilityProperty` IS REQUIRED. The bare call checks layout only and
+      // says a `visibility:hidden` element is visible (#36 measured that hole at
+      // 3.81% phantom identities before the options were passed). It was harmless
+      // here while this walk only SKIPPED matches; it is load-bearing now that the
+      // walk BUILDS text, because an unrendered child otherwise contributes to its
+      // ancestors — measured: "visible sibling GHOSTWORD tail" came back as the
+      // context of a sentence whose middle word is not on the screen (Q2c), which
+      // is the very defect this rewrite exists to end, pointed the other way.
+      // `opacityProperty` is deliberately NOT passed, matching _namable (#37):
+      // opacity:0 content is still in the accessibility tree, opacity is a
+      // gradient rather than a declaration of absence, and #15 records the
+      // readiness banner being stuck on by exactly that reading.
+      if (node.checkVisibility && !node.checkVisibility({ visibilityProperty: true })) return NONE;
+      const _cs = getComputedStyle(node) || {};
+      const d = String(_cs.display || 'inline');
+      inline = d.indexOf('inline') === 0 || d === 'contents' || d === 'ruby';
+      // WHITE-SPACE IS DECLARED, AND COLLAPSING IT UNCONDITIONALLY DESTROYED `\n`.
+      // Every text node was run through /\s+/g, so a <pre> — which CSS says
+      // preserves whitespace — came back as one unbroken line. Measured live on an
+      // RFC: `search_page(regex "5\.2\.\s+The 425[^\n]*")` matched from the heading
+      // to the END OF THE DOCUMENT, because no `\n` survived for `[^\n]*` to stop
+      // at, and the "context" was then the whole 26,568-char body however small
+      // context_chars was. Every RFC, man page, changelog and code block on the web
+      // is a <pre>, so a newline-anchored pattern silently meant something else
+      // there. `white-space` is the page's own statement, read off computed style —
+      // the same move as `display` one line up, not a tag list.
+      const _ws = String(_cs.whiteSpace || 'normal');
+      wsKeepNL = _ws.indexOf('pre') === 0 || _ws === 'break-spaces';
+      // `pre-line` collapses spaces and tabs but KEEPS newlines; the others keep
+      // everything. That distinction is in the CSS spec, not invented here.
+      wsKeepAll = wsKeepNL && _ws !== 'pre-line';
+    } catch (e) {}
+    scanned++;
+
+    // Children IN DOCUMENT ORDER: text nodes contribute directly, element children
+    // contribute their own rendered text. A host with a shadow root renders its
+    // shadow content, so that replaces the light children (#29) — descending into
+    // both would count slotted text twice.
+    let full = '';
+    let pend = null;        // hits from here or below that are still owed context
+    const spans = [];
+    // OFFSETS IN `full` WHERE THE PAGE DECLARED A BLOCK BOUNDARY. `full` joins a
+    // block child with a single space, which is right for MATCHING (it must not
+    // fuse "<li>alpha</li><li>beta</li>" into "alphabeta") and wrong for READING:
+    // a context quoted out of a table row arrived as `المساحة 1862 كم² (178)`,
+    // with the label cell, the value cell and the world-rank cell fused into one
+    // string that a reader can take for a single quantity. The boundaries are
+    // recorded here and rendered into the CONTEXT ONLY (see _ctx), so what is
+    // matched against is unchanged and only what is shown gains the columns the
+    // page already declared — the same source #26's aligned-grid renderer reads.
+    const bounds = [];
+    // Inter-word spacing lives in the SOURCE whitespace between tags ("The ",
+    // " (symbol "), so text pieces collapse runs but are NOT trimmed — trimming
+    // them is what would force a separator to be invented.
+    const add = (t, isEl, blockBreak, kid) => {
+      if (!t) return;
+      if (blockBreak && full && !/\s$/.test(full) && !/^\s/.test(t)) full += ' ';
+      // Leading-whitespace trimming is a COLLAPSING behaviour, so it must not run
+      // where the page declared whitespace significant -- doing it anyway would
+      // re-break the indentation of the very <pre> the flag exists to protect.
+      let trimmed = 0;
+      if (!wsKeepAll && (!full || /\s$/.test(full))) {
+        const t2 = t.replace(/^\s+/, '');
+        trimmed = t.length - t2.length;
+        t = t2;
+      }
+      if (!t) return;
+      const s0 = full.length;
+      full += t;
+      if (isEl) spans.push({ s: s0, e: full.length });
+      if (blockBreak && s0 > 0) bounds.push(s0);
+      if (kid) {
+        // A child's own boundaries and pending hits are expressed in ITS
+        // coordinates; shifting by where its text landed (less whatever leading
+        // whitespace was just collapsed away) makes them exact in ours. No
+        // indexOf, no re-derivation — which is what kept the old climb honest
+        // only by accident.
+        for (const b of kid.bounds) bounds.push(b + s0 - trimmed);
+        if (kid.pend) {
+          for (const p of kid.pend) {
+            p.at += s0 - trimmed;
+            (pend || (pend = [])).push(p);
+          }
+        }
+      }
+    };
+    try {
+      const sr = node.shadowRoot || node.__abClosedRoot;
+      for (const c of (sr ? sr.childNodes : node.childNodes)) {
+        if (c.nodeType === 3) {
+          const _raw = (c.nodeValue || '');
+          add(wsKeepAll ? _raw
+              : wsKeepNL ? _raw.replace(/[^\S\n]+/g, ' ')
+              : _raw.replace(/\s+/g, ' '), false, false, null);
+        } else if (c.nodeType === 1) {
+          const r = walk(c, depth + 1);
+          add(r.t, true, !r.inline, r);
+        }
+      }
+    } catch (e) {}
+    // A hit from a descendant is still owed context even if THIS node adds no
+    // text of its own, so pend must travel on every return path below.
+    if (!full.trim()) return { t: '', inline: inline, pend: pend, bounds: bounds };
+
+    // UPGRADE THE DESCENDANTS' HITS FIRST, with the text this node has now that
+    // its children are in. Their offsets were translated by add() above, so this
+    // is a re-slice at a known position rather than a search.
+    if (pend) {
+      for (const p of pend) { p.hops++; _ctx(p, full, bounds); }
+      pend = pend.filter((p) => _wants(p, full));
+      if (!pend.length) pend = null;
+    }
+
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(full)) !== null) {
+      const at0 = m.index, len0 = m[0].length;
+      let inChild = false;
+      for (const sp of spans) {
+        if (at0 >= sp.s && at0 + len0 <= sp.e) { inChild = true; break; }
+      }
+      if (m[0] === '') re.lastIndex++;   // a zero-width match would loop forever
+      if (inChild) { if (total > 5000) break; continue; }
+      total++;
+      if (hits.length < MAX) {
+        let ref = null;
+        try {
+          let w = node;
+          for (let d = 0; w && d < 4; d++) {
+            if (w.getAttribute && w.getAttribute('mmid')) { ref = w.getAttribute('mmid'); break; }
+            w = w.parentElement || (w.getRootNode && w.getRootNode().host) || null;
+          }
+        } catch (e) {}
+        const hit = {
+          match: m[0],
+          // A BARE ELLIPSIS SAYS A CUT HAPPENED AND NOT HOW BIG IT IS, which is the
+          // difference between "the section ends here" and "there are 2,800 more
+          // characters you have not seen". markCut's `…(+N)` convention, applied on
+          // both sides because the match can sit anywhere in its ancestor. Filled
+          // in by _ctx, here and again at every ancestor that can do better.
+          context: '',
+          at: 0,
+          // ATTRIBUTION IS UNCHANGED (#32): the hit belongs to the element whose
+          // text first contains the whole match, whatever ancestor ends up
+          // supplying the context around it.
+          tag: (node.tagName || '').toLowerCase(),
+          ref: ref,
+        };
+        hits.push(hit);
+        const p = { hit: hit, at: at0, len: len0, hops: 0 };
+        _ctx(p, full, bounds);
+        if (_wants(p, full)) (pend || (pend = [])).push(p);
+      }
+      if (total > 5000) break;
+    }
+    return { t: full, inline: inline, pend: pend, bounds: bounds };
+  };
+  try {
+    const start = root === document ? (document.body || document.documentElement) : root;
+    if (start) walk(start, 0);
+  } catch (e) {}
+  return { hits: hits, total: total, shown: hits.length, scanned: scanned };
+}
+
+// CSS QUERY AND COUNTING — the deterministic escape hatch from the indexed listing.
+// "How many rows does this table have" had NO primitive at all: `find` scores over
+// the COLLECTOR's entries, so page prose, table cells and everything the existence
+// rules legitimately exclude are outside its search space, and the 150-entry cap
+// actively hides the answer. The only way to ask was javascript_tool, which #14 and
+// #24 both treat as a design-failure signal.
+//
+// `total` is reported separately from the returned rows and is never capped, because
+// counting is the point — a caller asking "how many" gets the true number even when
+// it only wants five examples back. Pierces shadow roots (querySelectorAll does not),
+// which browser-use's version does not do either.
+function _queryElementsPage(selector, opts) {
+  const o = opts || {};
+  const MAX = Math.max(1, Math.min(500, o.maxResults == null ? 50 : o.maxResults));
+  const WANT = Array.isArray(o.attributes) ? o.attributes.slice(0, 12) : null;
+  const WANT_TEXT = o.includeText !== false;
+  const roots = [document];
+  try {
+    const collect = (r, d) => {
+      if (d > 8) return;
+      let all;
+      try { all = r.querySelectorAll('*'); } catch (e) { return; }
+      for (const e of all) {
+        const sr = e.shadowRoot || e.__abClosedRoot;
+        if (sr) { roots.push(sr); collect(sr, d + 1); }
+      }
+    };
+    collect(document, 0);
+  } catch (e) {}
+  const rows = [];
+  let total = 0;
+  let firstEl = null;
+  const seen = new Set();
+  for (const r of roots) {
+    let found;
+    try { found = r.querySelectorAll(selector); } catch (e) {
+      return { error: 'invalid CSS selector: ' + (e && e.message) };
+    }
+    for (const el of found) {
+      if (seen.has(el)) continue;
+      seen.add(el);
+      if (!firstEl) firstEl = el;
+      total++;
+      if (rows.length >= MAX) continue;
+      const row = { tag: (el.tagName || '').toLowerCase() };
+      try { const m = el.getAttribute('mmid'); if (m) row.ref = m; } catch (e) {}
+      if (WANT_TEXT) {
+        let t = '';
+        try { t = ((el.innerText != null ? el.innerText : el.textContent) || '').replace(/\s+/g, ' ').trim(); } catch (e) {}
+        // One MARKED bound, for the reason #24 kept exactly one: a single essay
+        // must not evict every other row from the caller's budget.
+        if (t) row.text = t.length > 300 ? t.slice(0, 300) + '…(+' + (t.length - 300) + ')' : t;
+      }
+      if (WANT) {
+        const a = {};
+        for (const name of WANT) {
+          try {
+            // Read href/src off the PROPERTY so they resolve absolute, the way a
+            // caller asking for a URL means them; everything else off the attribute.
+            //
+            // BUT A CSS SELECTOR MATCHES THE ATTRIBUTE, AND WE PRINT THE PROPERTY.
+            // On a same-site relative link those are different strings, so
+            // `a[href]:not([href*="curl.se"])` correctly KEEPS `href="/docs/"` and
+            // then prints it as `https://curl.se/docs/` — a row that looks exactly
+            // like a filter which did nothing. Measured live: an agent reported the
+            // count as wrong and named `:not()` as the cause; an independent probe
+            // showed `:not()` working, quoted or bare, and the discrepancy was this
+            // substitution. The count was right and the display made it unreadable.
+            // Both strings are facts, so when they differ we state both rather than
+            // choosing — the same rule as #23's attributed `data-testid`.
+            //
+            // TWO FACTS ARE TWO FIELDS. Concatenating them put both inside ONE pair
+            // of quotes at the renderer, so `href="https://iana.org/a/b (attribute:
+            // /a/b)"` is not a URL and an agent copying the quoted value gets a
+            // malformed one. The provenance was right and the rendering destroyed
+            // it; the raw attribute now travels under its own key.
+            const _attr = el.getAttribute(name);
+            let v = (name === 'href' || name === 'src') && el[name] != null
+              ? el[name] : _attr;
+            const _prov = ((name === 'href' || name === 'src')
+                           && _attr != null && _attr !== v) ? String(_attr) : null;
+            // PRESENT-AND-EMPTY IS NOT ABSENT. `getAttribute` returns null when the
+            // attribute is missing and "" when it is present with no value, and the
+            // guard here collapsed those into one silence — so asking for an
+            // attribute an element HAS printed nothing, which reads as a negative.
+            //
+            // That is every HTML boolean attribute, because HTML serialises them as
+            // the bare name: disabled, checked, selected, readonly, required,
+            // multiple, hidden, open, autofocus, novalidate, controls, inert...
+            // Measured live on Bootstrap's Disabled-forms example: asking for
+            // `disabled` on `#disabledFieldsetCheck` — which provably carries it,
+            // since it is one of only two elements on the page matching `[disabled]`
+            // — returned nothing, while `type` and `id` printed normally. A live
+            // agent read that as "no control carries its own disabled attribute".
+            //
+            // It is not only booleans. `alt=""` is the page DECLARING an image
+            // decorative, and dropping it made that identical to no alt at all; the
+            // same for an empty `value` on a cleared field. The distinction the
+            // caller asked about is exactly the one that was being erased.
+            if (v != null) a[name] = String(v);
+            if (_prov != null) a[name + '@attr'] = _prov;
+          } catch (e) {}
+        }
+        if (Object.keys(a).length) row.attrs = a;
+      }
+      rows.push(row);
+    }
+  }
+  // WHAT THE PAGE SAYS EXISTS, when that is more than what is rendered.
+  //
+  // Counting is this tool's entire purpose, and on a virtualized or paginated grid a
+  // count of RENDERED rows is not a smaller answer — it is a WRONG one. Measured live:
+  // a record created seconds earlier could not be found because the table showed
+  // "1 to 25 of 39" and the new row was on page 2; an agent that stopped there would
+  // have reported a successful run as a failure.
+  //
+  // ARIA declares exactly this and nothing else is read: `aria-rowcount` on the grid
+  // is the total when the DOM holds a window onto it, and `aria-setsize` is the same
+  // for a member of a set. No pagination CONTROL is detected and no "Showing 1 to 25
+  // of 39" text is parsed — those are a wordlist and a guess respectively, and this
+  // path stays declaration-only. The honest consequence, stated rather than buried:
+  // a table that declares neither (which is most of them, including the one that
+  // produced the defect) still returns the rendered count, and the tool's own
+  // no-match message is what covers that case.
+  let declared = 0, declaredVia = '';
+  try {
+    if (firstEl) {
+      const _ss = parseInt(firstEl.getAttribute('aria-setsize') || '', 10);
+      if (_ss > 0) { declared = _ss; declaredVia = 'aria-setsize'; }
+      if (!declared) {
+        let w = firstEl;
+        for (let d = 0; w && d < 8; d++) {
+          const _rc = parseInt(w.getAttribute && w.getAttribute('aria-rowcount') || '', 10);
+          if (_rc > 0) { declared = _rc; declaredVia = 'aria-rowcount'; break; }
+          w = w.parentElement || (w.getRootNode && w.getRootNode().host) || null;
+        }
+      }
+    }
+  } catch (e) {}
+  const out = { rows: rows, total: total, shown: rows.length };
+  if (declared > total) { out.declaredTotal = declared; out.declaredVia = declaredVia; }
+  return out;
+}
+
+// CHROME'S OWN ACCESSIBLE NAMES, for the controls ours could not name.
+//
+// We derive AccName in JavaScript, and that derivation is where #28's separator bug
+// (`<span>4</span><span>9秒39</span>` reading as "49秒39" — a wrong NUMBER in the field
+// that decides identity) and #29's shadow-text fix both came from. Chrome implements
+// the same spec, correctly, and will hand over the result — but only over CDP, which
+// needs the debugger attached and therefore the yellow infobar.
+//
+// So this is OPT-IN and ATTACH-ONLY: it never attaches on its own, because paying an
+// infobar on every read to improve a minority of rows is the wrong trade, and because
+// limitation #12 means the attach is refused outright on exactly the password-manager
+// pages where a login form most needs naming. When the debugger is already attached
+// (any trusted click, `computer`, `javascript_tool` or a PDF has run), the data is two
+// CDP calls away and there is no reason not to use it.
+//
+// The join is by backendNodeId, from ONE `DOM.getDocument` rather than a
+// `DOM.resolveNode` per node — that would be a round trip per element and unusable at
+// a few hundred. `pierce:true` also reaches closed shadow roots, so a name can come
+// back for an element only reachable there.
+async function axNamesFor(tabId) {
+  if (!_attachedTabs.get(tabId)) return { attached: false, names: {} };
+  // THE DOMAINS MUST BE ENABLED FIRST. `Accessibility.getFullAXTree` returns an
+  // EMPTY node list — not an error — until `Accessibility.enable` has run, so the
+  // first live call reported "Chrome returned no accessible names for any element
+  // on this page" on a page full of named controls. Nothing offline can catch this:
+  // every suite injects page functions directly and never speaks CDP.
+  try { await cdpSend(tabId, "DOM.enable", {}); } catch (e) {}
+  try { await cdpSend(tabId, "Accessibility.enable", {}); } catch (e) {}
+  const byBackend = new Map();
+  const doc = await cdpSend(tabId, "DOM.getDocument", { depth: -1, pierce: true });
+  const walk = (n) => {
+    if (!n) return;
+    try {
+      const a = n.attributes || [];
+      for (let i = 0; i + 1 < a.length; i += 2) {
+        if (a[i] === 'mmid') { byBackend.set(n.backendNodeId, String(a[i + 1])); break; }
+      }
+    } catch (e) {}
+    for (const c of (n.children || [])) walk(c);
+    for (const s of (n.shadowRoots || [])) walk(s);
+    if (n.contentDocument) walk(n.contentDocument);
+  };
+  walk(doc && doc.root);
+  const ax = await cdpSend(tabId, "Accessibility.getFullAXTree", {});
+  const names = {};
+  for (const node of ((ax && ax.nodes) || [])) {
+    if (node.ignored) continue;
+    const mmid = byBackend.get(node.backendDOMNodeId);
+    if (!mmid) continue;
+    const nm = node.name && node.name.value;
+    if (typeof nm !== 'string' || !nm.trim()) continue;
+    names[mmid] = {
+      name: nm.trim().slice(0, 300),
+      role: (node.role && node.role.value) || '',
+    };
+  }
+  // COUNTS, so a zero result can be diagnosed instead of guessed at. The three
+  // numbers fail differently: axNodes=0 means the domain did not produce a tree,
+  // mapped=0 means no element carried an mmid (no read_page yet), and both non-zero
+  // with names={} means the join by backendNodeId is wrong.
+  return {
+    attached: true, names: names,
+    mapped: byBackend.size,
+    axNodes: ((ax && ax.nodes) || []).length,
+  };
+}
+
 function _pageFingerprintPage() {
   return {
     url: location.href,
@@ -10897,6 +12266,23 @@ async function handleOp({ id, op, params }) {
         result = _rn + `${text}\n\n[Text snapshot at this moment. It can MISS content that is still loading, inside a closed menu/accordion, rendered as an image, drawn on canvas, generated by CSS (::before/::after content, counter()), or rendered inside a web component's shadow root that this text pass could not reach. It can also INCLUDE text that read_page omits: text under aria-hidden="true" is on screen and appears here, while read_page drops those elements because the page declares them absent from the accessibility tree — so a string found here may have no actionable row there. If you expected something that is not here, re-read or take a screenshot before concluding the page does not have it.]`;
         break;
       }
+      // READINESS ALONE, for the callers that cannot get it from a listing.
+      // readinessNote() is prepended to the STRING listing only (see the
+      // `!params?.structured` guard below), because an array cannot carry a
+      // banner and JSON.stringify drops properties hung off one. find() asks for
+      // structured output, so it has never been able to see this signal: a query
+      // run against a half-rendered page returned "NO CONFIDENT MATCH", which is
+      // byte-identical to "that control does not exist". Measured live in #35 on
+      // a VERBATIM label match. Rather than reshape the op's response (a
+      // PROTOCOL_VERSION concern, and every structured consumer would pay for it),
+      // expose the note on its own so a caller can ask for it on exactly the path
+      // where it changes the answer. GATED by omission from UNGATED_OPS: it
+      // reports page state, which is page content.
+      case "page_readiness": {
+        const t = await resolveTab(params);
+        result = await readinessNote(t.id);
+        break;
+      }
       case "get_interactive_elements": {
         const t = await resolveTab(params);
         // scopeMmid narrows the listing to one element's subtree (read_page ref_id).
@@ -11047,7 +12433,7 @@ async function handleOp({ id, op, params }) {
         if (r.ok && urlChanged2) {
           nav = `Navigated: ${urlBefore} -> ${urlAfter}`;
         } else if (r.ok && (elCountChanged2 || txtChanged2)) {
-          nav = `URL unchanged but page DOM changed (modal/dropdown likely opened — re-observe with get_dom_fields). elements:${fpBefore.n}->${fpAfter.n}`;
+          nav = `URL unchanged but page DOM changed (modal/dropdown likely opened — re-observe with read_page). elements:${fpBefore.n}->${fpAfter.n}`;
         } else if (r.ok && stateChanged2) {
           // Say WHAT changed. A toggle reports its own new state, which is the only
           // thing the agent needs to decide whether the click did what it wanted —
@@ -11136,36 +12522,168 @@ async function handleOp({ id, op, params }) {
       case "navigate": {
         const t = await resolveTab(params);
         const dest = String(params.url || "");
+        const isHistory = (dest === "back" || dest === "forward");
+        // Tolerate protocol-less URLs ("example.com") like Claude-in-Chrome.
+        // normalizeNavUrl is shared with the permission gate on purpose — the
+        // origin that was checked must be the origin that gets opened.
+        const want = isHistory ? null : normalizeNavUrl(dest);
+        // Compare ignoring a trailing slash, which Chrome adds to a bare origin:
+        // asking for "https://example.com" lands on "https://example.com/".
+        const _same = (a, b) => String(a || "").replace(/\/+$/, "") === String(b || "").replace(/\/+$/, "");
+        let before = "";
+        try { before = (await chrome.tabs.get(t.id)).url || ""; } catch (e) {}
+        // Re-navigating to where we already are is a RELOAD: the URL will not
+        // change, so "the URL changed" cannot be the arrival test there.
+        const reload = !isHistory && _same(want, before);
+
         if (dest === "back") {
           await chrome.tabs.goBack(t.id);
         } else if (dest === "forward") {
           await chrome.tabs.goForward(t.id);
         } else {
-          // Tolerate protocol-less URLs ("example.com") like Claude-in-Chrome.
-          // normalizeNavUrl is shared with the permission gate on purpose — the
-          // origin that was checked must be the origin that gets opened.
-          await chrome.tabs.update(t.id, { url: normalizeNavUrl(dest) });
+          await chrome.tabs.update(t.id, { url: want });
         }
-        // Wait for the target tab to finish loading.
+
+        // WAIT FOR THE NAVIGATION WE ASKED FOR, NOT FOR ANY "complete".
+        // This used to resolve on the first onUpdated carrying status==="complete"
+        // for this tab — including one belonging to the PREVIOUS document. A fresh
+        // about:blank MCP tab is already complete, so on a slow destination the old
+        // document's event won the race, the wait fell through before the new load
+        // committed, and the result line below was then built from whatever the tab
+        // still said. Measured live, twice, in the 10-task eval: `navigate` returned
+        // "Navigated to about:blank, title: about:blank" while get_url confirmed the
+        // tab had never moved, and the retry worked. It cost ~9 tool calls across two
+        // runs and, worse, it is a FALSE SUCCESS — the #10/#11/#12 family exactly:
+        // reported ok, nothing happened. Reproduced deterministically against a slow
+        // host (a free dyno) and not at all against a fast one, which is why it looks
+        // intermittent.
         await new Promise(resolve => {
-          // Clear the fallback when the load wins the race. Leaving it armed kept a 15s
-          // timer alive after every single navigate — invisible in a service worker that
-          // is about to be evicted anyway, but it held a test process open for 15s and it
-          // is a leak either way.
+          // Clear the fallback when the load wins the race; leaving it armed held a
+          // 15s timer open after every navigate.
           let timer = null;
+          let _wnCommitted = null;   // declared before `done`, which clears it
           const done = () => {
             if (timer !== null) { clearTimeout(timer); timer = null; }
             chrome.tabs.onUpdated.removeListener(lid);
+            // Registered below; cleared here so one timer and one listener cannot
+            // outlive the call (the same leak the fallback timer comment covers).
+            try { if (_wnCommitted) chrome.webNavigation.onCommitted.removeListener(_wnCommitted); } catch (e) {}
             resolve();
           };
-          const lid = (tabId, info) => {
-            if (tabId === t.id && info.status === "complete") done();
+          // back/forward have NO KNOWABLE DESTINATION — #a history entry can even be
+          // the same URL — so any completion is the end of the wait there, and the
+          // report below states where it actually landed. Requiring a URL change
+          // made `navigate("back")` sit out the full timeout.
+          const arrived = (u) => isHistory || reload || (!!u && !_same(u, before));
+          // COMMIT, NOT COMPLETE — this is a LATENCY fix, measured.
+          // `status === "complete"` means the whole page finished: every image and
+          // subresource. On a slow or erroring host that never arrives inside the
+          // cap, so navigate burned the FULL 15s and then reported a failure while
+          // the load was still in flight. Measured on a cold free dyno via
+          // sw_info's bridge timer: bridge_ms_total moved 20,973 -> 51,027 for TWO
+          // navigates, i.e. ~15s each, against ~5ms for an ordinary op.
+          // A navigation COMMITS as soon as the server responds and the new
+          // document exists — which is the only thing this wait actually needs to
+          // establish, because "content is still arriving" is precisely what the
+          // readiness banner (#15) already reports on the next read. Waiting for
+          // the rest is paying for information we then re-derive anyway.
+          // webNavigation is already a permission this extension holds and is
+          // already used for the cross-frame collector and the network buffer.
+          try {
+            _wnCommitted = (d) => {
+              if (d.tabId !== t.id || d.frameId !== 0) return;   // main frame only
+              if (arrived(d.url)) done();
+            };
+            chrome.webNavigation.onCommitted.addListener(_wnCommitted);
+          } catch (e) { _wnCommitted = null; }
+          const lid = (tabId, info, tab) => {
+            if (tabId !== t.id || info.status !== "complete") return;
+            // THREE SOURCES, because none is guaranteed. Chrome passes the tab as
+            // the third argument and sets changeInfo.url on a navigation, but a
+            // completion event can carry neither — and depending on the argument
+            // alone is how the first version of this fix waited the full 15s on
+            // every call instead of resolving. It did not FAIL a test; it made the
+            // suite 30s slower while staying green, which is the quieter half of
+            // the same mistake. Falling back to asking the tab is one call and
+            // cannot be absent.
+            const u = (tab && tab.url) || info.url || "";
+            if (u) { if (arrived(u)) done(); return; }
+            chrome.tabs.get(t.id).then(tt => { if (arrived(tt && tt.url)) done(); }).catch(() => {});
           };
           chrome.tabs.onUpdated.addListener(lid);
           timer = setTimeout(done, 15000);
         });
+
         const t2 = await chrome.tabs.get(t.id);
-        result = `Navigated to ${t2.url}, title: ${t2.title}`;
+        const now = t2.url || "";
+        if (isHistory && _same(now, before)) {
+          // At the start (or end) of history, goBack/goForward is a silent no-op.
+          // Reporting "Navigated to <the page we never left>" is the same false
+          // success as the about:blank case, one step removed.
+          result = `${dest.toUpperCase()} DID NOT MOVE — the tab is still at ${now}. ` +
+                   `Causes: this tab has no history entry in that direction (a tab the ` +
+                   `agent opened starts with none), or the entry resolves to the same ` +
+                   `url. Navigate by url instead if you need a specific page.`;
+        } else if (!isHistory && !reload && _same(now, before)) {
+          // SAY IT DID NOT HAPPEN. The old line reported `t2.url` whatever it was,
+          // so a navigation that never committed still read as a success sentence
+          // naming the page it had failed to leave — the agent then acted on a page
+          // it believed it was on. State the fact, and name the retry, which is the
+          // documented recovery here because the second attempt does commit.
+          // STATE THE FACT, ENUMERATE THE CAUSES. The first version of this named
+          // the one cause I had measured — a slow destination on the first navigate
+          // out of a fresh about:blank tab — as THE cause, and C15 refused it. It
+          // is the cause I reproduced, not the only one that produces this state,
+          // and the three below need different responses.
+          // THE ADVICE MUST BE A RECOVERY THAT HAS BEEN SEEN TO WORK. The generic
+          // "retry the same url" was offered to a freshly created tab and FAILED
+          // BOTH TIMES; what succeeded was navigating the site root first and then
+          // the deep url. That is the #23/#33 class — a tool asserting a recovery it
+          // has not verified — inside the message written to end that class. The
+          // tab being at about:blank is a FACT we hold here, so the branch costs
+          // nothing and the two cases get the two different answers they need.
+          const _blank = /^about:blank$/i.test(now);
+          result = `NAVIGATION DID NOT COMMIT — the tab is still at ${now}; it was asked ` +
+                   `to open ${want}. ` +
+                   (_blank
+                     ? `This tab has never navigated (tabs_create_mcp opens about:blank). ` +
+                       `Measured on this case: retrying the same deep url failed twice in a ` +
+                       `row, while navigating to the SITE ROOT first and then to the full ` +
+                       `url succeeded — try that order. Other causes: `
+                     : `Possible causes: the destination was slow and the load had not ` +
+                       `started (retry the same url); `) +
+                   `the server did not respond or refused the connection (try a different ` +
+                   `url to tell the two apart); or the page blocked the navigation. Confirm ` +
+                   `with get_url before acting on the page — anything you read now belongs ` +
+                   `to ${now}, not to what you asked for.`;
+        } else {
+          // A TITLE THAT IS THE URL IS NOT A TITLE. Chrome fills `tab.title` with a
+          // DISPLAY FORM of the url — the scheme stripped — until the document sets
+          // one, so reading it at commit time printed
+          // `title: nginx.org/en/docs/http/ngx_http_proxy_module.html` for a page
+          // whose <title> is `Module ngx_http_proxy_module`. Measured on three
+          // unrelated sites, and once correct and incorrect in the SAME batch on the
+          // SAME tab, which rules out the site and leaves timing. #40 fixed the
+          // commit; this is the same race surviving one field over.
+          //
+          // Substituting the url is the worst available answer, because it is
+          // indistinguishable from a page that genuinely declares no title. The
+          // fallback is DETECTABLE rather than guessed (it is exactly the url with
+          // the scheme removed), so wait briefly for the real one and otherwise say
+          // the page has not supplied it. Bounded at ~600ms and paid only when the
+          // title still looks like the url — a settled page costs nothing.
+          const _urlish = (s) => String(s || "").replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+                                                .replace(/\/+$/, "");
+          let title = t2.title || "";
+          for (let k = 0; k < 6 && title && _urlish(title) === _urlish(t2.url); k++) {
+            await new Promise((r) => setTimeout(r, 100));
+            try { title = (await chrome.tabs.get(t.id)).title || title; } catch (e) {}
+          }
+          result = (title && _urlish(title) !== _urlish(t2.url))
+            ? `Navigated to ${t2.url}, title: ${title}`
+            : `Navigated to ${t2.url} — the page has not supplied a <title>; Chrome is ` +
+              `showing the url in its place, so there is no page title to report.`;
+        }
         break;
       }
       case "screenshot": {
@@ -11224,6 +12742,58 @@ async function handleOp({ id, op, params }) {
       case "page_fingerprint": {
         const t = await resolveTab(params);
         result = await runInTab(t.id, _pageFingerprintPage);
+        break;
+      }
+      // Both gated by omission from UNGATED_OPS — they read page content, which is
+      // exactly what the gate exists for.
+      case "search_dom_text": {
+        const t = await resolveTab(params);
+        result = await runInTab(t.id, _searchTextPage, [
+          String((params && params.pattern) || ''),
+          {
+            regex: !!(params && params.regex),
+            caseSensitive: !!(params && params.caseSensitive),
+            contextChars: params && params.contextChars,
+            maxResults: params && params.maxResults,
+            cssScope: (params && params.cssScope) || null,
+          },
+        ]);
+        break;
+      }
+      case "query_elements": {
+        const t = await resolveTab(params);
+        result = await runInTab(t.id, _queryElementsPage, [
+          String((params && params.selector) || '*'),
+          {
+            attributes: (params && params.attributes) || null,
+            maxResults: params && params.maxResults,
+            includeText: !(params && params.includeText === false),
+          },
+        ]);
+        break;
+      }
+      case "ax_names": {
+        const t = await resolveTab(params);
+        result = await axNamesFor(t.id);
+        break;
+      }
+      case "print_pdf": {
+        // Page.printToPDF over the debugger we already attach for every trusted
+        // input path. Before this there was no way to produce ANY artifact of a
+        // full page: captureScreenshot is hardcoded captureBeyondViewport:false,
+        // and screenshots live only in the server's in-memory registry.
+        const t = await resolveTab(params);
+        await attachDebugger(t.id);
+        const _pp = (params || {});
+        const r = await cdpSend(t.id, "Page.printToPDF", {
+          printBackground: _pp.printBackground !== false,
+          landscape: !!_pp.landscape,
+          scale: Math.max(0.1, Math.min(2, Number(_pp.scale) || 1)),
+          paperWidth: _pp.paperWidth || 8.5,
+          paperHeight: _pp.paperHeight || 11,
+          displayHeaderFooter: !!_pp.displayHeaderFooter,
+        });
+        result = { data: (r && r.data) || '', title: (await runInTab(t.id, () => document.title)) || '' };
         break;
       }
       case "deep_inspect": {
@@ -11442,17 +13012,29 @@ async function handleOp({ id, op, params }) {
             ok: false,
             msg: `submit SKIPPED: only ${out.fields.filter(f => f.ok).length}/${out.fields.length} ` +
                  `field(s) were filled (failed: ${bad}). Submitting a partly-filled form is not ` +
-                 `recoverable, so nothing was clicked. Re-observe — the form probably re-rendered ` +
-                 `mid-fill — then fill the remaining fields and submit.`,
+                 `recoverable, so nothing was clicked. A field fails to fill for several reasons ` +
+                 `— the form re-rendered mid-fill and the ref moved, the control was disabled or ` +
+                 `read-only, or the page rewrote the value after we set it — and the per-field ` +
+                 `results above say which applies to each. Fix those, then submit.`,
           };
           submit_mmid = null;
         }
         if (submit_mmid && !out.fields.some(f => f.ok)) {
           out.submit = {
             ok: false,
-            msg: "submit SKIPPED: none of the supplied field refs resolved on this page, " +
-                 "so the refs are stale (the page probably navigated since you observed it). " +
-                 "Nothing was clicked. Re-observe with read_page and retry with fresh refs.",
+            // #14 fixed exactly this sentence in the stale-ref message and it survived
+            // here: mmids are per-document, so a ref stops resolving whenever the
+            // DOCUMENT changed — a navigation, a full client-side re-render, or a frame
+            // reload all do it, and nothing at this point can tell which. Naming one
+            // sends the agent to check the URL, find it unchanged, and distrust the tool.
+            // "Nothing was clicked" is a CONTRACT, not prose — test_ops pins it, and it
+            // is the sentence that tells the agent no action was taken on its behalf.
+            msg: "submit SKIPPED: none of the supplied field refs resolved on this page. " +
+                 "Nothing was clicked. mmids are per-document and are re-numbered on " +
+                 "every load, so refs stop resolving whenever the document changed — a " +
+                 "navigation, a client-side re-render that replaced the form, or a frame " +
+                 "reload will each do it, and this cannot tell which. Re-observe with " +
+                 "read_page and retry with fresh refs.",
           };
           submit_mmid = null;
         }
@@ -11686,7 +13268,7 @@ async function handleOp({ id, op, params }) {
             if (!errors.length && busyEffect(after)) {
               const btnNow = after.btnTxt === null ? "(button unmounted)"
                 : `"${after.btnTxt}"${after.btnBusy ? " (disabled)" : ""}`;
-              msg = `submit ACCEPTED — async operation in progress: the submit button changed from "${before.btnTxt}" to ${btnNow} after the click. The page is processing (server round-trip); the modal may close on its own. WAIT a few seconds, then re-observe with get_dom_fields. Do NOT click submit again.`;
+              msg = `submit ACCEPTED — async operation in progress: the submit button changed from "${before.btnTxt}" to ${btnNow} after the click. The page is processing (server round-trip); the modal may close on its own. WAIT a few seconds, then re-observe with read_page. Do NOT click submit again.`;
               out.submit_in_flight = true;
               dbg(`submit in-flight: btn "${before.btnTxt}" -> ${btnNow}`);
             } else {

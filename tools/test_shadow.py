@@ -15,6 +15,7 @@ Run:  python tools/test_shadow.py     (exit code 0 = all pass)
 """
 
 import asyncio
+import json
 import sys
 
 try:
@@ -164,6 +165,12 @@ async def main():
         # every text tool.
         tp = await browser.new_page(viewport={"width": 900, "height": 700})
         await tp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # A NEW DOCUMENT IS REQUIRED HERE. add_init_script only affects documents
+        # created AFTER it, and set_content reuses the existing about:blank — so
+        # without this goto, listener_tag.js never runs and every fixture below is
+        # testing an untagged page. Found while adding S14: the attachShadow wrap
+        # read as broken when it was the harness that was. C13 now enforces it.
+        await tp.goto("about:blank")
         await tp.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<h1>Thread</h1><p>Ordinary light-DOM prose, long enough to matter.</p>"
@@ -197,6 +204,57 @@ async def main():
         check("S13c ...while a private-use icon glyph is still excluded",
               "" not in _txt, f"leaked={chr(0xf002) in _txt}")
         await tp.close()
+
+        # ---- S14-S14c: CLOSED shadow roots, limitation #2's last open case.
+        # browser-use reaches these with CDP `DOM.getDocument{pierce:true}`, which is
+        # more capable and less available — limitation #12 refuses the attach tab-wide
+        # on exactly the password-manager login pages where the form must be read.
+        # listener_tag.js wraps attachShadow at document_start instead, so the root is
+        # captured at creation with no debugger.
+        #
+        # NOT VACUOUS — S14/S14b fail against the pre-change collector: `el.shadowRoot`
+        # is null for a closed root, so the button is in no listing at any detail level.
+        # S14c is the control that proves the wrap is semantics-preserving; without it
+        # the fix could work by breaking the page's own encapsulation contract.
+        cs = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await cs.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # A NEW DOCUMENT IS REQUIRED HERE. add_init_script only affects documents
+        # created AFTER it, and set_content reuses the existing about:blank — so
+        # without this goto, listener_tag.js never runs and every fixture below is
+        # testing an untagged page. Found while adding S14: the attachShadow wrap
+        # read as broken when it was the harness that was. C13 now enforces it.
+        await cs.goto("about:blank")
+        await cs.set_content(
+            "<div id=host></div><button id=plain>Plain</button>"
+            "<script>"
+            "var r=document.getElementById('host').attachShadow({mode:'closed'});"
+            "r.innerHTML='<button id=inner>Inside closed root</button>"
+            "<span>closed-root text 4821</span>';"
+            "window.__probeClosed=(document.getElementById('host').shadowRoot===null);"
+            "</script>"
+        )
+        await cs.wait_for_timeout(150)
+        ents = await cs.evaluate("(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        blob = json.dumps(ents, default=str)
+        check("S14 a control inside a CLOSED shadow root is collected, with no debugger attach",
+              "Inside closed root" in blob,
+              f"entries={len(ents)} found={'Inside closed root' in blob}")
+        _inner = [e for e in ents if "Inside closed root" in json.dumps(e, default=str)]
+        check("S14b ...and it carries a ref, so it is actionable and not just visible",
+              bool(_inner) and bool(_inner[0].get("mmid")),
+              f"mmid={_inner[0].get('mmid') if _inner else None}")
+        txt = await cs.evaluate("(function(){ " + DOMTEXT + "; return _domTextPage(); })()")
+        check("S14c ...and its text reaches get_page_text too",
+              "closed-root text 4821" in str(txt),
+              f"present={'closed-root text 4821' in str(txt)}")
+        # THE SEMANTICS CONTROL. The cheap way to do this is to redefine the
+        # shadowRoot getter, which would make every existing traversal site pierce
+        # for free — and would silently change how a page feature-detects its own
+        # encapsulation. This asserts we did NOT do that.
+        still_null = await cs.evaluate("window.__probeClosed && document.getElementById('host').shadowRoot === null")
+        check("S14d ...while the page's own `el.shadowRoot === null` contract is untouched",
+              still_null is True, f"shadowRoot_still_null={still_null}")
+        await cs.close()
 
         await browser.close()
 

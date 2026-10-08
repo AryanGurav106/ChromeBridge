@@ -226,11 +226,196 @@ def main() -> int:
           f"server default={_srv_fmt.group(1) if _srv_fmt else 'NOT FOUND'!r}, "
           f"collector treats omitted as tree={_coll_default_is_tree}")
 
+    # C14: A FIXTURE THAT SILENTLY LOADS NOTHING. Playwright's add_init_script only
+    # affects documents created AFTER the call, and page.set_content reuses the
+    # existing about:blank — so `add_init_script(listener_tag.js)` immediately
+    # followed by `set_content` runs the tagger on nothing, and every check on that
+    # page tests an untagged document while staying green. Found while adding S14:
+    # the attachShadow wrap read as broken when it was the harness that was, and the
+    # audit then found ELEVEN fixture pages across two suites in that state, some
+    # predating this change. Same class as #29's three vacuous fixtures, and the
+    # reason that lesson is now a test rather than a paragraph.
+    _fx_bad = []
+    _tools_dir = _Path(ROOT) / "tools"
+    for _f in sorted(_tools_dir.glob("test_*.py")):
+        _txt = _f.read_text(encoding="utf-8")
+        for _m in re.finditer(r"await (\w+)\.add_init_script\([^\n]*listener_tag\.js[^\n]*\)\n"
+                              r"(?P<rest>(?:[ \t]*#[^\n]*\n)*)[ \t]*await (\w+)\.(\w+)\(", _txt):
+            if _m.group(1) == _m.group(3) and _m.group(4) == "set_content":
+                _fx_bad.append(f"{_f.name}:{_txt[:_m.start()].count(chr(10)) + 1} ({_m.group(1)})")
+    check("C14 no fixture injects listener_tag.js and then calls set_content without "
+          "a navigation (the init script would never run)",
+          not _fx_bad,
+          f"{len(_fx_bad)} vacuous fixture page(s)"
+          + (f": {'; '.join(_fx_bad[:6])}" if _fx_bad else " — all fixtures navigate first"))
+
+    # C15: A NOTE MAY NOT PICK A CAUSE FOR THE READER. Three separate incidents now
+    # share one shape — #14's stale-ref message asserting "a navigation invalidated
+    # your refs" (BBC hit it with no navigation), #23's cross-extension message
+    # asserting a recovery was impossible that an agent had just performed, and the
+    # aria-hidden note concluding "most likely a CLOSED menu/panel" while its own
+    # output listed an open role=menu. Each read as considered rather than guessed,
+    # which is what makes the class expensive.
+    # The rule the codebase already states: an explanatory note gives the FACT and
+    # enumerates causes; it never selects one. This flags the hedged-assertion
+    # vocabulary inside emitted strings, which is how all three were phrased.
+    _notes_src = read("extension/background.js")
+    _mask_bg = code_mask(_notes_src)
+    _note_bad = []
+    for _m in re.finditer(r"[`\"'][^`\"'\n]{0,400}?(most likely|probably|this is because|usually means)"
+                          r"[^`\"'\n]{0,400}?[`\"']", _notes_src, re.I):
+        # Only STRING literals matter — prose in a comment is the reasoning, not output.
+        if _mask_bg[_m.start()]:
+            continue
+        # THE WINDOW MUST SPAN THE WHOLE MESSAGE, not one literal. These notes are
+        # built by concatenating several string chunks, so the hedge and the words
+        # that justify it routinely sit in different literals — the first version
+        # matched only the chunk containing "probably" and flagged a note whose very
+        # next line says "heuristic".
+        _seg = _notes_src[max(0, _m.start() - 200):_m.end() + 400]
+        # An enumeration is the sanctioned form: naming several causes is not picking one.
+        if re.search(r"\(a\)|\(b\)|either|or a |one of|each do it|which applies", _seg, re.I):
+            continue
+        # ...and so is a note that DECLARES itself a judgement. "PROBABLY DECORATION —
+        # a size/shape/label heuristic (never a spec rule) judged them non-content" is
+        # the honest form this rule exists to encourage, not a violation of it: the
+        # hedge is the category name and the note says what made the guess. Flagging
+        # it would push the codebase toward removing the word rather than the guess.
+        if re.search(r"heuristic|never a spec rule", _seg, re.I):
+            continue
+        _note_bad.append(f"background.js:{_notes_src[:_m.start()].count(chr(10)) + 1}")
+    check("C15 no emitted note asserts a single cause it cannot know "
+          "(state the fact, enumerate the causes)",
+          not _note_bad,
+          f"{len(_note_bad)} hedged assertion(s)"
+          + (f": {'; '.join(_note_bad[:6])}" if _note_bad else " — all notes enumerate or state facts"))
+
+    # C16: AN AGENT-FACING MESSAGE MAY ONLY NAME TOOLS THE AGENT HAS. The extension
+    # speaks in OP names (`get_dom_fields`, `get_interactive_elements`); the agent has
+    # MCP TOOL names (`read_page`, `find`). They are different vocabularies and only
+    # the server knows the mapping, so an op name in a message is an instruction the
+    # reader cannot follow. Found live: fill_form's submit result said "re-observe with
+    # get_dom_fields", which is not a tool — the agent had to guess `read_page`.
+    # Ops that ARE also tool names (navigate, computer, fill_form…) are fine.
+    _ops = set(re.findall(r'case\s+"([a-z_0-9]+)"\s*:', _notes_src))
+    _tools = set(re.findall(r"^async def ([a-z_0-9]+)\(", read("mcp_server.py"), re.M))
+    # TWO NARROWINGS, both because the first version flagged 38 sites of ordinary
+    # English. `click` and `screenshot` are op names AND normal words, so "nothing was
+    # clicked" and "take a screenshot" tripped it — and telling the codebase to stop
+    # using those words is worse than the bug. So:
+    #   - only SNAKE_CASE ops (an underscore makes it unambiguously an identifier;
+    #     a single English word cannot be separated from prose mechanically), and
+    #   - only in an INSTRUCTION context ("re-observe with X", "call X"), which is
+    #     what makes it a direction the reader cannot follow rather than a mention.
+    # `get_dom_fields` — the live leak — satisfies both, which is the test.
+    # SCAN THE SOURCE, NOT STRING LITERALS. The first version windowed on quoted
+    # regions and its planted-leak control DID NOT FIRE — the real message is a
+    # TEMPLATE literal carrying `${...}` and embedded quotes, so the window either
+    # terminated early or started on a delimiter the mask calls code. A tripwire that
+    # cannot catch the bug it was written for is worth nothing (#21), and only the
+    # control showed it. The instruction phrasing is distinctive enough to scan for
+    # directly; the one thing to exclude is a `//` comment, where naming an op is
+    # discussion rather than output.
+    # THE NAME NEED NOT BE A REAL OP. `get_dom_fields` — the live leak — is not a
+    # router case, not a tool, not anything: a phantom. Deriving the candidate set from
+    # `case "…"` therefore could NOT catch it, and the planted control said so twice
+    # before I stopped assuming and read what the string actually contained. The
+    # invariant is about what the READER can act on: an instruction naming a
+    # snake_case identifier that is not an MCP tool, whatever it is internally.
+    # THREE REFERENCE SHAPES, because the messages use all three and only checking one
+    # is how this stayed open. A survey found ZERO bad `name` / name( references — the
+    # forms I looked at first — while the live leak was a BARE name after "with", which
+    # neither shape matches. Checking all three also guards the case nobody has hit yet:
+    # RENAMING a tool silently invalidates every message that names the old one, and
+    # `read_page(ledger=true)` / `computer(action="scroll_to")` appear in a lot of them.
+    # Restricted to snake_case: `click` and `screenshot` are tool-ish words AND ordinary
+    # English, and no mechanical rule separates "take a screenshot" from a reference.
+    _NAME = r"([a-z][a-z0-9]*_[a-z0-9_]+)"
+    _leaks = []
+    for _pat in (re.compile(r"(?:re-observe with|observe with|call|invoke|use)\s+`?" + _NAME + r"\b", re.I),
+                 re.compile(r"`" + _NAME + r"`"),
+                 re.compile(r"\b" + _NAME + r"\(")):
+        for _m in _pat.finditer(_notes_src):
+            _ls = _notes_src.rfind("\n", 0, _m.start()) + 1
+            if "//" in _notes_src[_ls:_m.start()] or _m.group(1) in _tools:
+                continue
+            _hit = f"background.js:{_notes_src[:_m.start()].count(chr(10)) + 1} ({_m.group(1)})"
+            if _hit not in _leaks:
+                _leaks.append(_hit)
+    check("C16 no agent-facing message names an internal op that is not an MCP tool",
+          not _leaks,
+          f"{len(_leaks)} leak(s)" + (f": {'; '.join(_leaks[:5])}" if _leaks
+                                      else f" — every instruction names a real tool"))
+
     check("C11 every function injected via runInTab is self-contained "
           "(executeScript stringifies only that function)",
           not _bad,
           f"{len(_injected)} injected function(s) checked"
           + (f" — FREE REFERENCES: {'; '.join(_bad[:6])}" if _bad else ", all self-contained"))
+
+    # C17: A FIELD THE EXTENSION COMPUTES AND THE SERVER DOES NOT PRINT IS NOT
+    # SHIPPED. Same class as C12 and as #19's "the op router is the untested link":
+    # `_searchTextPage` locates each match inside the window it quotes, and for as
+    # long as the renderer dropped that number, two matches inside one element came
+    # back byte-identical and a live agent read them as one position reported twice.
+    # Checked against the real renderer with a hand-built hit, because the defect is
+    # entirely in the formatting and a browser is not needed to see it.
+    import asyncio as _aio
+    sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+    import mcp_server as _ms
+
+    class _FB:
+        connected = True
+
+        async def call(self, op, **kw):
+            return {"hits": [
+                {"match": "SIGQUIT", "context": "SIGQUIT 3 3 SIGUSR1 10 30",
+                 "at": 0, "tag": "pre", "ref": "12"},
+                {"match": "SIGUSR1", "context": "SIGQUIT 3 3 SIGUSR1 10 30",
+                 "at": 12, "tag": "pre", "ref": "12"},
+            ], "total": 2, "shown": 2, "scanned": 9}
+
+    _ms.STATE["bridge"] = _FB()
+    _sp = _ms.search_page.fn if hasattr(_ms.search_page, "fn") else _ms.search_page
+    _out = _aio.run(_sp(pattern="SIGQUIT|SIGUSR1", tabId=1, regex=True))
+    _rows = [ln for ln in _out.splitlines() if ln.strip().startswith("<pre")]
+    check("C17 two matches quoted from the same window are distinguishable in the "
+          "rendered output",
+          len(_rows) == 2 and _rows[0] != _rows[1]
+          and '"SIGQUIT"@0' in _out and '"SIGUSR1"@12' in _out,
+          f"{len(_rows)} row(s); identical={_rows[0] == _rows[1] if len(_rows) == 2 else 'n/a'}")
+
+    # C18/C19: query_elements' two silences. An element with NO text rendered
+    # IDENTICALLY to a text-extraction failure (live on nginx, whose <h1> really is
+    # empty because the visible heading is an <h2>) — correct, indistinguishable, and
+    # it cost a third batch to confirm another way. And a zero-result asserted
+    # "nothing on the page has that shape right now", a fact about the PAGE that a
+    # query of the rendered document at one instant cannot establish.
+    class _FBQ:
+        connected = True
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        async def call(self, op, **kw):
+            if op == "page_readiness":
+                return ""
+            return self.payload
+
+    _qe = _ms.query_elements.fn if hasattr(_ms.query_elements, "fn") else _ms.query_elements
+
+    _ms.STATE["bridge"] = _FBQ({"rows": [{"ref": "9", "tag": "h1", "text": ""}],
+                                "total": 1})
+    _out = _aio.run(_qe(selector="h1", tabId=1))
+    check("C18 an element with no text SAYS so, instead of rendering like a failed read",
+          "(no text)" in _out, _out.replace("\n", " ")[:120])
+
+    _ms.STATE["bridge"] = _FBQ({"rows": [], "total": 0})
+    _out = _aio.run(_qe(selector=".nope", tabId=1))
+    check("C19 a zero-result states the MISS and enumerates causes, rather than "
+          "asserting a fact about the page it cannot establish",
+          "has that shape right now" not in _out and "Causes" in _out,
+          _out.replace("\n", " ")[:140])
 
     print(f"\n{passed} passed, {failed} failed, {passed + failed} total checks")
     if failures:

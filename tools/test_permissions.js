@@ -133,6 +133,18 @@ const GATED = [
   // UNGATED_OPS, which is the intended default for a new op — this list is what
   // proves the default actually held rather than being assumed.
   "page_tools", "call_page_tool",
+  // search_dom_text and query_elements READ page content — the exact thing the gate
+  // exists for — and print_pdf renders the whole page to a file. All three are gated
+  // by omission from UNGATED_OPS, which is the intended default; listing them here
+  // is what proves the default actually held rather than being assumed.
+  "search_dom_text", "query_elements", "print_pdf",
+  // ax_names reads Chrome's accessibility tree for the page — page content by any
+  // reading, so it is gated by omission like the rest.
+  "ax_names",
+  // page_readiness reports document.readyState, in-flight images, aria-busy regions
+  // and visible progressbars — page state, which is page content. Gated by omission
+  // from UNGATED_OPS like the rest; listed here so the default is proven, not assumed.
+  "page_readiness",
 ];
 
 (async function main() {

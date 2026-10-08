@@ -189,6 +189,51 @@ async def main_async():
     check("T15 text with no banner is unchanged by the banner path",
           not out.startswith("***"), repr(out[:60]))
 
+    # ---- T24/T25: THE BUDGET MUST RECONCILE AGAINST WHAT THE CALLER PASSED.
+    # The most-reported defect of the 24-task eval -- five sightings, four pages,
+    # three agents, every one in the same direction. Two separate arithmetic bugs
+    # pointing opposite ways: `max_chars` was REBOUND to `max_chars - len(banner)`
+    # and the reduced figure then printed as "the N requested" (passed 1600, told
+    # 1303); and the body reserved a literal 120 chars for a note that is ~560, so
+    # the function returned ~440 MORE than asked while its message reported a
+    # shortfall. An agent wrote: "the shortfall between the stated budget and the
+    # actual cut is the one number in the run I cannot account for."
+    _over, _unquoted = [], []
+    for cap in (400, 600, 900, 1500, 2400, 4000):
+        for _bnr_on in (True, False):
+            payload = ((BANNER if _bnr_on else "") + BODY
+                       + "\n--- DOCUMENT OUTLINE (2 headings) ---\n  h2: One\n  h2: Two")
+            ms.STATE["bridge"] = FB(payload)
+            out = await gpt(tabId=1, max_chars=cap)
+            if len(out) > cap:
+                _over.append(f"cap={cap} banner={_bnr_on}: returned {len(out)}")
+            # Every truncation message must quote the caller's own number, so the
+            # reader can add the named deductions back up to it.
+            if "truncated" in out and f"max_chars={cap}" not in out:
+                _unquoted.append(f"cap={cap} banner={_bnr_on}")
+            # AND THE ITEMISED PARTS MUST ADD UP. This is the defect itself: the
+            # numbers were arithmetically correct all along and simply could not be
+            # reconciled -- an agent compared the printed body figure (7,420) to the
+            # max_chars it passed (9,000) and wrote "the shortfall between the
+            # stated budget and the actual cut is the one number in the run I cannot
+            # account for". It was the outline, the banner and the note, none of
+            # which the message named.
+            m = re.search(r"was spent as: (.+?), and this note", out, re.S)
+            if m:
+                parts = [int(x) for x in re.findall(r"(\d+) (?:body|readiness|document)", m.group(1))]
+                note = out[out.index("\n\n[body truncated"):out.index("]\n\n") + 3]
+                # The named parts plus the note ARE the whole return. If they do not
+                # add up, some share of the caller's budget went somewhere the
+                # message does not account for -- which is the defect verbatim.
+                if sum(parts) + len(note) != len(out):
+                    _unquoted.append(
+                        f"cap={cap}: itemised {parts} + note {len(note)} = "
+                        f"{sum(parts) + len(note)}, but returned {len(out)}")
+    check("T24 get_page_text never returns more than the max_chars it was given",
+          not _over, "; ".join(_over))
+    check("T25 ...and its note quotes the CALLER's max_chars and itemises where it went",
+          not _unquoted, "; ".join(_unquoted))
+
     # T18: A FOLD IS ONE VERY LONG LINE, so a slice almost always lands inside it.
     # Found live: `->/2026/08/21/business/are-you-cuttin`, a URL cut mid-path where
     # the fragment is a plausible slug and nothing marked it -- the residual note
@@ -311,6 +356,35 @@ async def main_async():
           " way the reader counts it (folds included)",
           not _bad4, f"{len(_bad4)} bad of 100 budgets; first: {(_bad4 or ['-'])[0]}"
                      f" (true total {_true})")
+
+    # ---- T22/T23: A BIG FIRST ROW MUST NOT DELETE THE WHOLE LISTING.
+    # #13's fallback drops the legend when a plain slice would return no rows — but it
+    # asked whether the raw slice REACHES a row, while `_whole_members` (added later,
+    # for half-written rows) then removes that row when the cut left it incomplete. The
+    # two cancelled: guard sees a row, keeps the legend, slicer deletes the row, caller
+    # gets a decoder ring and nothing to decode. Found by reproducing an app-shell page
+    # offline after a live read returned almost nothing; T1-T21 all passed throughout,
+    # because none of them has a FIRST row long enough to trigger it.
+    _legend = ("Current URL: /x\nVisible interactive elements (21 on screen).\n"
+               + "\n".join(f"  - notation line {i} explaining something at length" for i in range(8))
+               + "\n")
+    _huge = 'ref_3 | div "' + ("Shell label word " * 60).strip() + '"'
+    _small = [f'ref_{i} | a "Item {i}"' for i in range(10, 22)]
+    _doc = _legend + _huge + "\n" + "\n".join(_small)
+
+    # A budget that fits the first row once the legend is gone, but not with it.
+    _out = _truncate(_doc, len(_huge) + 120)
+    check("T22 a budget that fits the first row only WITHOUT the legend drops the"
+          " legend and prints the row, instead of returning neither",
+          "ref_3" in _out, f"got {len(_out)} chars, has_row={'ref_' in _out}")
+
+    # A budget too small for even the first row: must SAY so, and name the real blocker.
+    _out2 = _truncate(_doc, 300)
+    _blames_first = "FIRST one is" in _out2 and str(len(_huge)) in _out2
+    check("T23 ...and when not even the first row fits it says NOTHING could be shown"
+          " and names the row that blocked it, not a smaller one that would have fit",
+          "NOTHING could be shown" in _out2 and _blames_first,
+          f"blames_first={_blames_first}")
 
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} truncation checks passed.")

@@ -212,6 +212,10 @@ async def main():
         # reads that as "this page has no controls" — and the page has 557.
         bp = await browser.new_page(viewport={"width": 900, "height": 700})
         await bp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await bp.goto("about:blank")
         await bp.set_content("<!doctype html><meta charset=utf-8><body style='margin:0'>"
                              "<p>" + ("Plenty of prose. " * 20) + "</p></body>")
         await bp.wait_for_timeout(120)
@@ -242,6 +246,10 @@ async def main():
         # promise. Both fixtures on ONE page, so neither can pass by configuration.
         cu = await browser.new_page(viewport={"width": 900, "height": 700})
         await cu.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await cu.goto("about:blank")
         await cu.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<p>Cited<sup class=reference><a href='#c1'>"
@@ -683,6 +691,10 @@ async def main():
         # CONTAINS a real <canvas>, and that is what gets marked.
         dp2 = await browser.new_page(viewport={"width": 1100, "height": 800})
         await dp2.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await dp2.goto("about:blank")
         await dp2.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             # A page-builder wrapper whose class merely contains the WORD, holding
@@ -949,6 +961,10 @@ async def main():
         # javascript_tool from three different directions.
         tb = await browser.new_page(viewport={"width": 900, "height": 700})
         await tb.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await tb.goto("about:blank")
         await tb.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<div id=wrap><p>Notes before.</p>"
@@ -1182,6 +1198,10 @@ async def main():
         # with one small read.
         rg = await browser.new_page(viewport={"width": 900, "height": 600})
         await rg.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await rg.goto("about:blank")
         await rg.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<header><a href=/h>Home</a></header>"
@@ -1302,6 +1322,10 @@ async def main():
         # reader recovers; in Chinese it reads as one natural token.
         nm = await browser.new_page(viewport={"width": 900, "height": 700})
         await nm.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await nm.goto("about:blank")
         await nm.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<a href=/a id=cjk><span>4</span><span>9秒39！中国机器人</span></a>"
@@ -1338,6 +1362,10 @@ async def main():
         # scope is omitted. The real 33-link footer was never named.
         rg2 = await browser.new_page(viewport={"width": 900, "height": 600})
         await rg2.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await rg2.goto("about:blank")
         await rg2.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<header><a href=/h>Home</a></header>"
@@ -1376,6 +1404,10 @@ async def main():
         # passes over an output that has no notice at all.
         cp = await browser.new_page(viewport={"width": 900, "height": 4000})
         await cp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await cp.goto("about:blank")
         await cp.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'><main id=m>"
             + "".join(f'<a href=/x{i} style="display:block;width:200px;height:18px">'
@@ -1410,6 +1442,10 @@ async def main():
         # this session.
         mh = await browser.new_page(viewport={"width": 900, "height": 700})
         await mh.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — without this navigation listener_tag.js
+        # never runs and everything below tests an untagged page. Pinned by C14.
+        await mh.goto("about:blank")
         await mh.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
             "<nav><h2 style='font-size:16px'>Contents</h2>"
@@ -1440,6 +1476,47 @@ async def main():
         _mhline2 = next((l for l in _mhl2.splitlines() if l.startswith("Main heading")), "ABSENT")
         check("MH2 ...and aria-level declares rank too, outranking an earlier <h2>",
               "Quarterly results" in _mhline2, _mhline2[:90])
+
+        # MH3: THE CONSENT-BANNER CASE. Both headings are <h2>, so rank ties and the
+        # old tie-break was document order -- and a consent overlay is injected at
+        # the TOP of the document. Live on gov.uk: `Main heading: "Cookies on
+        # GOV.UK"` while the page's actual subject sat one line below it in the same
+        # call's outline. This is the single line an agent reads to decide whether it
+        # is even on the right page, and on any site with a banner it named the
+        # overlay. <main> is HTML's own declaration of the dominant content.
+        await mh.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<div role=region aria-label='Cookie banner'>"
+            "<h2 style='font-size:20px'>Cookies on GOV.UK</h2>"
+            "<button>Accept</button></div>"
+            "<main><h2 style='font-size:28px'>UK bank holidays</h2>"
+            "<p>Body text.</p></main></body>")
+        await mh.wait_for_timeout(120)
+        _mhl3 = await mh.evaluate("(function(){ " + COLLECT
+                                  + "; return _collectInteractivePage(false,null,'compact',"
+                                    "false,false,'tree'); })()")
+        _mhline3 = next((l for l in _mhl3.splitlines() if l.startswith("Main heading")), "ABSENT")
+        check("MH3 a rank TIE is broken by <main>, so a consent banner injected at the "
+              "top of the document does not become the page's heading",
+              "UK bank holidays" in _mhline3 and "Cookies" not in _mhline3, _mhline3[:100])
+
+        # MH3b THE CONTROL: rank still wins ACROSS the landmark boundary. Without it
+        # MH3 would also pass over a rule that simply preferred anything inside
+        # <main>, which would be a landmark preference rather than a tie-break and
+        # would lose a real <h1> that sits outside one.
+        await mh.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<header><h1 style='font-size:28px'>The Daily Chronicle</h1></header>"
+            "<main><h2 style='font-size:20px'>Today's weather</h2>"
+            "<p>Body text.</p></main></body>")
+        await mh.wait_for_timeout(120)
+        _mhl4 = await mh.evaluate("(function(){ " + COLLECT
+                                  + "; return _collectInteractivePage(false,null,'compact',"
+                                    "false,false,'tree'); })()")
+        _mhline4 = next((l for l in _mhl4.splitlines() if l.startswith("Main heading")), "ABSENT")
+        check("MH3b CONTROL: a declared h1 OUTSIDE <main> still outranks an h2 inside "
+              "it — the landmark breaks ties, it does not override rank",
+              "Daily Chronicle" in _mhline4, _mhline4[:100])
         await mh.close()
 
         await browser.close()
