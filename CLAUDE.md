@@ -260,8 +260,13 @@ Pinned by `node tools/test_permissions.js` (22 checks).
 **Consequence for the first-run UX, which the docs must keep saying:** connected
 is not allowed. The first op on a new origin is *supposed* to fail, and the
 panel's "Permission requested → Allow this site" card is the intended
-interaction. There is no pre-grant input — the card only appears after a
-refusal has recorded the origin.
+interaction. **It is NOT the only way in, and this file said it was for a long
+time:** `renderPreGrant()` resolves the ACTIVE tab's origin through the gate and
+offers Allow for it directly, so a user looking at a site can grant it without
+provoking a refusal first. The two cards never both offer the same origin (the
+pre-grant card hides itself when the refusal card is already offering that exact
+one). Verified live when a user with the gate freshly re-armed could not find the
+refusal card at all.
 
 ---
 
@@ -341,8 +346,10 @@ the only place a site can be granted or the bridge paused**:
 
 UI sections: Connection · Permission requested · Sites ChromeBridge can act on
 (with Revoke) · Recent operations · blocked-input notice · Settings. There is
-**no pre-grant input** — the Allow card only appears after the gate has refused
-something and recorded the origin, which is the deliberate first-run flow.
+**two ways to grant** — the Allow card appears after the gate refuses something
+and records the origin (the deliberate first-run flow), AND `renderPreGrant()`
+offers Allow for the ACTIVE tab's origin with no refusal needed. The claim that
+there is "no pre-grant input" was stale in this file for several entries.
 
 The log lives in storage rather than in either process because **both ends are
 disposable**: the panel document is destroyed whenever the panel closes, and the
