@@ -344,8 +344,8 @@ the only place a site can be granted or the bridge paused**:
 | `bridge_pending_origin` | the gate | drives the "Permission requested → Allow this site" card |
 | `bridge_debugger_block` | `recordDebuggerBlock` | drives the "another extension is blocking trusted input" notice (limitation #12) |
 
-UI sections: Connection · Permission requested · Sites ChromeBridge can act on
-(with Revoke) · Recent operations · blocked-input notice · Settings. There is
+UI sections (each a collapsible `<details>`, fold state in localStorage; the permission card never folds): Connection · Permission requested · Allowed sites
+(with Revoke) · Activity · blocked-input notice · Settings. There is
 **two ways to grant** — the Allow card appears after the gate refuses something
 and records the origin (the deliberate first-run flow), AND `renderPreGrant()`
 offers Allow for the ACTIVE tab's origin with no refusal needed. The claim that
@@ -3771,6 +3771,19 @@ granted in the side panel is refused with the same message the agent gets.
     path at all, which is a thing to CHECK, not to A/B. A live experiment on a
     docstring would have produced a clean null result and left the wrong-tab bug
     sitting there.
+
+    **LIVE-VERIFIED, which #43 made non-optional.** Against a real Chrome holding
+    27 group tabs, all `active: false` — so the user's own tab was outside the
+    group and was exactly what a threading failure would have driven.
+    `[tabs_create_mcp, navigate, read_page]` with no `tabId` on the last two ran
+    **all three steps in one turn**, and `get_url` on the created tab
+    (`1711639058`) returned the navigated url, so the navigation landed where the
+    batch meant. Both controls hold live too: a tabId-less `navigate` with NO
+    create step is still `REFUSED: missing required argument(s) tabId — NOTHING in
+    this batch ran`, and a batch creating a tab while naming a DIFFERENT one
+    explicitly left the new tab at `about:blank` and navigated the named one. The
+    readiness banner fired on the read with "2 network request(s) in flight", with
+    `readyState` reported ALONGSIDE it rather than alone — #43's deletion holding.
 
     Suites: 815 checks. New — B11–B11f (threading, with the explicit-tabId,
     no-create, before-the-create, and pre-flight-still-refuses controls).
