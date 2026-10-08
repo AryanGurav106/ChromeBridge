@@ -1980,11 +1980,26 @@ async function readinessNote(tabId) {
   if (pend) for (const t of pend.values()) if (t !== 'websocket' && t !== 'media') net++;
   if (!r) return '';
   const bits = [];
-  if (r.ready !== 'complete') bits.push(`document.readyState="${r.ready}"`);
   if (r.imgs) bits.push(`${r.imgs} image(s) still loading`);
   if (net) bits.push(`${net} network request(s) in flight`);
   if (r.prog) bits.push(`${r.prog} progress indicator(s) visible`);
   if (r.busy) bits.push(`${r.busy} region(s) marked aria-busy`);
+  // readyState IS NOT A SIGNAL ON ITS OWN, measured across a 24-task live bench:
+  // `readyState="interactive"` raised this banner on SIX fully-settled pages --
+  // rfc-editor info pages, two tiny static aozora cards, man7, loc.gov -- and on
+  // none of them was anything actually arriving. It never once was the useful
+  // firing: the genuine catches in that bench all came from `network request(s) in
+  // flight` (and the readiness fixtures pin aria-busy and progressbar). The reason
+  // is that `interactive` only means DOMContentLoaded has fired and a subresource
+  // somewhere has not finished -- a slow third-party asset on a page whose content
+  // is complete holds it there indefinitely, which is the lazy-image mistake #15
+  // already corrected once, in a second place.
+  //
+  // So it is reported only ALONGSIDE a signal that something is genuinely in
+  // flight, where it adds the useful detail that the document itself has not
+  // finished. An always-on warning is one the reader learns to skip, and this one
+  // had started costing re-checks.
+  if (bits.length && r.ready !== 'complete') bits.push(`document.readyState="${r.ready}"`);
   if (!bits.length) return '';
   // Says "any coordinate" rather than "box() coordinates": box() is opt-in now
   // (`geometry=true`), so naming it would describe a field most reads do not
@@ -10832,12 +10847,20 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
           }
         } catch (e2) {}
         if (_ctlTotal >= 20 && _noBox * 2 >= _ctlTotal) {
-          const _domCtl = _ctlTotal;
-          L.push(`  - NOTE: the DOM holds ${_domCtl} controls but only ${out.length} were collectable.`
-               + ` This tab is in the BACKGROUND (visibilityState="hidden"), and some sites defer`
-               + ` layout until a tab is visible, leaving content display:none. If this page looks`
-               + ` emptier than it should: take a computer screenshot (that activates rendering`
-               + ` without focusing the tab) and read again.`);
+          // REPORT THE NUMBER THE GATE IS ABOUT, FROM ONE POPULATION. This printed
+          // `_ctlTotal` (form tags only, document-wide) against `out.length` (every
+          // collected entry, including handler-bound divs) -- two different
+          // populations, so on demoqa it read "the DOM holds 40 controls but only 91
+          // were collectable", where the collectable figure EXCEEDS the stated total
+          // and the sentence refutes itself. #22's rule: a ratio's numerator and
+          // denominator must come from the same population. The gate tests how many
+          // controls have NO LAYOUT BOX, so that is what the note states.
+          L.push(`  - NOTE: ${_noBox} of ${_ctlTotal} form controls in this document have NO layout`
+               + ` box. This tab is in the BACKGROUND (visibilityState="hidden"), and some sites`
+               + ` defer layout until a tab is visible. A collapsed menu or an unopened panel also`
+               + ` looks like this and is normal. If this page looks emptier than it should: take a`
+               + ` computer screenshot (that activates rendering without focusing the tab) and read`
+               + ` again.`);
         }
       }
     } catch (e) {}
@@ -11561,8 +11584,26 @@ function _searchTextPage(pattern, opts) {
   // visibility rules this walk applies), no indexOf (which finds the wrong
   // occurrence when the string repeats), and the 4-hop bound is kept as `hops`.
   const SEP = ' | ';
+  // ONE HOP. The bound used to be 4 hops, and the condition was "the element's own
+  // text cannot supply the caller's context_chars" -- so with context_chars=300 or
+  // 600 a short <a> walked out of its row, out of its list item, and quoted the
+  // WHOLE LIST. Measured live on three pages: six aozora links each quoted the same
+  // ~4,000-char run of siblings with nothing saying which record they belonged to
+  // (2 extra calls), and a gov.uk topic link came back as one ~900-char blob of
+  // every link in the section (1 extra call).
+  //
+  // One hop is the right bound because of what one hop IS: from a cell you reach
+  // the ROW, from a link you reach the LIST ITEM, from a <dt> you reach the <dl>.
+  // That is the record -- the unit that holds a field's neighbours, which is the
+  // whole reason to climb (#32/Q1b, and D15's columns). The SECOND hop reaches the
+  // collection -- the table, the list, the nav -- and a collection is not context
+  // for one of its members.
+  //
+  // So D5 ("<dt>Published:</dt> cannot reach its <dd>") and D9 (the over-climb) are
+  // the same dial, and this is the setting that satisfies both: the <dl> is one hop
+  // from the <dt>, and the <ul> is two from the <a>.
   const _wants = (p, src) =>
-    p.hops < 4 && (p.at < CTX || src.length - (p.at + p.len) < CTX);
+    p.hops < 1 && (p.at < CTX || src.length - (p.at + p.len) < CTX);
   const _ctx = (p, src, bnds) => {
     const s2 = Math.max(0, p.at - CTX);
     const e2 = Math.min(src.length, p.at + p.len + CTX);
@@ -12657,32 +12698,36 @@ async function handleOp({ id, op, params }) {
                    `with get_url before acting on the page — anything you read now belongs ` +
                    `to ${now}, not to what you asked for.`;
         } else {
-          // A TITLE THAT IS THE URL IS NOT A TITLE. Chrome fills `tab.title` with a
-          // DISPLAY FORM of the url — the scheme stripped — until the document sets
-          // one, so reading it at commit time printed
-          // `title: nginx.org/en/docs/http/ngx_http_proxy_module.html` for a page
-          // whose <title> is `Module ngx_http_proxy_module`. Measured on three
-          // unrelated sites, and once correct and incorrect in the SAME batch on the
-          // SAME tab, which rules out the site and leaves timing. #40 fixed the
-          // commit; this is the same race surviving one field over.
+          // ASK THE DOCUMENT, NOT THE TAB. `tab.title` is Chrome's DISPLAY string:
+          // when the document has set no title Chrome substitutes a rendering of the
+          // url, and that substitute is not stable — across this bench it appeared as
+          // the landed url after a redirect, a long url TRUNCATED WITH AN ELLIPSIS,
+          // a url carrying a #fragment, and once as a plain ascii url with none of
+          // those (cause never established). #42 tried to RECOGNISE that substitute
+          // by comparing it against the url; five live sightings later it had four
+          // distinct shapes and one unexplained, which is the signature of a matcher
+          // that reads as general and measures as narrow (#21).
           //
-          // Substituting the url is the worst available answer, because it is
-          // indistinguishable from a page that genuinely declares no title. The
-          // fallback is DETECTABLE rather than guessed (it is exactly the url with
-          // the scheme removed), so wait briefly for the real one and otherwise say
-          // the page has not supplied it. Bounded at ~600ms and paid only when the
-          // title still looks like the url — a settled page costs nothing.
-          const _urlish = (s) => String(s || "").replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
-                                                .replace(/\/+$/, "");
-          let title = t2.title || "";
-          for (let k = 0; k < 6 && title && _urlish(title) === _urlish(t2.url); k++) {
-            await new Promise((r) => setTimeout(r, 100));
-            try { title = (await chrome.tabs.get(t.id)).title || title; } catch (e) {}
-          }
-          result = (title && _urlish(title) !== _urlish(t2.url))
+          // `document.title` is the DECLARATION. It is empty exactly when the page
+          // declares no title, so the question needs no detector, no normalisation
+          // and no fixture per shape — the same move as every other matcher this
+          // codebase replaced with something the page states. One injected read,
+          // and it degrades to silence if the page cannot be scripted.
+          let title = "";
+          try {
+            const _r = await chrome.scripting.executeScript({
+              target: { tabId: t.id }, world: "MAIN",
+              // NAMED, not an arrow: an arrow in a property slot takes the KEY
+              // as its inferred name ("func"), which makes every such injection
+              // indistinguishable from every other at any call site that
+              // dispatches on the function name.
+              func: function _declaredTitle() { return document.title; },
+            });
+            title = (_r && _r[0] && typeof _r[0].result === "string") ? _r[0].result.trim() : "";
+          } catch (e) {}
+          result = title
             ? `Navigated to ${t2.url}, title: ${title}`
-            : `Navigated to ${t2.url} — the page has not supplied a <title>; Chrome is ` +
-              `showing the url in its place, so there is no page title to report.`;
+            : `Navigated to ${t2.url} (the page declares no <title>).`;
         }
         break;
       }
@@ -13633,7 +13678,26 @@ async function handleOp({ id, op, params }) {
               }
               _want = "";   // handled; skip the text containment test below
             }
-            if (r.ok && _want && _shown != null) {
+            // A STATE WORD CANNOT CONTAIN AN OPTION LABEL, so do not ask it to.
+            // For a checkbox or radio the readback is `checked`/`unchecked` -- a
+            // STATE, not contents. The boolish branch above handles the values that
+            // mean a state. Anything else the caller sent is an option LABEL naming a
+            // member of a radio group ("other"), and comparing that against the word
+            // "checked" is a category mismatch that can only ever report a false
+            // failure. Measured live: `form_input(ref_314, "other")` returned "the
+            // write reported success but did NOT land. The field still reads
+            // 'checked'" while read_page showed `(checked)` and
+            // query_elements("input[type=radio]:checked") returned exactly that one
+            // radio -- the write HAD landed. It also attached the Monaco
+            // mirror-textarea advice, pointing at a cause that cannot apply to a
+            // radio, and following that advice un-ticks a correctly-ticked control.
+            //
+            // #25's regression class for the third time: the check is right, it was
+            // reading the wrong field. The write path's own verdict is what stands
+            // here -- it resolves the group member by label and already reports a
+            // genuine miss by naming the valid options (verified live on T18).
+            const _stateWord = (_shown === 'checked' || _shown === 'unchecked');
+            if (r.ok && _want && _shown != null && !_stateWord) {
               const _got = String(_shown);
               // Compare on the marked-cut prefix: the readback may be bounded, so a
               // long write can only be checked as far as we can see it.

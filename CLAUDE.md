@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 18 suites, 780 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 18 suites, 784 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -491,7 +491,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 18 suites, 780 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 18 suites, 784 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -3454,6 +3454,104 @@ granted in the side panel is refused with the same message the agent gets.
     MH3/MH3b (heading tie-break, with the rank-still-wins control), B5f/B5f2/B5h
     (addresses-the-old-page, with the screenshot control), C18/C19 (query_elements'
     two silences).
+
+43. **THE RERUN SAID THE FIXES MADE IT WORSE, SO THIS ROUND SUBTRACTS.** A 24-task
+    pre-registered head-to-head on the post-#42 build: 20 decided pairs, CB fewer
+    calls in 15, **p = 0.0414** — it still clears the bar, and it is WEAKER than the
+    pre-fix baseline (19/21, p = 0.0002). Our own total went **172 → 188 (+9.3%)**
+    while the unchanged control arm went 213 → 226 (+6.1%), so shared drift explains
+    part of it and not all: we rose more than the control. **#42 did not widen the
+    lead, it narrowed it.** 48/48 runs correct on both arms, which is saturated and
+    cannot discriminate — same model both sides.
+
+    **The defects had MIGRATED, and that is the finding.** Across 24 tasks not one
+    agent reported a missing element; `lost_identities` is 0/32 sites and Mind2Web
+    recall is unchanged. The collector — the part that took a year — is done. All
+    seven regressions were in a thin outer layer of MESSAGES, BATCH RULES, READBACK
+    VERDICTS and CONTEXT WINDOWS, and every one was *a guess about when to apply a
+    rule*: exactly the class #27/#28 deleted from the collector, reintroduced at the
+    edges. So three of them were not fixed, they were **removed**, which is #24's
+    precedent and the most reliable move in this log.
+    - **The title detector: deleted.** #42 compared Chrome's DISPLAY string
+      (`tab.title`) against the url to decide whether it was a real title. Five live
+      sightings produced FOUR shapes — a redirect, a long url truncated with an
+      ELLIPSIS, a `#fragment`, and one plain-ascii url with none of those and no
+      explanation. A matcher needing a new case per shape is #21's signature.
+      `document.title` is the DECLARATION, empty exactly when the page declares
+      nothing, so there is one rule and no shapes (N7–N7c; **the control asserts no
+      url ever reaches the title slot**, which covers all four at once). The injected
+      reader is a NAMED function, because an arrow in a property slot takes the KEY
+      as its inferred name and becomes indistinguishable from every other injection.
+    - **`readyState` as a readiness trigger: deleted.** It raised the banner on SIX
+      fully-settled pages and was never once the useful firing — every genuine catch
+      came from in-flight requests. `interactive` only means a subresource somewhere
+      is unfinished, which a slow third-party asset holds indefinitely: the lazy-image
+      mistake #15 corrected once, in a second place. Now reported only ALONGSIDE a
+      real signal, where it adds detail.
+    - **The hidden-tab note's arithmetic.** It printed form-tag controls against the
+      whole listing — two populations — so demoqa read "the DOM holds 40 controls but
+      only 91 were collectable", a sentence that refutes itself. #22's rule. It states
+      the gate's own number now, and names a collapsed menu as a normal cause.
+
+    **THE CLIMB WAS ONE DIAL SET TWO WAYS, AND ONE HOP IS THE SETTING.** #42 changed
+    the stopping rule from "the nearest ancestor containing more than the match" to
+    "climb until the caller's `context_chars` is satisfied" — which fixed D5
+    (`<dt>Published:</dt>` could not reach its `<dd>`) and then, with
+    `context_chars=300`, walked a short `<a>` out of its row, out of its list item,
+    and quoted the WHOLE LIST. Three live sightings, two cost calls: six aozora links
+    each quoting the same ~4,000-char run of siblings, and a gov.uk link returning one
+    ~900-char blob of every topic. **The fixtures were green throughout while Q1b was
+    quoting the entire page.** One hop is right because of what one hop IS — from a
+    cell the ROW, from a link the LIST ITEM, from a `<dt>` the `<dl>`: the record,
+    which is the unit holding a field's neighbours. The SECOND hop reaches the
+    collection, and a collection is not context for one of its members. Verified both
+    ways: at 4 hops the fixture leaks both sibling records, at 1 hop it returns
+    `Gamma Report (edition 33, id 433)` (Q1n/Q1n2).
+
+    **TWO MORE OF MINE, both the same shape as a bug this log already records.**
+    - **A state word cannot contain an option label.** `form_input(ref, "other")` on a
+      radio returned "the write reported success but did NOT land. The field still
+      reads 'checked'" — the write HAD landed (`read_page` showed `(checked)`,
+      `query_elements("input[type=radio]:checked")` returned that one radio). The
+      readback is a STATE for a checkbox/radio and the sent value was an option LABEL;
+      comparing them is a category mismatch that can only ever report a false failure,
+      and it attached Monaco mirror-textarea advice whose remedy UN-TICKS a correctly
+      ticked control. #25's regression class for the third time: the check is right, it
+      was reading the wrong field. The containment test no longer runs against a state
+      word; a genuine text miss is still caught.
+    - **A click does not invalidate the keystrokes it was issued for.** #42 made
+      `computer(action="key"/"type")` count as addressing the previous page, because a
+      keystroke follows focus. True in the abstract and wrong inside a batch: the page
+      change was caused by the batch's OWN preceding step, and `click(ref) -> type ->
+      key` is how every combobox and date picker on the web is driven. It skipped four
+      steps in one live batch and two in another, ~4 wasted calls — and the message
+      said "names a ref or coordinate" for a step that names NEITHER, in the same
+      output stating that ref-free steps keep running (C15's class, in text I wrote).
+      Focus is ESTABLISHED by a ref step in the same batch and invalidated only by a
+      change the batch did not cause (B5h2, with B5h3 the control that a keystroke
+      with nothing before it is still skipped and the message now says FOCUS).
+
+    **WHAT THE BENCH SETTLED THAT IS WORTH NOT RE-OPENING.** Every "big alternative"
+    is now measured and rejected: browser-use's admission rules are **84.5% junk**
+    (#33), the Chrome AX tree is **7.15x the tokens for 4pp recall** and needs an
+    attach #12 proves gets refused on login pages (#17), MindAct's `cleaned_html` is
+    33.6x. And the control arm's own defects are worse than ours — **ref-click false
+    success 12 times across 9 of 24 tasks, twice on a submit button**, `find` hard
+    failing with a 400 on large pages, no checked/selected state in the listing, and a
+    textarea's real contents rendered identically to a placeholder (which is fix #6,
+    the oldest entry in this file). The architecture question is closed.
+
+    **THE PROCESS DEFECT, which is the actual lesson.** #42 shipped 15 fixes with
+    fixtures and NO live pass before committing; seven regressions followed. Every
+    entry that went well (#26, #27, #28) measured on a corpus or a live run BEFORE
+    shipping. Fixtures encode what you thought of — Q1b passed while quoting a whole
+    page, and B5/B5b encoded the old rule rather than its invariant. A live smoke pass
+    is cheap next to a 48-run benchmark that has to find it for you.
+
+    Suites: 784 checks. New — Q1n/Q1n2 (the climb stops at the record, with the
+    sibling-leak control), B5h2/B5h3 (a click establishes focus; nothing before it
+    does not), N7–N7c rewritten around `document.title` with the no-url and
+    unscriptable-page controls.
 
 ## Debugging starting points
 

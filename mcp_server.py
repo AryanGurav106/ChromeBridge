@@ -2986,6 +2986,22 @@ async def browser_batch(
     # at all (screenshot, wait, zoom).
     _FOCUS_ACTIONS = {"type", "key"}
 
+    def _is_focus_step(item):
+        """Does this step address whatever currently has FOCUS?
+
+        Split out from `_plans_against_page` because the two need DIFFERENT answers
+        once the batch is running. A ref is invalidated by any page change -- refs are
+        per-document, full stop. Focus is not: it is invalidated by a change the batch
+        did not cause, and ESTABLISHED by one it did. `click(ref) -> type -> key` is
+        how every widget on the web is driven, and treating the click's own DOM change
+        as invalidating the keystrokes it was issued for skipped four steps in one
+        live batch and two in another, ~4 wasted calls.
+        """
+        it = item or {}
+        if str(it.get("name") or "") != "computer":
+            return False
+        return str((it.get("input") or {}).get("action") or "").strip().lower() in _FOCUS_ACTIONS
+
     def _plans_against_page(item):
         """Does this step's TARGET resolve against the page as it was when the
         batch was planned? That is the ONLY question. It is not "can this tool
@@ -3039,6 +3055,8 @@ async def browser_batch(
 
     _seen_tabs: dict = {}
     _stale_why = None      # the page moved under the plan; set once, never cleared
+    _acted = False         # an earlier step of THIS batch named a ref/coordinate and ran,
+                           # so any focus it set is the focus later steps meant
     _dropped: list = []    # ref-naming steps skipped after that, named once at the end
     for i, item in enumerate(actions):
         name = item.get("name")
@@ -3056,13 +3074,20 @@ async def browser_batch(
         # dropped the `get_page_text` behind it, costing a whole agent turn (~3.6s)
         # to reissue a call the batch was already holding.
         if _stale_why:
-            if _ref_at[i]:
+            _focus = _is_focus_step(item)
+            # A focus step survives when the batch itself set the focus. Anything
+            # naming a ref or coordinate does not, because refs are per-document.
+            if _ref_at[i] and not (_focus and _acted):
                 _dropped.append(name)
+                _why = ("targets whatever has FOCUS, and nothing earlier in this batch "
+                        "set it, so the focus belongs to the PREVIOUS page"
+                        if _focus else
+                        "names a ref or coordinate planned against the PREVIOUS page")
                 out.append(TextContent(type="text", text=(
-                    f"[{i}] {name} SKIPPED: {_stale_why}, and this step names a ref "
-                    f"or coordinate planned against the PREVIOUS page, so it is now "
-                    f"STALE and may address something else. Nothing was dispatched. "
-                    f"Later steps that name no ref are still running.")))
+                    f"[{i}] {name} SKIPPED: {_stale_why}, and this step {_why}, so it "
+                    f"is now STALE and may address something else. Nothing was "
+                    f"dispatched. Later steps that do not address the old page are "
+                    f"still running.")))
                 continue
             # NOTHING ELSE STOPS THE BATCH. There is no second question to ask:
             # `_plans_against_page` already decided, from this step's own input,
@@ -3088,6 +3113,11 @@ async def browser_batch(
         except Exception as e:
             out.append(TextContent(type="text", text=f"[{i}] {name} ERROR: {e} — batch stopped"))
             break
+        # A step that named a ref or coordinate and RAN has put the focus where the
+        # rest of this batch expects it. Recorded after the call, not before, because
+        # a step that threw established nothing.
+        if _ref_at[i] and not _is_focus_step(item):
+            _acted = True
         if isinstance(res, list):
             out.append(TextContent(type="text", text=f"[{i}] {name}:"))
             out.extend(res)

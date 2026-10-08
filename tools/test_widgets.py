@@ -1232,6 +1232,18 @@ async def main():
             # Q1k: two matches inside ONE element, with a context window bigger than
             # the element, so both windows cover all of it.
             "<pre>SIGQUIT      3           3\nSIGUSR1     10          30\n</pre>"
+            # Q1n: THE OVER-CLIMB SHAPE. A short <a> inside a list item that carries
+            # its own distinguishing metadata, inside a LONG list. The record is the
+            # <li>; the <ul> is the collection. Measured live on two sites: the climb
+            # walked to the collection and every hit quoted the same run of siblings,
+            # costing 1-2 calls each. The list must be long enough that quoting it
+            # would be obviously wrong.
+            "<ul>"
+            "<li><a href=/a>Alpha Report</a> <span>(edition 11, id 431)</span></li>"
+            "<li><a href=/b>Beta Report</a> <span>(edition 22, id 432)</span></li>"
+            "<li><a href=/c>Gamma Report</a> <span>(edition 33, id 433)</span></li>"
+            "<li><a href=/d>Delta Report</a> <span>(edition 44, id 434)</span></li>"
+            "</ul>"
             "</body>")
         await meta.wait_for_timeout(150)
 
@@ -1285,6 +1297,17 @@ async def main():
             for h in (rr.get("hits") or []):
                 if h["match"] not in h["context"]:
                     bad.append(f"{pat}: {h['context']!r}")
+        # Q1n/Q1n2: the climb stops at the RECORD, not the COLLECTION. One hop from
+        # the <a> is the <li>, which carries the metadata that distinguishes this
+        # entry from its siblings; two hops is the <ul>, which is every entry and
+        # therefore identifies none of them.
+        r = await msearch("Gamma Report", contextChars=300)
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1n a link in a list reaches its own record's metadata",
+              "edition 33" in ctx and "id 433" in ctx, f"context={ctx!r}")
+        check("Q1n2 ...and NOT the sibling records, which would identify nothing",
+              "Alpha Report" not in ctx and "Delta Report" not in ctx, f"context={ctx!r}")
+
         check("Q1m CONTROL: context always contains the match verbatim",
               not bad, "; ".join(bad))
         await meta.close()

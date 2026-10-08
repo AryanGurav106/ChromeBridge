@@ -288,6 +288,38 @@ async def main():
           [r[0] for r in RAN] == ["navigate", "fake_tool"] and "SKIPPED" in t,
           f"ran={[r[0] for r in RAN]} said={t[-150:]!r}")
 
+    # B5h2: THE LIVE SHAPE THAT #42 BROKE. `click(ref) -> type -> key` is how every
+    # combobox, date picker and react-select on the web is driven. The click's OWN
+    # DOM change tripped the guard, so the keystrokes it was issued for were skipped
+    # as "planned against the PREVIOUS page" -- four steps in one live batch and two
+    # in another, ~4 wasted calls, on a page the batch itself had just changed.
+    # Focus is ESTABLISHED by a ref step in the same batch; only a change the batch
+    # did not cause invalidates it.
+    install([SAME, MOVED, SAME, SAME, SAME])
+    out = await ms.browser_batch([
+        {"name": "fake_act", "input": {"tabId": 1, "ref": "ref_9"}},
+        {"name": "computer", "input": {"action": "type", "text": "Maths", "tabId": 1}},
+        {"name": "computer", "input": {"action": "key", "text": "Enter", "tabId": 1}},
+    ])
+    check("B5h2 a click that changes the page does NOT invalidate the keystrokes it "
+          "was issued for",
+          [r[0] for r in RAN] == ["fake_act", "computer", "computer"],
+          f"ran={[r[0] for r in RAN]} said={text_of(out)[-150:]!r}")
+
+    # B5h3 IS ITS CONTROL and keeps B5f meaningful: with NO ref step before it, a
+    # keystroke after a page change still addresses the old page's focus.
+    install([SAME] * 8)
+    out = await ms.browser_batch([
+        {"name": "navigate", "input": {"url": "https://b.test/", "tabId": 1}},
+        {"name": "computer", "input": {"action": "key", "text": "Enter", "tabId": 1}},
+    ])
+    check("B5h3 CONTROL: a keystroke with nothing before it to set focus is still "
+          "skipped, and the message says FOCUS rather than naming a ref",
+          [r[0] for r in RAN] == ["navigate"]
+          and "FOCUS" in text_of(out)
+          and "names a ref or coordinate" not in text_of(out),
+          f"ran={[r[0] for r in RAN]} said={text_of(out)[-180:]!r}")
+
     # B5f2 IS THE OTHER DIRECTION, and it is what stops B5f being satisfied by
     # blacklisting the whole `computer` tool -- which is exactly what the old
     # whitelist did, "absent even for action=screenshot". A screenshot has no

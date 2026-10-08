@@ -181,15 +181,10 @@ const chromeMock = {
         // 10-task eval against a slow host, from a fresh about:blank tab.
         if (!state.navStalls) {
           t.url = props.url;
-          // CHROME FILLS tab.title WITH A DISPLAY FORM OF THE URL (scheme stripped)
-          // until the document sets one. The mock always set a distinct title, so
-          // the live defect -- `title: nginx.org/en/docs/...` for a page whose
-          // <title> is `Module ngx_http_proxy_module` -- could not be reproduced
-          // here at all. Three unrelated sites hit it; one of them reported
-          // correctly and incorrectly in the same batch on the same tab.
-          t.title = state.titleFallback
-            ? String(props.url).replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
-            : "loaded:" + props.url;
+          // tab.title is Chrome's DISPLAY string and the op no longer reads it;
+          // the declared title comes from document.title, stubbed per test via
+          // `inline:docTitle`. Kept here only so the tab object stays realistic.
+          t.title = String(props.url).replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
           t._titleIn = state.titleArrivesAfter || 0;
         }
         scheduleComplete(id);
@@ -1049,37 +1044,39 @@ const FIELDS3 = () => ([
       r.ok && /^Navigated to/.test(String(r.result)), String(r.result).slice(0, 110));
   });
 
-  await test("navigate never substitutes the url for a page title", async () => {
-    // D28, three unrelated sites, and once right and wrong in ONE batch on ONE tab
-    // -- which rules out the site and leaves timing. #40 fixed the COMMIT; this is
-    // the same race surviving one field over. Substituting the url is the worst
-    // available answer because it is indistinguishable from a page that genuinely
-    // declares no title.
+  await test("navigate reports the DECLARED title, never a rendering of the url", async () => {
+    // #42 compared Chrome's DISPLAY string (tab.title) against the url to decide
+    // whether it was a real title. Five live sightings produced FOUR shapes -- a
+    // redirect, an ellipsis-truncated long url, a #fragment, and one plain ascii url
+    // with none of those and no explanation. A matcher that needs a new case per
+    // shape is the #21 signature. `document.title` is the DECLARATION and is empty
+    // exactly when the page declares nothing, so there is one rule and no shapes.
     resetState();
-    state.titleFallback = true;
+    currentStubs["_declaredTitle"] = () => "Module ngx_http_proxy_module";
     let r = await callOp("navigate", { tabId: 1, url: "https://nginx.org/en/docs/a.html" });
-    check("N7 a title that is just the url is NOT reported as the page's title",
-      r.ok && !/title: nginx\.org/.test(String(r.result))
-        && /has not supplied a <title>/.test(String(r.result)),
-      String(r.result).slice(0, 150));
-
-    // THE CONTROL. Without it N5 would also pass over a navigate that stopped
-    // reporting titles altogether.
-    resetState();
-    r = await callOp("navigate", { tabId: 1, url: "https://example.com/p" });
-    check("N7b CONTROL: a real title is still reported",
-      r.ok && /title: loaded:https:\/\/example\.com\/p/.test(String(r.result)),
-      String(r.result).slice(0, 150));
-
-    // ...and the SECOND control: the brief wait must actually be what recovers the
-    // title, not merely the detection suppressing it. Here the document sets its
-    // title a beat after the commit, which is the live shape.
-    resetState();
-    state.titleFallback = true;
-    state.titleArrivesAfter = 2;
-    r = await callOp("navigate", { tabId: 1, url: "https://nginx.org/en/docs/b.html" });
-    check("N7c ...and a title that arrives a beat late is picked up, not discarded",
+    check("N7 the title comes from document.title, not from the tab's display string",
       r.ok && /title: Module ngx_http_proxy_module/.test(String(r.result)),
+      String(r.result).slice(0, 150));
+
+    // THE CONTROL that no url ever reaches the title slot. Every one of the four
+    // live shapes is a url, so asserting the url is absent covers all of them at
+    // once -- which is the point of reading a declaration instead of matching.
+    resetState();
+    currentStubs["_declaredTitle"] = () => "";
+    r = await callOp("navigate", { tabId: 1, url: "https://nginx.org/en/docs/b.html?x=1#frag" });
+    check("N7b CONTROL: a page that declares no title says so, and the url never "
+      + "appears as the title",
+      r.ok && /declares no <title>/.test(String(r.result))
+        && !/title: /.test(String(r.result)),
+      String(r.result).slice(0, 150));
+
+    // ...and the degradation control: a page that cannot be scripted must still
+    // report the navigation rather than failing it.
+    resetState();
+    currentStubs["_declaredTitle"] = () => { throw new Error("no access"); };
+    r = await callOp("navigate", { tabId: 1, url: "https://nginx.org/en/docs/c.html" });
+    check("N7c ...and an unscriptable page still reports the navigation",
+      r.ok && /^Navigated to https:\/\/nginx\.org\/en\/docs\/c\.html/.test(String(r.result)),
       String(r.result).slice(0, 150));
   });
 
