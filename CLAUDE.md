@@ -3759,27 +3759,38 @@ granted in the side panel is refused with the same message the agent gets.
     required argument is still refused with nothing executed.
 
     **Discoverability is part of the fix, not a note about it** — #26 records a
-    capability the agent cannot find not being a capability. **And I put it in the
-    wrong channel first, which a canary caught before the eval did.** The shape
-    went only into the `instructions=` field #45 added; a throwaway subagent asked
-    to quote its own system prompt reported NO chromebridge instructions at all,
-    and a scan of 512 subagent transcripts confirms it: the server instructions
-    field reaches a subagent **zero** times (its one apparent hit is an agent
-    quoting `mcp_server.py` after reading it), while tool DESCRIPTIONS reach them
-    constantly — `read_page`'s text in 83 transcripts, `browser_batch`'s in 111.
-    So the one-turn start was invisible to exactly the agents an eval is run with,
-    and the eval would have scored #46 as worthless — not because threading fails,
-    but because nothing told anyone it existed. It now lives in `browser_batch`'s
-    DESCRIPTION, with the boundary stated: omitting `tabId` OUTSIDE such a batch
-    still means the user's active tab. `instructions=` keeps its copy, because it
-    is right for a main session; it is simply not sufficient alone. C20d pins the
-    docstring and FAILS against the instructions-only state this entry shipped in.
+    capability the agent cannot find not being a capability — and the shape went
+    into `browser_batch`'s DESCRIPTION as well as the `instructions=` field #45
+    added, with the boundary stated: omitting `tabId` OUTSIDE such a batch still
+    means the user's active tab. C20d pins the description.
 
-    **The general rule, because this will recur:** a channel is only a channel for
-    the audience that receives it. `instructions=` reaches a main session (and
-    #45's ToolSearch guidance still belongs there, since it must be read before
-    any tool loads). Tool descriptions reach everyone. Anything a SUBAGENT must
-    know goes in a description.
+    **THE REASON RECORDED FOR THAT WAS WRONG, AND IT WAS PUSHED BEFORE IT WAS
+    CHECKED.** The claim was that `instructions=` reaches a subagent ZERO times,
+    evidenced by a canary that saw none and by a scan of 512 subagent transcripts
+    finding no hits. **The scan could not have found any: the instructions were
+    added one hour earlier, so every transcript in it predates their existence.**
+    It measured the past and was read as measuring the mechanism — a before/after
+    confound of the plainest kind, in a log whose own #25 says an ablation
+    measures the code against the sample and cannot measure the sample.
+    What the transcripts actually show, read properly: a subagent that loads a
+    chromebridge tool receives the instructions as an `addedBlocks` attachment
+    alongside the ToolSearch result, and one that loads NO tool from the server
+    receives nothing. That is the real rule — **`instructions=` is delivered when
+    the server's tools come into play, not at spawn** — and it explains both
+    canaries instead of only the first.
+
+    **What the canary DID establish, and it is the load-bearing half:** the
+    subagent received the **OLD** `browser_batch` description, verbatim from its
+    transcript, *after* a `/mcp` reconnect. Tool schemas are cached in the parent
+    session, and the reconnect did not refresh one already loaded there. #27's
+    debugging row says a reconnect suffices for subagents and adds that whether
+    the PARENT's already-loaded schema refreshes is untested; this is the case
+    where it mattered. **Verify a description change by reading it back out of a
+    subagent's transcript, not from the agent's own report and not from the file.**
+
+    So putting the guidance in BOTH channels is still right, for a reason the
+    original note got backwards: not because `instructions=` fails to arrive, but
+    because the two arrive on different schedules and under different caches.
 
     **What this says about the method.** #45's measurement said tab discovery was
     1.65 turns/run and could not separate the docstring from my own prompt. The
