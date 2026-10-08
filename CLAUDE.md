@@ -3265,11 +3265,16 @@ granted in the side panel is refused with the same message the agent gets.
     and the pages that pay are exactly the pages where it would save a call.
     By #38's arithmetic that reads Pareto-positive: ~770 tokens against ~12,000
     and 3.6s for the turn it saves.
-    **NOT SHIPPED.** #26's rule for this change is explicit — measure recall AND
-    tokens together and keep it only if Pareto-positive — and the recall half was
-    not run. Shipping on the arithmetic alone would be reasoning, and reasoning
-    without measurement has been wrong repeatedly in this log. The cost side is
-    done; whoever picks it up starts half-measured.
+    **NOT SHIPPED, and #44 settled it for good.** #26's rule for this change is
+    explicit — measure recall AND tokens together and keep it only if
+    Pareto-positive — and the recall half was not run here. Shipping on the
+    arithmetic alone would be reasoning, and reasoning without measurement has
+    been wrong repeatedly in this log. **The recall half was run in #44 and
+    REFUTED the reading above:** it buys +6.9pp first-read reachability for +18.7%
+    tokens, and 70% of that spend lands on tasks that gain nothing — so "the pages
+    that pay are exactly the pages where it would save a call" is false. Two
+    narrower predicates were tested and the waste fraction did not move. Do not
+    re-open this with another predicate.
 
     **A DEFECT THAT DISSOLVED ON INVESTIGATION.** An agent reported
     `get_page_text` truncating at 2,075 of 2,556 chars; the default is 30,000, so
@@ -3451,7 +3456,9 @@ granted in the side panel is refused with the same message the agent gets.
     **NOT FIXED, deliberately:** D21 (the viewport-scoped listing missing a below-fold
     form) stays unshipped for the reason #41 recorded — the cost half is measured at
     median +1.1% and the RECALL half is not, and #26's rule for that change is to
-    measure both and keep it only if Pareto-positive.
+    measure both and keep it only if Pareto-positive. **The recall half has since
+    been run (#44) and the answer is a firm no**, on evidence the cost half could
+    not produce.
 
     Suites: 780 checks. New — T24/T25 (budget reconciliation), Q1i–Q1m (the climb,
     declared columns, match offsets, with the context-contains-match invariant),
@@ -3559,6 +3566,67 @@ granted in the side panel is refused with the same message the agent gets.
     sibling-leak control), B5h2/B5h3 (a click establishes focus; nothing before it
     does not), N7–N7c rewritten around `document.title` with the no-url and
     unscriptable-page controls.
+
+44. **D21'S RECALL HALF, RUN AT LAST — AND IT SAYS NO, FOR A REASON THE COST HALF
+    COULD NOT SEE.** #41 priced admitting off-viewport FORM CONTROLS to the
+    unscoped string listing (median +1.1% listing chars on 8 frozen sites) and
+    deliberately did not ship it, because #26's rule for this exact change is to
+    measure recall AND tokens together and keep it only if Pareto-positive. The
+    recall half sat unrun through two entries. Ruler: `bench_trajectory.py`,
+    imported and used UNCHANGED so the metric cannot drift — only the collector
+    source is swapped. 22 tasks, 173 steps, 16 sites never used in development.
+
+    | arm | first-read | tokens | Δ tok | reads | steps gained | waste |
+    |---|---|---|---|---|---|---|
+    | base | 51.4% | 294,328 | 0.0% | 263 | 0 | — |
+    | **v_any** (#41's variant) | **58.4%** | 349,324 | **+18.7%** | 251 | 12 | **70%** |
+    | v_form | 57.2% | 336,179 | +14.2% | 253 | 10 | 70% |
+    | v_blank | 57.2% | 336,444 | +14.3% | 253 | 10 | 71% |
+
+    Drift control (base run twice): tokens +1.59%, first-read **+0.000** — so the
+    recall gain is exact and both deltas clear the floor. `recall_structured`
+    (96.0%) and `task_complete` (81.8%) are identical across all four arms, which
+    is the cross-check that nothing but the string listing moved.
+
+    **70% OF THE EXTRA TOKENS LAND ON TASKS THAT GAIN NOTHING.** 16 of 22 tasks
+    pay and get no reachability back; discogs pays **+88.4%** for 8/26 → 8/26.
+    All-in, **4,583 tokens per step made reachable**. That falsifies the inference
+    #41 drew from the cost half alone — *"the pages that pay are exactly the pages
+    where it would save a call"*. Paying barely predicts gaining: median +16.3%
+    among the six gainers against +7.4% among the sixteen non-gainers. **A cost
+    measured without its benefit cannot tell a targeted rule from an
+    indiscriminate one**, and that is the whole reason #26 demands both halves.
+
+    **THE TARGETING RESCUE IS DEAD TOO, which is the part worth not re-opening.**
+    The obvious reading of a 70% waste rate is that the rule is indiscriminate
+    rather than expensive, so two narrower admissions were tested: `v_form` (the
+    document declares the control part of a `<form>`) and `v_blank` (…and that
+    form shows the viewport nothing — the exact shape of the live failures E4, E9,
+    R4, R9). Both buy LESS recall for barely less cost and **the waste fraction
+    does not move: 70%, 70%, 71%.** The waste is not stray search boxes in the
+    chrome; it is off-viewport form controls admitted on pages whose target was
+    never a form control. No form-shaped predicate separates those populations, so
+    there is nothing left to target.
+
+    **THE CAVEAT, STATED RATHER THAN BURIED.** Mind2Web is serialized HTML in a
+    blank browser with most external CSS gone (#18), so documents are unstyled and
+    tall and far more falls below the fold than on a real page. That inflates BOTH
+    halves by the same artefact — which is why +18.7% here and +1.1% on the frozen
+    corpus are not in conflict. They are different samples, and #25's rule applies:
+    an ablation measures the code against the sample, it cannot measure the sample.
+    **The waste ratio is the robust number** because it is taken within ONE sample,
+    and it is the one that kills the change. The recall half can only ever be
+    measured here — the frozen corpus has no labelled click targets — so this is
+    the best evidence obtainable and it says no.
+
+    **What would reopen it:** not another predicate, those were tested. It needs a
+    representation that makes off-viewport reach CHEAP rather than one that admits
+    more rows — which is what #26's region index already is. The live follow-up
+    worth running is whether agents USE the region hint on these pages, not whether
+    to widen the gate.
+
+    No code changed. Probes kept with the verdict; #41's and #42's "not shipped"
+    notes now point here instead of describing it as half-measured.
 
 ## Debugging starting points
 
