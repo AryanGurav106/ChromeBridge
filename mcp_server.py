@@ -2986,6 +2986,14 @@ async def browser_batch(
     Use whenever you can predict two or more steps ahead — including
     `navigate` followed by a read, which is one round trip, not two.
 
+    START IN ONE TURN: open with `tabs_create_mcp` and OMIT tabId on the steps
+    after it — they inherit the tab it just made:
+      [{"name":"tabs_create_mcp","input":{}},
+       {"name":"navigate","input":{"url":"..."}},
+       {"name":"read_page","input":{}}]
+    Only steps AFTER the create inherit it, and an explicit tabId always wins.
+    OUTSIDE such a batch a missing tabId still means the user's ACTIVE tab.
+
     A page change does NOT end the batch wholesale. It stops the steps that NAME A
     REF (ref / ref_id / submit_ref / coordinate, or fill_form's fields, whose keys
     are refs), because only those were planned against the old page; those are

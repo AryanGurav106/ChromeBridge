@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 18 suites, 815 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 18 suites, 816 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -498,7 +498,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 18 suites, 815 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 18 suites, 816 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -3758,12 +3758,28 @@ granted in the side panel is refused with the same message the agent gets.
     did not turn the pre-flight into a no-op: with no create step, a missing
     required argument is still refused with nothing executed.
 
-    **Discoverability is part of the fix, not a note about it.** #26 records a
-    capability the agent cannot find not being a capability — the columnar table
-    renderer worked and needed `javascript_tool` to reach. So the shape is written
-    into the instructions #45 added, with the boundary stated: omitting `tabId`
-    OUTSIDE that batch still means the user's active tab, which is the hazard this
-    entry is about and not a new idiom.
+    **Discoverability is part of the fix, not a note about it** — #26 records a
+    capability the agent cannot find not being a capability. **And I put it in the
+    wrong channel first, which a canary caught before the eval did.** The shape
+    went only into the `instructions=` field #45 added; a throwaway subagent asked
+    to quote its own system prompt reported NO chromebridge instructions at all,
+    and a scan of 512 subagent transcripts confirms it: the server instructions
+    field reaches a subagent **zero** times (its one apparent hit is an agent
+    quoting `mcp_server.py` after reading it), while tool DESCRIPTIONS reach them
+    constantly — `read_page`'s text in 83 transcripts, `browser_batch`'s in 111.
+    So the one-turn start was invisible to exactly the agents an eval is run with,
+    and the eval would have scored #46 as worthless — not because threading fails,
+    but because nothing told anyone it existed. It now lives in `browser_batch`'s
+    DESCRIPTION, with the boundary stated: omitting `tabId` OUTSIDE such a batch
+    still means the user's active tab. `instructions=` keeps its copy, because it
+    is right for a main session; it is simply not sufficient alone. C20d pins the
+    docstring and FAILS against the instructions-only state this entry shipped in.
+
+    **The general rule, because this will recur:** a channel is only a channel for
+    the audience that receives it. `instructions=` reaches a main session (and
+    #45's ToolSearch guidance still belongs there, since it must be read before
+    any tool loads). Tool descriptions reach everyone. Anything a SUBAGENT must
+    know goes in a description.
 
     **What this says about the method.** #45's measurement said tab discovery was
     1.65 turns/run and could not separate the docstring from my own prompt. The
@@ -3785,8 +3801,9 @@ granted in the side panel is refused with the same message the agent gets.
     readiness banner fired on the read with "2 network request(s) in flight", with
     `readyState` reported ALONGSIDE it rather than alone — #43's deletion holding.
 
-    Suites: 815 checks. New — B11–B11f (threading, with the explicit-tabId,
-    no-create, before-the-create, and pre-flight-still-refuses controls).
+    Suites: 816 checks. New — B11–B11f (threading, with the explicit-tabId,
+    no-create, before-the-create, and pre-flight-still-refuses controls), C20d
+    (the guidance is in the channel subagents actually read).
 
 ## Debugging starting points
 

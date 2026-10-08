@@ -384,6 +384,25 @@ def main() -> int:
           "the measured 21.8%-of-turns sink is still addressed"
           if "ToolSearch" in _ins else "the ToolSearch guidance is GONE")
 
+    # C20d: A CAPABILITY MUST LIVE IN THE CHANNEL THE AGENT ACTUALLY RECEIVES.
+    # #46's one-turn start was first documented ONLY in the server `instructions=`
+    # field, and MEASURED, that field reaches a subagent ZERO times out of 512
+    # transcripts, while tool DESCRIPTIONS reach them constantly (read_page's text
+    # appears in 83, browser_batch's in 111). So the guidance was invisible to
+    # exactly the agents an eval is run with, and #26's rule -- a capability the
+    # agent cannot discover is not a capability -- was being broken by the fix for
+    # it. The instructions field is still right for a main session; it is not
+    # sufficient on its own.
+    _bb = re.search(r"async def browser_batch\(.*?\n    \"\"\"(.*?)\"\"\"",
+                    _srv, re.S)
+    _bbdoc = _bb.group(1) if _bb else ""
+    check("C20d the one-turn start is in browser_batch's DESCRIPTION, "
+          "not only in the server instructions",
+          "START IN ONE TURN" in _bbdoc and "tabs_create_mcp" in _bbdoc,
+          "tool descriptions reach subagents; instructions= does not"
+          if "START IN ONE TURN" in _bbdoc else
+          "MISSING from the only channel a subagent reads")
+
     check("C11 every function injected via runInTab is self-contained "
           "(executeScript stringifies only that function)",
           not _bad,
