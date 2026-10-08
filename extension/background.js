@@ -303,9 +303,15 @@ function _isInstalledExtension() {
 //     read-nothing/change-nothing ops in PAUSE_EXEMPT_OPS survive.
 //   - pause is checked before origins, because a paused bridge should say
 //     "paused" rather than send the user hunting for a site to allow.
-// Set true to bypass per-site permission prompts (every origin allowed).
-// See the note inside assertOpAllowed for exactly what this gives up.
-const ALLOW_ALL_ORIGINS = true;
+// PER-SITE CONSENT: ON. This is the shipped default and the product's central
+// claim -- "default deny, per origin". Setting it true bypasses every per-site
+// grant; it was true during the live benchmark runs, where an agent had to reach
+// two dozen arbitrary sites without a human clicking Allow for each one, and that
+// made CLAUDE.md's and README's "default deny" untrue of the loaded extension.
+// `tools/test_permissions.js` says so on every run rather than passing silently
+// (it reports the origin checks as "not-applicable (gate off)"), which is how this
+// was caught. See the note inside assertOpAllowed for exactly what true gives up.
+const ALLOW_ALL_ORIGINS = false;
 
 async function assertOpAllowed(op, params) {
   if (!_isInstalledExtension()) return;
@@ -351,15 +357,16 @@ async function assertOpAllowed(op, params) {
   }
   if (st.origins[g.origin]) return;
 
-  // DEFAULT-ALLOW. Per-site grants are bypassed by ALLOW_ALL_ORIGINS, set for
-  // real-world stress testing where an agent must reach arbitrary sites without a
-  // human clicking Allow for each one.
+  // THE ESCAPE HATCH, OFF BY DEFAULT. When ALLOW_ALL_ORIGINS is true this returns
+  // and every origin is allowed.
   //
-  // WHAT THIS TURNS OFF: this gate is the only thing that stops an op acting on
-  // a logged-in origin the user never approved — their mail, ticketing, admin
-  // dashboards. The PAUSE switch above still works, and Chrome's own closed
-  // surfaces (chrome://, devtools://) are still unreachable, but per-site consent
-  // is gone. Flip this back to false to restore it; nothing else changed.
+  // WHAT TRUE TURNS OFF: this gate is the only thing that stops an op acting on a
+  // logged-in origin the user never approved — their mail, ticketing, admin
+  // dashboards. The PAUSE switch above still works and Chrome's own closed surfaces
+  // (chrome://, devtools://) stay unreachable, but per-site consent is gone. It is
+  // false here, so the first op on an ungranted origin is REFUSED and the side
+  // panel raises "Permission requested → Allow this site" — which is the intended
+  // first-run interaction, not a failure.
   if (ALLOW_ALL_ORIGINS) return;
 
   await _recordPending(g.origin, op);

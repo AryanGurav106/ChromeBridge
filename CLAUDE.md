@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 18 suites, 784 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 18 suites, 806 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -491,7 +491,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 18 suites, 784 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 18 suites, 806 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -2256,12 +2256,12 @@ granted in the side panel is refused with the same message the agent gets.
     **All three ops are gated by omission from `UNGATED_OPS`** — they read page
     content or render it to a file — and all three are named in
     `test_permissions.js`'s GATED list, which is what proves the default held rather
-    than being assumed. **Note that suite currently reports `8 not-applicable (gate
-    off)`:** `ALLOW_ALL_ORIGINS = true` in `background.js` is set for stress testing,
-    so the consent half of it is dormant and CLAUDE.md's "default deny, per origin"
-    is not true of the loaded extension. The suite says so on every run rather than
-    passing silently, which is the right behaviour — but it is a deliberate decision
-    that should be re-made rather than drifted past.
+    than being assumed. **~~Note that suite currently reports `8 not-applicable (gate
+    off)`~~ — RESOLVED in #44: `ALLOW_ALL_ORIGINS` is `false` again and the suite
+    reports 22/22 with no caveat.** It had been set true for stress testing, so the
+    consent half was dormant and "default deny, per origin" was not true of the
+    loaded extension. The suite saying so on every run rather than passing silently
+    is what kept it visible until it was re-decided.
 
     **THE LIVE PASS FOUND TWO DEFECTS THAT 636 GREEN CHECKS DID NOT, both in
     `search_page`, and both are the fixture-encodes-what-you-thought-of lesson.**
