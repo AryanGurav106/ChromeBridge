@@ -347,6 +347,43 @@ def main() -> int:
           f"{len(_leaks)} leak(s)" + (f": {'; '.join(_leaks[:5])}" if _leaks
                                       else f" — every instruction names a real tool"))
 
+    # C20: THE SERVER'S OWN INSTRUCTIONS ARE AGENT-FACING TEXT, so C16's rule
+    # applies to them with more force, not less: they are read ONCE, before the
+    # agent calls anything, and nothing later corrects them. They also name tools
+    # explicitly, in a `select:` line whose whole purpose is to be pasted into a
+    # ToolSearch call — so a renamed tool turns that line into a request for a
+    # phantom, and the agent discovers it by having the call fail.
+    #
+    # The second half pins WHY the field exists. #45 added it because transcript
+    # mining measured 1.24 ToolSearch calls per run (21.8% of turns in the
+    # unconfounded group) against a competitor that ships instructions saying to
+    # batch them into one. An `instructions=` that survives but loses that sentence
+    # is the field still being set and the cost being paid again, which is exactly
+    # the silent-no-op shape #30 and #39 both record.
+    _srv = read("mcp_server.py")
+    _ins_m = re.search(r'FastMCP\([^)]*instructions\s*=\s*(\w+)', _srv)
+    _ins = ""
+    if _ins_m:
+        _lit = re.search(r'^' + _ins_m.group(1) + r'\s*=\s*"""\\?\n(.*?)"""',
+                         _srv, re.S | re.M)
+        _ins = _lit.group(1) if _lit else ""
+    check("C20 the server declares non-empty MCP instructions",
+          len(_ins) > 200,
+          f"{len(_ins)} chars"
+          + ("" if len(_ins) > 200 else " — the only channel read BEFORE the first call"))
+
+    _named = set(re.findall(r"mcp__chromebridge__([a-z_0-9]+)", _ins))
+    _ins_bad = sorted(n for n in _named if n not in _tools)
+    check("C20b every tool the instructions name is a real tool",
+          not _ins_bad,
+          f"{len(_named)} named"
+          + (f" — PHANTOM: {', '.join(_ins_bad)}" if _ins_bad else ", all resolve"))
+
+    check("C20c the instructions still say to batch ToolSearch into one call",
+          "ToolSearch" in _ins and "SINGLE" in _ins.upper(),
+          "the measured 21.8%-of-turns sink is still addressed"
+          if "ToolSearch" in _ins else "the ToolSearch guidance is GONE")
+
     check("C11 every function injected via runInTab is self-contained "
           "(executeScript stringifies only that function)",
           not _bad,

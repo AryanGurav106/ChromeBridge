@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 18 suites, 806 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 18 suites, 809 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -498,7 +498,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 18 suites, 806 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 18 suites, 809 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -3627,6 +3627,84 @@ granted in the side panel is refused with the same message the agent gets.
 
     No code changed. Probes kept with the verdict; #41's and #42's "not shipped"
     notes now point here instead of describing it as half-measured.
+
+45. **THE LARGEST COST IN THE SYSTEM WAS NEVER PRICED, BECAUSE NO RULER HERE CAN
+    SEE A SESSION — and the first measurement of it was half artefact of my own
+    benchmark harness.** #38 established that the lever is TURNS, not tokens, and
+    then applied that insight to exactly one thing (`browser_batch`) and stopped.
+    This entry is what happens when the same question is asked of the whole
+    session.
+
+    **THE INSTRUMENT NOBODY HAD USED.** CLAUDE.md records only the TOTALS of the
+    #39–#43 evals. The per-call sequences survived in the subagent transcripts —
+    **229 runs with browser calls, 1,975 calls, 119 of them ChromeBridge** — and
+    bucketing them by what each turn was FOR is a measurement this project had
+    never made. Every ruler here scores one observation (`measure_retention`), one
+    gold action (`bench_mind2web`) or one trajectory's reads (`bench_trajectory`).
+    **None of them can see a turn spent on ceremony**, so a cost that is ~20–40%
+    of every run was invisible to the entire measurement spine.
+
+    **AND THE FIRST ANSWER WAS CONFOUNDED BY MY OWN PROMPT.** The initial mining
+    put fixed ceremony at 43.6% of turns, with tab discovery the largest single
+    bucket at 23%. That is the kind of result #16 says to re-derive before
+    believing, and re-deriving it found the cause in `bench25/PROMPT_TEMPLATE.md`
+    — the prompt I wrote for the 24-task eval, which instructs every agent:
+    *"Call `tabs_context_mcp` … as a call ON ITS OWN (do not batch it with
+    anything). Call `tabs_create_mcp` as a call ON ITS OWN."* **The agents were
+    obeying me, not the docstring.** Split by whether the run's own prompt carried
+    that mandate: `tabs_create_mcp` runs at 1.02/run where the prompt names it and
+    **0.05/run where it does not**, so that half of the finding dissolves outright,
+    and `tabs_context_mcp` is simply **unmeasurable from this corpus** — 116 of 119
+    prompts instruct it and the clean group is n=3. A second confound compounds it:
+    the mandated and unmandated groups are also DIFFERENT TASK SETS.
+    That mandate was not a mistake — #39 records six parallel agents corrupting
+    each other's tab groups, and it is a harness fix for a harness problem. The
+    mistake would have been shipping a product change to fix it.
+
+    **WHAT SURVIVES IS UNCONFOUNDED AND IS THE FIX.** In the **46 runs whose prompt
+    never mentions ToolSearch**, agents spent **1.24 ToolSearch calls per run —
+    21.8% of that group's turns**, at ~3.6s and 92–97% of a tool call each (#38).
+    Nothing in the prompt asks for that. And the channel that addresses it was one
+    this project had left completely empty: **`FastMCP(...)` was constructed with
+    no `instructions=` at all**, while Claude-in-Chrome ships instructions saying,
+    verbatim, to batch every tool into ONE ToolSearch call because *"each separate
+    ToolSearch call wastes a full round-trip"*. The competitor closes this exact
+    sink through a channel we were not using.
+
+    `instructions=` is the ONLY text an agent reads BEFORE it calls anything —
+    every docstring in the file is read after it has already chosen that tool. The
+    1,841 characters now there are deliberately short, because it is prefill on
+    every session and no ruler here can price it: batch the ToolSearch, chain with
+    `browser_batch`, the first op on a new origin is SUPPOSED to be refused, which
+    tool answers which question, and that a scoped read is not viewport-limited.
+    Verified over the wire (`tools/list` against a fresh process), not from the
+    file — #27's trap is that a stale client schema is undetectable from inside.
+
+    **C20/C20b/C20c, and each was shown to FIRE.** C16 exists because an
+    agent-facing message named a tool that does not exist; instructions are
+    agent-facing text read once with nothing to correct them later, and they name
+    eight tools in a `select:` line whose entire purpose is to be pasted into a
+    call — so a rename turns it into a request for a phantom. C20b catches that,
+    C20 catches the field being dropped, and **C20c catches the field surviving
+    while the sentence it exists for is deleted**, which is the silent-no-op shape
+    #30 and #39 both record. Planted-violation controls: each fires on its own
+    violation and only its own.
+
+    **WHAT IS EXPLICITLY NOT CLAIMED.** No ruler in this repo can measure whether
+    this works — that needs the #40/#41 live design, scored on TURNS with the bar
+    fixed in advance, and #35/#41's ~47s/task drift floor is why wall clock will
+    not answer it. Also withdrawn before it was acted on: fusing teardown into a
+    batch (0.72/run where the prompt says to close, **0.00/run where it does not** —
+    prompt-driven), and "0 of 292 batches used the tab tools" (196 of those batches
+    came from runs FORBIDDEN to batch them, so the statistic carries no weight).
+    **And one claim in this file is literally overstated:** #39 says agents reached
+    for `find` "zero times"; it is 19 calls across 3 of 119 runs. The direction
+    holds and strengthens — it loses about 15:1 to `query_elements` + `search_page`
+    — but the exact phrase was quoted forward into `find`'s own docstring, which is
+    #30's failure mode.
+
+    Suites: 809 checks. New — C20/C20b/C20c (the instructions channel, with three
+    planted-violation controls).
 
 ## Debugging starting points
 

@@ -265,7 +265,56 @@ async def _lifespan(_server: FastMCP):
         _log("bridge stopped")
 
 
-mcp = FastMCP("chromebridge", lifespan=_lifespan)
+# THE ONE CHANNEL THAT SPEAKS TO THE AGENT BEFORE IT CALLS ANYTHING.
+#
+# Every docstring in this file is read AFTER the agent has already decided to
+# reach for that tool. These instructions are read first, once per session, and
+# they are the only place a SESSION-level cost can be addressed -- which matters
+# because every ruler in this project scores one observation (measure_retention)
+# or one gold action (bench_mind2web) or one trajectory's reads
+# (bench_trajectory), and NONE of them can see a turn spent on ceremony.
+#
+# MEASURED, by mining the eval transcripts rather than the summaries CLAUDE.md
+# keeps: across 46 runs whose prompt never mentions ToolSearch, agents spent
+# 1.24 ToolSearch calls per run -- 21.8% of all turns in that group. #38 priced
+# a model turn at ~3.6s and 92-97% of a tool call, so that is the single largest
+# removable cost in the system and no entry before #45 had priced it.
+# Claude-in-Chrome ships instructions that say exactly this; we shipped none.
+#
+# KEEP THIS SHORT. It is prefill on every session, it cannot be measured by any
+# ruler here, and a wall of text is how a channel that is read once gets skimmed.
+# Each line below earns its place by naming a turn someone actually lost.
+_INSTRUCTIONS = """\
+ChromeBridge drives the user's REAL Chrome (their logins, their cookies).
+
+LOAD TOOLS IN ONE CALL. If these tools are deferred, batch every tool you expect
+to need into a SINGLE ToolSearch call -- the select query takes a comma-separated
+list. Each extra ToolSearch is a wasted round trip. A good opening set:
+  select:mcp__chromebridge__tabs_context_mcp,mcp__chromebridge__navigate,mcp__chromebridge__read_page,mcp__chromebridge__browser_batch,mcp__chromebridge__query_elements,mcp__chromebridge__search_page,mcp__chromebridge__computer,mcp__chromebridge__fill_form
+
+CHAIN STEPS WITH browser_batch. It runs sequentially in ONE round trip and
+pre-flights every step before running any. `navigate` then `read_page` is one
+turn, not two: a page change only stops later steps that NAME a ref.
+
+PERMISSION IS PER ORIGIN AND DEFAULT DENY. The first op on a new site is
+SUPPOSED to be refused -- that is the consent model, not a failure. The refusal
+names the origin; the user allows it in the side panel. Do not retry in a loop.
+
+PICK THE TOOL THAT ANSWERS THE QUESTION:
+  how many / does one exist  -> query_elements (CSS; `total` is never capped)
+  does the page mention X    -> search_page (greps rendered text; a few hundred
+                                chars where get_page_text costs tens of thousands)
+  what can I act on          -> read_page (refs; scope with ref_id to go deep)
+  read a table or an article -> get_page_text (ref_id renders tables as columns)
+`find` is a LEXICAL matcher over what read_page collected. It cannot infer which
+control achieves a goal, so give it words that appear on the page.
+
+Listings are VIEWPORT-SCOPED by design; a scoped read (`ref_id`) is not. When a
+listing says elements are off-viewport it names the region and its ref -- scope
+to that ref rather than scrolling and re-reading the whole page.
+"""
+
+mcp = FastMCP("chromebridge", lifespan=_lifespan, instructions=_INSTRUCTIONS)
 
 # ----------------------------------------------------------------------------
 # helpers
