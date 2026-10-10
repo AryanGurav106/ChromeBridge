@@ -3494,6 +3494,11 @@ async def record_flow(
                  f'{report["asserted"]} with assertions.',
                  f'  dropped: {report["dropped_errors"]} failed call(s), '
                  f'{report["dropped_observations"]} observation(s) folded in or discarded.']
+        if report.get("secrets"):
+            lines.append(
+                f'  {len(report["secrets"])} password field(s) were NOT written to '
+                f'the file. Export these before replaying: '
+                + ", ".join(report["secrets"]))
         if report["asserted"] == 0:
             lines.append("  NOTE: no step carries an assertion, so this flow can only "
                          "detect a control going missing, not a wrong RESULT. Re-record "

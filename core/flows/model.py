@@ -155,6 +155,21 @@ def set_ref(inp: dict, path: str, ref: str) -> None:
     inp[path] = ref
 
 
+def set_value(inp: dict, path: str, v) -> None:
+    """Write the VALUE that goes with the target at `path`.
+
+    form_input carries one `value`; fill_form carries one per field entry.
+    Kept beside set_ref so a caller never has to know which shape it has.
+    """
+    if path.startswith("fields."):
+        i = int(path.split(".", 1)[1])
+        fields_ = [dict(f) for f in (inp.get("fields") or [])]
+        fields_[i]["value"] = v
+        inp["fields"] = fields_
+        return
+    inp["value"] = v
+
+
 def ref_paths(name: str, inp: dict) -> list:
     """Every place in this call's input that names a per-document handle."""
     out = [k for k in REF_KEYS if (inp or {}).get(k) is not None]

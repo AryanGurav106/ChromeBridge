@@ -32,7 +32,8 @@ import time
 from typing import Any, Callable, Optional
 
 from .descriptor import build
-from .model import Flow, Step, mutates, ref_paths, get_ref
+from . import secrets
+from .model import Flow, Step, mutates, ref_paths, get_ref, set_value
 
 # Result-string contracts. These parse the OUTPUT of two tools, which is a
 # string contract with mcp_server -- exactly the thing #30 found dead for the
@@ -139,6 +140,13 @@ class Recorder:
         live = [r for r in self.raw if not r.get("error")]
         dropped_err = len(self.raw) - len(live)
 
+        # Focus is established by the last step that NAMED a ref. That is #43's
+        # rule for the batch guard, reused here so `computer(action="type")` --
+        # which names nothing and goes wherever focus is -- can be judged from
+        # the recording instead of from a second probe of the page.
+        focus_target = None
+        redacted: list = []
+
         for i, r in enumerate(live):
             if not r["mutates"]:
                 dropped_obs += 1
@@ -165,6 +173,24 @@ class Recorder:
                 else:
                     inp.pop(p, None)
 
+            # A PASSWORD IS NEVER WRITTEN TO THE FILE. Declared by HTML's own
+            # type enum (secrets.is_secret), so there is no wordlist and no
+            # entropy test; the placeholder names the environment variable the
+            # replay must read, which is what makes the file safe to commit.
+            for p in paths:
+                if secrets.is_secret(r["targets"].get(p)):
+                    nm = secrets.env_name(self.name, r["targets"][p], p)
+                    set_value(inp, p, secrets.placeholder(nm))
+                    redacted.append(nm)
+            if paths:
+                focus_target = r["targets"].get(paths[-1])
+            elif r["name"] == "computer" and \
+                    str(r["input"].get("action") or "") in ("type", "key"):
+                if secrets.is_secret(focus_target):
+                    nm = secrets.env_name(self.name, focus_target, "typed")
+                    inp["text"] = secrets.placeholder(nm)
+                    redacted.append(nm)
+
             kept.append(Step(
                 name=r["name"], input=inp, targets=r["targets"],
                 expect=self._expect_after(live, i),
@@ -181,6 +207,10 @@ class Recorder:
             "dropped_errors": dropped_err,
             "dropped_observations": dropped_obs,
             "asserted": sum(1 for s in kept if s.expect),
+            # NAMES ONLY. The report is printed to the agent and lands in a
+            # transcript, so it says which secret is needed and never which
+            # value was typed.
+            "secrets": sorted(set(redacted)),
             "notes": self.notes,
         }
         return flow, report

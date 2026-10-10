@@ -17,6 +17,7 @@ Run:  python tools/test_flows.py
 """
 
 import asyncio
+import json
 import re
 import sys
 from pathlib import Path
@@ -32,6 +33,7 @@ from core.flows.descriptor import (  # noqa: E402
     FULL, LEVELS, Unresolved, build, fields, resolve,
 )
 from core.flows import model as FM  # noqa: E402
+from core.flows import secrets as FS  # noqa: E402
 from core.flows.recorder import Recorder, query_total, search_hits  # noqa: E402
 from core.flows.runner import FAILED, NEEDS, PASSED, resume, start  # noqa: E402
 
@@ -414,6 +416,89 @@ async def record_and_replay():
     check("FR10 fill_form's fields are described one per entry, by input path",
           sorted(mt) == ["fields.0", "fields.1"]
           and mt["fields.1"]["desc"].get("name") == "Delete", str(sorted(mt)))
+
+    # ---- FS: a recorded flow must never carry a password -----------------
+    # Flow files are tests, so they live in git. Recording a login wrote the
+    # password in plaintext into a file whose whole purpose is to be committed
+    # -- undoing #31/W24, which removed exactly this leak from read_page.
+    import os as _os
+    fb6 = FakeBridge([E(50, "input", type_="email", name="Work email", editable=True,
+                        clickable=False),
+                      E(51, "input", type_="password", name="Password", editable=True,
+                        clickable=False),
+                      E(52, "button", name="Sign in", type_="submit")])
+    rec3 = Recorder("acme-login", fb6.entries_fn)
+    li = {"fields": [{"ref": "ref_50", "value": "ada@acme.test"},
+                     {"ref": "ref_51", "value": "hunter2-real-password"}],
+          "submit": True, "submit_ref": "ref_52", "tabId": 1}
+    lt = await rec3.before("fill_form", li)
+    rec3.after("fill_form", li, "Filled 2/2", lt)
+    lf, lr = rec3.compile()
+    blob = json.dumps(lf.to_json())
+    check("FS1 the typed password is NOWHERE in the flow file",
+          "hunter2-real-password" not in blob, blob[:160])
+    check("FS1b ...and the email beside it IS stored — the control that this "
+          "redacts the declared password field, not every value",
+          "ada@acme.test" in blob)
+    check("FS1c the placeholder NAMES the environment variable, so the file "
+          "says which secret it needs without containing it",
+          "CB_SECRET_ACME_LOGIN_PASSWORD" in blob, blob[:200])
+    check("FS1d the compile report lists the variable NAMES and no values",
+          lr["secrets"] == ["CB_SECRET_ACME_LOGIN_PASSWORD"]
+          and "hunter2" not in json.dumps(lr), str(lr.get("secrets")))
+
+    # ---- replay ----------------------------------------------------------
+    fb7 = FakeBridge(fb6.entries); fb7.url = "https://app.test/start"
+    _os.environ.pop("CB_SECRET_ACME_LOGIN_PASSWORD", None)
+    rr = await start(lf, 1, fb7.call, fb7.entries_fn)
+    check("FS2 replay with the secret UNSET fails and names the variable, "
+          "rather than typing an empty string",
+          rr["status"] == FAILED
+          and "CB_SECRET_ACME_LOGIN_PASSWORD" in rr["reason"], str(rr["reason"])[:140])
+    check("FS2b ...and nothing was dispatched for that step — a blank password "
+          "submits, then looks like a wrong credential instead of a missing one",
+          not any(t == "fill_form" for t, _ in fb7.calls))
+
+    _os.environ["CB_SECRET_ACME_LOGIN_PASSWORD"] = "hunter2-real-password"
+    try:
+        fb8 = FakeBridge(fb6.entries); fb8.url = "https://app.test/start"
+        rr2 = await start(lf, 1, fb8.call, fb8.entries_fn)
+        sent = next((i for t, i in fb8.calls if t == "fill_form"), {})
+        vals = [f.get("value") for f in (sent.get("fields") or [])]
+        check("FS3 with the variable exported, replay types the real secret",
+              rr2["status"] == PASSED and "hunter2-real-password" in vals, str(vals))
+        check("FS3b ...and the secret does not appear in the run REPORT, which "
+              "goes into a transcript", "hunter2" not in json.dumps(rr2))
+    finally:
+        _os.environ.pop("CB_SECRET_ACME_LOGIN_PASSWORD", None)
+
+    # ---- the focus rule: computer(type) names nothing --------------------
+    for kind, expect_redacted in (("password", True), ("text", False)):
+        fbx = FakeBridge([E(60, "input", type_=kind, name="Secret", editable=True,
+                            clickable=True)])
+        rx = Recorder("kb", fbx.entries_fn)
+        ci = {"action": "left_click", "ref": "ref_60", "tabId": 1}
+        ct = await rx.before("computer", ci)
+        rx.after("computer", ci, "clicked", ct)
+        ti = {"action": "type", "text": "typed-secret-xyz", "tabId": 1}
+        rx.after("computer", ti, "typed", {})
+        fx, _ = rx.compile()
+        hidden = "typed-secret-xyz" not in json.dumps(fx.to_json())
+        check(f"FS4{'' if expect_redacted else 'b'} computer(type) after a click "
+              f"on a {kind} field is {'redacted' if expect_redacted else 'stored'} "
+              f"— focus is established by the last step that named a ref (#43)",
+              hidden == expect_redacted, f"hidden={hidden}")
+
+    check("FS5 'is this secret' is DECLARED, never guessed: a text field whose "
+          "name contains 'password' is not redacted, and a password field named "
+          "in another script is",
+          not FS.is_secret({"desc": {"type": "text", "name": "password hint"}})
+          and FS.is_secret({"desc": {"type": "password", "name": "\u30d1\u30b9\u30ef\u30fc\u30c9"}}))
+    check("FS5b ...and a non-Latin field name falls back to its POSITION rather "
+          "than emitting an empty variable name (POSIX env names are ASCII)",
+          FS.env_name("f", {"desc": {"type": "password",
+                                     "name": "\u30d1\u30b9\u30ef\u30fc\u30c9"}},
+                      "fields.1") == "CB_SECRET_F_FIELDS_1")
 
     # ---- contracts -------------------------------------------------------
     check("FD16 REF_KEYS matches browser_batch's own _REF_KEYS — one concept, "

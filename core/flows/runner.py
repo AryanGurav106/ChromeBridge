@@ -34,6 +34,7 @@ import time
 import uuid
 from typing import Any, Callable, Optional
 
+from . import secrets
 from .descriptor import Unresolved, build, resolve
 from .model import Flow, Step, set_ref
 from .recorder import query_total, search_hits
@@ -79,6 +80,14 @@ class Run:
                                       candidates=exc.candidates)
                 return self._stop(NEEDS, why, candidates=exc.candidates)
             binding = None
+
+            # RESOLVE SECRETS LAST, so a placeholder cannot be logged by
+            # anything above and the value exists only for this one call.
+            inp, missing = secrets.resolve(inp)
+            if missing:
+                return self._stop(FAILED,
+                                  f"step {self.i} ({step.name}): "
+                                  + secrets.missing_message(missing))
 
             inp["tabId"] = self.tab_id
             try:

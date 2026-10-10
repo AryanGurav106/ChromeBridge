@@ -24,6 +24,27 @@ textarea. The runner now names that cause when it sees an open surface in its
 own listing, but naming it is a consolation prize; recording from the navigate
 is the fix.
 
+## Passwords are never in the file
+
+A `<input type="password">` the flow typed into is recorded as a placeholder
+naming an environment variable, not as the value:
+
+```json
+{"value": "${CHROMEBRIDGE_SECRET:CB_SECRET_ACME_CREATE_PROJECT_PASSWORD}"}
+```
+
+Export it before replaying; `run_flow` REFUSES and names the variable when it
+is unset rather than typing an empty string, because a blank password submits
+and then looks like a wrong credential instead of a missing one.
+
+What counts as a secret is HTML's own `type` enum — declared, so there is no
+wordlist to miss `kennwort` or over-redact `password_hint`. The one case that
+names no field, `computer(action="type")`, is judged by what the last
+ref-naming step clicked, which is the same focus rule the batch guard uses.
+
+The example flow here was MIGRATED rather than re-recorded, using the real
+functions so the result matches what a fresh recording produces.
+
 ## What makes a flow able to FAIL
 
 Only what you checked while recording becomes an assertion: a `get_url`, a

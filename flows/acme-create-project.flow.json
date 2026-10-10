@@ -20,7 +20,7 @@
             "value": "ada@acme.test"
           },
           {
-            "value": "demo-pass-1234"
+            "value": "${CHROMEBRIDGE_SECRET:CB_SECRET_ACME_CREATE_PROJECT_PASSWORD}"
           }
         ],
         "submit": true
