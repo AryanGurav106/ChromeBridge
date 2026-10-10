@@ -81,6 +81,10 @@ function setStubs(stubs) { currentStubs = stubs; }
 const listeners = {
   tabsUpdated: new Set(), tabsRemoved: new Set(),
   netCompleted: [], netError: [], navCommitted: [],
+  // Without these the nav tracker registers NOTHING and awaitNavigationSettled
+  // reports idle forever — a probe that never fires looks exactly like
+  // "all settled", which is the trap #15 names and R8 exists for.
+  navBefore: [], navDOM: [], navError: [],
 };
 function emitTabsUpdated(tabId, info) {
   // Chrome's onUpdated passes (tabId, changeInfo, TAB). The mock passed only two
@@ -308,6 +312,9 @@ const chromeMock = {
     onErrorOccurred: { addListener: (fn) => listeners.netError.push(fn) },
   },
   webNavigation: {
+    onBeforeNavigate: { addListener: (fn) => listeners.navBefore.push(fn) },
+    onDOMContentLoaded: { addListener: (fn) => listeners.navDOM.push(fn) },
+    onErrorOccurred: { addListener: (fn) => listeners.navError.push(fn) },
     onCommitted: {
       addListener: (fn) => listeners.navCommitted.push(fn),
       // Chrome has this; the mock did not, so navigate's cleanup was silently
@@ -1135,6 +1142,97 @@ const FIELDS3 = () => ([
       + "answer to 'is a dialog what is wedging this page', and an error would "
       + "look like the same stall it exists to diagnose",
       r.ok && r.result && r.result.no_dialog === true && !r.result.dismissed,
+      JSON.stringify(r.result || r.error));
+  });
+
+  await test("await_navigation waits on a FACT, and only while there is one", async () => {
+    // #47/#48: an observation chained after a CLICK read the page the click was in
+    // the middle of replacing (search_page, get_url, get_page_text -- three
+    // sightings, one mechanism). The batch cannot predict this from a step's input,
+    // so it asks; this is the op it asks. The router is where features ship inert
+    // (#19), and this one is invisible when it fails -- an op that always answers
+    // "idle" is indistinguishable from a tab that always IS idle, which is exactly
+    // what #15's R8 was written for. So each check drives the real listeners.
+    const fire = (arr, d) => arr.forEach((f) => f(d));
+
+    // `resetState()` does NOT reach the tracker: it is module state in
+    // background.js, and an earlier navigate in this file left tab 1 committed
+    // (the mock fires onCommitted to end navigate's own wait and never fires
+    // DOMContentLoaded). Settling it explicitly is what makes AN1 a test of the
+    // idle path rather than of whatever ran before it -- and finding this is what
+    // produced the self-heal on timeout, because a real tab stuck the same way
+    // would have made every later step pay the cap.
+    resetState();
+    fire(listeners.navDOM, { tabId: 1, frameId: 0 });
+    let r = await callOp("await_navigation", { tabId: 1 });
+    check("AN1 a tab with nothing in flight settles IMMEDIATELY, waiting 0ms",
+      r.ok && r.result && r.result.waited_ms === 0 && r.result.settled === true
+        && r.result.was === "idle",
+      JSON.stringify(r.result || r.error));
+
+    // AN2 -- THE ONE THAT MATTERS. A navigation is announced, so the op must not
+    // return until the DOM it is waiting for exists. Asserted by resolving the
+    // promise ONLY after onDOMContentLoaded fires: if the op returned early the
+    // flag would still be false when it did.
+    resetState();
+    fire(listeners.navBefore, { tabId: 1, frameId: 0, url: "https://b.test/next" });
+    let done = false;
+    const pending = callOp("await_navigation", { tabId: 1 }).then((x) => { done = true; return x; });
+    await new Promise((res) => setTimeout(res, 30));
+    check("AN2 a navigation IN FLIGHT holds the wait open", done === false,
+      `resolved early=${done}`);
+    fire(listeners.navDOM, { tabId: 1, frameId: 0, url: "https://b.test/next" });
+    r = await pending;
+    check("AN2b ...and it resolves as soon as the new DOM is parsed, saying what it waited on",
+      r.ok && r.result.settled === true && r.result.was === "pending"
+        && r.result.url === "https://b.test/next",
+      JSON.stringify(r.result || r.error));
+
+    // AN3 -- a COMMIT is not enough. #40's navigate wait ends at the commit, and at
+    // that moment the new document exists and is empty, which is precisely the page
+    // the raced observations were reading.
+    resetState();
+    fire(listeners.navCommitted, { tabId: 1, frameId: 0, url: "https://b.test/c" });
+    let done3 = false;
+    const p3 = callOp("await_navigation", { tabId: 1 }).then((x) => { done3 = true; return x; });
+    await new Promise((res) => setTimeout(res, 30));
+    check("AN3 a COMMITTED but unparsed document still holds the wait open",
+      done3 === false, `resolved early=${done3}`);
+    fire(listeners.navDOM, { tabId: 1, frameId: 0 });
+    r = await p3;
+    check("AN3b ...and releases at DOMContentLoaded, not at `complete` — waiting on "
+      + "subresources is the trigger #43 deleted",
+      r.ok && r.result.settled === true && r.result.was === "committed",
+      JSON.stringify(r.result || r.error));
+
+    // AN4 -- CONTROL. A navigation that FAILS is settled. Without this the batch
+    // would pay the full cap on every step after a click that went nowhere.
+    resetState();
+    fire(listeners.navBefore, { tabId: 1, frameId: 0, url: "https://dead.test/" });
+    fire(listeners.navError, { tabId: 1, frameId: 0 });
+    r = await callOp("await_navigation", { tabId: 1 });
+    check("AN4 CONTROL: a navigation that ERRORED is settled, not waited out",
+      r.ok && r.result.waited_ms === 0 && r.result.was === "idle",
+      JSON.stringify(r.result || r.error));
+
+    // AN5 -- CONTROL. A SUBFRAME navigating is not the page being replaced. An ad
+    // iframe reloading itself must not make every later step in every batch wait.
+    resetState();
+    fire(listeners.navBefore, { tabId: 1, frameId: 7, url: "https://ads.test/" });
+    r = await callOp("await_navigation", { tabId: 1 });
+    check("AN5 CONTROL: a SUBFRAME navigation does not mark the tab busy",
+      r.ok && r.result.waited_ms === 0 && r.result.was === "idle",
+      JSON.stringify(r.result || r.error));
+
+    // AN6 -- CONTROL. The wait is BOUNDED, and a bound reached is reported as such
+    // rather than as a settle. Reporting both the same way would hand the caller a
+    // read that may belong to either page under a sentence saying otherwise.
+    resetState();
+    fire(listeners.navBefore, { tabId: 1, frameId: 0, url: "https://slow.test/" });
+    r = await callOp("await_navigation", { tabId: 1, timeoutMs: 40 });
+    check("AN6 CONTROL: the wait is bounded, and a timeout says settled=false",
+      r.ok && r.result.settled === false && r.result.waited_ms >= 30
+        && r.result.was === "pending",
       JSON.stringify(r.result || r.error));
   });
 

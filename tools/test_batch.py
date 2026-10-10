@@ -126,12 +126,22 @@ async def fake_fill(fields: list, tabId: int = None, submit: bool = False):
 # worth having if it can be shown to skip, and only safe if it can be shown NOT to
 # skip when a ref is coming (B10/B10b).
 FPS = []
+# Which tabs were asked to settle, in order. The COUNT is the load-bearing part:
+# the first step of a batch cannot race anything in that batch, so asking before it
+# would be a round trip whose answer is never used (B14c).
+NAVS = []
 
 
-def install(fingerprints):
-    """Point _BATCHABLE at recorders and _bridge at a scripted fingerprint sequence."""
+def install(fingerprints, navs=None, nav_raises=False):
+    """Point _BATCHABLE at recorders and _bridge at a scripted fingerprint sequence.
+
+    `navs` scripts the `await_navigation` replies in order; `nav_raises` makes that
+    op throw, which is the degradation case (the gate refusing it on about:blank or
+    an ungranted origin) and must leave the batch working.
+    """
     RAN.clear()
     FPS.clear()
+    NAVS.clear()
     ms._BATCHABLE.clear()
     ms._BATCHABLE.update({"fake_tool": fake_tool, "navigate": fake_navigate,
                           "fake_act": fake_act, "computer": fake_computer,
@@ -144,12 +154,24 @@ def install(fingerprints):
     # rule reads each step's own input instead, so the fakes need no registration
     # beyond being callable.
     seq = list(fingerprints)
+    nseq = list(navs or [])
 
     class _B:
         async def call(self, op, **kw):
             if op == "page_fingerprint":
                 FPS.append(kw.get("tabId"))
                 return seq.pop(0) if seq else {"url": "u", "elements": 10, "textLen": 5}
+            if op == "await_navigation":
+                NAVS.append(kw.get("tabId"))
+                if nav_raises:
+                    raise RuntimeError("Permission required: not allowed to act on …")
+                # Default IDLE. Every pre-existing check in this suite runs through
+                # here, so the default has to be the normal case -- nothing in
+                # flight, no wait, no line -- or adding the settle would have
+                # rewritten the expected output of checks that are about something
+                # else entirely.
+                return nseq.pop(0) if nseq else {"waited_ms": 0, "settled": True,
+                                                 "was": "idle", "url": ""}
             return None
 
     async def _bridge():
@@ -666,6 +688,83 @@ async def main():
     check("B11f with no create step a missing required tabId is still REFUSED",
           "REFUSED" in _txt and "tabId" in _txt and not RAN,
           f"ran={len(RAN)} (expected 0); {_txt.strip()[:90]}")
+
+    # ---- B14: THE CLICK-THEN-OBSERVE RACE (#47, #48).
+    #
+    # A step that acts on the page can start a navigation, and the next step then
+    # reads the document being replaced. Three live sightings, one mechanism:
+    # search_page, get_url and get_page_text. The fix cannot be "predict which
+    # tools navigate" -- a ref to an <a> and a ref to a <button> are the same
+    # input, and a tool list is the `_OBSERVES` whitelist #42 deleted -- so the
+    # batch ASKS the browser, which announces every main-frame navigation.
+    #
+    # These drive the real browser_batch against a scripted await_navigation, so
+    # what is under test is the batch's control flow: does it ask, does it ask at
+    # the right moments, does it say what it did, and does it survive the op
+    # failing. The navigation tracking itself is the extension's, pinned by the
+    # router checks in test_ops.js (#19: the router is the untested link).
+    install([SAME] * 6, navs=[{"waited_ms": 140, "settled": True,
+                               "was": "pending", "url": "https://b.test/next"}])
+    out = await ms.browser_batch([
+        {"name": "fake_act", "input": {"tabId": 1, "ref": 9}},
+        {"name": "fake_obs", "input": {"tabId": 1}},
+    ])
+    _txt = text_of(out)
+    check("B14 an observation after a step that navigated WAITS for the new DOM",
+          "waited 140ms" in _txt and len(RAN) == 2,
+          f"ran={len(RAN)} (expected 2); {_txt.strip()[:120]}")
+    check("B14b ...and says which step started it, and that the read is of the NEW page",
+          "step 0" in _txt and "NEW page" in _txt and "https://b.test/next" in _txt,
+          _txt.strip()[:150])
+
+    # B14c — THE CONTROL THAT THIS IS NOT AN ALWAYS-ON NOTE. A tab with nothing in
+    # flight is the normal case; a line on every step would be the noise #15 priced
+    # and #43 deleted `readyState` for being, and "deleting the wait" would pass
+    # B14 alone if the line were unconditional.
+    install([SAME] * 6)          # default reply is IDLE / waited_ms 0
+    out = await ms.browser_batch([
+        {"name": "fake_act", "input": {"tabId": 1, "ref": 9}},
+        {"name": "fake_obs", "input": {"tabId": 1}},
+    ])
+    _txt = text_of(out)
+    check("B14c CONTROL: a settled page waits 0ms and the batch says NOTHING about it",
+          "waited" not in _txt and len(RAN) == 2,
+          f"ran={len(RAN)}; {_txt.strip()[:110]}")
+
+    # B14d — THE FIRST STEP CANNOT RACE THIS BATCH. Nothing in it has run, so a
+    # wait before it is a round trip whose answer is never used. Asserted on the
+    # COUNT, because "it asked and got idle" and "it did not ask" print the same.
+    check("B14d step 0 is never asked to settle — only steps 1..n are",
+          NAVS == [1], f"settle calls={NAVS} (expected one, for step 1)")
+
+    # B14e — DEGRADATION. The gate refuses this op on about:blank and on an
+    # ungranted origin, and the server's call is non-fatal for exactly that reason.
+    # A wait that cannot be taken must leave the batch working, not break it --
+    # the same contract `_fp` carries, and the reason it carries it.
+    install([SAME] * 6, nav_raises=True)
+    out = await ms.browser_batch([
+        {"name": "fake_act", "input": {"tabId": 1, "ref": 9}},
+        {"name": "fake_obs", "input": {"tabId": 1}},
+    ])
+    _txt = text_of(out)
+    check("B14e CONTROL: a settle that THROWS degrades to not waiting, batch runs on",
+          len(RAN) == 2 and "ERROR" not in _txt,
+          f"ran={len(RAN)} (expected 2); {_txt.strip()[:110]}")
+
+    # B14f — A TIMED-OUT WAIT IS NOT A SETTLED ONE. Reporting both the same way
+    # would hand the agent a read that may belong to either page under a sentence
+    # saying it read the new one, which is the #10/#11/#12 shape (a tool reporting
+    # the outcome it intended rather than the one it got).
+    install([SAME] * 6, navs=[{"waited_ms": 5000, "settled": False,
+                               "was": "committed", "url": "https://slow.test/"}])
+    out = await ms.browser_batch([
+        {"name": "fake_act", "input": {"tabId": 1, "ref": 9}},
+        {"name": "fake_obs", "input": {"tabId": 1}},
+    ])
+    _txt = text_of(out)
+    check("B14f a wait that timed out says the read may belong to EITHER page",
+          "either page" in _txt and "NEW page" not in _txt and len(RAN) == 2,
+          f"ran={len(RAN)}; {_txt.strip()[:140]}")
 
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} browser_batch checks passed.")

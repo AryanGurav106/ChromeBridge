@@ -2019,6 +2019,137 @@ async function readinessNote(tabId) {
          `click time, so acting BY REF is safe. ***\n`;
 }
 
+// ---------------------------------------------------------------------------
+// MAIN-FRAME NAVIGATION STATE — the fact that makes the click-then-observe race
+// decidable.
+//
+// #47 and #48 recorded three sightings of one mechanism: an observation chained
+// after a CLICK inside browser_batch read the page the click was in the middle of
+// replacing (`search_page` returned "No match ... 91 text block(s) were searched"
+// on a page that contains the string; `get_url` and `get_page_text` the same).
+// #38's batch rule cannot cover it, and the reason is worth keeping: that rule
+// decides from a step's OWN INPUT, and whether a click navigates is not in its
+// input. Layer 1 knows `navigate` terminates because the tool says so; a <a> ref
+// and a <button> ref are the same input.
+//
+// So this does not predict. Chrome ANNOUNCES every main-frame navigation, and
+// these four events are that announcement. Recording them costs nothing (no
+// injection, no CDP, no page contact) and turns "might this have navigated?" into
+// a lookup — which is #27/#28's move, one layer out from the collector.
+//
+// SETTLED means DOMContentLoaded, not `complete`: an observation reads the DOM,
+// and DOMContentLoaded is exactly when the DOM exists. Waiting for `complete`
+// would be waiting on subresources, which is the trigger #43 DELETED for firing
+// on six fully-settled pages.
+const _navState = new Map();    // tabId -> { phase: 'pending'|'committed', url, since, gen }
+const _navWaiters = new Map();  // tabId -> [fn, ...]
+let _navGen = 0;
+
+function _navSettle(tabId) {
+  _navState.delete(tabId);
+  const arr = _navWaiters.get(tabId);
+  if (!arr) return;
+  _navWaiters.delete(tabId);
+  for (const f of arr.slice()) { try { f(true); } catch (e) {} }
+}
+
+function _navStart(tabId, phase, url) {
+  const gen = ++_navGen;
+  _navState.set(tabId, { phase, url: url || '', since: Date.now(), gen });
+  // A navigation that neither commits nor errors must not pin the tab as busy
+  // forever: a stuck entry would make EVERY later wait in every later batch pay
+  // the full cap. Same guard, and the same reason, as the 15s drop on
+  // `_netPending` above. Generation-checked so a late expiry cannot clear a
+  // NEWER navigation that started in the meantime.
+  setTimeout(() => {
+    const cur = _navState.get(tabId);
+    if (cur && cur.gen === gen) _navSettle(tabId);
+  }, 15000);
+}
+
+// THE SETTLE EVENTS REGISTER FIRST, AND THE ORDER IS THE WHOLE POINT. These five
+// used to share one `try`, which is the shape #15 records going wrong once already
+// ("anything that made it throw took the whole network buffer down with it"). Here
+// a PARTIAL registration is worse than none in one specific direction: with the
+// START listeners live and the SETTLE listeners missing, every tab that navigates
+// is pinned busy and every later batch step pays the full cap. With the settle
+// listeners live and the start listeners missing, nothing is ever marked pending
+// and the feature is merely absent. So the harmless half is registered first and
+// the dangerous half is registered second, in its own try.
+try {
+  chrome.webNavigation.onDOMContentLoaded.addListener((d) => {
+    if (d.frameId === 0) _navSettle(d.tabId);
+  });
+  chrome.webNavigation.onErrorOccurred.addListener((d) => {
+    // A navigation that FAILED is settled too. Leaving it pending would make the
+    // batch wait out the cap for a page that is never going to arrive.
+    if (d.frameId === 0) _navSettle(d.tabId);
+  });
+  chrome.tabs.onRemoved.addListener((tabId) => _navSettle(tabId));
+} catch (e) { /* nothing is ever marked pending below if this failed */ }
+
+try {
+  chrome.webNavigation.onBeforeNavigate.addListener((d) => {
+    if (d.frameId !== 0) return;
+    _navStart(d.tabId, 'pending', d.url);
+  });
+  chrome.webNavigation.onCommitted.addListener((d) => {
+    if (d.frameId !== 0) return;
+    // Committed but not yet parsed. A commit is where #40's `navigate` wait ends,
+    // and it is NOT enough for a reader: the new document exists and is empty.
+    _navStart(d.tabId, 'committed', d.url);
+  });
+} catch (e) { /* webNavigation unavailable — awaitNavigationSettled reports idle */ }
+
+// Resolves as soon as the tab has no main-frame navigation in flight. Returns
+// IMMEDIATELY (waited_ms 0) when there is none, which is the normal case and is
+// why this can be asked unconditionally rather than predicted.
+function awaitNavigationSettled(tabId, capMs) {
+  const st = _navState.get(tabId);
+  if (!st) return Promise.resolve({ waited_ms: 0, settled: true, was: 'idle', url: '' });
+  const t0 = Date.now();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (settled) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      const arr = _navWaiters.get(tabId);
+      if (arr) {
+        const ix = arr.indexOf(finish);
+        if (ix >= 0) arr.splice(ix, 1);
+        if (!arr.length) _navWaiters.delete(tabId);
+      }
+      resolve({ waited_ms: Date.now() - t0, settled: !!settled, was: st.phase,
+                url: st.url || '' });
+    };
+    // Bounded, and the caller is TOLD when the bound was reached rather than being
+    // handed a wait that looks the same as a settle. A page slower than the cap
+    // still gets #15's readiness banner on the observation itself, so the floor
+    // under this is the behaviour that already shipped.
+    //
+    // A TIMEOUT ALSO DROPS THE STATE, which is what stops one stuck navigation
+    // taxing everything after it. If we still believe a tab is navigating after
+    // the full cap, the belief is what is wrong -- a commit whose
+    // DOMContentLoaded never arrives would otherwise make EVERY later step in
+    // EVERY later batch pay the cap again, turning a feature that saves a model
+    // turn into one that spends seconds per step. Found by AN1 failing on a tab
+    // an earlier op had left committed. Under-waiting afterwards is exactly the
+    // behaviour that shipped before this existed; over-waiting forever is not.
+    // ORDER AND CHOICE OF CALL BOTH MATTER, and the first version got both wrong
+    // in one line: it called `_navSettle` first, which resolves EVERY waiter as
+    // SETTLED -- so the timeout reported success, which is the one thing this
+    // branch exists to distinguish. Caught by AN6 on the first run. Drop the
+    // STATE only, and answer for THIS waiter alone: another waiter with a longer
+    // cap asked for more time and is still entitled to it, and a late
+    // DOMContentLoaded still resolves it through `_navSettle`.
+    const timer = setTimeout(() => { _navState.delete(tabId); finish(false); }, capMs);
+    let arr = _navWaiters.get(tabId);
+    if (!arr) { arr = []; _navWaiters.set(tabId, arr); }
+    arr.push(finish);
+  });
+}
+
 function _pendDrop(tabId, requestId) {
   const m = _netPending.get(tabId);
   if (m) { m.delete(requestId); if (!m.size) _netPending.delete(tabId); }
@@ -12972,6 +13103,18 @@ async function handleOp({ id, op, params }) {
         let vp = null;
         try { vp = await runInTab(t.id, () => ({ w: innerWidth, h: innerHeight, dpr: devicePixelRatio })); } catch (e) {}
         result = vp && vp.w ? { dataUrl, cssWidth: vp.w, cssHeight: vp.h, dpr: vp.dpr } : dataUrl;
+        break;
+      }
+      // Gated by omission from UNGATED_OPS. It reports a url, which is what the
+      // gate exists for, and a batch that needs it is already acting on a granted
+      // origin — the click that started the navigation had to pass the gate first.
+      // The server's call is non-fatal, so a refusal here (about:blank after
+      // tabs_create, an ungranted origin) degrades to not waiting.
+      case "await_navigation": {
+        const t = await resolveTab(params);
+        const cap = Math.max(0, Math.min(30000,
+          Number(params && params.timeoutMs) || 5000));
+        result = await awaitNavigationSettled(t.id, cap);
         break;
       }
       case "page_fingerprint": {

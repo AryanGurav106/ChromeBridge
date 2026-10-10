@@ -379,6 +379,14 @@ def _q(v: Any, limit: int) -> str:
 # is a string contract across a process boundary and a comment is not a guard.
 _ACT_LINE = "Act on a row by its ref"
 
+# How long a batch will wait for a navigation ALREADY IN FLIGHT to parse its DOM
+# before giving up and running the step anyway. It is a cap on a wait, not a poll
+# interval and not a settle delay: a tab with nothing in flight waits 0ms, which
+# is the normal case. Generous because the thing being waited for has already
+# started -- and bounded because the floor under a timeout is #15's readiness
+# banner, which still fires on the observation itself.
+_SETTLE_CAP_MS = 5000
+
 # Lines the listing writes ABOUT itself. Never elements, so never diffable.
 _META_ROW = re.compile(
     r"more interactive element\(s\)|interactive element\(s\) are (BELOW|ABOVE)"
@@ -3018,7 +3026,13 @@ async def browser_batch(
     are refs), because only those were planned against the old page; those are
     dropped and named rather than fired blind. Observations that name no ref —
     read_page, get_url, search_page, query_elements, find — mean the same thing
-    whatever the page became, so they keep running."""
+    whatever the page became, so they keep running.
+
+    AN OBSERVATION AFTER A CLICK IS SAFE TO CHAIN. If the click starts a
+    navigation the batch waits for the new page's DOM before the next step runs,
+    and says so; a settled page waits 0ms and says nothing. So
+    [click(ref), search_page(...)] reads the page the click led to, not the one it
+    left, and does it in ONE turn."""
     out: list = []
 
     # PRE-FLIGHT. A typo in `name` at index 3 used to be discovered AFTER indices
@@ -3230,6 +3244,47 @@ async def browser_batch(
         except Exception:
             return None
 
+    async def _settle(tab_id):
+        """Wait out any main-frame navigation already in flight on this tab.
+
+        THE RACE THIS CLOSES (#47, #48 -- three sightings, one mechanism): a step
+        that acts on the page can start a navigation, and the NEXT step in the same
+        batch then reads the document that is being replaced. `search_page` reported
+        "No match ... 91 text block(s) were searched" on a page containing the
+        string; `get_url` and `get_page_text` raced the same way.
+
+        WHY IT IS NOT DECIDED FROM THE STEP'S INPUT, which is #38's rule everywhere
+        else in this function: a click's input cannot say whether it navigates -- a
+        ref to an <a> and a ref to a <button> are the same input -- so predicting
+        would mean a list of tools-that-might-navigate, which is exactly the
+        `_OBSERVES` whitelist #42 deleted after it went unupdated three times in one
+        day. The browser already ANNOUNCES navigations, so this asks instead of
+        guessing, and asks unconditionally because an answer that is a lookup
+        cannot be wrong about which steps navigate.
+
+        It is affordable to ask unconditionally because the op touches no page:
+        no injection, no CDP, just a Map lookup in the service worker, returning
+        immediately when nothing is in flight. #38's rule is still satisfied --
+        the answer changes what happens next whenever it is not "idle".
+
+        BATCH-ONLY ON PURPOSE. Between two separate tool calls a model turn elapses
+        (~3.6s, #38), which is far longer than any commit; the race exists because a
+        batch removes that gap. Making `navigate` itself wait longer would change
+        behaviour for every caller to fix a batch-shaped problem.
+
+        Deliberately NOT fatal, exactly like `_fp`: a wait that cannot be taken
+        (the gate refuses the origin, the tab is at about:blank) must not break a
+        batch that would otherwise work -- it degrades to the behaviour that
+        shipped before this existed.
+        """
+        try:
+            b = await _bridge()
+            r = await b.call("await_navigation", tabId=tab_id,
+                             timeoutMs=_SETTLE_CAP_MS)
+            return r if isinstance(r, dict) else None
+        except Exception:
+            return None
+
     _seen_tabs: dict = {}
     _made_tab = None       # a tab THIS batch created; later tabId-less steps inherit it
     _stale_why = None      # the page moved under the plan; set once, never cleared
@@ -3307,6 +3362,34 @@ async def browser_batch(
         # to be taken BEFORE the step runs or it would include that step's own
         # effect, so it cannot be made lazy at the comparison site — hence the
         # look-ahead. On an all-observation batch this saves one round trip.
+        # SETTLE BEFORE READING, AND BEFORE FINGERPRINTING. Step 0 cannot race
+        # anything in this batch -- nothing in it has run -- so the wait starts at
+        # step 1. Placed above the baseline deliberately: a fingerprint taken
+        # mid-navigation describes a document that is being thrown away, which
+        # would make Layer 2's comparison a measurement of the race rather than of
+        # the step.
+        if _tab is not None and i > 0:
+            _st = await _settle(_tab)
+            if _st and (_st.get("waited_ms") or 0) > 0:
+                # Reported only when it actually waited. A line on every step would
+                # be the always-on note #15 priced as pure noise and #43 deleted
+                # `readyState` for being -- and it would say nothing, since "waited
+                # 0ms" is the normal case.
+                _ms = int(_st.get("waited_ms") or 0)
+                if _st.get("settled"):
+                    out.append(TextContent(type="text", text=(
+                        f"[{i}] waited {_ms}ms for the navigation step {i - 1} "
+                        f"started to finish loading its DOM"
+                        + (f" ({_st.get('url')})" if _st.get("url") else "")
+                        + " — this step read the NEW page.")))
+                else:
+                    out.append(TextContent(type="text", text=(
+                        f"[{i}] waited {_ms}ms and the navigation step {i - 1} "
+                        f"started had still not parsed its DOM"
+                        + (f" ({_st.get('url')})" if _st.get("url") else "")
+                        + ". This step ran anyway, so what it read may belong to "
+                        "either page. The readiness banner on the result says what "
+                        "was still in flight.")))
         if _tab is not None and _tab not in _seen_tabs and _ref_from[i + 1]:
             _seen_tabs[_tab] = await _fp(_tab, _all_mmids)
 

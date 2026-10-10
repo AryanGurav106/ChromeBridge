@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 915 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 929 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 915 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 929 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -4030,7 +4030,9 @@ granted in the side panel is refused with the same message the agent gets.
     nine runs both times, CIC median 4. H3 9/9 again, 0 ceremony calls against 5.
 
     **TWO NEW DEFECTS, both ours, both found only because the rerun existed.**
-    - **An observation chained after a CLICK races the navigation.** `[click(ref),
+    - **An observation chained after a CLICK races the navigation. FIXED in #51**,
+      by asking the browser rather than predicting from the step's input.
+      `[click(ref),
       search_page(...)]` ran the search against the mid-navigation page and
       returned `No match ... 91 text block(s) were searched` on a page that
       contains the string. #38's rule cannot cover it: Layer 1 knows `navigate`
@@ -4190,11 +4192,12 @@ granted in the side panel is refused with the same message the agent gets.
     a table header (`"Mean (deg. C)"` renders as `Mean\n(deg. C)`); ~~the
     data-table hint counts header `<th>` elements while the renderer EXPANDS
     COLSPANS, advertising `155x11` for a table it renders as `155x28`~~ **FIXED in
-    #51**; and three sightings across two evals of an observation chained after a
+    #51**; and ~~three sightings across two evals of an observation chained after a
     CLICK racing the navigation the click caused -- `search_page`, `get_url` and
     `get_page_text`, one mechanism, all three flagged LOUD by the readiness banner
-    rather than answering falsely. **STILL OPEN**, and #51 explains why it is not
-    the same question as the batch guard it looks like.
+    rather than answering falsely~~ **FIXED in #51**: the batch waits on Chrome's
+    own navigation announcement, which is a fact, where the step's INPUT -- the
+    thing #38's guard reads -- cannot say whether a click navigates.
 
     **A GRADER BUG OF MY OWN, caught by the falsifier firing on BOTH arms.**
     Correctness first read 36/38, with T16 wrong on cb AND cic -- and both had
@@ -4509,25 +4512,79 @@ granted in the side panel is refused with the same message the agent gets.
     re-render still stops the batch**, which "never fire" would also satisfy —
     the same way #38's B10b is the control for its own skip.
 
-    **STILL OPEN, and it is NOT the same question as the guard above.** An
-    observation chained after a CLICK can race the navigation that click caused —
-    three sightings across two evals (`search_page`, `get_url`,
-    `get_page_text`). It looks like a batch-guard defect and is not: whether a
-    click navigates is not decidable from its input, which is the entire basis of
-    #38's decide-from-the-input rule, and the fingerprint is deliberately not
-    taken before an observation because that would tax the commonest batch there
-    is. All three failed LOUD — the readiness banner led with "1 network request
-    in flight" and said not to conclude absence — so it costs a round trip rather
-    than a wrong answer, which is #15 paying for itself. A fix must be priced
-    first: #38 measured a fingerprint at ~2-3ms against a ~24ms read, and a
-    settle wait is far more expensive than either. Also still open: `search_page`
-    cannot match a literal space against a `<br>`-induced newline.
+    **THE CLICK-THEN-OBSERVE RACE, CLOSED BY ASKING INSTEAD OF PREDICTING.** An
+    observation chained after a CLICK read the page the click was in the middle of
+    replacing — three sightings across two evals (`search_page`, `get_url`,
+    `get_page_text`), one mechanism. It looks like a batch-guard defect and is
+    not, and that is why it stayed open through two entries: **whether a click
+    navigates is not in the click's input** — a ref to an `<a>` and a ref to a
+    `<button>` are the same input — and the decide-from-the-input rule is the
+    entire basis of #38's guard. Predicting would have meant a list of
+    tools-that-might-navigate, which is the `_OBSERVES` whitelist #42 deleted
+    after it went unupdated three times in one day.
+    **So the batch stopped predicting and asked.** Chrome ANNOUNCES every
+    main-frame navigation; `onBeforeNavigate` / `onCommitted` /
+    `onDOMContentLoaded` / `onErrorOccurred` are that announcement, they land in
+    the service worker, and recording them makes "might this have navigated?" a
+    Map lookup. `await_navigation` returns the moment nothing is in flight. This
+    is #27/#28's move — replace a heuristic with what is declared — one layer out
+    from the collector.
+    **SETTLED MEANS DOMContentLoaded, NOT `complete`.** An observation reads the
+    DOM and that is exactly when the DOM exists. Waiting for `complete` would be
+    waiting on subresources, which is the trigger #43 DELETED for firing on six
+    settled pages. It is also strictly later than the COMMIT where #40's navigate
+    wait ends — at a commit the new document exists and is empty, which is the
+    page the raced observations were reading (AN3).
+    **THE PRICE IS WHY IT CAN BE ASKED UNCONDITIONALLY**, and #51's own note said
+    a settle wait would be "far more expensive" than a fingerprint. Measured,
+    interleaved against a fingerprint on the same page in the same run: **0.80ms
+    median on a settled tab, against 0.97ms for `page_fingerprint` and 5.85ms for
+    a `read_page`** on that page. It is CHEAPER than the fingerprint because it
+    touches no page at all — no injection, no CDP, a Map lookup in the worker. At
+    0.80ms against a ~3,600ms model turn (#38) it is 0.02% of the thing it saves,
+    so there is nothing left to buy by guessing which steps navigate. The earlier
+    estimate was reasoning, and it was wrong in the direction this log keeps
+    warning about.
+    **Step 0 is never asked** (nothing in the batch has run, so its answer is
+    unused — B14d), the wait is reported only when it actually waited (an
+    always-on line is #15's noise), and a wait that TIMES OUT says the read may
+    belong to either page rather than claiming it read the new one (B14f).
+    **AND A PARTIAL LISTENER REGISTRATION IS WORSE THAN NONE, in one direction
+    only.** All five listeners first shared one `try` — the shape #15 records
+    going wrong once already. With the START listeners live and the SETTLE
+    listeners missing, every navigating tab is pinned busy and every later step
+    pays the full cap; the other way round the feature is merely absent. The
+    harmless half registers first, in its own try.
+    **TWO DEFECTS OF MY OWN, both caught by RUNNING it.** `AN1` failed on a tab an
+    earlier op had left `committed` with no DOMContentLoaded following — which is
+    a real hazard, not a test artefact: a stuck belief would make every later step
+    in every later batch pay the cap. A timeout now DROPS the state, so the worst
+    case degrades to the behaviour that shipped before this existed rather than
+    taxing everything after it. The first version of that self-heal called
+    `_navSettle`, which resolves every waiter as SETTLED — so the timeout reported
+    success, the one thing that branch exists to distinguish. AN6 caught it on the
+    first run.
+    **LIVE-VERIFIED IN BOTH DIRECTIONS**, which is the only way a wait means
+    anything (#15: a probe that never fires looks identical to "all settled").
+    Against the playground's `slow` flag (1.5s per GET), `[click(ref),
+    search_page]`: fixed arm **waited 1517ms and found the string**; the same
+    batch against an extension with the op removed took 0.08s, found nothing, and
+    returned `*** PAGE IS STILL SETTLING (1 network request(s) in flight)` —
+    #47's sighting reproduced byte-for-byte. That ablation doubles as the live
+    degradation control: the missing op did not break the batch, it just stopped
+    waiting.
+    **Still open:** `search_page` cannot match a literal space against a
+    `<br>`-induced newline.
 
-    Suites: 915 checks. New — MV1-MV3 (the modal pass asks the collector's
+    Suites: 929 checks. New — MV1-MV3 (the modal pass asks the collector's
     question, with the opacity:1 control), TB14 (the hint and the renderer count
     the same columns), B13/B13b/B13c (ref-resolution staleness, with the
-    genuine-re-render and unknown-refs controls), DD1-DD3 (`dismiss_dialog`,
-    with the no-dialog-is-a-fact control) and its GATED entry, C21/C21b.
+    genuine-re-render and unknown-refs controls), B14-B14f (the settle, with the
+    settled-page, first-step, throwing-op and timed-out controls), AN1-AN6 (the
+    navigation tracker at the router, with the errored, subframe and bounded
+    controls — #19, and because an op that always answers "idle" is
+    indistinguishable from a tab that always IS idle), DD1-DD3 (`dismiss_dialog`,
+    with the no-dialog-is-a-fact control) and both new GATED entries, C21/C21b.
 
 ## Debugging starting points
 
@@ -4595,6 +4652,8 @@ granted in the side panel is refused with the same message the agent gets.
 | The MODAL banner fires on a dialog a scoped read calls invisible | Fixed in #51 — `dialogOpen` hand-rolled its visibility test and missed opacity, so a faded-out consent overlay raised the banner AND suppressed the page beneath it. Both loops now ask the collector's own `checkVisibility({opacityProperty:true, visibilityProperty:true})`. If it recurs, check that the aria-hidden-siblings loop still uses `_dlgVisible` — that one tested the rect alone and was the back door |
 | A batch step was dropped as STALE after a change the batch itself caused | Fixed in #51 — the guard compared ELEMENT COUNTS, so a `list=` datalist opening (1007 -> 1012) orphaned a ref that was fine. `page_fingerprint` now reports whether each ref the NEXT step names still resolves; a count delta alone no longer stops a batch. A `null` (cross-frame) falls back to the count rule |
 | The data-table hint's size does not match the grid you get | Fixed in #51 — it counted header cell ELEMENTS while the renderer expands colspans (`155x11` advertised, `155x28` rendered). TB14 pins the two against each other on the same page |
+| A batch step says `waited Nms for the navigation step N-1 started` | By design since #51 — that step acted on the page and started a navigation, and the next step would otherwise have read the document being replaced (#47/#48, three sightings). The batch asks `await_navigation`, a Map lookup in the service worker fed by Chrome's own main-frame events, so a settled tab costs 0.80ms and prints nothing. SETTLED means DOMContentLoaded, not `complete` — waiting on subresources is the trigger #43 deleted. A wait that TIMED OUT says so, and that the read may belong to either page |
+| Every batch step after the first is slow by ~5s | A tab is stuck marked navigating — a commit whose `onDOMContentLoaded` never arrived. A timed-out wait drops the state so it self-heals after one step, and a navigation that neither commits nor errors expires after 15s. If it persists, check that the SETTLE listeners (`onDOMContentLoaded`/`onErrorOccurred`) registered: they sit in their own `try`, BEFORE the start listeners, because the half that pins tabs busy is the dangerous half to have alone |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---

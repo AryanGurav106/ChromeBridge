@@ -152,6 +152,12 @@ const GATED = [
   // origin the user never granted is a page we should not be answering
   // dialogs on either.
   "dismiss_dialog",
+  // await_navigation reports the url a tab is navigating TO, and the timing of it.
+  // Gated for the same reason page_fingerprint is: it is an internal helper of
+  // browser_batch, the batch's call is non-fatal, and any batch that reaches it has
+  // already passed the gate on the step that started the navigation. Default deny
+  // costs nothing here and is the direction the gate is supposed to fail in.
+  "await_navigation",
 ];
 
 (async function main() {
