@@ -478,6 +478,40 @@ def main() -> int:
           "has that shape right now" not in _out and "Causes" in _out,
           _out.replace("\n", " ")[:140])
 
+    # ---- C21: fill_form's batched write must not trust a held reference ----
+    # The batched text pass CLEARS each field and dispatches `input` before
+    # writing the real value. An app that re-renders synchronously on input
+    # replaces the node right there, so the held `el` is detached: the write
+    # lands on an orphan and the read-back reads that same orphan and reports
+    # SUCCESS while the page stays empty. Measured live on
+    # tools/saas_playground.py -- detachedAfterClear=true, readback filled,
+    # live value "" -- i.e. the #10/#11/#12 family reached through the
+    # VERIFICATION step, which is why #24's read-back rule did not catch it.
+    #
+    # This lives in a contract check rather than a fixture because the batched
+    # write is INLINE in the op router's `case "fill_form"` and cannot be
+    # sliced out by _extract -- #19's "the op router is the untested link",
+    # literally. A source-shape tripwire is weaker than a behavioural test and
+    # is what is available here.
+    _bg = open(os.path.join(ROOT, "extension", "background.js"),
+               encoding="utf-8").read()
+    _i = _bg.find("Batched text-input pass")
+    _j = _bg.find("Non-text fields one-by-one", _i + 1) if _i > 0 else -1
+    # Bounded by the NEXT section's marker, not by a character count: a magic
+    # window silently stops covering the end of the pass the moment the code
+    # grows, which is how a tripwire stops tripping (#39).
+    _seg = _bg[_i:_j] if _i > 0 and _j > _i else ""
+    check("C21 fill_form's batched write RE-RESOLVES after the clear-dispatch, "
+          "instead of writing to and reading back from a node the app may have "
+          "already replaced",
+          bool(_seg) and "if (!node.isConnected) node = q(j.selector)" in _seg,
+          "re-resolve after clear not found in the batched pass")
+    check("C21b ...and the read-back is taken from the LIVE document, not from "
+          "the node the write happened to land on",
+          bool(_seg) and "node.isConnected ? node : (q(j.selector)" in _seg
+          and "'value' in live" in _seg,
+          "live read-back not found in the batched pass")
+
     print(f"\n{passed} passed, {failed} failed, {passed + failed} total checks")
     if failures:
         print("failing: " + ", ".join(failures))

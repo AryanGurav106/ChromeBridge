@@ -12690,6 +12690,20 @@ async function handleOp({ id, op, params }) {
         // reported ok, nothing happened. Reproduced deterministically against a slow
         // host (a free dyno) and not at all against a fast one, which is why it looks
         // intermittent.
+        // A MAIN-FRAME COMMIT *IS* THE NAVIGATION, whatever url it lands on.
+        // `arrived` below asks whether the url CHANGED, which is a proxy, and it
+        // is wrong for the commonest thing a server does: a redirect. Measured on
+        // tools/saas_playground.py — /projects -> /login -> 303 -> /projects —
+        // the tab navigated twice and ended where it started, so the proxy never
+        // fired, the wait burned its full 15s, and the verdict below then called a
+        // successful redirect "NAVIGATION DID NOT COMMIT" and offered three causes
+        // (slow destination, server refused, page blocked) that were all false.
+        // Auth guards, canonical urls and trailing-slash fixes all redirect, so
+        // this is not an edge case. Recording the commit separately keeps the
+        // url-change proxy for the onUpdated fallback while letting the verdict
+        // ask the question it actually means.
+        let _didCommit = false;
+        let _landed = "";
         await new Promise(resolve => {
           // Clear the fallback when the load wins the race; leaving it armed held a
           // 15s timer open after every navigate.
@@ -12725,7 +12739,14 @@ async function handleOp({ id, op, params }) {
           try {
             _wnCommitted = (d) => {
               if (d.tabId !== t.id || d.frameId !== 0) return;   // main frame only
-              if (arrived(d.url)) done();
+              // The listener is attached immediately before the tab is told to
+              // navigate, so any main-frame commit after that is ours. Record it
+              // and stop waiting: a redirect chain commits at its destination,
+              // and requiring the url to differ from `before` is what made that
+              // case sit out the full timeout.
+              _didCommit = true;
+              _landed = d.url || "";
+              done();
             };
             chrome.webNavigation.onCommitted.addListener(_wnCommitted);
           } catch (e) { _wnCommitted = null; }
@@ -12757,7 +12778,7 @@ async function handleOp({ id, op, params }) {
                    `Causes: this tab has no history entry in that direction (a tab the ` +
                    `agent opened starts with none), or the entry resolves to the same ` +
                    `url. Navigate by url instead if you need a specific page.`;
-        } else if (!isHistory && !reload && _same(now, before)) {
+        } else if (!isHistory && !reload && !_didCommit && _same(now, before)) {
           // SAY IT DID NOT HAPPEN. The old line reported `t2.url` whatever it was,
           // so a navigation that never committed still read as a success sentence
           // naming the page it had failed to leave — the agent then acted on a page
@@ -12817,9 +12838,22 @@ async function handleOp({ id, op, params }) {
             });
             title = (_r && _r[0] && typeof _r[0].result === "string") ? _r[0].result.trim() : "";
           } catch (e) {}
-          result = title
+          // SAY WHEN THE SERVER SENT YOU SOMEWHERE ELSE. Landing on a url other
+          // than the one asked for is a successful navigation, not a failure —
+          // but reporting only the destination leaves the caller believing it is
+          // on the page it requested, which is how a flow step asserts against
+          // the wrong document. An auth guard bouncing /login -> /projects is the
+          // case that found this, and it is the one where the difference matters
+          // most. Stated only when it actually happened (C15): no redirect, no
+          // clause.
+          const _redirected = !isHistory && !reload && want && !_same(t2.url || "", want);
+          const _note = _redirected
+            ? ` — REDIRECTED: you asked for ${want} and the server sent you here, so this`
+              + ` is not the page you requested. Anything you assert now is about ${t2.url}.`
+            : "";
+          result = (title
             ? `Navigated to ${t2.url}, title: ${title}`
-            : `Navigated to ${t2.url} (the page declares no <title>).`;
+            : `Navigated to ${t2.url} (the page declares no <title>).`) + _note;
         }
         break;
       }
@@ -13075,10 +13109,28 @@ async function handleOp({ id, op, params }) {
               if (!el) { out[j.idx] = { ok: false, actual: '', msg: `element ${j.selector} not found` }; continue; }
               try {
                 el.focus({ preventScroll: true });
+                // The node this loop writes to and reads back from. It is NOT
+                // `el` throughout, because the clear below can replace it.
+                let node = el;
                 if ('value' in el) {
                   setNative(el, '');
                   el.dispatchEvent(new Event('input', { bubbles: true }));
-                  setNative(el, j.text);
+                  // RE-RESOLVE AFTER THE CLEAR. That dispatch is an `input`
+                  // event, and an app that re-renders SYNCHRONOUSLY on input
+                  // replaces this node — so `el` is detached, the write below
+                  // goes to an orphan, and the read-back reads that same orphan
+                  // and reports SUCCESS while the page stays empty. Measured on
+                  // tools/saas_playground.py: detachedAfterClear=true,
+                  // readback="repro@acme.test", live value="". That is the
+                  // #10/#11/#12 family — acts elsewhere, reports ok — reached
+                  // through the verification step rather than the input path,
+                  // which is why #24's read-back rule did not catch it.
+                  // React is NOT the case that breaks: it batches to one
+                  // re-render at the end of the tick, exactly as the comment
+                  // above assumes. Vanilla, htmx, Alpine and Stimulus handlers
+                  // replace the node right here.
+                  if (!node.isConnected) node = q(j.selector) || node;
+                  setNative(node, j.text);
                 } else if (el.isContentEditable) {
                   // SAME strategy as _enterTextPage (keep in sync): rich-text
                   // editors (Lexical/ProseMirror/Quill) keep their own model —
@@ -13096,9 +13148,16 @@ async function handleOp({ id, op, params }) {
                   } catch (e) {}
                   if (!ceOk) el.textContent = j.text;
                 }
-                el.dispatchEvent(new Event('input',  { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                const actual = ('value' in el) ? el.value : (el.innerText || el.textContent || '');
+                node.dispatchEvent(new Event('input',  { bubbles: true }));
+                node.dispatchEvent(new Event('change', { bubbles: true }));
+                // READ BACK FROM THE LIVE DOCUMENT. Those dispatches can
+                // replace the node a second time, and a read-back taken off
+                // the node we just wrote verifies our own intent rather than
+                // the page — the defect #14 fixed for `(value now: …)` and
+                // #24 made the verdict follow, in the one place still reading
+                // a held reference.
+                const live = node.isConnected ? node : (q(j.selector) || node);
+                const actual = ('value' in live) ? live.value : (live.innerText || live.textContent || '');
                 const ok = String(actual).trim() === String(j.text).trim();
                 out[j.idx] = { ok, actual, msg: ok ? `typed ${JSON.stringify(j.text)}` : `read-back mismatch (got ${JSON.stringify(actual)})` };
               } catch (e) {

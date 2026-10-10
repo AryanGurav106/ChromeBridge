@@ -203,12 +203,28 @@ class ExtensionBridge:
             result = await asyncio.wait_for(fut, timeout=timeout)
         except asyncio.TimeoutError:
             self._pending.pop(req_id, None)
+            # NAME THE RECOVERY THAT WAS SEEN TO WORK, and only that one.
+            # Observed live: ops that INJECT into the page (read_page,
+            # fill_form, computer, javascript_tool) all hung together, while
+            # get_url, sw_info and navigate kept answering in milliseconds --
+            # the signature of a blocked page main thread rather than a dead
+            # extension, which the old wording could not distinguish. Steering
+            # the reader to `read_page` first is the one thing that cannot
+            # work in that state, because read_page is one of the ops that is
+            # stuck. navigate recovered the tab on the spot. #33's rule: the
+            # advice has to be a recovery that has been verified, not a
+            # plausible one (and no cause is asserted here that was not seen).
             raise TimeoutError(
                 f"extension did not respond to {op} within {timeout:.0f}s. "
                 "IMPORTANT: the extension may still be executing this op — for a "
                 "mutating op (fill_form, click, computer) do NOT simply retry; "
-                "re-observe with read_page/get_url first to see what actually "
-                "landed, or you risk duplicating the action."
+                "re-observe FIRST to see what actually landed, or you risk "
+                "duplicating the action. Use get_url or sw_info to re-observe, "
+                "NOT read_page: if the page's own main thread is blocked (a "
+                "modal dialog, or a script loop) then every op that injects "
+                "into the page is stuck too, while get_url/sw_info/navigate "
+                "still answer. If those answer and page ops do not, navigating "
+                "the tab clears the wedged document."
             )
         finally:
             # Record the most recent op's round-trip so callers (e.g. the per-

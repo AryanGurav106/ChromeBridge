@@ -180,11 +180,29 @@ const chromeMock = {
         // for the document it is already on and never moves. Measured twice in the
         // 10-task eval against a slow host, from a fresh about:blank tab.
         if (!state.navStalls) {
-          t.url = props.url;
+          // state.redirectTo reproduces a SERVER-SIDE REDIRECT: the tab lands
+          // somewhere other than the url it was handed. Until this existed the
+          // mock never fired onCommitted at all -- every navigate test went
+          // through onUpdated, where the url-change proxy happens to work --
+          // which is exactly why the redirect defect survived the suite.
+          const _landed = state.redirectTo || props.url;
+          t.url = _landed;
+          // A SUPERSEDED navigation never commits. Without this guard the 5ms
+          // timer from one call lands inside the NEXT one and hands it a commit
+          // it never earned -- which is a mock artefact, not browser behaviour,
+          // and it made the two navStalls checks report success.
+          state.navSeq = state.navSeq || {};
+          const _seq = (state.navSeq[id] = (state.navSeq[id] || 0) + 1);
+          setTimeout(() => {
+            if ((state.navSeq || {})[id] !== _seq) return;
+            for (const fn of listeners.navCommitted.slice()) {
+              try { fn({ tabId: id, frameId: 0, url: _landed }); } catch (e) {}
+            }
+          }, 5);
           // tab.title is Chrome's DISPLAY string and the op no longer reads it;
           // the declared title comes from document.title, stubbed per test via
           // `inline:docTitle`. Kept here only so the tab object stays realistic.
-          t.title = String(props.url).replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+          t.title = String(_landed).replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
           t._titleIn = state.titleArrivesAfter || 0;
         }
         scheduleComplete(id);
@@ -362,6 +380,8 @@ function resetState() {
   state.storage = {};
   state.frames = {};
   state.navStalls = false;
+  state.redirectTo = null;
+  state.navSeq = {};
   state.titleFallback = false;
   state.titleArrivesAfter = 0;
   state.nextTabId = 500;
@@ -1042,6 +1062,37 @@ const FIELDS3 = () => ([
     r = await callOp("navigate", { tabId: 1, url: "https://example.com/here" });
     check("N3 re-navigating to the CURRENT url is a reload, not a failure",
       r.ok && /^Navigated to/.test(String(r.result)), String(r.result).slice(0, 110));
+  });
+
+  await test("a server-side redirect is a navigation, not a failure", async () => {
+    // Measured live on tools/saas_playground.py: an auth guard bounced
+    // /projects -> /login -> 303 -> /projects. The tab navigated twice and ended
+    // where it started, so `arrived` (which asks whether the url CHANGED) never
+    // fired, the wait burned its full 15s, and the verdict called it
+    // "NAVIGATION DID NOT COMMIT" while offering three causes that were all
+    // false. Auth guards, canonical urls and trailing slashes all redirect.
+    resetState();
+    currentStubs["_declaredTitle"] = () => "Projects";
+    state.tabs[0].url = "http://app.test/projects";
+    state.redirectTo = "http://app.test/projects";     // bounced straight back
+    let r = await callOp("navigate", { tabId: 1, url: "http://app.test/login" });
+    check("N9 a redirect that lands back on the SAME url still reports a navigation",
+      r.ok && /^Navigated to/.test(String(r.result))
+          && !/DID NOT COMMIT/.test(String(r.result)), String(r.result).slice(0, 160));
+    check("N9b ...and SAYS it was redirected, so the caller does not assert "
+      + "against a page it never asked for",
+      /REDIRECTED/.test(String(r.result)) && /app\.test\/login/.test(String(r.result)),
+      String(r.result).slice(0, 200));
+
+    // The control: without a redirect the clause must be absent, or it is noise
+    // on every navigate (#15) rather than information.
+    resetState();
+    currentStubs["_declaredTitle"] = () => "Docs";
+    state.tabs[0].url = "http://app.test/a";
+    r = await callOp("navigate", { tabId: 1, url: "http://app.test/b" });
+    check("N9c ...and a navigation that landed where it was sent carries NO "
+      + "redirect clause", r.ok && !/REDIRECTED/.test(String(r.result)),
+      String(r.result).slice(0, 140));
   });
 
   await test("navigate reports the DECLARED title, never a rendering of the url", async () => {
