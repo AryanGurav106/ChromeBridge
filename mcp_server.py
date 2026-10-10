@@ -3179,6 +3179,35 @@ async def browser_batch(
             return str(inp.get("action") or "").strip().lower() in _FOCUS_ACTIONS
         return False
 
+    def _mmids_named(item):
+        """The mmids this step addresses. [] when it names none.
+
+        `coordinate` is deliberately absent: a point is not an element, so
+        there is nothing to ask the page about and the count proxy is all
+        there is for those (the same reason flows cannot record one).
+        """
+        inp = (item or {}).get("input") or {}
+        out_ = []
+        for k in ("ref", "ref_id", "submit_ref"):
+            v = inp.get(k)
+            if v is not None:
+                out_.append(re.sub(r"^ref_", "", str(v)).strip())
+        try:
+            for f in (inp.get("fields") or []):
+                if isinstance(f, dict):
+                    for k in ("ref", "mmid"):
+                        if f.get(k) is not None:
+                            out_.append(re.sub(r"^ref_", "", str(f[k])).strip())
+        except TypeError:
+            pass
+        return [m for m in out_ if m]
+
+    # Every mmid this batch will address, so the BASELINE can record which of
+    # them resolved before anything ran. Without that, a ref that never existed
+    # is indistinguishable from one the page destroyed, and the batch would
+    # blame staleness for a typo instead of letting the step say "not found".
+    _all_mmids = sorted({m for a in actions for m in _mmids_named(a)})
+
     # Does ANY step from j onward name a ref? Used to skip fingerprints that cannot
     # change what happens next — see the call sites below.
     _ref_at = [_plans_against_page(a) for a in actions]
@@ -3186,7 +3215,7 @@ async def browser_batch(
     for _j in range(len(actions) - 1, -1, -1):
         _ref_from[_j] = _ref_at[_j] or _ref_from[_j + 1]
 
-    async def _fp(tab_id):
+    async def _fp(tab_id, mmids=None):
         """url + element count + text length for one tab, or None if unavailable.
 
         Deliberately NOT fatal: a fingerprint that cannot be taken (the gate refuses
@@ -3195,7 +3224,8 @@ async def browser_batch(
         """
         try:
             b = await _bridge()
-            r = await b.call("page_fingerprint", tabId=tab_id)
+            r = await b.call("page_fingerprint", tabId=tab_id,
+                             mmids=(mmids or None))
             return r if isinstance(r, dict) else None
         except Exception:
             return None
@@ -3278,7 +3308,7 @@ async def browser_batch(
         # effect, so it cannot be made lazy at the comparison site — hence the
         # look-ahead. On an all-observation batch this saves one round trip.
         if _tab is not None and _tab not in _seen_tabs and _ref_from[i + 1]:
-            _seen_tabs[_tab] = await _fp(_tab)
+            _seen_tabs[_tab] = await _fp(_tab, _all_mmids)
 
         try:
             res = await fn(**_inp)
@@ -3319,14 +3349,37 @@ async def browser_batch(
         # the NEXT step's refs; when that step names none, its answer is unused.
         if not _ref_at[i + 1]:
             continue
-        _after = await _fp(_tab)
+        _next = _mmids_named(actions[i + 1])
+        _after = await _fp(_tab, _all_mmids)
         _before = _seen_tabs.get(_tab)
         if _after and _before:
             if _after.get("url") != _before.get("url"):
                 _stale_why = f"the page navigated to {_after.get('url')}"
-            elif abs((_after.get("elements") or 0) - (_before.get("elements") or 0)) >= 2:
-                _stale_why = (f"the DOM changed ({_before.get('elements')} -> "
-                              f"{_after.get('elements')} elements)")
+            else:
+                # ASK WHETHER THE NEXT STEP'S REFS STILL RESOLVE, rather than
+                # whether the element count moved. The count was only ever a
+                # proxy for that, and it is wrong in the commonest direction:
+                # measured live, a fill_form opened the input's own `list=`
+                # datalist (1007 -> 1012 elements) and the next step -- clicking
+                # that same form's submit -- was dropped as STALE holding a
+                # perfectly valid ref. A fill-then-submit batch is the commonest
+                # batch there is.
+                #
+                # The count still answers for a COORDINATE, which names no
+                # element, and for a cross-frame ref, which this document cannot
+                # look up (reported null = unknown). Conservative where it
+                # cannot know, exact where it can.
+                _ra, _rb = _after.get("refs") or {}, _before.get("refs") or {}
+                _gone = [m for m in _next
+                         if _ra.get(m) is False and _rb.get(m) is not False]
+                _unknown = any(_ra.get(m) is None for m in _next)
+                if _gone:
+                    _stale_why = ("the element(s) ref_" + ", ref_".join(_gone)
+                                  + " no longer resolve — the page replaced them")
+                elif (not _next or _unknown) and \
+                        abs((_after.get("elements") or 0) - (_before.get("elements") or 0)) >= 2:
+                    _stale_why = (f"the DOM changed ({_before.get('elements')} -> "
+                                  f"{_after.get('elements')} elements)")
         # THE BASELINE IS NOT ADVANCED, deliberately. It used to be reset after every
         # clean comparison, so two sub-threshold changes in a row never tripped
         # anything. The refs in the remaining steps were planned against the page as
@@ -3463,6 +3516,38 @@ def _install_recording_wrappers() -> int:
             _BATCHABLE[tname] = wrapped
         n += 1
     return n
+
+
+@mcp.tool()
+async def dismiss_dialog(
+    tabId: Annotated[int, Field(description="Tab whose JavaScript dialog to handle.")],
+    accept: Annotated[bool, Field(description="Accept instead of dismissing. Default False — accepting a confirm() takes the action behind it, and this exists to unblock a page, not to answer for the user.")] = False,
+    promptText: Annotated[Optional[str], Field(description="Text to supply when accepting a prompt().")] = None,
+) -> str:
+    """Dismiss a blocking alert()/confirm()/prompt(), and say whether there was one.
+
+    A JavaScript dialog blocks the page's main thread, so every tool that reads
+    or acts on the page hangs until it times out while get_url and sw_info keep
+    answering instantly — which looks exactly like a dead extension. This
+    reaches the dialog over CDP, which is out of process, so it works when
+    nothing else does. It is also the only way to ASK whether a dialog is the
+    cause: it reports no_dialog when there is none, which tells you the stall is
+    something else.
+    """
+    b = await _bridge()
+    res = await b.call("dismiss_dialog", tabId=tabId, accept=bool(accept),
+                       promptText=promptText)
+    d = res if isinstance(res, dict) else {}
+    if d.get("no_dialog"):
+        return ("No JavaScript dialog is open on this tab, so a blocking dialog is "
+                "NOT what is holding things up. If page tools are still hanging while "
+                "get_url and sw_info answer, the page's main thread is blocked by "
+                "something else (a script loop) — navigating the tab clears it.")
+    if d.get("dismissed"):
+        return (f'{"Accepted" if d.get("accepted") else "Dismissed"} the dialog. '
+                f"The page's main thread is running again; re-observe before acting, "
+                f"because whatever ran before the dialog may have changed the page.")
+    return str(res)
 
 
 @mcp.tool()

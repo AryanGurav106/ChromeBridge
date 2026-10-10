@@ -145,6 +145,13 @@ const GATED = [
   // and visible progressbars — page state, which is page content. Gated by omission
   // from UNGATED_OPS like the rest; listed here so the default is proven, not assumed.
   "page_readiness",
+  // dismiss_dialog ANSWERS a modal the page put up, and with accept=true it
+  // takes the action behind a confirm(). That is an interaction with the page,
+  // so it is gated by omission like the rest — even though it is a RECOVERY
+  // tool and the temptation is to make it always available. A page on an
+  // origin the user never granted is a page we should not be answering
+  // dialogs on either.
+  "dismiss_dialog",
 ];
 
 (async function main() {

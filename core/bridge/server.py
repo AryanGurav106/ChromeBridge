@@ -233,8 +233,11 @@ class ExtensionBridge:
                 "NOT read_page: if the page's own main thread is blocked (a "
                 "modal dialog, or a script loop) then every op that injects "
                 "into the page is stuck too, while get_url/sw_info/navigate "
-                "still answer. If those answer and page ops do not, navigating "
-                "the tab clears the wedged document."
+                "still answer. The two causes need DIFFERENT answers and there "
+                "is a tool that tells them apart: dismiss_dialog reports "
+                "no_dialog when none is open, and clears the page when one is. "
+                "A script loop is the other case, and navigating the tab clears "
+                "that one."
             )
         finally:
             # Record the most recent op's round-trip so callers (e.g. the per-

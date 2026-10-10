@@ -273,6 +273,12 @@ const chromeMock = {
     detach: async ({ tabId }) => { log({ kind: "cdp.detach", tabId }); },
     sendCommand: async (target, method, params) => {
       log({ kind: "cdp", tabId: target.tabId, method, params: params ? JSON.parse(JSON.stringify(params)) : params });
+      // Chrome's own wording when nothing is showing. The op has to report that
+      // as a FACT rather than an error, because "is a dialog what is wedging
+      // this page" is the question the caller could not otherwise ask.
+      if (method === "Page.handleJavaScriptDialog" && state.noDialog) {
+        throw new Error("No dialog is showing");
+      }
       return {};
     },
     onDetach: { addListener: () => {} },
@@ -381,6 +387,7 @@ function resetState() {
   state.frames = {};
   state.navStalls = false;
   state.redirectTo = null;
+  state.noDialog = false;
   state.navSeq = {};
   state.titleFallback = false;
   state.titleArrivesAfter = 0;
@@ -1093,6 +1100,42 @@ const FIELDS3 = () => ([
     check("N9c ...and a navigation that landed where it was sent carries NO "
       + "redirect clause", r.ok && !/REDIRECTED/.test(String(r.result)),
       String(r.result).slice(0, 140));
+  });
+
+  await test("a blocking JS dialog is answerable, and its absence is an answer", async () => {
+    // #48: alert()/confirm()/prompt() block the page's main thread, so every
+    // tool that injects into the page hangs while get_url and sw_info answer
+    // instantly -- indistinguishable from a dead extension, and the old advice
+    // was to re-observe with read_page, which is one of the ops that cannot
+    // answer. CDP is out of process, so it reaches what the page thread cannot.
+    resetState();
+    let r = await callOp("dismiss_dialog", { tabId: 1 });
+    const sent = callLog.filter((e) => e.kind === "cdp" &&
+                                 e.method === "Page.handleJavaScriptDialog");
+    check("DD1 dismiss_dialog reaches the dialog over CDP",
+      r.ok && r.result && r.result.dismissed === true && sent.length === 1,
+      JSON.stringify(r.result));
+    check("DD1b ...and DISMISSES by default — accepting a confirm() takes the "
+      + "action behind it, and this exists to unblock a page, not to answer "
+      + "for the user", sent[0] && sent[0].params.accept === false,
+      JSON.stringify(sent[0] && sent[0].params));
+
+    resetState();
+    r = await callOp("dismiss_dialog", { tabId: 1, accept: true });
+    const acc = callLog.filter((e) => e.kind === "cdp" &&
+                                e.method === "Page.handleJavaScriptDialog");
+    check("DD2 accept=true is honoured when it is asked for",
+      r.ok && acc[0] && acc[0].params.accept === true,
+      JSON.stringify(acc[0] && acc[0].params));
+
+    resetState();
+    state.noDialog = true;
+    r = await callOp("dismiss_dialog", { tabId: 1 });
+    check("DD3 no dialog is reported as a FACT, not an error — that is the "
+      + "answer to 'is a dialog what is wedging this page', and an error would "
+      + "look like the same stall it exists to diagnose",
+      r.ok && r.result && r.result.no_dialog === true && !r.result.dismissed,
+      JSON.stringify(r.result || r.error));
   });
 
   await test("navigate reports the DECLARED title, never a rendering of the url", async () => {

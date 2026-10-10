@@ -8584,11 +8584,29 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     try { nodes = _allComposed('[role="dialog"],[role="alertdialog"],[aria-modal="true"],dialog'); } catch (e) {}
     let anyDialogVisible = false;
     let ariaModalClaim = false;
+    // THE SAME VISIBILITY QUESTION THE COLLECTOR ASKS, not a fourth opinion.
+    // This pass used to hand-roll `visibility !== hidden && display !== none`,
+    // which misses opacity and misses an ancestor that is not rendered -- so a
+    // Rijksmuseum cookie <aside> the collector had already judged invisible
+    // raised *** A MODAL/DIALOG IS CURRENTLY OPEN *** and suppressed 32
+    // elements, while a scoped read of that same ref said "none passed the
+    // interactivity/visibility filters" and clicking it said "not visible".
+    // Two passes over one element, disagreeing, in the pass that decides
+    // WHETHER TO SHOW THE PAGE AT ALL. #18's asymmetry, fourth instance, and
+    // the most expensive one because it hides everything else.
+    const _dlgVisible = (d) => {
+      try {
+        const rr = d.getBoundingClientRect();
+        if (!(rr.width > 0 && rr.height > 0)) return false;
+        if (d.checkVisibility &&
+            !d.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
+        return true;
+      } catch (e) { return false; }
+    };
     for (const d of nodes) {
+      if (!_dlgVisible(d)) continue;
       const rr = d.getBoundingClientRect();
-      if (!(rr.width > 0 && rr.height > 0)) continue;
       let dcs; try { dcs = getComputedStyle(d); } catch (e) { continue; }
-      if (dcs.visibility === 'hidden' || dcs.display === 'none') continue;
       anyDialogVisible = true;
       // aria-modal="true" is a CLAIM, verified below — Yahoo Finance marks a
       // passive right-rail widget aria-modal, which hijacked the whole listing.
@@ -8616,8 +8634,10 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     if (anyDialogVisible) {
       try {
         for (const d of nodes) {
-          const dr = d.getBoundingClientRect();
-          if (!(dr.width > 0 && dr.height > 0)) continue;
+          // Same predicate as above. This loop tested the RECT only, so an
+          // invisible dialog whose siblings happen to be aria-hidden could
+          // still declare the page modal by the back door.
+          if (!_dlgVisible(d)) continue;
           // Walk up to the level whose siblings the library hid.
           let n = d;
           for (let up = 0; up < 4 && n && n.parentElement; up++, n = n.parentElement) {
@@ -11162,7 +11182,23 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
         let _dtTotal = 0;
         for (const t of document.querySelectorAll('table')) {
           const rs = t.querySelectorAll('tr').length;
-          const cs = t.querySelector('tr') ? t.querySelector('tr').children.length : 0;
+          // COUNT COLUMNS THE WAY THE RENDERER DOES — by expanding colspan,
+          // which is what the grid at line ~4286 already does. Counting cell
+          // ELEMENTS advertised a table as `155x11` and then rendered it as
+          // `155x28`, so the one number an agent uses to decide whether a
+          // scoped read is affordable was wrong by 2.5x, and wrong in the
+          // direction that makes it look cheaper than it is. Two counts of one
+          // thing in one output, which is the defect the comments below record
+          // fixing twice already for the ROW count and the TABLE count.
+          // `cell.colSpan` is the DOM property, so HTML's own default of 1
+          // applies and there is no attribute parsing to get wrong.
+          let cs = 0;
+          try {
+            const _r0 = t.querySelector('tr');
+            if (_r0) for (const c of _r0.children) {
+              cs += Math.min(50, Math.max(1, c.colSpan || 1));
+            }
+          } catch (e) { cs = 0; }
           const mm = t.getAttribute('mmid');
           // MATCH THE TREE'S OWN TEST. The hint required >=2 COLUMNS while the tree
           // prints a `table (N rows, read with ref_M)` node on >=2 rows alone, so one
@@ -12124,12 +12160,40 @@ async function axNamesFor(tabId) {
   };
 }
 
-function _pageFingerprintPage() {
-  return {
+function _pageFingerprintPage(mmids) {
+  const out = {
     url: location.href,
     textLen: (document.body ? document.body.innerText.length : 0),
     elements: document.querySelectorAll('*').length,
   };
+  // DO THE REFS STILL RESOLVE? The element COUNT is only ever a proxy for that
+  // question, and a bad one: a <datalist> opening under its own input adds
+  // elements without orphaning anything, so a fill followed by a click on that
+  // same form's submit was dropped as STALE with a perfectly valid ref
+  // (1007 -> 1012 elements). Asking directly is exact, costs nothing extra —
+  // it rides the fingerprint round trip that was already being taken — and
+  // replaces a chosen number with a fact, which is #27/#28's whole move.
+  if (mmids && mmids.length) {
+    const refs = {};
+    for (const m of mmids) {
+      const key = String(m);
+      // A cross-frame ref (`f<frameId>:<n>`) lives in another document and
+      // cannot be looked up from here. Reported as null = UNKNOWN rather than
+      // false, so the caller falls back to the count instead of calling every
+      // cross-frame ref stale after any step.
+      if (key.indexOf(':') !== -1) { refs[key] = null; continue; }
+      let ok = false;
+      try {
+        const reg = window.__mmidReg;
+        let n = reg ? reg.get(key) : null;
+        if (!(n && n.isConnected)) n = document.querySelector("[mmid='" + key + "']");
+        ok = !!(n && n.isConnected);
+      } catch (e) { ok = false; }
+      refs[key] = ok;
+    }
+    out.refs = refs;
+  }
+  return out;
 }
 
 // Deep diagnostic: find candidates by label / dump all potentially-interactive
@@ -12912,7 +12976,8 @@ async function handleOp({ id, op, params }) {
       }
       case "page_fingerprint": {
         const t = await resolveTab(params);
-        result = await runInTab(t.id, _pageFingerprintPage);
+        result = await runInTab(t.id, _pageFingerprintPage,
+                                [Array.isArray(params && params.mmids) ? params.mmids : null]);
         break;
       }
       // Both gated by omission from UNGATED_OPS — they read page content, which is
@@ -12946,6 +13011,52 @@ async function handleOp({ id, op, params }) {
       case "ax_names": {
         const t = await resolveTab(params);
         result = await axNamesFor(t.id);
+        break;
+      }
+      case "dismiss_dialog": {
+        // A BLOCKING JS DIALOG IS INDISTINGUISHABLE FROM A DEAD EXTENSION, and
+        // that was the whole defect (#48). alert()/confirm()/prompt() block the
+        // page's main thread, so every op that injects into the page --
+        // read_page, fill_form, computer, javascript_tool -- hangs until its
+        // timeout, while the ops that never touch the page keep answering in
+        // milliseconds. The agent sees "extension did not respond" and has no
+        // way to tell a wedged page from a broken bridge, and the old advice
+        // was to re-observe with read_page, which is itself one of the ops that
+        // cannot answer.
+        //
+        // CDP is OUT OF PROCESS, so it reaches the dialog that the page thread
+        // cannot. Page.handleJavaScriptDialog is both the DETECTOR and the
+        // RECOVERY: it errors "No dialog is showing" when there is none, which
+        // is the one question the agent could not otherwise ask.
+        //
+        // DISMISSES by default rather than accepting: accepting a confirm()
+        // takes the action behind it, and this op exists to UNBLOCK a stuck
+        // page, not to answer a question on the user's behalf. Accepting is
+        // available and has to be asked for.
+        const t = await resolveTab(params);
+        await attachDebugger(t.id);
+        const accept = !!(params && params.accept);
+        try {
+          await cdpSend(t.id, "Page.enable", {});
+        } catch (e) {}
+        try {
+          await cdpSend(t.id, "Page.handleJavaScriptDialog", {
+            accept: accept,
+            promptText: (params && typeof params.promptText === 'string')
+              ? params.promptText : undefined,
+          });
+          result = { dismissed: true, accepted: accept };
+        } catch (e) {
+          const msg = String((e && e.message) || e);
+          // Chrome's own wording. Reported as a FACT rather than an error,
+          // because "no dialog is showing" is the answer to the question the
+          // caller asked -- it tells them the stall is something else.
+          if (/No dialog is showing/i.test(msg)) {
+            result = { dismissed: false, no_dialog: true };
+          } else {
+            throw e;
+          }
+        }
         break;
       }
       case "print_pdf": {

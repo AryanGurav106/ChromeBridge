@@ -161,6 +161,13 @@ def install(fingerprints):
 SAME = {"url": "https://a.test/", "elements": 100, "textLen": 500}
 MOVED = {"url": "https://b.test/", "elements": 100, "textLen": 500}
 GREW = {"url": "https://a.test/", "elements": 140, "textLen": 900}
+# The datalist case: the DOM grew, and the ref the next step names is still
+# there. The count says "changed", the page says "your element is fine".
+GREW_REF_OK = dict(GREW, refs={"9": True})
+# The re-render case: same growth, but the element was replaced. This is what
+# the guard exists for (fix #5's React orphaning).
+GREW_REF_GONE = dict(GREW, refs={"9": False})
+BASE_REF_OK = dict(SAME, refs={"9": True})
 
 
 async def main():
@@ -521,6 +528,52 @@ async def main():
           len(RAN) == 2 and "fake_act" not in [r[0] for r in RAN]
           and "DOM changed" in text_of(out),
           f"ran={[r[0] for r in RAN]} said={text_of(out)[:90]!r}")
+
+    # ------------------------------------------------------------------
+    # B13: THE COUNT WAS ONLY EVER A PROXY FOR "DO THE REFS STILL RESOLVE".
+    #
+    # Measured live (#48): a fill_form opened the input's own `list=` datalist
+    # (1007 -> 1012 elements) and the next step -- clicking that same form's
+    # submit -- was dropped as STALE holding a perfectly valid ref. A
+    # fill-then-submit batch is the commonest batch there is, so the guard was
+    # firing on a change the batch ITSELF caused, in the case it most needs to
+    # survive. Asking the page directly is exact and rides the round trip that
+    # was already being taken.
+    # ------------------------------------------------------------------
+    install([BASE_REF_OK, GREW_REF_OK, GREW_REF_OK])
+    out = await ms.browser_batch([
+        {"name": "fill_form", "input": {"tabId": 1,
+                                        "fields": [{"ref": "ref_8", "value": "x"}]}},
+        {"name": "fake_act", "input": {"tabId": 1, "ref": "ref_9"}},
+    ])
+    check("B13 a DOM change that does NOT orphan the next step's ref lets it run "
+          "— the datalist case, where the count moved and nothing broke",
+          "fake_act" in [r[0] for r in RAN] and "SKIPPED" not in text_of(out),
+          f"ran={[r[0] for r in RAN]} said={text_of(out)[:110]!r}")
+
+    install([BASE_REF_OK, GREW_REF_GONE, GREW_REF_GONE])
+    out = await ms.browser_batch([
+        {"name": "fill_form", "input": {"tabId": 1,
+                                        "fields": [{"ref": "ref_8", "value": "x"}]}},
+        {"name": "fake_act", "input": {"tabId": 1, "ref": "ref_9"}},
+    ])
+    check("B13b ...and the CONTROL: the same growth with the ref REPLACED is "
+          "still caught, which is the React re-render the guard exists for "
+          "(fix #5) — without this, B13 would pass over a deleted guard",
+          "fake_act" not in [r[0] for r in RAN]
+          and "no longer resolve" in text_of(out),
+          f"ran={[r[0] for r in RAN]} said={text_of(out)[:140]!r}")
+
+    install([BASE_REF_OK, dict(GREW, refs={"9": None}), dict(GREW, refs={"9": None})])
+    out = await ms.browser_batch([
+        {"name": "fake_tool", "input": {"tabId": 1, "value": "opens something"}},
+        {"name": "fake_act", "input": {"tabId": 1, "ref": "ref_9"}},
+    ])
+    check("B13c a ref the page cannot answer for (cross-frame, reported null) "
+          "falls back to the COUNT rather than being called fine — conservative "
+          "where it cannot know, exact where it can",
+          "fake_act" not in [r[0] for r in RAN] and "DOM changed" in text_of(out),
+          f"ran={[r[0] for r in RAN]} said={text_of(out)[:110]!r}")
 
     # ------------------------------------------------------------------
     # B11: A TAB THIS BATCH CREATED IS THE TAB THIS BATCH MEANT.

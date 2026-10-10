@@ -172,7 +172,7 @@ def shell(title, body, user=None, current="", overlay=""):
     nav = ""
     if user:
         items = [("/projects", T("Projects")), ("/members", T("Members")),
-                 ("/settings", T("Settings"))]
+                 ("/report", "Report"), ("/settings", T("Settings"))]
         nav = "".join(
             f'<a href="{h}" class="{rid()}"{" aria-current=page" if h == current else ""}>{t}</a>'
             for h, t in items)
@@ -375,6 +375,50 @@ def project_page(user, p):
 </div>""", user, "/projects")
 
 
+def report_page(user):
+    """Two shapes that each made a pass disagree with another pass (#48).
+
+    The DIALOG is a FULL-VIEWPORT opacity:0 overlay — what a consent
+    library leaves behind after a fade-out. It must dominate the viewport and
+    sit over its centre, or it passes no modality test and the fixture is
+    VACUOUS: the first version was 320x120 in a corner, and an ablation of the
+    fix produced byte-identical output because neither arm could reach the
+    code under test. Being opacity:0 with an unremarkable display/visibility,
+    the modal pass's old hand-rolled test kept it while the collector's
+    checkVisibility({opacityProperty:true}) had already dropped it. That is how a Rijksmuseum cookie <aside> raised the MODAL banner and
+    suppressed 32 elements that were perfectly visible.
+
+    The TABLE's first row carries a colspan=2, so counting cell ELEMENTS gives
+    3 while the renderer expands to 4. The hint advertised `155x11` for a table
+    it rendered as `155x28`.
+    """
+    rows = "".join(
+        f'<tr><td>{d}</td><td>{a}</td><td>{b}</td><td>{c}</td></tr>'
+        for d, a, b, c in [("2026-10-01", "12", "4", "0.33"),
+                           ("2026-10-02", "18", "9", "0.50"),
+                           ("2026-10-03", "7", "1", "0.14")])
+    return shell("Report", f"""
+<h1>Report</h1><p class="sub">Three days, four columns, one colspan</p>
+<div class="card">
+  <table id="metrics">
+    <thead>
+      <tr><th>Day</th><th colspan="2">Requests</th><th>Ratio</th></tr>
+    </thead>
+    <tbody>{rows}</tbody>
+  </table>
+</div>""", user, "/report", overlay=f"""
+<aside role="dialog" aria-label="Cookie notice" class="{rid()}"
+       style="position:fixed;inset:0;opacity:0;pointer-events:none;
+              background:rgba(10,10,12,.86);display:flex;align-items:center;
+              justify-content:center">
+  <div style="background:#141417;border:1px solid #232329;border-radius:12px;
+              padding:24px;width:320px">
+    <p class="muted" style="margin:0 0 10px">We use cookies.</p>
+    <button class="{rid()}">Accept</button>
+  </div>
+</aside>""")
+
+
 def members_page(user):
     people = [("Ada Lovelace", "ada@acme.test", "Owner"),
               ("Grace Hopper", "grace@acme.test", "Admin"),
@@ -488,6 +532,8 @@ class H(BaseHTTPRequestHandler):
             p = next((x for x in STATE["projects"] if x["id"] == int(m.group(1))), None)
             return self._send(project_page(user, p)) if p else self._send(
                 shell("Not found", "<h1>404</h1><p class='sub'>No such project.</p>", user), 404)
+        if path == "/report":
+            return self._send(report_page(user))
         if path == "/members":
             return self._send(members_page(user))
         if path == "/settings":

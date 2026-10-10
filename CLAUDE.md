@@ -51,7 +51,7 @@ printf '%s\n' \
  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
- | .venv/Scripts/python.exe mcp_server.py 2>/dev/null    # -> 30 tools
+ | .venv/Scripts/python.exe mcp_server.py 2>/dev/null    # -> 31 tools
 ```
 
 ---
@@ -62,7 +62,7 @@ printf '%s\n' \
 ┌──────────────────────┐    stdio MCP   ┌──────────────────────┐   WebSocket    ┌──────────────────────┐
 │  Claude Code         │ ◄────────────► │  mcp_server.py       │ ◄────────────► │  Chrome extension    │
 │  (the agent — runs   │   JSON-RPC     │  (FastMCP)           │ ws://:8765-74  │  (extension/)        │
-│  on YOUR Claude      │                │   - 30 MCP tools     │  token + v1    │   - service worker   │
+│  on YOUR Claude      │                │   - 31 MCP tools     │  token + v1    │   - service worker   │
 │  subscription)       │                │   - ExtensionBridge  │                │   - PERMISSION GATE  │
 └──────────────────────┘                │   - imageId registry │                │   - side panel UI    │
                                         │   - GIF recorder     │                │   - mmid injector    │
@@ -82,7 +82,7 @@ between them.
 
 ```
 ChromeBridge/
-├── mcp_server.py               # THE entry point — FastMCP stdio server, all 30 tools
+├── mcp_server.py               # THE entry point — FastMCP stdio server, all 31 tools
 ├── .mcp.json                   # project-scope registration; PORTABLE (see "Registration")
 ├── config.py                   # paths
 ├── pyproject.toml              # packaging; console script `chromebridge`; deps read
@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 904 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 915 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -144,7 +144,7 @@ badge or a clone URL until one exists.
 
 ## MCP tool surface (what Claude Code sees)
 
-**30 tools** (verified over the wire with the `tools/list` smoke test above, not
+**31 tools** (verified over the wire with the `tools/list` smoke test above, not
 just `grep -c '^@mcp.tool()' mcp_server.py`). Clones Claude-in-Chrome's tool
 names/schemas, plus two ChromeBridge power-tools and three diagnostics:
 
@@ -171,6 +171,7 @@ names/schemas, plus two ChromeBridge power-tools and three diagnostics:
 | `read_console_messages(tabId, pattern, ...)` | `read_console_messages` | ring buffer in `listener_tag.js` |
 | `read_network_requests(tabId, urlPattern, ...)` | `read_network_requests` | `chrome.webRequest` per-tab buffer |
 | `resize_window(width, height, tabId)` | `resize_window` | |
+| `dismiss_dialog(tabId, accept, promptText)` | `dismiss_dialog` | CDP `Page.handleJavaScriptDialog` — the ONLY tool that reaches a tab blocked by `alert`/`confirm`/`beforeunload`, because every page-context op is queued behind the dialog's own thread. Reports `no_dialog` as a FACT rather than erroring, so "nothing is blocking" and "the op failed" stay distinguishable |
 | `file_upload(paths, ref, tabId)` | `file_upload` | base64 over bridge, 10 MB cap |
 | `upload_image(imageId, ref\|coordinate, tabId)` | `file_upload` | from the screenshot registry |
 | `gif_creator(action, tabId)` | server-side | Pillow export to `temp/`, frames auto-captured per action |
@@ -505,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 904 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 915 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -4166,13 +4167,13 @@ granted in the side panel is refused with the same message the agent gets.
       so this was that fix present in one tool and absent in its sibling. Inlined
       as a closure, not called as a sibling, because this function is injected and
       a free identifier there is #30's bug class (C11 would fail on it).
-    - **The modal banner fires on a dialog the collector knows is invisible. NOT
-      FIXED.** A Rijksmuseum cookie `aside` raised `*** A MODAL/DIALOG IS CURRENTLY
+    - **The modal banner fires on a dialog the collector knows is invisible.
+      FIXED in #51.** A Rijksmuseum cookie `aside` raised `*** A MODAL/DIALOG IS CURRENTLY
       OPEN ***` and suppressed 32 elements, while a scoped read of that same ref
       said "none passed the interactivity/visibility filters" and clicking it said
       "not visible". Two passes over one element disagreeing, in the pass that
       decides WHETHER TO SHOW THE PAGE. ~4 round trips.
-    - **The batch guard fires on a change the batch ITSELF caused. NOT FIXED.**
+    - **The batch guard fires on a change the batch ITSELF caused. FIXED in #51.**
       A fill opened the input's own `list=` datalist (1007 -> 1012 elements) and
       the next step -- clicking that same form's submit -- was dropped as STALE.
       The ref was fine. #43 answered this exact question one layer over ("a click
@@ -4181,17 +4182,19 @@ granted in the side panel is refused with the same message the agent gets.
       element-count signal exists to catch a React re-render orphaning mmids
       (fix #5). Needs measurement against B10c before it is touched.
 
-    **Also unfixed, with evidence:** a blocking JS `alert()` is indistinguishable
+    **Also unfixed, with evidence:** ~~a blocking JS `alert()` is indistinguishable
     from a dead extension and the timeout message advises re-observing with
-    `read_page`, which is itself one of the ops that cannot answer (cost ~7 minutes
-    on T8, and is why that is our only wall-clock loss); `search_page` cannot match
-    a literal space against a `<br>`-induced newline in a table header
-    (`"Mean (deg. C)"` renders as `Mean\n(deg. C)`); the data-table hint counts
-    header `<th>` elements while the renderer EXPANDS COLSPANS, advertising
-    `155x11` for a table it renders as `155x28`; and three sightings across two
-    evals of an observation chained after a CLICK racing the navigation the click
-    caused -- `search_page`, `get_url` and `get_page_text`, one mechanism, all
-    three flagged LOUD by the readiness banner rather than answering falsely.
+    `read_page`, which is itself one of the ops that cannot answer~~ **FIXED in
+    #51** (cost ~7 minutes on T8, and is why that is our only wall-clock loss);
+    `search_page` cannot match a literal space against a `<br>`-induced newline in
+    a table header (`"Mean (deg. C)"` renders as `Mean\n(deg. C)`); ~~the
+    data-table hint counts header `<th>` elements while the renderer EXPANDS
+    COLSPANS, advertising `155x11` for a table it renders as `155x28`~~ **FIXED in
+    #51**; and three sightings across two evals of an observation chained after a
+    CLICK racing the navigation the click caused -- `search_page`, `get_url` and
+    `get_page_text`, one mechanism, all three flagged LOUD by the readiness banner
+    rather than answering falsely. **STILL OPEN**, and #51 explains why it is not
+    the same question as the batch guard it looks like.
 
     **A GRADER BUG OF MY OWN, caught by the falsifier firing on BOTH arms.**
     Correctness first read 36/38, with T16 wrong on cb AND cic -- and both had
@@ -4422,6 +4425,110 @@ granted in the side panel is refused with the same message the agent gets.
     always fires is indistinguishable from one that works, and the
     derived-not-mandatory control), and `tools/run_flows.py` as a CI step.
 
+51. **#48'S FOUR RESIDUALS, CLOSED — and the fixture for the first one was
+    VACUOUS until an ablation said so.** Four defects the generality eval left
+    open. Each is one pass disagreeing with another pass about a question the
+    other pass had already answered, which is #18's asymmetry and is now the
+    commonest shape in this log.
+
+    **THE MODAL PASS WAS ASKING ITS OWN VISIBILITY QUESTION.** `dialogOpen`
+    hand-rolled `visibility !== 'hidden' && display !== 'none'` — which misses
+    opacity, and misses an ancestor that is not rendered — while the collector
+    three thousand lines away asks `checkVisibility({opacityProperty: true,
+    visibilityProperty: true})`. So a Rijksmuseum consent `aside` left at
+    `opacity:0` after its fade-out raised `*** A MODAL/DIALOG IS CURRENTLY OPEN
+    ***`, the modal-focus pass at line 9326 then dropped 32 rows beneath it, and
+    a scoped read of that same ref said "none passed the interactivity/visibility
+    filters" while clicking it said "not visible". **Three passes over one
+    element, two of them agreeing and the loudest one wrong**, in the pass that
+    decides whether to show the page at all. One `_dlgVisible` helper now asks
+    the collector's question, in BOTH loops — the aria-hidden-siblings modality
+    test (#25's Radix path) tested the rect only and was the back door.
+
+    **AND THE FIXTURE I WROTE FOR IT PROVED NOTHING, which only the ablation
+    showed.** The playground's `/report` overlay was 320x120 in a corner: it
+    passes no modality test, so neither arm could reach the code under test and
+    the probe returned byte-identical output with the fix reverted. Widened to a
+    full-viewport `position:fixed; inset:0` overlay — what a consent library
+    actually leaves behind — and the ablated arm immediately raised the banner
+    and dropped the page. **This is the fourth vacuous fixture this project has
+    found by running one against the pre-fix code** (#29 found three in one
+    session), and it is the only method that works: a fixture encodes what you
+    thought the cause was, and nothing but watching it fail distinguishes that
+    from the cause. MV1/MV2 fail pre-fix with `alpha=False buy=False` — #48's
+    suppression half reproduced exactly — and **MV3 is the control that the fix
+    is not simply "delete the banner"**: the same overlay at `opacity:1` still
+    raises it.
+
+    **A SECOND STALENESS, in the harness rather than the code:** every ablation
+    run before this one served the OLD fixture, because a `saas_playground.py`
+    started hours earlier was still listening and Python does not hot-reload. A
+    probe pointed at a long-running server measures whatever that server was
+    started with — the same shape as #27's stale client schema, one process over.
+
+    **THE DATA-TABLE HINT COUNTED CELL ELEMENTS; THE RENDERER EXPANDS COLSPANS.**
+    `t.querySelector('tr').children.length` on a header row whose first cell
+    spans is the number of `<th>` elements, not the number of COLUMNS — so the
+    hint advertised `155x11` for a table it renders as `155x28`, and an agent
+    budgeting a scoped read against the advertised width gets something else.
+    Summing `colSpan` is what HTML already declares (`colSpan` defaults to 1, so
+    a table with no spans is unchanged), clamped at 50 per cell so a hostile
+    `colspan=10000` cannot make the hint absurd. **TB14 is the invariant rather
+    than the value**: the hint's column count must equal what the aligned grid
+    produces, measured from the same page in the same run. It fails pre-fix with
+    `hint=1 rendered=3`.
+
+    **A BLOCKING `alert()` WAS INDISTINGUISHABLE FROM A DEAD EXTENSION.** Every
+    page-context op — `read_page`, `javascript_tool`, `chrome.scripting`, the
+    collector itself — is queued behind the dialog's own thread, so all of them
+    time out with nothing to say, and the timeout message advised re-observing
+    with `read_page`, **which is itself one of the ops that cannot answer**. That
+    is the #23/#33 class (a tool asserting a recovery it has not verified) in the
+    one message a stuck agent reads. Cost ~7 minutes on T8 and is the only
+    wall-clock loss in the whole eval. `dismiss_dialog` uses CDP
+    `Page.handleJavaScriptDialog`, which is out-of-process and therefore the only
+    thing that reaches a blocked page at all; the timeout message now names it
+    and distinguishes it from a script loop, and the bridge's own timeout ring
+    (#50) gives the message its evidence. **It reports `no_dialog` as a FACT, not
+    an error** — "nothing is blocking this tab" and "the op failed" are different
+    answers and must not arrive as the same one, which is the same rule `navigate`
+    needed in #40.
+
+    **THE BATCH GUARD FIRED ON A CHANGE THE BATCH ITSELF CAUSED.** A `fill_form`
+    opened the input's own `list=` datalist (1007 -> 1012 elements) and the next
+    step — clicking that same form's submit — was dropped as STALE. The ref was
+    fine. #43 answered this one layer over ("a click does not invalidate the
+    keystrokes it was issued for") and I deliberately did not extend it to refs,
+    because refs really are per-document and the element-count signal exists to
+    catch a React re-render orphaning mmids (fix #5). **So the count was never
+    the right question — the refs were.** `page_fingerprint` now optionally
+    returns, per mmid the next step names, whether it still resolves; a ref that
+    resolved before and does not now is stale, and a count delta alone is not.
+    `null` means cross-frame or unknown and falls back to the count rule, so the
+    guard degrades rather than breaking. **B13b is the control that a genuine
+    re-render still stops the batch**, which "never fire" would also satisfy —
+    the same way #38's B10b is the control for its own skip.
+
+    **STILL OPEN, and it is NOT the same question as the guard above.** An
+    observation chained after a CLICK can race the navigation that click caused —
+    three sightings across two evals (`search_page`, `get_url`,
+    `get_page_text`). It looks like a batch-guard defect and is not: whether a
+    click navigates is not decidable from its input, which is the entire basis of
+    #38's decide-from-the-input rule, and the fingerprint is deliberately not
+    taken before an observation because that would tax the commonest batch there
+    is. All three failed LOUD — the readiness banner led with "1 network request
+    in flight" and said not to conclude absence — so it costs a round trip rather
+    than a wrong answer, which is #15 paying for itself. A fix must be priced
+    first: #38 measured a fingerprint at ~2-3ms against a ~24ms read, and a
+    settle wait is far more expensive than either. Also still open: `search_page`
+    cannot match a literal space against a `<br>`-induced newline.
+
+    Suites: 915 checks. New — MV1-MV3 (the modal pass asks the collector's
+    question, with the opacity:1 control), TB14 (the hint and the renderer count
+    the same columns), B13/B13b/B13c (ref-resolution staleness, with the
+    genuine-re-render and unknown-refs controls), DD1-DD3 (`dismiss_dialog`,
+    with the no-dialog-is-a-fact control) and its GATED entry, C21/C21b.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -4484,6 +4591,10 @@ granted in the side panel is refused with the same message the agent gets.
 | A batch step using `fill_form(fields=[{"selector": ...}])` ran after a navigation | By design since #48 — a CSS selector is resolved at DISPATCH time against the live document, so it is the ref-FREE way to address a form across a page change. A `ref` or `mmid` key is still per-document and is still skipped (B12b), and a MIXED list is conservative because fill_form writes atomically (B12c) |
 | `query_elements(include_text=true)` now returns text read_page already showed | By design since #48 — `innerText`/`textContent` stop at a shadow boundary, so a host rendering its content in its own shadow root read as empty while read_page named it from that same content (#29/SH1, #37). Used ONLY when the light-DOM read came back empty: it does not reproduce innerText's CSS-aware line breaking (Q9b is the control) |
 | A batch kept going after `javascript_tool` or a second `navigate` | By design since #42 — the `_OBSERVES` whitelist is gone. A step is stopped only if it ADDRESSES the previous page, decided from its own input: a ref/coordinate, `back`/`forward`, or `computer(action="key"/"type")` whose target is the focused element. A whitelist had to be remembered every time a tool or parameter was added, and was not, three times in one day |
+| Every op times out at once and the tab looks dead | A blocking `alert`/`confirm`/`beforeunload`. EVERY page-context op is queued behind the dialog's own thread, so `read_page` cannot answer and neither can anything else — call `dismiss_dialog`, which goes over CDP and is out-of-process. `sw_info` reports the bridge's last ten timeouts with their ages, which is how you tell one stuck op from a pattern. Before #51 the timeout message advised `read_page`, i.e. one of the ops that cannot answer |
+| The MODAL banner fires on a dialog a scoped read calls invisible | Fixed in #51 — `dialogOpen` hand-rolled its visibility test and missed opacity, so a faded-out consent overlay raised the banner AND suppressed the page beneath it. Both loops now ask the collector's own `checkVisibility({opacityProperty:true, visibilityProperty:true})`. If it recurs, check that the aria-hidden-siblings loop still uses `_dlgVisible` — that one tested the rect alone and was the back door |
+| A batch step was dropped as STALE after a change the batch itself caused | Fixed in #51 — the guard compared ELEMENT COUNTS, so a `list=` datalist opening (1007 -> 1012) orphaned a ref that was fine. `page_fingerprint` now reports whether each ref the NEXT step names still resolves; a count delta alone no longer stops a batch. A `null` (cross-frame) falls back to the count rule |
+| The data-table hint's size does not match the grid you get | Fixed in #51 — it counted header cell ELEMENTS while the renderer expands colspans (`155x11` advertised, `155x28` rendered). TB14 pins the two against each other on the same page |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---

@@ -1049,6 +1049,27 @@ async def main():
               + (f" MISSING FROM HINT={sorted(_tree_refs - _hint_refs)}"
                  if _tree_refs - _hint_refs else ""))
 
+        # TB14: THE HINT AND THE RENDERER MUST COUNT THE SAME COLUMNS. `cs` was
+        # the number of cell ELEMENTS in the first row while the aligned grid
+        # EXPANDS colspans, so a table advertised as `155x11` rendered as
+        # `155x28` -- an agent budgets a scoped read against the advertised
+        # width and gets something else. #48, and the same two-passes-disagree
+        # shape as TB12 one axis over. `#span1`'s first row is a single
+        # colspan=3 <th>: counting elements gives 1, the renderer gives 3, so
+        # the check is only meaningful on a table whose first row spans.
+        _sm = await tb.evaluate(
+            "()=>{const e=document.getElementById('span1');return e?e.getAttribute('mmid'):null;}")
+        _hint_cols = None
+        if _sm:
+            _m = re.search(r"ref_" + str(_sm) + r" \((\d+)x(\d+)\)", _tnote)
+            _hint_cols = int(_m.group(2)) if _m else None
+        _grid = await scoped("span1") or ""
+        _hdr = next((l for l in _grid.splitlines() if "|" in l and "---" not in l), "")
+        _rend_cols = len([c for c in _hdr.split("|")]) if _hdr else 0
+        check("TB14 the data-table hint's column count is what the renderer produces",
+              _hint_cols is not None and _rend_cols > 0 and _hint_cols == _rend_cols,
+              f"hint={_hint_cols} rendered={_rend_cols} :: {_hdr.strip()[:60]}")
+
         check("TB11 the <caption> is rendered, so a figure's UNIT is not lost",
               "[caption] Revenue by region (thousands of JPY)" in w,
               next((l.strip() for l in w.splitlines() if "caption" in l.lower()),
@@ -1518,6 +1539,50 @@ async def main():
               "it — the landmark breaks ties, it does not override rank",
               "Daily Chronicle" in _mhline4, _mhline4[:100])
         await mh.close()
+
+        # MV: THE MODAL PASS MUST ASK THE COLLECTOR'S OWN VISIBILITY QUESTION.
+        # dialogOpen hand-rolled `visibility !== hidden && display !== none`,
+        # which misses opacity -- so a consent overlay left at opacity:0 after
+        # its fade-out raised *** A MODAL/DIALOG IS CURRENTLY OPEN *** and the
+        # modal-focus pass then dropped the rows beneath it, while a scoped read
+        # of that same ref said "none passed the interactivity/visibility
+        # filters" and clicking it said "not visible". Two passes over one
+        # element disagreeing, in the pass that decides whether to show the page
+        # at all (#18's asymmetry, #48).
+        # THE OVERLAY MUST DOMINATE THE VIEWPORT AND COVER ITS CENTRE. The first
+        # version of this fixture was 320x120 in a corner, which passes no
+        # modality test, so an ablation of the fix produced byte-identical
+        # output and the fixture proved nothing.
+        OVERLAY = ("<!doctype html><meta charset=utf-8><body style='margin:0'>"
+                   "<nav><a href=/a>Alpha</a> <a href=/b>Beta</a></nav>"
+                   "<main><button>Buy</button></main>"
+                   "<div role=dialog aria-label='Cookie notice' style='position:fixed;"
+                   "inset:0;opacity:{op};background:rgba(0,0,0,.8);display:flex;"
+                   "align-items:center;justify-content:center'>"
+                   "<button>Accept</button></div></body>")
+        mv = await browser.new_page(viewport={"width": 900, "height": 700})
+        await mv.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await mv.goto("about:blank")
+        await mv.set_content(OVERLAY.replace("{op}", "0"))
+        await mv.wait_for_timeout(120)
+        _mv0 = await mv.evaluate("(function(){ " + COLLECT
+                                 + "; return _collectInteractivePage(false); })()")
+        check("MV1 an opacity:0 overlay raises NO modal banner — the collector had "
+              "already judged it invisible",
+              "A MODAL/DIALOG IS CURRENTLY OPEN" not in _mv0,
+              "banner present" if "A MODAL/DIALOG IS CURRENTLY OPEN" in _mv0 else "no banner")
+        check("MV2 ...and the page beneath it is still listed",
+              "Alpha" in _mv0 and "Buy" in _mv0,
+              f"alpha={'Alpha' in _mv0} buy={'Buy' in _mv0}")
+        # CONTROL. Without this, deleting the banner outright would pass MV1/MV2.
+        await mv.set_content(OVERLAY.replace("{op}", "1"))
+        await mv.wait_for_timeout(120)
+        _mv1 = await mv.evaluate("(function(){ " + COLLECT
+                                 + "; return _collectInteractivePage(false); })()")
+        check("MV3 CONTROL: the SAME overlay at opacity:1 does raise the banner",
+              "A MODAL/DIALOG IS CURRENTLY OPEN" in _mv1,
+              "banner present" if "A MODAL/DIALOG IS CURRENTLY OPEN" in _mv1 else "NO BANNER")
+        await mv.close()
 
         await browser.close()
 
