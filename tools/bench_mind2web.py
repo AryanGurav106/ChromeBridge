@@ -22,8 +22,11 @@ Three numbers per action:
   findability   the REAL find() scorer, given the human's task description,
                 ranks the target — MRR and top-3
 
-Compared against MindAct's published HTML-cleaning baseline of 94.7% target
-recall, which is the closest thing to a comparable number in the literature.
+Reported beside MindAct's published HTML-cleaning baseline of 94.7% target
+recall. That is CONTEXT, not a head-to-head: their denominator rule is not
+known to match ours (we exclude actions whose target is absent from the saved
+snapshot), and nothing here establishes that it does. The script prints both
+our denominators so the headline cannot be quoted without them.
 
 HONEST LIMITS — do not quote a number from here without these
 --------------------------------------------------------------
@@ -253,8 +256,25 @@ async def main() -> int:
     status = Counter(r["status"] for r in rows)
 
     print(f"\n=== OUT-OF-SAMPLE (Mind2Web, {len(scored)} actions, {len(sites)} sites) ===")
+    # THE DENOMINATOR, PRINTED, because it is a choice that flatters and the
+    # headline number is quoted publicly. `target_not_in_html` actions are EXCLUDED
+    # above: the target element is absent from the saved snapshot entirely, so no
+    # collector could list it and scoring it as a miss would measure the dataset's
+    # completeness rather than our recall. That is the right call and it is still a
+    # choice, so the all-in figure is printed beside it rather than left for a
+    # reader to reconstruct from the status line. #22's rule, applied to a ratio:
+    # a bound nobody can see is indistinguishable from no bound.
+    _all_in = len(scored) + status.get("target_not_in_html", 0)
     print(f"target recall            {rec}/{len(scored)} = {rec/len(scored):.1%}"
-          f"    (MindAct published baseline: 94.7%)")
+          f"   <- of targets PRESENT in the snapshot")
+    print(f"  ...counting absent targets as misses {rec}/{_all_in} = "
+          f"{rec/max(1,_all_in):.1%}   (quote the denominator with the number)")
+    # The published MindAct figure is NOT known to use this denominator rule, and
+    # nothing in this repo establishes that it does. Printed as context, flagged as
+    # not-a-like-for-like, because an unqualified "vs 94.7%" is a comparison this
+    # harness has not earned.
+    print(f"  MindAct published baseline 94.7% — denominator rule NOT verified to "
+          f"match; do not quote as a head-to-head")
     print(f"  ...of RENDERED targets {rec_r}/{len(rendered)} = "
           f"{rec_r/max(1,len(rendered)):.1%}   <- the number that reflects live behaviour")
     print(f"exact (no anc/desc credit) {exact}/{len(scored)} = {exact/len(scored):.1%}")
