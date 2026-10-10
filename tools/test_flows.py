@@ -1,0 +1,491 @@
+"""Unit suite for the flow descriptor — naming a control so a recorded step survives.
+
+Why this exists: a recorded step cannot store a ref. mmids are per-document and
+additive (limitation #1, fix #5), so on the next run the number does not mean
+"not found", it means SOME OTHER ELEMENT — a step that stores one is a step that
+clicks the wrong thing and reports success, which is the #10/#11/#12 family.
+
+Every check here has a negative control beside it, because the failure mode this
+module can have is the quiet one: a descriptor that resolves to a plausible
+wrong element looks exactly like a descriptor that works.
+
+FD8 and FD12 are the two that matter. FD12 is the whole claim — survive a
+re-render that renumbers every mmid. FD8 is the whole safety property — when
+the crowd around the target changed, REFUSE rather than take the ordinal.
+
+Run:  python tools/test_flows.py
+"""
+
+import asyncio
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+from core.flows.descriptor import (  # noqa: E402
+    FULL, LEVELS, Unresolved, build, fields, resolve,
+)
+from core.flows import model as FM  # noqa: E402
+from core.flows.recorder import Recorder, query_total, search_hits  # noqa: E402
+from core.flows.runner import FAILED, NEEDS, PASSED, resume, start  # noqa: E402
+
+sys.path.insert(0, str(ROOT / "tools"))
+from _extract import extract  # noqa: E402
+
+results = []
+
+
+def check(name, ok, detail=""):
+    results.append(bool(ok))
+    print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"  - {detail}" if detail else ""))
+
+
+def E(mmid, tag="button", role="", name="", type_="", placeholder="",
+      section="", under="", value="", disabled=False, clickable=True,
+      editable=False, text=""):
+    """One collector entry, in the shape _collectInteractivePage(structured) emits."""
+    return {
+        "mmid": mmid, "tag": tag, "role": role, "name": name, "label": "",
+        "type": type_, "placeholder": placeholder, "section": section,
+        "underHeading": under, "value": value, "text": text,
+        "disabled": disabled, "clickable": clickable, "editable": editable,
+    }
+
+
+def main():
+    # ---------------------------------------------------------------- build
+    page = [
+        E(1, "button", name="Save"),
+        E(2, "button", name="Cancel"),
+        E(3, "input", type_="email", placeholder="you@example.com",
+          section="form", editable=True, clickable=False),
+    ]
+    t = build(page[0], page)
+    check("FD1 a uniquely-named control gets the CHEAPEST descriptor that resolves",
+          t["level"] == 1 and t["desc"].get("name") == "Save", f"level={t['level']}")
+    check("FD1b ...and therefore does NOT carry section/heading, which a rename "
+          "elsewhere on the page would otherwise break",
+          "under" not in t["desc"] and "section" not in t["desc"],
+          f"desc keys={sorted(t['desc'])}")
+
+    # Two controls sharing a name, separated by the landmark they sit in.
+    dup = [
+        E(10, "button", name="Delete", section="main", under="Drafts"),
+        E(11, "button", name="Delete", section="main", under="Published"),
+    ]
+    t2 = build(dup[0], dup)
+    check("FD2 a shared name escalates to section/heading rather than giving up",
+          t2["desc"].get("under") == "Drafts" and "nth" not in t2,
+          f"level={t2['level']} nth={t2.get('nth')}")
+    check("FD2b ...and stops THERE rather than climbing to near=, which costs a "
+          "field for nothing once the heading already resolved it",
+          "near" not in t2["desc"], f"desc keys={sorted(t2['desc'])}")
+
+    # Identical in every declared field: only an ordinal can separate them.
+    rows = [E(20 + i, "button", name="Edit", section="main", under="Rows")
+            for i in range(4)]
+    t3 = build(rows[2], rows)
+    check("FD3 controls identical in every DECLARED field fall back to an ordinal",
+          t3.get("nth") == 2 and t3.get("of") == 4,
+          f"nth={t3.get('nth')} of={t3.get('of')}")
+
+    # -------------------------------------------------------------- resolve
+    check("FD4 a level-1 descriptor resolves to the one element it names",
+          resolve(t, page) == "1")
+    check("FD5 zero matches refuses, and NAMES the descriptor it looked for "
+          "(#24: refuse and name the candidates, never guess)",
+          _raises(lambda: resolve(t, [page[1], page[2]]), "Save"))
+
+    t_noord = {"level": FULL, "desc": dict(t3["desc"])}
+    check("FD6 several matches with no recorded ordinal refuses AND hands back "
+          "the candidates, so the refusal is actionable (#39)",
+          _raises(lambda: resolve(t_noord, rows), "4 elements match",
+                  want_candidates=4))
+
+    check("FD7 the ordinal resolves when the crowd is unchanged",
+          resolve(t3, rows) == "22")
+
+    # ---- FD8: THE safety property -----------------------------------------
+    # A row inserted ABOVE the target shifts every ordinal. Taking nth here
+    # would act on a different element and report success.
+    grown = [E(19, "button", name="Edit", section="main", under="Rows")] + rows
+    ok8 = _raises(lambda: resolve(t3, grown), "but 4 did when")
+    check("FD8 a CHANGED crowd refuses instead of taking the ordinal — a row "
+          "added above the target must not silently redirect the click", ok8)
+    check("FD8b ...and the control: an UNCHANGED crowd still resolves, so the "
+          "guard is not simply refusing everything",
+          resolve(t3, list(rows)) == "22")
+
+    # FD8c is the case 17 green checks missed and tools/audit_flow_resolve.py
+    # found: the crowd SHRINKS TO EXACTLY ONE. A `len(hits) == 1` fast path
+    # ahead of the crowd-check returns the survivor without ever reading the
+    # recorded ordinal, so "the 1st of 2" binds to the OTHER one. Measured at
+    # 7.9% silent mis-binds across the corpus before the order was fixed.
+    pair = [E(30, "button", name="Search", section="nav"),
+            E(31, "button", name="Search", section="nav")]
+    t_pair = build(pair[0], pair)
+    check("FD8c a crowd that SHRANK TO ONE refuses — the survivor is not known "
+          "to be the element the step recorded",
+          t_pair.get("of") == 2
+          and _raises(lambda: resolve(t_pair, [pair[1]]), "1 element(s) match"))
+    check("FD8d ...and the control: a step that recorded NO ordinal, because it "
+          "was unique, still resolves against a single match",
+          resolve(build(page[0], page), [page[0]]) == "1")
+
+    # ---- FD9/FD10: what identity must NOT depend on ------------------------
+    typed = [dict(e) for e in page]
+    typed[2]["value"] = "ada@example.com"
+    t_in = build(page[2], page)
+    check("FD9 value is not identity: a field still resolves after the flow has "
+          "typed into it (#6 — value is CURRENT CONTENTS)",
+          resolve(t_in, typed) == "3")
+
+    off = [dict(e) for e in page]
+    off[0]["disabled"] = True
+    check("FD10 state is not identity: a control a step is about to assert on "
+          "still resolves once that state changes",
+          resolve(t, off) == "1")
+
+    # ---- FD11: the pool is the collector's own answer ----------------------
+    noise = page + [E(99, "div", name="Save", clickable=False, editable=False)]
+    check("FD11 a non-targetable entry sharing the name creates no phantom tie "
+          "(#18 — asking 'is this a control' a second way was 60% of the gap)",
+          resolve(t, noise) == "1")
+
+    # ---- FD12: THE claim ---------------------------------------------------
+    # Re-render: same page, every mmid renumbered. A stored ref is now wrong; a
+    # stored XPath may be wrong; a declaration is not.
+    rerendered = [dict(e, mmid=e["mmid"] + 500) for e in page]
+    check("FD12 a descriptor survives a re-render that renumbers every mmid — "
+          "the property a stored ref and a stored DOM path do not have",
+          resolve(t, rerendered) == "501")
+    check("FD12b ...including when the ordinal is doing the work",
+          resolve(t3, [dict(e, mmid=e["mmid"] + 500) for e in rows]) == "522")
+
+    # ---- FD14: the cheap/full tie-break ------------------------------------
+    # build() stores the CHEAPEST descriptor that resolved, so a heading rename
+    # cannot break a step whose name was already unique. The cost is that a
+    # same-named control appearing elsewhere later makes it ambiguous --
+    # measured at 54% of targets by audit_flow_resolve's twin-elsewhere
+    # mutation. Carrying the full descriptor as a tie-break bought all of that
+    # back (54% refused -> 0%) with no new mis-binds.
+    solo = [E(40, "button", name="Export", section="main", under="Reports")]
+    t_solo = build(solo[0], solo)
+    check("FD14 a uniquely-named control records the cheap descriptor AND the "
+          "full one, so a later collision can be narrowed instead of escalated",
+          "under" not in t_solo["desc"] and t_solo["full"]["under"] == "Reports")
+    later = solo + [E(41, "button", name="Export", section="footer", under="Legal")]
+    check("FD14b ...and when that collision happens the step still resolves, to "
+          "the element it was recorded for",
+          resolve(t_solo, later) == "40")
+    both = solo + [E(42, "button", name="Export", section="main", under="Reports")]
+    check("FD14c ...but the control: when the FULL descriptor is ambiguous too, "
+          "it still refuses rather than taking the first",
+          _raises(lambda: resolve(t_solo, both), "match"))
+
+    # ---- FD13: fields() normalisation --------------------------------------
+    check("FD13 label fills the identity slot when name is empty, and tag is "
+          "lowercased, so a descriptor built from either side matches",
+          fields({"tag": "BUTTON", "label": "Submit"})["name"] == "Submit"
+          and fields({"tag": "BUTTON"})["tag"] == "button")
+
+    # ---- FD15: the field-name contract -------------------------------------
+    # Every check above runs on dicts THIS FILE wrote. If the collector spells
+    # a field differently from fields(), all of them stay green and nothing
+    # resolves on a real page -- #16's "test stubs that share your assumptions
+    # test nothing", and #30 found exactly this twice behind green suites.
+    # So: read the real collector and require every key the descriptor depends
+    # on to be a key it actually emits. Same job as C11/C12.
+    src = extract("_collectInteractivePage",
+                  (ROOT / "extension" / "background.js").read_text(encoding="utf-8"),
+                  verify=True)
+    needed = sorted({k for lv in LEVELS for k in lv} |
+                    {"label", "placeholder", "underHeading", "near", "text",
+                     "mmid", "clickable", "editable"})
+    # Read the keys off the ENTRY LITERALS themselves -- the out.push({...})
+    # objects that carry an mmid -- rather than grepping the function body. A
+    # loose grep passes on a mention in a comment, which is how a tripwire
+    # quietly stops tripping (#39: a drift check that could not fire).
+    emitted = set()
+    for m in re.finditer(r"out\.push\(\{", src):
+        seg = src[m.start(): m.start() + 1200]
+        if "mmid:" in seg:
+            emitted |= set(re.findall(r"[{,]\s*([A-Za-z_]\w*)\s*:", seg))
+    # `under` is the descriptor's name for the collector's `underHeading`.
+    missing = [k for k in needed if k != "under" and k not in emitted]
+    check("FD15 every field the descriptor reads is a field the real collector "
+          "emits — the fixtures above all use dicts this file wrote",
+          not missing, f"missing from _collectInteractivePage: {missing}")
+
+    asyncio.run(record_and_replay())
+
+    passed = sum(1 for r in results if r)
+    print(f"\n{passed}/{len(results)} flow checks passed.")
+    return 0 if passed == len(results) else 1
+
+
+# =========================================================================
+# FR series — the recorder and the runner, end to end against a fake bridge.
+#
+# The fake returns the REAL result-string shapes (FD17 pins them against
+# mcp_server), because #19's lesson is that a stub sharing your assumptions
+# tests nothing: the delta unit test passed for its whole life while the live
+# path was broken, because the fake returned get_url as a dict and the real
+# bridge returns a JSON string.
+# =========================================================================
+PAGE_A = [E(1, "button", name="Save"), E(2, "input", type_="email",
+            placeholder="you@example.com", editable=True, clickable=False),
+          E(3, "button", name="Delete", section="main", under="Drafts")]
+
+
+class FakeBridge:
+    """Stands in for the extension. Records what it was asked to do."""
+
+    def __init__(self, entries=None):
+        self.entries = list(entries if entries is not None else PAGE_A)
+        self.calls = []
+        self.url = "https://app.test/start"
+        self.search_hits = 2
+        self.query_total = 7
+
+    async def entries_fn(self, tabId=None):
+        return list(self.entries)
+
+    async def call(self, tool, inp):
+        self.calls.append((tool, dict(inp)))
+        if tool == "get_url":
+            return '{"url": "%s", "title": "t"}' % self.url
+        if tool == "search_page":
+            if not self.search_hits:
+                return 'No match for "%s". 91 text block(s) were searched.' % inp.get("pattern")
+            return '%d match(es) for "%s"\n  <p ref_9> ...' % (self.search_hits, inp.get("pattern"))
+        if tool == "query_elements":
+            return "%d element(s) match %r" % (self.query_total, inp.get("selector"))
+        return "ok"
+
+
+async def record_and_replay():
+    # ---- recording -------------------------------------------------------
+    fb = FakeBridge()
+    rec = Recorder("signup", fb.entries_fn, origin="https://app.test")
+
+    inp = {"ref": "ref_1", "tabId": 5}
+    tgts = await rec.before("form_input", inp)
+    check("FR1 the recorder describes a ref BEFORE the call runs, because the "
+          "action is often what destroys the document the ref belonged to",
+          "ref" in tgts and tgts["ref"]["desc"].get("name") == "Save",
+          f"targets={tgts}")
+
+    rec.after("form_input", inp, "Typed", tgts)
+    rec.after("get_url", {"tabId": 5}, '{"url": "https://app.test/done"}', {})
+    rec.after("search_page", {"tabId": 5, "pattern": "Welcome"},
+              '2 match(es) for "Welcome"', {})
+    rec.after("query_elements", {"tabId": 5, "selector": "tr"},
+              "7 element(s) match \'tr\'", {})
+    rec.after("computer", {"tabId": 5, "action": "left_click", "ref": "ref_99"},
+              "", {}, error="Element not found")
+
+    flow, report = rec.compile()
+    check("FR2 a call that ERRORED is dropped — replaying it would replay the "
+          "agent's dead end", report["dropped_errors"] == 1, str(report))
+    check("FR3 observations are folded into the PREVIOUS action's assertions "
+          "rather than replayed as steps",
+          len(flow.steps) == 1 and report["dropped_observations"] == 3, str(report))
+    exp = flow.steps[0].expect
+    check("FR3b ...and all three kinds survive: url, search hit count, element count",
+          exp.get("url") == "https://app.test/done"
+          and exp["search"] == {"pattern": "Welcome", "min": 2}
+          and exp["query"] == {"selector": "tr", "min": 7}, str(exp))
+    check("FR3c the recorded ref is GONE from the step input — a per-document "
+          "handle in a saved file is a wrong click waiting to happen",
+          "ref" not in flow.steps[0].input and "tabId" not in flow.steps[0].input,
+          str(flow.steps[0].input))
+
+    # A ref the listing does not carry cannot be described, so the step goes.
+    rec2 = Recorder("bad", fb.entries_fn)
+    t2 = await rec2.before("form_input", {"ref": "ref_404", "tabId": 5})
+    rec2.after("form_input", {"ref": "ref_404", "tabId": 5}, "ok", t2)
+    f2, r2 = rec2.compile()
+    check("FR4 a ref that is not in the listing is NOT silently recorded; the "
+          "step is dropped and the reason is reported",
+          not f2.steps and any("not in the current listing" in n for n in r2["notes"]),
+          str(r2["notes"]))
+
+    # ---- replay ----------------------------------------------------------
+    fb2 = FakeBridge()
+    fb2.url = "https://app.test/done"
+    res = await start(flow, 5, fb2.call, fb2.entries_fn)
+    check("FR5 replay resolves the descriptor and calls the tool with a FRESH "
+          "ref for the current document",
+          res["status"] == PASSED and ("form_input", {"ref": "ref_1", "tabId": 5})
+          in [(t, i) for t, i in fb2.calls], str(fb2.calls[:2]))
+    check("FR5b ...and the assertions were actually run, not just stored",
+          any(t == "search_page" for t, _ in fb2.calls)
+          and any(t == "query_elements" for t, _ in fb2.calls))
+
+    # ---- THE FALSIFIER ---------------------------------------------------
+    fb3 = FakeBridge(); fb3.url = "https://app.test/done"; fb3.search_hits = 0
+    res3 = await start(flow, 5, fb3.call, fb3.entries_fn)
+    check("FR6 a flow FAILS when a postcondition stops holding — a suite that "
+          "cannot fail is worth less than no suite",
+          res3["status"] == FAILED and "search_page" in res3["reason"], str(res3["reason"]))
+    fb4 = FakeBridge(); fb4.url = "https://app.test/elsewhere"
+    res4 = await start(flow, 5, fb4.call, fb4.entries_fn)
+    check("FR6b ...and it notices a wrong URL too, naming both values",
+          res4["status"] == FAILED and "elsewhere" in res4["reason"], str(res4["reason"]))
+
+    # ---- escalation ------------------------------------------------------
+    gone = FakeBridge([E(7, "button", name="Store"), E(8, "button", name="Store")])
+    gone.url = "https://app.test/done"
+    res5 = await start(flow, 5, gone.call, gone.entries_fn)
+    check("FR7 a step that cannot be pinned to one element PAUSES and hands "
+          "back the candidates, instead of guessing",
+          res5["status"] == NEEDS and res5["run_id"].startswith("run_"),
+          str(res5["reason"]))
+    check("FR7b ...and nothing was dispatched for that step",
+          not any(t == "form_input" for t, _ in gone.calls))
+
+    res6 = await resume(res5["run_id"], "ref_7")
+    check("FR8 resuming with a binding continues the run from the paused step",
+          res6["status"] == PASSED and res6["at"] == 1, str(res6["status"]))
+    check("FR8b ...the step is MARKED as rebound, so a green run that needed "
+          "help does not read like a clean one",
+          any(l.get("healed") for l in res6["log"]), str(res6["log"]))
+    check("FR8c ...and the fix is PROPOSED as a patch, never written into the "
+          "flow file", res6["patches"] and res6["patches"][0]["now"] != res6["patches"][0]["was"]
+          and flow.steps[0].targets["ref"]["desc"].get("name") == "Save",
+          str(res6["patches"]))
+
+    # A rebind must not rescue a broken assertion.
+    bad = FakeBridge([E(7, "button", name="Store"), E(8, "button", name="Store")])
+    bad.url = "https://app.test/WRONG"
+    r7 = await start(flow, 5, bad.call, bad.entries_fn)
+    r8 = await resume(r7["run_id"], "ref_7")
+    check("FR8d the reported time is EXECUTION time, not wall time — a paused "
+          "run waits for a human, and billing that to the flow corrupts the one "
+          "number anyone will quote",
+          res6["seconds"] < 1.0, f'{res6["seconds"]}s for a fake-bridge run')
+
+    check("FR9 a rebound step still has to satisfy the ORIGINAL postcondition — "
+          "healing the LOCATOR must never relax the CHECK",
+          r8["status"] == FAILED and "WRONG" in r8["reason"], str(r8["reason"]))
+
+    # ---- FR11: name the cause, do not just report the symptom ------------
+    # Found on the FIRST live replay: form_input on a Radix combobox left its
+    # listbox open, an open popup aria-hides the rest of the document, and the
+    # next run failed at step 0 on an unrelated textarea saying only "no
+    # element matches tag='textarea'" — true, useless, and the reason was in
+    # the runner's own listing.
+    popped = FakeBridge([E(7, "div", role="listbox", name="Models"),
+                         E(8, "button", name="Elsewhere")])
+    popped.url = "https://app.test/done"
+    r9 = await start(flow, 5, popped.call, popped.entries_fn)
+    check("FR11 when a descriptor cannot resolve AND an open listbox/menu/dialog "
+          "is listed, the runner names it and the recovery",
+          r9["status"] == NEEDS and "open listbox" in r9["reason"]
+          and "aria-hidden" in r9["reason"], str(r9["reason"]))
+    plain = FakeBridge([E(9, "button", name="Elsewhere")])
+    plain.url = "https://app.test/done"
+    r10 = await start(flow, 5, plain.call, plain.entries_fn)
+    check("FR11b ...and the control: with no popup listed it asserts no cause, "
+          "because a note that always fires is noise (#15) and a note that "
+          "guesses is C15's defect",
+          r10["status"] == NEEDS and "aria-hidden" not in r10["reason"],
+          str(r10["reason"]))
+
+    # ---- fill_form carries several refs ----------------------------------
+    fb5 = FakeBridge()
+    multi = {"fields": [{"ref": "ref_1", "value": "a"}, {"ref": "ref_3", "value": "b"}],
+             "tabId": 5}
+    mt = await rec.before("fill_form", multi)
+    check("FR10 fill_form's fields are described one per entry, by input path",
+          sorted(mt) == ["fields.0", "fields.1"]
+          and mt["fields.1"]["desc"].get("name") == "Delete", str(sorted(mt)))
+
+    # ---- contracts -------------------------------------------------------
+    check("FD16 REF_KEYS matches browser_batch's own _REF_KEYS — one concept, "
+          "one spelling (#21), enforced rather than hoped for",
+          _batch_ref_keys() == set(FM.REF_KEYS) | {"coordinate"},
+          f"batch={_batch_ref_keys()} flows={FM.REF_KEYS}")
+    check("FD17 the result-string parsers still match what mcp_server emits — "
+          "#30 found `delta` dead for its whole life behind exactly this kind "
+          "of contract",
+          search_hits('3 match(es) for "x"') == 3
+          and search_hits('No match for "x". 9 text block(s) were searched.') == 0
+          and query_total("12 element(s) match 'tr'") == 12
+          and _server_emits_these_shapes())
+    _bad, _ok = _signatures_survive_wrapping()
+    check("FD18 recording wrappers preserve every tool's SIGNATURE — browser_batch "
+          "pre-flights against it, and a bare **kw wrapper refuses every batch "
+          "with \"missing required argument(s) kw\"",
+          not _bad and _ok, f"opaque={_bad} distinguishes_tools={_ok}")
+
+    check("FD17b ...and a readiness banner in front of them does not blind the "
+          "parser, which is exactly when a flow is most likely to be running",
+          search_hits("PAGE IS STILL SETTLING\n2 match(es) for \"x\"") == 2)
+
+
+def _signatures_survive_wrapping():
+    """Wrapping a tool for recording must not hide its signature.
+
+    browser_batch's pre-flight introspects the function to decide which
+    arguments a tool takes and which are required. A bare `**kw` wrapper makes
+    inspect.signature report one VAR_KEYWORD parameter, and EVERY batch is then
+    refused with "missing required argument(s) kw". Found live on the first
+    real call after the wrappers shipped; functools.wraps sets __wrapped__,
+    which inspect.signature follows.
+    """
+    import importlib.util
+    import inspect
+    spec = importlib.util.spec_from_file_location("ms_sig", ROOT / "mcp_server.py")
+    ms = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ms)
+    bad = []
+    for name, fn in ms._BATCHABLE.items():
+        ps = list(inspect.signature(fn).parameters.values())
+        if len(ps) == 1 and ps[0].kind is inspect.Parameter.VAR_KEYWORD:
+            bad.append(name)
+    # and the two that must still differ, as a positive control
+    ok = (not list(inspect.signature(ms._BATCHABLE["tabs_create_mcp"]).parameters)
+          and "tabId" in inspect.signature(ms._BATCHABLE["read_page"]).parameters)
+    return bad, ok
+
+
+def _batch_ref_keys():
+    src = (ROOT / "mcp_server.py").read_text(encoding="utf-8")
+    m = re.search(r"_REF_KEYS\s*=\s*\(([^)]*)\)", src)
+    return set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
+
+
+def _server_emits_these_shapes():
+    src = (ROOT / "mcp_server.py").read_text(encoding="utf-8")
+    return ('match(es) for "' in src and "element(s) match" in src
+            and 'No match for "' in src)
+
+
+def _raises(fn, needle, want_candidates=0):
+    try:
+        fn()
+    except Unresolved as exc:
+        if needle not in str(exc):
+            print(f"        (reason did not mention {needle!r}: {exc})")
+            return False
+        if want_candidates and len(exc.candidates) != want_candidates:
+            print(f"        (expected {want_candidates} candidates, "
+                  f"got {len(exc.candidates)})")
+            return False
+        return True
+    except Exception as exc:  # a different exception is not the contract
+        print(f"        (raised {type(exc).__name__}: {exc})")
+        return False
+    return False
+
+
+if __name__ == "__main__":
+    sys.exit(main())

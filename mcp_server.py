@@ -22,12 +22,14 @@ import io
 import json
 import mimetypes
 import os
+import functools
 import re
 import secrets
 import sys
 import time
 import unicodedata
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any, Optional, Union
 
 # Make repo-root imports work no matter what cwd Claude Code launches us with.
@@ -105,6 +107,9 @@ from mcp.types import ImageContent, TextContent
 from pydantic import Field
 
 from core.bridge.server import DEFAULT_PORT, PORT_RANGE_SPAN, ExtensionBridge
+from core.flows.model import load as _flow_load, save as _flow_save
+from core.flows.recorder import Recorder as _FlowRecorder
+from core.flows.runner import resume as _flow_resume, start as _flow_start
 
 # ----------------------------------------------------------------------------
 # globals
@@ -3353,6 +3358,220 @@ _BATCHABLE.update(
         "upload_image": upload_image,
     }
 )
+
+
+# ===========================================================================
+# RECORDED FLOWS  (FLOW_RECORDER_PLAN.md)
+#
+# Record a happy path once, replay it deterministically as a frontend
+# regression test, and spend a model turn only where a decision needs one.
+# The motivating arithmetic is #38's: a model turn is ~3.6s and 92-97% of a
+# tool call's wall clock, so driving a known flow through the agent loop on
+# every commit pays the discovery price forever.
+# ===========================================================================
+FLOWS_DIR = Path(_ROOT) / "flows"
+
+
+async def _flow_entries(tabId: Optional[int]) -> list:
+    """The structured collector entries, straight off the op.
+
+    THIS is the link #19 keeps warning about -- every offline probe injects
+    _collectInteractivePage directly and would not notice the op router or the
+    JSON hop changing the shape underneath it. The recorder and the runner both
+    come through here, so they exercise it on every single call.
+    """
+    b = await _bridge()
+    ents = await b.call("get_interactive_elements", tabId=tabId, structured=True)
+    return ents if isinstance(ents, list) else []
+
+
+def _flow_path(name: str) -> Path:
+    # Same rule as save_as_pdf's filename: strip only what a FILESYSTEM
+    # forbids, never an allowlist. #32 shipped `[^\w.()-]+` here and
+    # tools/audit_patterns.py caught it on its first run -- an allowlist built
+    # from \w is the ASCII-shaped matcher #21 built that auditor for, and a
+    # flow named in Japanese or Arabic would come back as a row of dashes.
+    name = str(name).replace("\\", "/").rsplit("/", 1)[-1]
+    safe = re.sub(r'[\x00-\x1f<>:"/\\|?*]+', "-", name).strip(". -")[:120] or "flow"
+    if not safe.endswith(".flow.json"):
+        safe += ".flow.json"
+    return FLOWS_DIR / safe
+
+
+# The recorder is a module-level singleton because recording is a MODE of the
+# session, not a parameter of a call: the agent starts it, works normally, and
+# stops it. None means not recording, and the wrapper below costs nothing then.
+_REC: Optional[_FlowRecorder] = None
+_REC_SKIP = {"record_flow", "run_flow", "browser_batch"}
+
+
+def _wrap_for_recording(name: str, fn):
+    """Observe one tool call. Applied to the REGISTRY, not the definition.
+
+    FastMCP builds Tool.parameters and Tool.fn_metadata from the signature at
+    REGISTRATION time, so wrapping fn afterwards cannot damage a schema -- and
+    _BATCHABLE holds the same function objects the registry does, so one
+    wrapper covers both the direct call path and the batch path. Decorating 28
+    definitions instead would have put a **kwargs wrapper in front of the
+    signature FastMCP reads, which is how a tool ships with no schema.
+    """
+    @functools.wraps(fn)
+    async def recorded(**kw):
+        rec = _REC
+        if rec is None:
+            return await fn(**kw)
+        targets = await rec.before(name, kw)
+        try:
+            res = await fn(**kw)
+        except Exception as exc:
+            rec.after(name, kw, "", targets, error=str(exc))
+            raise
+        rec.after(name, kw, res, targets)
+        return res
+    # functools.wraps sets __wrapped__, and inspect.signature FOLLOWS that by
+    # default -- which is load-bearing here, not cosmetic. browser_batch's
+    # pre-flight introspects the function to decide which arguments a tool
+    # takes (_takes_tab) and which are required. Without it the wrapper reports
+    # a single VAR_KEYWORD parameter and EVERY batch is refused with
+    # "missing required argument(s) kw". Caught live by that pre-flight on the
+    # first real call, which is the #32 guard doing its job.
+    return recorded
+
+
+def _install_recording_wrappers() -> int:
+    n = 0
+    for tname, tool in list(mcp._tool_manager._tools.items()):
+        if tname in _REC_SKIP:
+            continue
+        wrapped = _wrap_for_recording(tname, tool.fn)
+        tool.fn = wrapped
+        if tname in _BATCHABLE:
+            _BATCHABLE[tname] = wrapped
+        n += 1
+    return n
+
+
+@mcp.tool()
+async def record_flow(
+    action: Annotated[str, Field(description='"start", "stop", "cancel" or "status".')],
+    name: Annotated[Optional[str], Field(description="Flow name (start/stop). Saved to flows/<name>.flow.json.")] = None,
+) -> str:
+    """Record what you do next as a replayable frontend test.
+
+    start -> drive the happy path normally -> stop. Every tool call you make is
+    observed; the recording is then COMPILED rather than transcribed: dead ends
+    are dropped, every ref is rewritten into a descriptor built from what the
+    page DECLARES (a ref is per-document and means nothing on the next run),
+    and the observations you made after each action become that step's
+    postconditions. So check your work as you go -- a search_page or
+    query_elements after an action is what makes the replay able to FAIL.
+    """
+    global _REC
+    if action == "start":
+        if _REC is not None:
+            return f'Already recording "{_REC.name}" ({len(_REC.raw)} call(s)). Stop or cancel it first.'
+        _REC = _FlowRecorder(name or "flow", _flow_entries)
+        return (f'Recording "{_REC.name}". Drive the happy path with ordinary tool calls, '
+                f'then record_flow(action="stop"). Check your work as you go: the '
+                f'observations you make after an action become its assertions.')
+    if _REC is None:
+        return 'Not recording. record_flow(action="start", name="...") first.'
+    if action == "status":
+        return f'Recording "{_REC.name}": {len(_REC.raw)} call(s) observed.'
+    if action == "cancel":
+        n, _REC = len(_REC.raw), None
+        return f"Discarded {n} observed call(s)."
+    if action == "stop":
+        rec, _REC = _REC, None
+        if name:
+            rec.name = name
+        flow, report = rec.compile()
+        if not flow.steps:
+            return ("Nothing to save: no state-changing step survived the compile. "
+                    + ("Notes: " + "; ".join(report["notes"]) if report["notes"] else ""))
+        path = _flow_save(flow, _flow_path(rec.name))
+        lines = [f'Saved {path} — {report["steps"]} step(s), '
+                 f'{report["asserted"]} with assertions.',
+                 f'  dropped: {report["dropped_errors"]} failed call(s), '
+                 f'{report["dropped_observations"]} observation(s) folded in or discarded.']
+        if report["asserted"] == 0:
+            lines.append("  NOTE: no step carries an assertion, so this flow can only "
+                         "detect a control going missing, not a wrong RESULT. Re-record "
+                         "with a search_page/query_elements check after each action.")
+        for nte in report["notes"][:6]:
+            lines.append(f"  - {nte}")
+        return "\n".join(lines)
+    raise ValueError('action must be "start", "stop", "cancel" or "status"')
+
+
+@mcp.tool()
+async def run_flow(
+    name: Annotated[str, Field(description="Flow name or path under flows/.")],
+    tabId: Annotated[int, Field(description="Tab to replay in.")],
+    resume_id: Annotated[Optional[str], Field(description="Resume a paused run (from a needs_decision result).")] = None,
+    bind: Annotated[Optional[str], Field(description="With resume_id: the ref to use for the step that could not be resolved.")] = None,
+) -> str:
+    """Replay a recorded flow as a test. Deterministic; no model call per step.
+
+    Each step re-resolves its target from what the page declares NOW, then runs,
+    then its postconditions are checked LIVE. A step that cannot be pinned to
+    exactly one element does not guess: the run PAUSES and hands you the
+    candidates, and you continue with run_flow(resume_id=..., bind="ref_N").
+    Rebinding proposes a patch to the flow file; it never edits it.
+    """
+    if resume_id:
+        if not bind:
+            return "resume_id needs bind=\"ref_N\" — the ref to use for the paused step."
+        try:
+            res = await _flow_resume(resume_id, bind)
+        except KeyError as exc:
+            return str(exc)
+    else:
+        path = _flow_path(name)
+        if not path.exists():
+            have = sorted(p.name for p in FLOWS_DIR.glob("*.flow.json")) if FLOWS_DIR.exists() else []
+            return (f"No flow at {path}." + (f" Recorded flows: {', '.join(have)}" if have
+                    else " Nothing recorded yet — record_flow(action='start', name='...')."))
+        res = await _flow_start(_flow_load(path), tabId, _flow_call, _flow_entries)
+    return _flow_report(res)
+
+
+async def _flow_call(tool: str, inp: dict):
+    fn = _BATCHABLE.get(tool)
+    if fn is None:
+        raise RuntimeError(f"flow step names {tool!r}, which is not a runnable tool")
+    return await fn(**inp)
+
+
+def _flow_report(res: dict) -> str:
+    head = {"passed": "PASSED", "failed": "FAILED",
+            "needs_decision": "PAUSED — a step needs your decision"}[res["status"]]
+    out = [f'{head}: flow "{res["flow"]}", {res["at"]}/{res["of"]} step(s) run '
+           f'in {res["seconds"]}s.']
+    if res["reason"]:
+        out.append(f'  {res["reason"]}')
+    if res["candidates"]:
+        out.append("  candidates on the page now:")
+        out += [f"    {c}" for c in res["candidates"]]
+    if res["status"] == "needs_decision":
+        out.append(f'  Continue with run_flow(name="{res["flow"]}", tabId=…, '
+                   f'resume_id="{res["run_id"]}", bind="ref_N"), or read the page '
+                   f'first if none of these is right.')
+    healed = [l for l in res["log"] if l.get("healed")]
+    if healed:
+        out.append(f'  {len(healed)} step(s) needed a rebind — this run is NOT the '
+                   f'same as a clean pass.')
+    if res["patches"]:
+        out.append("  proposed descriptor changes (not applied):")
+        for p in res["patches"]:
+            out.append(f'    step {p["step"]} {p["name"]}: {p["was"]} -> {p["now"]}')
+    asserted = sum(1 for l in res["log"] if l.get("asserted"))
+    out.append(f'  {asserted} of {len(res["log"])} completed step(s) had their '
+               f'postconditions checked.')
+    return "\n".join(out)
+
+
+_install_recording_wrappers()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "name": "playground-idempotent",
+  "origin": "",
+  "recorded_at": "2026-10-10T18:20:23",
+  "viewport": null,
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "https://ui.shadcn.com/examples/playground"
+      },
+      "expect": {
+        "query": {
+          "selector": "button[role=combobox]",
+          "min": 3
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": "text-curie-001"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "button",
+            "role": "combobox",
+            "type": "button",
+            "name": "Select a model"
+          },
+          "full": {
+            "tag": "button",
+            "role": "combobox",
+            "type": "button",
+            "name": "Select a model",
+            "section": "main",
+            "under": "Playground",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "search": {
+          "pattern": "text-curie-001",
+          "min": 2
+        }
+      },
+      "on_fail": "ask"
+    }
+  ]
+}
