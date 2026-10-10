@@ -249,8 +249,29 @@ class Run:
             # `count` is the recorded observation and must match exactly;
             # `min` is the hand-relaxed form for a list that legitimately grows.
             if "count" in q and tot != q["count"]:
+                # A COUNT THAT GREW IS THE COMMONEST WAY A FLOW FAILS ON ITS
+                # SECOND RUN, and the bare numbers do not say so. A flow that
+                # CREATES something changes the count it recorded, so replaying
+                # it in place leaves the app one row further on every time --
+                # measured: run 1 passes, run 2 fails here with 5 against 4.
+                # That is not a defect in the flow, it is what a mutating test
+                # needs a fixture reset for (`run_flows.py --playground` does
+                # one, which is why CI never sees it).
+                #
+                # STATED AS A CAUSE AMONG CAUSES, never as the diagnosis: the
+                # count also grows when someone else is using the app, when a
+                # seed changed, or when the page genuinely regressed. #33's
+                # rule, and the one C15 exists to enforce -- a note that picks
+                # a cause is how three earlier messages sent agents the wrong
+                # way.
+                grew = ("  The count GREW. Causes that need different answers: "
+                        "a previous run of this flow left its own rows behind "
+                        "(replay against a reset fixture, or record a flow that "
+                        "cleans up after itself); the data changed underneath; "
+                        "or the page really does render more now."
+                        if tot > q["count"] else "")
                 return (f'query_elements({q["selector"]!r}) counted {tot}, '
-                        f'recorded exactly {q["count"]}')
+                        f'recorded exactly {q["count"]}' + grew)
             if "min" in q and tot < q["min"]:
                 return (f'query_elements({q["selector"]!r}) counted {tot}, '
                         f'recorded at least {q["min"]}')

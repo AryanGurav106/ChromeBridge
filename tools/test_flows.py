@@ -35,7 +35,7 @@ from core.flows.descriptor import (  # noqa: E402
 from core.flows import model as FM  # noqa: E402
 from core.flows import secrets as FS  # noqa: E402
 from core.flows.recorder import Recorder, query_total, search_hits  # noqa: E402
-from core.flows.runner import FAILED, NEEDS, PASSED, resume, start  # noqa: E402
+from core.flows.runner import FAILED, NEEDS, PASSED, Run, resume, start  # noqa: E402
 
 sys.path.insert(0, str(ROOT / "tools"))
 from _extract import extract  # noqa: E402
@@ -407,6 +407,42 @@ async def record_and_replay():
           "guesses is C15's defect",
           r10["status"] == NEEDS and "aria-hidden" not in r10["reason"],
           str(r10["reason"]))
+
+    # ---- FR12: THE SECOND RUN OF A MUTATING FLOW ------------------------
+    #
+    # A flow that CREATES something changes the count it recorded, so replaying
+    # it in place leaves the app one row further on every time. Measured on the
+    # shipped CI flow: run 1 passes, run 2 fails with "counted 5, recorded
+    # exactly 4". That is not a defect -- it is what a mutating test needs a
+    # fixture reset for (`run_flows.py --playground` does one, which is why CI
+    # never sees it) -- but the bare numbers do not say so, and an agent
+    # re-running its own flow meets a failure with no cause attached.
+    class _V(Run):
+        def __init__(self, result):
+            self.call = lambda t, i: _async(result)
+            self.tab_id, self.vars = 1, {}
+
+    async def _async(v):
+        return v
+
+    grew = await _V("5 element(s) match 'tr':")._verify(
+        {"query": {"selector": "tr", "count": 4}})
+    check("FR12 a count that GREW names the previous-run cause among others, "
+          "rather than leaving the agent two bare numbers",
+          "GREW" in grew and "previous run" in grew and "reset fixture" in grew,
+          grew[:120])
+    # Listed as ONE cause of three, never as the diagnosis: the count also grows
+    # when the seed changed or the page genuinely regressed. #33's rule, and the
+    # defect C15 exists to catch.
+    check("FR12b ...as one cause of several, not as the diagnosis",
+          "Causes that need different answers" in grew
+          and "changed underneath" in grew, grew[:160])
+    # CONTROL. A count that SHRANK is a different failure with a different
+    # answer, and a clause that fires on every mismatch is the noise #15 priced.
+    shrank = await _V("2 element(s) match 'tr':")._verify(
+        {"query": {"selector": "tr", "count": 4}})
+    check("FR12c CONTROL: a count that SHRANK gets no grew-clause at all",
+          "counted 2" in shrank and "GREW" not in shrank, shrank[:120])
 
     # ---- fill_form carries several refs ----------------------------------
     fb5 = FakeBridge()

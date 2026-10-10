@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 944 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 947 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 944 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 947 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -4793,10 +4793,33 @@ granted in the side panel is refused with the same message the agent gets.
     naming the target it cannot resolve, and chaos `insert` trips the
     postcondition itself with `counted 6, recorded exactly 4`.
 
-    Suites: 944 checks. New — FV6 (an expectation whose value is a variable is
+    **AND THE ONE REAL BLOCKER, MEASURED RATHER THAN SUSPECTED: a mutating
+    flow is not re-runnable in place.** Run it twice against the same fixture
+    without a reset and the second fails — `counted 5, recorded exactly 4` —
+    because a flow that CREATES something changes the count it recorded. This
+    is not a defect: it is what any create-a-record test needs a fixture reset
+    for, `run_flows.py --playground` does one, and that is why CI never meets
+    it. What WAS wrong is that the failure handed the agent two bare numbers,
+    so an agent re-running its own flow met a mismatch with no cause attached.
+    A count that GREW now names the previous-run cause **among three that need
+    different answers** — never as the diagnosis, which is #33's rule and the
+    defect C15 exists to catch. A count that SHRANK gets no such clause
+    (FR12c), because a note that fires on every mismatch is #15's noise.
+    **The honest residue:** every end-to-end flow targets one fixture app I
+    wrote. The LOCATOR half is measured on real sites (37 frozen sites /
+    12,030 controls for uniqueness, 26 sites / 2,726 descriptors at 100%
+    correct under mutation, #49), but the record → replay loop is not.
+
+    **CI RUNS IT ON LINUX, which is better evidence than the local run.**
+    Confirmed from the workflow log rather than from the config: the extension
+    loads, the bridge connects on 8901, and `acme-create-project` passes 4/4 in
+    5.63s on every push.
+
+    Suites: 947 checks. New — FV6 (an expectation whose value is a variable is
     stored as the variable), FV6b (the control that a non-variable literal is
     left alone — exact equality, not substring), FV6c (an override changes what
-    the ASSERTION looks for, which is the end the live failure was at).
+    the ASSERTION looks for, which is the end the live failure was at),
+    FR12/FR12b (a grown count names its causes), FR12c (the shrank control).
 
 ## Debugging starting points
 
@@ -4870,6 +4893,7 @@ granted in the side panel is refused with the same message the agent gets.
 | Two `search_page` hits look identical | Fixed in #53 — they ARE different elements with the same text, and nothing printed said so. A colliding group now carries the cheapest handle that separates it: the page's own `id` when one is declared and VERIFIED unique (usable as `css_scope`), otherwise `[#N in document order]`. Rows that already differ, and single hits, carry nothing. With refs present there is no collision — this is specifically a FIRST search, before `read_page` has stamped mmids |
 | A flow fails on a `vars` override, searching for the RECORDED value | Fixed in #54 — `resolve_vars` reached the step's input and not its `expect`, so an override typed `beta-svc` and then asserted `search_page('atlas-svc')`. The recorder stores a variable's value in an expectation as `{{name}}` (exact equality only, never substring), and the runner resolves expectations at the same point it resolves inputs |
 | A recorded flow ships `origin: ""` | Fixed in #54 — the field was declared and nothing ever filled it, because `_FlowRecorder` is constructed without one. Harmless only because `run_flows._origins()` falls back to parsing step urls, i.e. an empty contract covered by a workaround. Taken from the first navigate now |
+| A flow passed once and fails on the next run with a bigger count | Working as designed, and #54 made it say so. A flow that CREATES something changes the count it recorded, so replaying in place leaves the app one row further on each time. Replay against a reset fixture (`run_flows.py --playground` resets before every run), or record a flow that cleans up after itself. The message lists this as one of three causes — the data changing underneath and a genuine regression are the others, and they need different answers |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---
