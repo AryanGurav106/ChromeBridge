@@ -1,31 +1,81 @@
 # ChromeBridge vs Claude-in-Chrome — head-to-head benchmark
 
-**32 measured runs** (2 pilot + 3 rounds × 5 scenarios × 2 servers) on 2026-07-25/26.
+**Current result: the generality eval, 2026-10-09/10.** 19 tasks across 7 task
+archetypes, 38 runs, strictly serial, pre-registered before any data existed.
+Harness, prompts, scorer and analysis: `tools/bench_turns/eval3/`.
 
-Each run was executed by an independent subagent restricted to ONE server's tool
-namespace, self-timing with `date` brackets, and required to report a friction log
-including its own failures. Prompts were byte-identical across rounds.
+| Metric | Claude-in-Chrome | **ChromeBridge** | |
+|---|---|---|---|
+| Turns (one assistant message carrying tool calls) | 240 | **117** | 15/17 decided pairs, **p = 0.0023** |
+| Wall clock | 3,674 s | **1,662 s** | 17/19 pairs, **p = 0.0007** |
+| Turns to first page content (median) | 4 | **2** | 2 on all 19 runs, no spread |
+| Tab-ceremony calls | 11 | **0** | |
+| Correctness | 19/19 | **19/19** | saturated — see below |
+
+Secondary analysis on the 16 tasks whose final hop is not already on the search
+results page: 13/15, p = 0.0074. Both the primary and the secondary clear.
+
+### Read this before quoting the numbers
+
+- **Correctness cannot discriminate and is not a win condition.** Both arms are
+  the same model, so the ceiling is Claude's, not the tool's. It is recorded as
+  a FALSIFIER: had ChromeBridge's correctness dropped below the other arm's, the
+  turn result would have been rejected outright. 38/38 across both arms.
+- **A large share of the margin is the other arm's defects, not our
+  representation.** Its runs included four of 18-31 turns, nearly all from one
+  cause: trusted input reporting success without reaching the page. Those cannot
+  affect the sign test, which counts direction only — that is why the bar is set
+  there — but they do inflate the totals. Excluding those four pairs: **72 v 127
+  turns (57%)**, so the result survives removing its own outliers.
+- **On the one archetype where both arms ran clean we are level.** Per-archetype
+  turn ratios: SPA 0.29, search-flow 0.35, data-table 0.43, drill-down 0.45,
+  doc-lookup 0.60, non-Latin 0.71, **form-lookup 0.88** — and form-lookup is the
+  only archetype ChromeBridge did not win outright (1-1). Per-archetype n is ~3
+  and is reported descriptively, with no p-values.
+- **The per-origin consent gate was OFF during the runs.** Consent is a one-time
+  per-origin cost a real user pays once, not a per-task turn cost, and counting
+  it would charge ChromeBridge nine times for a security feature the other arm
+  does not have. **So these numbers say nothing about the cost of the consent
+  model**, and a first-time user still pays an Allow click per site that they do
+  not contain.
+
+### What came before, and why it is superseded
+
+Three earlier pre-registered evals (10, 10 and 24 tasks) came back **TIES** —
+dead level on calls, inside the measured ~47 s/task drift floor on wall clock.
+Two more (9 tasks each) cleared on turns but were weak in the same two ways:
+n=9, where one bad task breaks the result, and a task set made entirely of
+two-hop navigate-and-read lookups, which is the shape the advantage is largest
+on. The generality eval exists because of that second weakness.
+
+**The 2026-07-25/26 study below (32 runs, 5 scenarios, "1.86x faster, 12.5x
+fewer retries") is kept as a historical record and should not be quoted as the
+current result.** Its methodology is weaker than everything after it: agents
+self-timed with `date` brackets, tool calls were harness-counted rather than
+read from transcripts, tasks were written by the same person running the
+comparison, there was no pre-registered bar, and no independent ground truth.
+Three later evals run with those controls in place found a tie on the same
+question. Where the two disagree, prefer the later design.
 
 ---
 
-## Headline
+## The 2026-07-25/26 study (historical — superseded, see the note above)
 
+**32 measured runs** (2 pilot + 3 rounds x 5 scenarios x 2 servers). Each run was
+an independent subagent restricted to one server's namespace, self-timing with
+`date` brackets and required to report its own failures. Prompts were
+byte-identical across rounds.
 
-| Metric                            | Claude-in-Chrome | **ChromeBridge** | Delta            |
-| --------------------------------- | ---------------- | ---------------- | ---------------- |
-| Total in-task time (15 runs each) | 1132.1 s         | **607.1 s**      | **1.86× faster** |
-| Retries / error-recovery calls    | 25               | **2**            | **12.5× fewer**  |
-| Tool calls (harness-counted)      | 244              | **167**          | 1.46× fewer      |
-| Tokens                            | 870,962          | **812,791**      | 1.07× fewer      |
-| Scenarios won (of 15 pairings)    | 3                | **12**           | —                |
-| Task correctness                  | all completed    | all completed    | tie              |
+| Metric | Claude-in-Chrome | ChromeBridge |
+|---|---|---|
+| Total in-task time (15 runs each) | 1132.1 s | 607.1 s |
+| Retries / error-recovery calls | 25 | 2 |
+| Tool calls (harness-counted) | 244 | 167 |
+| Tokens | 870,962 | 812,791 |
+| Scenarios won (of 15 pairings) | 3 | 12 |
+| Task correctness | all completed | all completed |
 
-
-Both servers produced correct final answers in every run. **This is a
-cost-to-correct-answer comparison, not an accuracy one.** The difference is how
-much work, wall-clock, and verification each required to get there.
-
----
+Everything below this line describes THAT study, not the current one.
 
 ## Methodology
 

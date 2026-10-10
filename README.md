@@ -349,6 +349,13 @@ exact-match invariant should be asserted on them.
 `BENCHMARK.md`, `AUDIT_DOM_GENERALITY.md` and `AUDIT_GENERALITY.md` hold the
 numbers these produced.
 
+`tools/bench_turns/` is the LIVE head-to-head harness — the pre-registration,
+the blind-written tasks, the referee's ground truth, every prompt, the transcript
+scorer and the analysis, for the comparison `BENCHMARK.md` now leads with. It is
+in the repo because six earlier head-to-heads were run out of session scratchpads
+and are not reproducible: the numbers survived, the means of re-deriving them did
+not.
+
 ## `legacy/`
 
 Before this was an MCP server it was a self-contained pydantic-ai agent loop
