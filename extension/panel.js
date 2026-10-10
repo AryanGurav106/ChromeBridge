@@ -739,3 +739,28 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes[DEBUG_BLOCK_KEY]) { dbgBlock = changes[DEBUG_BLOCK_KEY].newValue || null; access = true; }
   if (access) renderAccess();
 });
+
+// --------------------------------------------------------------------------
+// folding cards — presentation only
+// --------------------------------------------------------------------------
+
+// Remember which cards the user folded. localStorage, not chrome.storage: it is
+// a per-panel view preference, nothing else reads it, and losing it costs one
+// click. Wrapped because storage can be unavailable, and the panel must render
+// identically without it. #dbg_block carries no data-fold on purpose — a fresh
+// warning should never arrive pre-collapsed.
+document.querySelectorAll("details[data-fold]").forEach((d) => {
+  const key = `cb_fold_${d.dataset.fold}`;
+  try {
+    const v = localStorage.getItem(key);
+    if (v !== null) d.open = v === "1";
+  } catch (e) {}
+  d.addEventListener("toggle", () => {
+    try { localStorage.setItem(key, d.open ? "1" : "0"); } catch (e) {}
+  });
+});
+
+// Buttons that live in a card's header (Clear, Dismiss) act; they never fold it.
+document.querySelectorAll("summary button").forEach((b) => {
+  b.addEventListener("click", (e) => e.preventDefault());
+});
