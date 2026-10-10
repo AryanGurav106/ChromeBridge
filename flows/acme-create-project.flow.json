@@ -1,0 +1,223 @@
+{
+  "schema": 1,
+  "name": "acme-create-project",
+  "origin": "",
+  "recorded_at": "2026-10-10T22:38:11",
+  "viewport": null,
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "http://127.0.0.1:8787/logout"
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "fill_form",
+      "input": {
+        "fields": [
+          {
+            "value": "ada@acme.test"
+          },
+          {
+            "value": "demo-pass-1234"
+          }
+        ],
+        "submit": true
+      },
+      "targets": {
+        "submit_ref": {
+          "level": 1,
+          "desc": {
+            "tag": "button",
+            "role": "",
+            "type": "submit",
+            "name": "Sign in"
+          },
+          "full": {
+            "tag": "button",
+            "role": "",
+            "type": "submit",
+            "name": "Sign in",
+            "section": "form",
+            "under": "Sign in",
+            "near": ""
+          }
+        },
+        "fields.0": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "email",
+            "name": "Work email"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "email",
+            "name": "Work email",
+            "section": "form",
+            "under": "Sign in",
+            "near": ""
+          }
+        },
+        "fields.1": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "password",
+            "name": "Password"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "password",
+            "name": "Password",
+            "section": "form",
+            "under": "Sign in",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "tbody tr",
+          "count": 4
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "button",
+            "role": "",
+            "type": "",
+            "name": "New project"
+          },
+          "full": {
+            "tag": "button",
+            "role": "",
+            "type": "",
+            "name": "New project",
+            "section": "",
+            "under": "Projects",
+            "near": ""
+          }
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "fill_form",
+      "input": {
+        "fields": [
+          {
+            "value": "echo-gateway"
+          },
+          {
+            "value": "ap-south-1"
+          },
+          {
+            "value": "Team"
+          }
+        ],
+        "submit": true
+      },
+      "targets": {
+        "submit_ref": {
+          "level": 1,
+          "desc": {
+            "tag": "button",
+            "role": "",
+            "type": "submit",
+            "name": "Create project"
+          },
+          "full": {
+            "tag": "button",
+            "role": "",
+            "type": "submit",
+            "name": "Create project",
+            "section": "form",
+            "under": "New project",
+            "near": ""
+          }
+        },
+        "fields.0": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "Project name"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "Project name",
+            "section": "form",
+            "under": "New project",
+            "near": ""
+          }
+        },
+        "fields.1": {
+          "level": 1,
+          "desc": {
+            "tag": "button",
+            "role": "",
+            "type": "button",
+            "name": "Region"
+          },
+          "full": {
+            "tag": "button",
+            "role": "",
+            "type": "button",
+            "name": "Region",
+            "section": "form",
+            "under": "New project",
+            "near": ""
+          }
+        },
+        "fields.2": {
+          "level": 1,
+          "desc": {
+            "tag": "select",
+            "role": "",
+            "type": "",
+            "name": "plan"
+          },
+          "full": {
+            "tag": "select",
+            "role": "",
+            "type": "",
+            "name": "plan",
+            "section": "form",
+            "under": "New project",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "tbody tr",
+          "count": 5
+        },
+        "search": {
+          "pattern": "echo-gateway",
+          "min": 1,
+          "observed": 1
+        }
+      },
+      "on_fail": "ask"
+    }
+  ]
+}
