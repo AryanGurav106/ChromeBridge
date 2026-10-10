@@ -1659,13 +1659,31 @@ async def search_page(
         if mt and ctx != mt and isinstance(h.get("at"), int):
             loc = f' "{mt}"@{h["at"]}'
             _located = True
-        lines.append(f'  <{h.get("tag", "?")}{ref}{loc}> {ctx}')
+        # WHERE IT IS, when two hits would otherwise print identically. Only the
+        # colliding rows carry it (#37: a discriminator that discriminates
+        # nothing is dropped), and `#id` is preferred over a bare ordinal
+        # because the caller can hand it straight back as `css_scope`.
+        _sc = h.get("scope")
+        _nth = h.get("nth")
+        where = (f" [in {_sc}]" if _sc else (f" [#{_nth} in document order]" if _nth else ""))
+        lines.append(f'  <{h.get("tag", "?")}{ref}{loc}>{where} {ctx}')
     if _located:
         lines.append('  (`"text"@N` is the match and its character offset in the context '
                      "quoted on that line; ` | ` marks a boundary the page declared — between "
                      "cells, list items or blocks, or a line break. A literal "
                      "pattern matches any whitespace where it has a space, so "
                      "text broken across lines is found as it reads.)")
+    # NAMED ONLY WHEN IT APPEARS (#13). It is carried by the colliding rows alone,
+    # so on most results there is no such notation to explain and a standing line
+    # about it would be describing a field the output does not contain.
+    if any(h.get("scope") for h in hits):
+        lines.append("  (`[in #x]` tells apart hits that would otherwise print "
+                     "identically — different elements, same text. It is the page's "
+                     "own id, verified unique, so it can be passed back as css_scope.)")
+    elif any(h.get("nth") for h in hits):
+        lines.append("  (`[#N in document order]` tells apart hits that would otherwise "
+                     "print identically: they are different elements with the same text, "
+                     "not one match reported twice. Run read_page to give them refs.)")
     if total > len(hits):
         lines.append(f"  … {total - len(hits)} more match(es) not shown — raise max_results "
                      f"or narrow with css_scope.")

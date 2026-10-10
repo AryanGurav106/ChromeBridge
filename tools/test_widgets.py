@@ -1426,6 +1426,93 @@ async def main():
               not bad2, "; ".join(bad2[:3]))
         await brp.close()
 
+        # ---- Q1x-Q1z2: TWO CORRECT HITS THAT PRINT IDENTICALLY (#47).
+        #
+        # Reported by the T9 agents of BOTH #47 evals, independently: two matches
+        # came back identical in every printed field, which reads as one position
+        # reported twice. The count was right; nothing printed differed. Measured
+        # before changing anything: with refs present the rows ALREADY differ, so
+        # this is the first search on a document, before any read_page has stamped
+        # mmids (#32).
+        dupp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await dupp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await dupp.goto("about:blank")
+
+        async def dsearch(body, pat="Welsh", **o):
+            await dupp.set_content(
+                "<!doctype html><meta charset=utf-8><body>" + body + "</body>")
+            await dupp.wait_for_timeout(50)
+            return await dupp.evaluate(
+                "(a) => { " + SEARCH + "; return _searchTextPage(a[0], a[1]); }",
+                [pat, dict({"contextChars": 60}, **o)])
+
+        # Rendered EXACTLY as mcp_server renders it, or the check passes on a
+        # formatter of its own and proves nothing about what the agent reads.
+        def drow(h):
+            ref = f" ref_{h['ref']}" if h.get("ref") else ""
+            mt = h.get("match") or ""
+            loc = (f' "{mt}"@{h["at"]}'
+                   if mt and (h.get("context") or "") != mt
+                   and isinstance(h.get("at"), int) else "")
+            sc, nth = h.get("scope"), h.get("nth")
+            where = (f" [in {sc}]" if sc
+                     else (f" [#{nth} in document order]" if nth else ""))
+            return f'<{h.get("tag","?")}{ref}{loc}>{where} {h.get("context","")}'
+
+        LOCGOV = ("<main><h2>Collections</h2><table><tr><td>Welsh</td>"
+                  "<td>1,204</td></tr></table></main>"
+                  "<footer><h2>Also available</h2><table><tr><td>Welsh</td>"
+                  "<td>1,204</td></tr></table></footer>")
+        r = await dsearch(LOCGOV)
+        rows = [drow(h) for h in (r.get("hits") or [])]
+        check("Q1x two hits in DIFFERENT elements no longer print identically",
+              len(rows) == 2 and len(set(rows)) == 2, " || ".join(rows))
+
+        # THE PREFERRED RUNG, and the reason it is preferred: an id LOCATES and is
+        # ACTIONABLE, where an ordinal is only a tie-break.
+        IDS = ("<main><table id=collections><tr><td>Welsh</td><td>1,204</td></tr>"
+               "</table></main><footer><table id=also><tr><td>Welsh</td>"
+               "<td>1,204</td></tr></table></footer>")
+        r = await dsearch(IDS)
+        scopes = sorted((h.get("scope") or "") for h in (r.get("hits") or []))
+        check("Q1x2 ...and a declared id is used in preference to the ordinal",
+              scopes == ["#also", "#collections"], f"scopes={scopes}")
+
+        # THE CLAIM IS THAT THE id CAN BE HANDED BACK, so hand it back. A scope
+        # that does not narrow is a locator dressed up as an action.
+        r2 = await dsearch(IDS, cssScope="#also")
+        check("Q1x3 ...and that id really works as css_scope — one hit, not two",
+              (r2.get("total") or 0) == 1, f"total={r2.get('total')}")
+
+        # HTML says an id is unique and pages ship duplicates anyway. A css_scope
+        # that silently picks the first is worse than no scope at all, so the
+        # uniqueness is VERIFIED rather than trusted, and this falls back.
+        DUP = ("<main><table id=dup><tr><td>Welsh</td><td>1,204</td></tr></table>"
+               "</main><footer><table id=dup><tr><td>Welsh</td><td>1,204</td>"
+               "</tr></table></footer>")
+        r = await dsearch(DUP)
+        hs = r.get("hits") or []
+        check("Q1y a DUPLICATE id falls back to the ordinal rather than lying",
+              len(hs) == 2 and not any(h.get("scope") for h in hs)
+              and sorted(h.get("nth") for h in hs) == [1, 2],
+              f"scopes={[h.get('scope') for h in hs]} nths={[h.get('nth') for h in hs]}")
+
+        # CONTROLS. A discriminator that fires on rows which already differ is the
+        # noise #15 priced and #37 removed from `near=`; one that fires on a lone
+        # hit is worse, because it implies a sibling that does not exist.
+        r = await dsearch("<main><p>Welsh is spoken here.</p></main>")
+        hs = r.get("hits") or []
+        check("Q1z CONTROL: a single hit carries NO discriminator",
+              len(hs) == 1 and not hs[0].get("scope") and not hs[0].get("nth"),
+              f"hit={hs[0] if hs else None}")
+
+        r = await dsearch("<main><p>Welsh one</p><p>Welsh two</p></main>")
+        hs = r.get("hits") or []
+        check("Q1z2 CONTROL: two hits that ALREADY print differently get none either",
+              len(hs) == 2 and not any(h.get("scope") or h.get("nth") for h in hs),
+              f"rows={[drow(h) for h in hs]}")
+        await dupp.close()
+
         # THE CONTROL THAT MAKES IT TRUSTWORTHY. A grep that reads hidden templates
         # answers "does this page say X" with text no user can see.
         r = await search("SECRET hidden marker")

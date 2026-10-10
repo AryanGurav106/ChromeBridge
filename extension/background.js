@@ -11704,6 +11704,7 @@ function _searchTextPage(pattern, opts) {
     } catch (e) { return { error: 'invalid css_scope: ' + (e && e.message) }; }
   }
   const hits = [];
+  const hitNodes = [];   // parallel to `hits`, for the disambiguation pass only
   let total = 0, scanned = 0;
   // Elements whose text is never page content even when rendered. Same list and
   // same reason as _namable (#37 NR2c): a page that renders its own stylesheet
@@ -12104,6 +12105,7 @@ function _searchTextPage(pattern, opts) {
           ref: ref,
         };
         hits.push(hit);
+        hitNodes.push(node);
         const p = { hit: hit, at: at0, len: len0, hops: 0, climb: _climbTo(node) };
         _ctx(p, full, bounds);
         if (_wants(p, full)) (pend || (pend = [])).push(p);
@@ -12115,6 +12117,66 @@ function _searchTextPage(pattern, opts) {
   try {
     const start = root === document ? (document.body || document.documentElement) : root;
     if (start) walk(start, 0);
+  } catch (e) {}
+  // TWO CORRECT HITS THAT PRINT IDENTICALLY READ AS ONE REPORTED TWICE.
+  //
+  // Reported by the T9 agents of BOTH #47 evals, independently: search_page
+  // "Welsh" on loc.gov returned 2 matches as two lines identical in every
+  // printed field. The count was right and the page really does render that
+  // table twice -- nothing printed differed. This is #42's D30 fixed one level
+  // too shallow: D30 was the same complaint, and `match@offset` separates two
+  // hits inside ONE element while saying nothing about two hits in two.
+  //
+  // Measured before changing anything: with refs present the rows already
+  // differ (ref=10 vs ref=17 on the reproduction), so this is specifically the
+  // FIRST search on a document -- mmids are injected by the collector, so
+  // nothing carries one until read_page has run (#32). `_key` includes the ref,
+  // so a page that has been read pays nothing here.
+  //
+  // THE LADDER IS THE SAME SHAPE AS THE FLOW DESCRIPTOR'S (#49): the cheapest
+  // handle that actually separates the colliding rows, and nothing when they do
+  // not collide (#37's rule for `near=` -- a discriminator that discriminates
+  // nothing is dropped).
+  //   1. a declared `id`, which HTML says is unique and which the caller can
+  //      hand straight back as `css_scope` -- so it LOCATES and is ACTIONABLE,
+  //      where an ordinal is only a tie-break. Verified unique in the document
+  //      rather than trusted: pages ship duplicate ids, and a `css_scope` that
+  //      silently picks the first is worse than no scope at all.
+  //   2. the index in document order, which always separates.
+  // No landmark lookup and no heading walk: `section()` and find's `under=`
+  // already answer those, in the collector, and a second spelling of either is
+  // what #21 exists to stop.
+  try {
+    const _key = (h) => [h.tag, h.match, h.at, h.context, h.ref || ''].join('\u0000');
+    const groups = new Map();
+    hits.forEach((h, i) => {
+      const k = _key(h);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(i);
+    });
+    for (const idxs of groups.values()) {
+      if (idxs.length < 2) continue;
+      const ids = idxs.map((i) => {
+        let w = hitNodes[i];
+        for (let d = 0; w && d < 6; d++) {
+          const id = w.getAttribute && w.getAttribute('id');
+          if (id) {
+            try {
+              const sel = '[id="' + String(id).replace(/["\\]/g, '\\$&') + '"]';
+              if ((w.ownerDocument || document).querySelectorAll(sel).length !== 1) return '';
+            } catch (e) { return ''; }
+            return id;
+          }
+          w = w.parentElement || (w.getRootNode && w.getRootNode().host) || null;
+        }
+        return '';
+      });
+      if (ids.every((x) => x) && new Set(ids).size === idxs.length) {
+        idxs.forEach((i, k) => { hits[i].scope = '#' + ids[k]; });
+      } else {
+        idxs.forEach((i) => { hits[i].nth = i + 1; });
+      }
+    }
   } catch (e) {}
   return { hits: hits, total: total, shown: hits.length, scanned: scanned };
 }

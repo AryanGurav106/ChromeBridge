@@ -410,7 +410,17 @@ def report_page(user):
     </thead>
     <tbody>{rows}</tbody>
   </table>
-</div>""", user, "/report", overlay=f"""
+</div>
+<!-- The loc.gov shape (#47): the SAME table rendered twice on one page, so a
+     search hits two different elements whose rows are identical in every
+     printed field. Both containers declare an id, which is the rung that both
+     locates and is actionable -- it can be handed back as css_scope. -->
+<footer><h2>Archive</h2><div class="card">
+  <table id="archive">
+    <thead><tr><th>Day</th><th colspan="2">Requests</th><th>Mean<br>(per hr)</th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+</div></footer>""", user, "/report", overlay=f"""
 <aside role="dialog" aria-label="Cookie notice" class="{rid()}"
        style="position:fixed;inset:0;opacity:0;pointer-events:none;
               background:rgba(10,10,12,.86);display:flex;align-items:center;

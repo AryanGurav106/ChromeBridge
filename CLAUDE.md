@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 935 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 941 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 935 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 941 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -4046,7 +4046,8 @@ granted in the side panel is refused with the same message the agent gets.
       for quiescence after every possibly-navigating click taxes the commonest
       batch there is, and #38 measured a fingerprint at ~2-3ms against a ~24ms
       read, so a settle wait is far more expensive than either.
-    - **Two correct hits that are byte-identical.** `search_page("Welsh")` on
+    - **Two correct hits that are byte-identical. FIXED in #53.**
+      `search_page("Welsh")` on
       loc.gov returns 2 matches as two lines identical in every printed field --
       same tag, same `@22`, same context. Reported by BOTH evals' T9 agents
       independently. **This is #42's D30 fixed one level too shallow:** D30 was
@@ -4660,6 +4661,64 @@ granted in the side panel is refused with the same message the agent gets.
     Q1v/Q1w (one line per hit, and the printed match findable at the printed
     offset, swept over three context budgets).
 
+53. **TWO CORRECT HITS THAT READ AS ONE REPORTED TWICE — and the fix is a
+    ladder, because the obvious handle is not always there.** Reported by the
+    T9 agents of BOTH #47 evals, independently: `search_page("Welsh")` on
+    loc.gov returned 2 matches as two lines identical in every printed field.
+    The count was right and the page really does render that table twice;
+    nothing printed differed, so the only reading available to the agent was
+    that one position had been reported twice.
+
+    **IT IS #42'S D30 FIXED ONE LEVEL TOO SHALLOW.** D30 was the same complaint,
+    was retracted as a count defect, and was closed by printing `match@offset` —
+    an offset WITHIN the attributed element. That separates two hits inside one
+    `<pre>` and says nothing whatever about two hits in two elements. The same
+    symptom at a different scale, and the first fix's own success is what made it
+    look handled.
+
+    **MEASURED BEFORE CHANGING ANYTHING, and it narrowed the problem by half.**
+    Reproduced offline, then re-run with mmids stamped: **with refs present the
+    rows already differ** (`ref=10` vs `ref=17`). So this is specifically the
+    FIRST search on a document — mmids are injected by the collector, so nothing
+    carries one until `read_page` has run (#32) — and a page that has been read
+    pays nothing. That is the difference between a fix and a fix applied
+    everywhere it is not needed.
+
+    **THE LADDER, and what was rejected from it.** Same shape as the flow
+    descriptor's (#49): the cheapest handle that actually separates the colliding
+    rows, and nothing at all when they do not collide (#37's rule for `near=` — a
+    discriminator that discriminates nothing is dropped).
+    1. **a declared `id`**, which LOCATES and is ACTIONABLE: it goes straight back
+       as `css_scope`, where an ordinal is only a tie-break. Q1x3 hands it back
+       and asserts it narrows, because "actionable" is the claim.
+    2. **the index in document order**, which always separates.
+    **A landmark or heading locator was the obvious middle rung and is
+    deliberately absent:** `section()` already answers "which region" and find's
+    `under=` already answers "under which heading", both inside the collector,
+    and `_searchTextPage` is injected standalone so either would have to be
+    COPIED. A second spelling of a concept that already exists is what #21 exists
+    to stop, and #18 records three times what it costs when the copies disagree.
+    An `id` needs no such copy: it is an attribute.
+
+    **UNIQUENESS IS VERIFIED, NOT TRUSTED.** HTML says an id is unique and real
+    pages ship duplicates anyway; a `css_scope` that silently resolves to the
+    first of two is worse than no scope, because it answers confidently about the
+    wrong element. A duplicate id falls back to the ordinal (Q1y), which is the
+    same refuse-rather-than-guess rule as #24's submit picker.
+
+    **LIVE-VERIFIED BOTH WAYS** on a page carrying the loc.gov shape — the same
+    table rendered twice, both containers declaring an id. Fixed:
+    `rows=2 distinct=2`, `[in #metrics]` beside `[in #archive]`. Committed
+    collector, same page, same run: `rows=2 distinct=1`, the two rows byte-
+    identical — the reported symptom reproduced through the real tool rather
+    than described.
+
+    Suites: 941 checks. New — Q1x (the collision is gone), Q1x2 (the id rung is
+    preferred), Q1x3 (and genuinely works as `css_scope`), Q1y (a duplicate id
+    falls back rather than lying), Q1z/Q1z2 (a single hit and rows that already
+    differ carry nothing — a discriminator that always fires is the noise #15
+    priced).
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -4729,6 +4788,7 @@ granted in the side panel is refused with the same message the agent gets.
 | The data-table hint's size does not match the grid you get | Fixed in #51 — it counted header cell ELEMENTS while the renderer expands colspans (`155x11` advertised, `155x28` rendered). TB14 pins the two against each other on the same page |
 | A batch step says `waited Nms for the navigation step N-1 started` | By design since #51 — that step acted on the page and started a navigation, and the next step would otherwise have read the document being replaced (#47/#48, three sightings). The batch asks `await_navigation`, a Map lookup in the service worker fed by Chrome's own main-frame events, so a settled tab costs 0.80ms and prints nothing. SETTLED means DOMContentLoaded, not `complete` — waiting on subresources is the trigger #43 deleted. A wait that TIMED OUT says so, and that the read may belong to either page |
 | Every batch step after the first is slow by ~5s | A tab is stuck marked navigating — a commit whose `onDOMContentLoaded` never arrived. A timed-out wait drops the state so it self-heals after one step, and a navigation that neither commits nor errors expires after 15s. If it persists, check that the SETTLE listeners (`onDOMContentLoaded`/`onErrorOccurred`) registered: they sit in their own `try`, BEFORE the start listeners, because the half that pins tabs busy is the dangerous half to have alone |
+| Two `search_page` hits look identical | Fixed in #53 — they ARE different elements with the same text, and nothing printed said so. A colliding group now carries the cheapest handle that separates it: the page's own `id` when one is declared and VERIFIED unique (usable as `css_scope`), otherwise `[#N in document order]`. Rows that already differ, and single hits, carry nothing. With refs present there is no collision — this is specifically a FIRST search, before `read_page` has stamped mmids |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---
