@@ -24,6 +24,25 @@ textarea. The runner now names that cause when it sees an open surface in its
 own listing, but naming it is a consolation prize; recording from the navigate
 is the fix.
 
+## Running them
+
+```bash
+python tools/run_flows.py --playground --local-only   # what CI runs
+python tools/run_flows.py checkout --headed           # one, visibly
+python tools/run_flows.py --vars '{"project_name":"x"}'
+```
+
+Exit code 0 when every flow passed, 1 otherwise. `--playground` starts the
+fixture app and resets it first, so the run depends on nothing already
+running; `--local-only` skips flows that touch a non-loopback origin, because
+a suite that needs the public internet fails for reasons that are not the
+code's. Verified in all three directions: clean run exits 0, a chaos flag
+exits 1 naming the check that failed, and an unset secret exits 1 naming the
+variable.
+
+This is the only suite that crosses every boundary at once — real Chrome, real
+unpacked extension, real bridge, real op router, real MCP tool functions.
+
 ## Passwords are never in the file
 
 A `<input type="password">` the flow typed into is recorded as a placeholder

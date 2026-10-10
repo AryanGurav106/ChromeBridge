@@ -500,6 +500,97 @@ async def record_and_replay():
                                      "name": "\u30d1\u30b9\u30ef\u30fc\u30c9"}},
                       "fields.1") == "CB_SECRET_F_FIELDS_1")
 
+    # ---- FV: variables — a recorded value is a parameter ------------------
+    fbv = FakeBridge([E(70, "input", type_="text", name="Project name",
+                        editable=True, clickable=False),
+                      E(71, "button", name="Create", type_="submit")])
+    rv = Recorder("mk", fbv.entries_fn)
+    vi = {"fields": [{"ref": "ref_70", "value": "echo-gateway"}],
+          "submit": True, "submit_ref": "ref_71", "tabId": 1}
+    vt = await rv.before("fill_form", vi)
+    rv.after("fill_form", vi, "Filled 1/1", vt)
+    vf, vr = rv.compile()
+    check("FV1 a value typed into a form field becomes a NAMED variable with "
+          "what was recorded as its default",
+          vf.vars == {"project_name": "echo-gateway"}, str(vf.vars))
+    check("FV1b ...and the step stores the placeholder, not the literal",
+          "{{project_name}}" in json.dumps(vf.to_json())
+          and "echo-gateway" not in json.dumps([s.to_json() for s in vf.steps]))
+
+    fbv2 = FakeBridge(fbv.entries)
+    r = await start(vf, 1, fbv2.call, fbv2.entries_fn)
+    sent = next(i for t, i in fbv2.calls if t == "fill_form")
+    check("FV2 replaying with no overrides types what was recorded",
+          sent["fields"][0]["value"] == "echo-gateway", str(sent["fields"][0]))
+    fbv3 = FakeBridge(fbv.entries)
+    await start(vf, 1, fbv3.call, fbv3.entries_fn, overrides={"project_name": "beta-svc"})
+    sent3 = next(i for t, i in fbv3.calls if t == "fill_form")
+    check("FV3 an override replaces it — the same flow with a different input "
+          "is an argument, not a re-record",
+          sent3["fields"][0]["value"] == "beta-svc", str(sent3["fields"][0]))
+
+    # The hostile case: a flow file hand-edited to reference a variable that
+    # does not exist must FAIL loudly, not type the literal "{{typo}}" into a
+    # field and report success.
+    import copy as _copy
+    broken = _copy.deepcopy(vf)
+    broken.steps[0].input["fields"][0]["value"] = "{{typo_not_declared}}"
+    fbv4 = FakeBridge(fbv.entries)
+    rb = await start(broken, 1, fbv4.call, fbv4.entries_fn)
+    check("FV4 an UNDECLARED variable fails and names it, instead of typing "
+          "the placeholder text into the field",
+          rb["status"] == FAILED and "typo_not_declared" in rb["reason"]
+          and not any(t == "fill_form" for t, _ in fbv4.calls), str(rb["reason"])[:120])
+    check("FV5 a secret is NOT turned into an ordinary variable — it stays "
+          "env-backed, or the redaction would be undone by the next feature",
+          "password" not in " ".join(lf.vars) and lf.vars.get("work_email"),
+          str(lf.vars))
+
+    # ---- FP: preconditions — the state the flow starts from ---------------
+    fbp = FakeBridge([E(80, "button", name="New project")])
+    rp = Recorder("pre", fbp.entries_fn)
+    rp.after("get_url", {"tabId": 1}, '{"url": "https://app.test/projects"}', {})
+    rp.after("query_elements", {"tabId": 1, "selector": "tbody tr"},
+             "4 element(s) match 'tbody tr'", {})
+    ci2 = {"action": "left_click", "ref": "ref_80", "tabId": 1}
+    ct2 = await rp.before("computer", ci2)
+    rp.after("computer", ci2, "clicked", ct2)
+    pf, pr = rp.compile()
+    check("FP1 what the agent observed BEFORE it changed anything becomes the "
+          "flow's precondition",
+          pf.require.get("url") == "https://app.test/projects"
+          and pf.require["query"] == {"selector": "tbody tr", "count": 4},
+          str(pf.require))
+
+    ok = FakeBridge([E(80, "button", name="New project")])
+    ok.url = "https://app.test/projects"; ok.query_total = 4
+    rok = await start(pf, 1, ok.call, ok.entries_fn)
+    check("FP2 the right starting state passes — the control, without which a "
+          "precondition that always fires is indistinguishable from one that "
+          "works", rok["status"] == PASSED, str(rok["reason"])[:100])
+
+    wrong = FakeBridge([E(80, "button", name="New project")])
+    wrong.url = "https://app.test/login"; wrong.query_total = 4
+    rw = await start(pf, 1, wrong.call, wrong.entries_fn)
+    check("FP3 the WRONG starting state fails before anything runs, and says "
+          "the app is not where the flow begins",
+          rw["status"] == FAILED and "not in the state this flow starts" in rw["reason"]
+          and "login" in rw["reason"], str(rw["reason"])[:140])
+    check("FP3b ...and NOTHING was dispatched — this is the case that used to "
+          "fail deep inside with a message about one element",
+          not any(t == "computer" for t, _ in wrong.calls), str(wrong.calls))
+
+    drifted = FakeBridge([E(80, "button", name="New project")])
+    drifted.url = "https://app.test/projects"; drifted.query_total = 5
+    rd = await start(pf, 1, drifted.call, drifted.entries_fn)
+    check("FP4 a precondition catches app STATE drift too, not just the url — "
+          "5 rows where the flow was recorded against 4",
+          rd["status"] == FAILED and "counted 5" in rd["reason"], str(rd["reason"])[:120])
+
+    check("FP5 a flow that establishes its own state records NO precondition, "
+          "so it is derived rather than mandatory",
+          Recorder("self", fbp.entries_fn).compile()[0].require == {})
+
     # ---- contracts -------------------------------------------------------
     check("FD16 REF_KEYS matches browser_batch's own _REF_KEYS — one concept, "
           "one spelling (#21), enforced rather than hoped for",

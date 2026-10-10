@@ -12,6 +12,7 @@ because a healed step proposes a PATCH rather than rewriting itself.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -55,6 +56,21 @@ def mutates(name: str, inp: dict) -> bool:
     return name in MUTATES
 
 
+def slug(s: str, upper: bool = False) -> str:
+    """An ASCII identifier, or '' when nothing survives.
+
+    Shared by the VARIABLE names and the SECRET env-var names so one concept
+    has one spelling (#21). The ASCII allowlist is correct for both and wrong
+    for a filename: a variable is referenced as {{name}} in JSON and a secret
+    is an environment variable, which POSIX fixes at [A-Za-z_][A-Za-z0-9_]*.
+    A filename may be in any script, which is why _flow_path strips only what
+    a filesystem forbids (#32, #49). Callers fall back to a field's POSITION
+    when a non-Latin label leaves nothing, rather than emitting an empty name.
+    """
+    out = re.sub(r"_+", "_", re.sub(r"[^A-Za-z0-9]+", "_", s or "")).strip("_")
+    return out.upper() if upper else out.lower()
+
+
 @dataclass
 class Step:
     name: str                                   # the MCP tool to call
@@ -86,17 +102,34 @@ class Step:
 class Flow:
     name: str
     origin: str = ""
+    # Declared PARAMETERS: every value typed into a form field, with what was
+    # recorded as its default. workflow-use extracts variables from forms the
+    # same way; what it buys here is that replaying with a different project
+    # name is a run_flow argument rather than a re-record.
+    vars: dict = field(default_factory=dict)
+    # The state this flow EXPECTS TO START FROM, checked before step 0. Nothing
+    # else in this space has these -- ReUseIt's condition checks are per-step
+    # and judged by a model on a screenshot; ours are exact, because the page
+    # declares the things we check. Without it a flow run against the wrong
+    # starting state fails deep inside with a confusing message about one
+    # element, instead of saying the app is not where the flow begins.
+    require: dict = field(default_factory=dict)
     steps: list = field(default_factory=list)
     recorded_at: str = ""
     viewport: Optional[dict] = None
     schema: int = SCHEMA
 
     def to_json(self) -> dict:
-        return {
+        d = {
             "schema": self.schema, "name": self.name, "origin": self.origin,
             "recorded_at": self.recorded_at, "viewport": self.viewport,
-            "steps": [s.to_json() for s in self.steps],
         }
+        if self.vars:
+            d["vars"] = self.vars
+        if self.require:
+            d["require"] = self.require
+        d["steps"] = [s.to_json() for s in self.steps]
+        return d
 
     @staticmethod
     def from_json(d: dict) -> "Flow":
@@ -111,6 +144,7 @@ class Flow:
         return Flow(name=d.get("name") or "", origin=d.get("origin") or "",
                     recorded_at=d.get("recorded_at") or "",
                     viewport=d.get("viewport"),
+                    vars=d.get("vars") or {}, require=d.get("require") or {},
                     steps=[Step.from_json(s) for s in d.get("steps") or []])
 
 
@@ -153,6 +187,44 @@ def set_ref(inp: dict, path: str, ref: str) -> None:
         inp["fields"] = fields_
         return
     inp[path] = ref
+
+
+VAR_RE = re.compile(r"\{\{([A-Za-z0-9_]+)\}\}")
+
+
+def resolve_vars(obj, values: dict):
+    """Substitute {{name}} throughout a step's input. -> (input, missing names).
+
+    Walks the structure rather than knowing where values live, so it covers
+    form_input's `value`, fill_form's `fields[].value` and computer's `text`
+    with no third list of locations to keep in sync (#21) -- the same shape as
+    secrets.resolve, which runs after it.
+    """
+    missing: list = []
+
+    def walk(v):
+        if isinstance(v, str):
+            def sub(m):
+                nm = m.group(1)
+                if nm not in values:
+                    missing.append(nm)
+                    return m.group(0)
+                return str(values[nm])
+            return VAR_RE.sub(sub, v)
+        if isinstance(v, list):
+            return [walk(x) for x in v]
+        if isinstance(v, dict):
+            return {k: walk(x) for k, x in v.items()}
+        return v
+
+    return walk(obj), missing
+
+
+def get_value(inp: dict, path: str):
+    if path.startswith("fields."):
+        i = int(path.split(".", 1)[1])
+        return ((inp.get("fields") or [])[i] or {}).get("value")
+    return inp.get("value")
 
 
 def set_value(inp: dict, path: str, v) -> None:

@@ -1303,6 +1303,20 @@ async def sw_info(
                                else str(_caps))
         except Exception as e:
             out["client_caps_error"] = f"{type(e).__name__}: {e}"
+        # Recent op TIMEOUTS, so an intermittent stall arrives with evidence.
+        # Three were seen in one session and none reproduced; an intermittent
+        # that leaves no record cannot be diagnosed on its next occurrence
+        # either. Named with their age because "two, both within a minute of an
+        # extension reload" is a different fact from "two, hours apart".
+        try:
+            _now = time.time()
+            out["recent_timeouts"] = [
+                {"op": t["op"], "after_s": t["after_s"],
+                 "ago_s": round(_now - t["ts"], 1)}
+                for t in getattr(b, "timeouts", [])
+            ]
+        except Exception:
+            pass
         return json.dumps(out, default=str)
     except Exception:
         return str(res)
@@ -3515,11 +3529,16 @@ async def run_flow(
     tabId: Annotated[int, Field(description="Tab to replay in.")],
     resume_id: Annotated[Optional[str], Field(description="Resume a paused run (from a needs_decision result).")] = None,
     bind: Annotated[Optional[str], Field(description="With resume_id: the ref to use for the step that could not be resolved.")] = None,
+    vars: Annotated[Optional[dict], Field(description='Override the flow\'s recorded values, e.g. {"project_name": "beta-svc"}. The flow lists its variables; anything omitted uses what was recorded.')] = None,
 ) -> str:
     """Replay a recorded flow as a test. Deterministic; no model call per step.
 
-    Each step re-resolves its target from what the page declares NOW, then runs,
-    then its postconditions are checked LIVE. A step that cannot be pinned to
+    The flow's PRECONDITION is checked before anything runs, so a flow pointed
+    at the wrong starting state says so in one sentence instead of failing deep
+    inside with a message about one element. Then each step re-resolves its
+    target from what the page declares NOW, runs, and its postconditions are
+    checked LIVE. Values typed into form fields are VARIABLES -- pass `vars` to
+    run the same flow with different inputs instead of re-recording. A step that cannot be pinned to
     exactly one element does not guess: the run PAUSES and hands you the
     candidates, and you continue with run_flow(resume_id=..., bind="ref_N").
     Rebinding proposes a patch to the flow file; it never edits it.
@@ -3537,7 +3556,8 @@ async def run_flow(
             have = sorted(p.name for p in FLOWS_DIR.glob("*.flow.json")) if FLOWS_DIR.exists() else []
             return (f"No flow at {path}." + (f" Recorded flows: {', '.join(have)}" if have
                     else " Nothing recorded yet — record_flow(action='start', name='...')."))
-        res = await _flow_start(_flow_load(path), tabId, _flow_call, _flow_entries)
+        res = await _flow_start(_flow_load(path), tabId, _flow_call, _flow_entries,
+                                overrides=vars or None)
     return _flow_report(res)
 
 

@@ -103,6 +103,7 @@ class ExtensionBridge:
         self.client_version: Optional[str] = None
         self.client_name: Optional[str] = None
         # Most recent op's WS round-trip duration; read by per-tool timing.
+        self.timeouts: list = []
         self.last_call_ms: float = 0.0
         # Cumulative WS round-trip time since the bridge started; per-tool
         # timing subtracts before/after to get the bridge time inside a tool,
@@ -203,6 +204,15 @@ class ExtensionBridge:
             result = await asyncio.wait_for(fut, timeout=timeout)
         except asyncio.TimeoutError:
             self._pending.pop(req_id, None)
+            # LEAVE A TRACE. Three stalls were observed in one session and none
+            # reproduced, so there is nothing to fix -- but "it hung once" is
+            # not evidence and an intermittent that leaves no record cannot be
+            # diagnosed on the next occurrence either. sw_info reports this, so
+            # the next one arrives with its op, its age and how many came
+            # before it instead of a memory.
+            self.timeouts.append({"op": op, "after_s": round(timeout, 1),
+                                  "ts": time.time()})
+            del self.timeouts[:-10]
             # NAME THE RECOVERY THAT WAS SEEN TO WORK, and only that one.
             # Observed live: ops that INJECT into the page (read_page,
             # fill_form, computer, javascript_tool) all hung together, while

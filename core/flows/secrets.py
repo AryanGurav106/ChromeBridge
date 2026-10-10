@@ -34,8 +34,9 @@ failure that looks like a bad credential rather than a missing one.
 from __future__ import annotations
 
 import os
-import re
 from typing import Optional
+
+from .model import slug
 
 # Explicit and greppable. A plain string rather than a dict so the flow file's
 # value slot keeps one type, and a prefix no page value realistically collides
@@ -52,31 +53,15 @@ def is_secret(target: dict) -> bool:
     return (desc.get("type") or "").strip().lower() == "password"
 
 
-def _slug(s: str) -> str:
-    """Uppercase ASCII identifier, or '' when nothing survives.
-
-    AN ASCII ALLOWLIST IS CORRECT HERE AND IS WRONG THREE FILES OVER, which is
-    worth saying because this is the shape #32 shipped as a bug and #49
-    reproduced. A FILENAME may contain any script, so an allowlist built from
-    `\\w` turns a Japanese flow name into a row of dashes — that one strips only
-    what a filesystem forbids. An ENVIRONMENT VARIABLE NAME is `[A-Za-z_][A-Za-z0-9_]*`
-    by POSIX; a name outside that cannot be exported by a shell at all. So the
-    constraint is the standard's, not a guess about what matters — and the
-    caller below falls back to the field's POSITION when a non-Latin label
-    leaves nothing, rather than emitting an empty name.
-    """
-    return re.sub(r"_+", "_", re.sub(r"[^A-Za-z0-9]+", "_", s or "")).strip("_").upper()
-
-
 def env_name(flow_name: str, target: dict, path: str) -> str:
     """CB_SECRET_<FLOW>_<FIELD> — says which secret, never what it is."""
     desc = (target or {}).get("full") or (target or {}).get("desc") or {}
-    field = _slug(desc.get("name") or "")
+    field = slug(desc.get("name") or "", upper=True)
     if not field:
         # A label in a script with no ASCII at all, or no label. Position is
         # stable within one flow file and is the only thing left that is.
-        field = _slug(path) or "FIELD"
-    flow = _slug(flow_name) or "FLOW"
+        field = slug(path, upper=True) or "FIELD"
+    flow = slug(flow_name, upper=True) or "FLOW"
     return f"{ENV_PREFIX}{flow}_{field}"
 
 

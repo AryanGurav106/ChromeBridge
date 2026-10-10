@@ -102,6 +102,17 @@ jobs:
       - name: Run all suites
         run: python tools/run_tests.py --strict
 
+      # The only job here that crosses every boundary at once: a real Chrome,
+      # the real unpacked extension, the real WebSocket bridge, the real op
+      # router and the real MCP tool functions. Every other suite injects page
+      # functions directly, which is why `detail="brief"` (#19), `delta` (#30)
+      # and the recording wrapper (#49) each shipped broken behind green
+      # fixtures. --playground starts its own fixture app and --local-only
+      # skips flows needing the public internet, so this depends on nothing
+      # outside the checkout.
+      - name: Replay recorded flows end to end
+        run: python tools/run_flows.py --playground --local-only
+
   # ---------------------------------------------------------------------------
   # pyproject.toml claims requires-python = ">=3.10" and advertises 3.10-3.13.
   # Nothing checked that. The unit group imports mcp_server.py and every

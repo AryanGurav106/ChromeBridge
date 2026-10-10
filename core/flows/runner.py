@@ -36,7 +36,7 @@ from typing import Any, Callable, Optional
 
 from . import secrets
 from .descriptor import Unresolved, build, resolve
-from .model import Flow, Step, set_ref
+from .model import Flow, Step, resolve_vars, set_ref
 from .recorder import query_total, search_hits
 
 PASSED, FAILED, NEEDS = "passed", "failed", "needs_decision"
@@ -47,13 +47,20 @@ RUNS: dict = {}
 
 
 class Run:
-    def __init__(self, flow: Flow, tab_id: int, call: Callable, entries_fn: Callable):
+    def __init__(self, flow: Flow, tab_id: int, call: Callable, entries_fn: Callable,
+                 overrides: Optional[dict] = None):
         self.id = "run_" + uuid.uuid4().hex[:8]
         self.flow = flow
         self.tab_id = tab_id
         self.call = call
         self.entries_fn = entries_fn
         self.i = 0
+        # Recorded defaults, overridden per run. A flow that creates a record
+        # needs a different name on the second run, and that is an argument
+        # rather than a re-record.
+        self.vars = dict(flow.vars or {})
+        self.vars.update(overrides or {})
+        self.checked_require = False
         self.log: list = []
         self.patches: list = []
         self._last_entries: list = []
@@ -69,6 +76,23 @@ class Run:
     async def go(self, binding: Optional[str] = None) -> dict:
         """Run from the current step. `binding` answers the question that stopped us."""
         self._t0 = time.time()
+
+        # THE PRECONDITION, BEFORE ANYTHING RUNS. Without it a flow pointed at
+        # the wrong starting state fails deep inside with a message about one
+        # element -- measured live, a flow that begins at a login page was run
+        # while already signed in, and step 1 reported "no element matches
+        # tag='button' name='Sign in'", which describes the symptom of being on
+        # a page the flow never expected. Checking first turns that into one
+        # sentence about the app's state.
+        if not self.checked_require and self.flow.require:
+            self.checked_require = True
+            bad = await self._verify(self.flow.require)
+            if bad:
+                return self._stop(FAILED,
+                                  f"the app is not in the state this flow starts "
+                                  f"from: {bad}. Nothing was run.")
+        self.checked_require = True
+
         while self.i < len(self.flow.steps):
             step = self.flow.steps[self.i]
             try:
@@ -81,8 +105,15 @@ class Run:
                 return self._stop(NEEDS, why, candidates=exc.candidates)
             binding = None
 
-            # RESOLVE SECRETS LAST, so a placeholder cannot be logged by
-            # anything above and the value exists only for this one call.
+            # VARIABLES FIRST, then secrets -- a variable is an ordinary
+            # parameter and may be printed; a secret may not, so it is resolved
+            # last and exists only for this one call.
+            inp, unknown = resolve_vars(inp, self.vars)
+            if unknown:
+                return self._stop(FAILED,
+                                  f"step {self.i} ({step.name}): this flow has no "
+                                  f"value for {', '.join(sorted(set(unknown)))} — "
+                                  f"pass it to run_flow, or re-record.")
             inp, missing = secrets.resolve(inp)
             if missing:
                 return self._stop(FAILED,
@@ -171,8 +202,15 @@ class Run:
 
     # ------------------------------------------------------------------
     async def _check(self, step: Step) -> str:
-        """Every assertion, live. Returns '' when they all hold."""
-        exp = step.expect or {}
+        return await self._verify(step.expect or {})
+
+    async def _verify(self, exp: dict) -> str:
+        """Every assertion, live. Returns '' when they all hold.
+
+        Used for BOTH the flow's precondition and each step's postcondition:
+        the same declared checks, asked at two different moments. Two copies
+        would drift and each would be exercised by only half the tests (#21).
+        """
         if "url" in exp:
             res = await self.call("get_url", {"tabId": self.tab_id})
             m = re.search(r'"url"\s*:\s*"([^"]+)"', str(res))
@@ -225,8 +263,9 @@ class Run:
         }
 
 
-async def start(flow: Flow, tab_id: int, call: Callable, entries_fn: Callable) -> dict:
-    return await Run(flow, tab_id, call, entries_fn).go()
+async def start(flow: Flow, tab_id: int, call: Callable, entries_fn: Callable,
+                overrides: Optional[dict] = None) -> dict:
+    return await Run(flow, tab_id, call, entries_fn, overrides).go()
 
 
 async def resume(run_id: str, binding: str) -> dict:

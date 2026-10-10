@@ -33,7 +33,7 @@ from typing import Any, Callable, Optional
 
 from .descriptor import build
 from . import secrets
-from .model import Flow, Step, mutates, ref_paths, get_ref, set_value
+from .model import Flow, Step, mutates, ref_paths, get_ref, set_value, slug
 
 # Result-string contracts. These parse the OUTPUT of two tools, which is a
 # string contract with mcp_server -- exactly the thing #30 found dead for the
@@ -146,6 +146,24 @@ class Recorder:
         # the recording instead of from a second probe of the page.
         focus_target = None
         redacted: list = []
+        variables: dict = {}
+
+        def _var(target, path, value):
+            """Name a typed form value so replay can override it.
+
+            workflow-use extracts variables from forms the same way. What it
+            buys is that running the flow with a different project name is a
+            run_flow argument instead of a re-record -- and it is DECLARED
+            (the step named a form field), not a guess about which strings
+            look parameter-shaped.
+            """
+            desc = (target or {}).get("full") or (target or {}).get("desc") or {}
+            base = slug(desc.get("name") or "") or slug(path) or "value"
+            nm, n = base, 2
+            while nm in variables and variables[nm] != value:
+                nm, n = f"{base}_{n}", n + 1
+            variables[nm] = value
+            return "{{" + nm + "}}"
 
         for i, r in enumerate(live):
             if not r["mutates"]:
@@ -178,10 +196,16 @@ class Recorder:
             # entropy test; the placeholder names the environment variable the
             # replay must read, which is what makes the file safe to commit.
             for p in paths:
-                if secrets.is_secret(r["targets"].get(p)):
-                    nm = secrets.env_name(self.name, r["targets"][p], p)
+                tgt = r["targets"].get(p)
+                if secrets.is_secret(tgt):
+                    nm = secrets.env_name(self.name, tgt, p)
                     set_value(inp, p, secrets.placeholder(nm))
                     redacted.append(nm)
+                else:
+                    from .model import get_value as _gv
+                    val = _gv(inp, p)
+                    if isinstance(val, str) and val != "":
+                        set_value(inp, p, _var(tgt, p, val))
             if paths:
                 focus_target = r["targets"].get(paths[-1])
             elif r["name"] == "computer" and \
@@ -200,6 +224,7 @@ class Recorder:
         flow = Flow(
             name=self.name, origin=self.origin,
             recorded_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+            vars=variables, require=self._require_before(live),
             steps=kept,
         )
         report = {
@@ -211,23 +236,29 @@ class Recorder:
             # transcript, so it says which secret is needed and never which
             # value was typed.
             "secrets": sorted(set(redacted)),
+            "vars": sorted(variables),
+            "require": sorted(flow.require),
             "notes": self.notes,
         }
         return flow, report
 
     @staticmethod
-    def _expect_after(live: list, i: int) -> dict:
-        """Postconditions = what the agent checked NEXT, before acting again.
+    def _checks(records: list) -> dict:
+        """Turn a run of OBSERVATIONS into declared checks.
 
-        Only observations that actually SUCCEEDED become assertions, and only
-        ones whose answer is a number or a url -- never the prose of a listing,
-        which changes for a hundred innocent reasons. A weak assertion is worse
-        than none, because a flow that cannot fail still reports green.
+        One function for both directions: the observations after an action are
+        its postconditions, and the ones before the first action are what the
+        flow expects to start from. Two copies would drift, and they would
+        drift silently because each is only exercised by one half of the tests
+        (#21).
+
+        Only observations that SUCCEEDED become checks, and only ones whose
+        answer is a number or a url -- never the prose of a listing, which
+        changes for a hundred innocent reasons. A weak check is worse than
+        none, because a flow that cannot fail still reports green.
         """
         exp: dict = {}
-        for r in live[i + 1:]:
-            if r["mutates"]:
-                break                       # the next action starts a new state
+        for r in records:
             name, res = r["name"], r["result"] or ""
             if name == "get_url":
                 m = re.search(r'"url"\s*:\s*"([^"]+)"', res)
@@ -238,9 +269,9 @@ class Recorder:
                 pat = r["input"].get("pattern")
                 if hits and pat:
                     # PRESENCE, not the exact tally. A page-wide text search is
-                    # genuinely volatile -- a toast saying "Created echo-gateway"
+                    # genuinely volatile -- a toast saying "Created X"
                     # legitimately turns 1 hit into 2 -- and the question this
-                    # assertion is really asking is "is it there". The observed
+                    # check is really asking is "is it there". The observed
                     # count is kept for the reader, not asserted on.
                     exp.setdefault("search",
                                    {"pattern": pat, "min": 1, "observed": hits})
@@ -248,13 +279,34 @@ class Recorder:
                 tot = query_total(res)
                 sel = r["input"].get("selector")
                 if tot and sel:
-                    # EXACT, because that is what was observed. Recording "at
-                    # least N" is a weaker claim than the run actually made, and
-                    # it cannot see anything being ADDED: measured live, a row
-                    # injected above the table left the flow green at min=4
-                    # against 5 rendered. A count that legitimately grows is a
-                    # real case -- edit the file to {"min": N} for it -- but the
-                    # default must be the observation, or the flow quietly stops
-                    # being able to fail (#15).
+                    # EXACT, because that is what was observed. "At least N" is
+                    # a weaker claim than the run made and cannot see anything
+                    # being ADDED: measured live, a row injected above the
+                    # table left the flow green at min=4 against 5 rendered.
                     exp.setdefault("query", {"selector": sel, "count": tot})
         return exp
+
+    @classmethod
+    def _expect_after(cls, live: list, i: int) -> dict:
+        """Postconditions = what the agent checked NEXT, before acting again."""
+        run = []
+        for r in live[i + 1:]:
+            if r["mutates"]:
+                break                       # the next action starts a new state
+            run.append(r)
+        return cls._checks(run)
+
+    @classmethod
+    def _require_before(cls, live: list) -> dict:
+        """The state the flow EXPECTS TO START FROM.
+
+        Everything the agent observed before it first changed anything. A flow
+        whose first step is its own `navigate` establishes its state and needs
+        none, which is why this is derived rather than mandatory.
+        """
+        run = []
+        for r in live:
+            if r["mutates"]:
+                break
+            run.append(r)
+        return cls._checks(run)

@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 892 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 904 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -505,7 +505,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 892 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 904 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -4339,6 +4339,88 @@ granted in the side panel is refused with the same message the agent gets.
     contracts, FR1-FR11b recorder and runner, with the falsifier FR6, the
     safety property FR9, and the escalation path FR7/FR8). Probes:
     `tools/audit_descriptors.py`, `tools/audit_flow_resolve.py`.
+
+50. **THE FLOW FEATURE'S THREE STATED GAPS, CLOSED — and the one that could
+    not be closed, said so.** #49 shipped with a list: no CI runner, no
+    variable extraction, no preconditions, and a password written in plaintext
+    into a file whose whole purpose is to be committed. The secret leak went
+    first (its own commit, because it had already shipped). These are the rest.
+
+    **PRECONDITIONS ARE OURS, AND THE SEARCH IS WHY I SAY SO.** workflow-use
+    extracts variables from forms; mill's PR #707 binds parameters by step and
+    field; Dagu replays and re-asks the model on failure. **Nothing in the
+    space does preconditions.** The closest is ReUseIt's condition checks,
+    which are per-step and judged by a model reading a screenshot. Ours can be
+    exact, because the page DECLARES the things we check — a url and a counted
+    selector, the same `_checks` the postconditions use, asked at a different
+    moment. One function for both directions, because two would drift and each
+    would be exercised by only half the tests (#21).
+    The defect it closes was measured live in #49: a flow that begins at a
+    login page, run while already signed in, failed at step 1 with *"no element
+    matches tag='button' name='Sign in'"* — a true sentence about one element,
+    describing the symptom of being on a page the flow never expected. It now
+    says the app is not in the state the flow starts from, **before anything
+    runs** (FP3/FP3b). Derived, not mandatory: a flow that establishes its own
+    state with its own `navigate` records none (FP5).
+
+    **VARIABLES ARE workflow-use'S SHAPE, AND THE FAILURE MODE IS THE
+    INTERESTING PART.** Every value typed into a form field becomes a named
+    parameter with what was recorded as its default, so running the same flow
+    with a different project name is a `run_flow(vars=…)` argument rather than
+    a re-record. DECLARED — the step named a form field — not a guess about
+    which strings look parameter-shaped. **FV4 is the check worth having:** a
+    flow hand-edited to reference a variable that does not exist must FAIL
+    naming it, not type the literal `{{typo}}` into the field and report
+    success, which is the #10/#11/#12 family wearing a new hat. And **FV5**
+    pins that a secret is not quietly demoted to an ordinary variable, which
+    would undo the redaction one feature later.
+
+    **`tools/run_flows.py` IS THE ONLY SUITE THAT CROSSES EVERY BOUNDARY AT
+    ONCE.** Real Chrome, real unpacked extension, real WebSocket bridge, real
+    op router, real MCP tool functions — which matters because every other
+    suite injects page functions directly, and that is exactly why
+    `detail="brief"` (#19), `delta` (#30) and the recording wrapper that
+    refused every batch (#49) each shipped broken behind green fixtures. It
+    imports mcp_server rather than calling the bridge, so it tests the path an
+    agent actually uses.
+    **The gate is granted, not bypassed.** Flows name an origin; the grant is
+    written into a THROWAWAY profile this script creates and destroys, which is
+    what a human does in the panel for a browser that exists for twelve
+    seconds. It cannot reach the user's Chrome: empty profile, and a bridge on
+    port 8901, outside the default 8765-8774 span.
+    `--playground` starts the fixture app and resets it first; `--local-only`
+    skips flows touching a non-loopback origin, because a suite that needs the
+    public internet fails for reasons that are not the code's. One command,
+    nothing pre-running: **`python tools/run_flows.py --playground
+    --local-only`**, now a CI step.
+    **Verified in all three directions, which is the only way an exit code
+    means anything:** clean run exits 0 (4/4 steps, 4.47s), a chaos flag exits
+    1 naming the check (`counted 5, recorded exactly 4`), and an unset secret
+    exits 1 naming the variable. My first reading of that said EXIT=0 under
+    chaos — I had read `tail`'s status through a pipe, not Python's.
+
+    **AND IT DID NOT CONNECT ON THE FIRST RUN, for the oldest reason in this
+    file.** The throwaway profile was seeded with host and port and no TOKEN,
+    so the extension had nothing to handshake with and the wait died on a bare
+    `TimeoutError` naming nothing — #17's first-run bug in miniature, in a
+    harness written by someone who had read #17. The seed carries the token
+    now, and the timeout says which of the two it is.
+
+    **THE THREE STALLS ARE NOT FIXED, AND THAT IS THE HONEST WORD.** Three
+    30s+ no-responses in one session, none reproducible across four attempts;
+    every page-injecting op hangs together while `get_url`/`sw_info`/`navigate`
+    answer in milliseconds, which is a blocked page main thread rather than a
+    dead extension, and navigating the tab recovers it. An unreproducible
+    intermittent cannot be fixed by guessing at it. What changed is that it now
+    leaves a trace: the bridge records its last ten timeouts and `sw_info`
+    reports them with their age, so the next one arrives with its op and how
+    many came before it instead of a memory. "It hung once" is not evidence.
+
+    Suites: 904 checks. New — FV1-FV5 (variables, with the no-override, the
+    override, the undeclared-name failure and the secret-not-demoted controls),
+    FP1-FP5 (preconditions, with the right-state control that a check which
+    always fires is indistinguishable from one that works, and the
+    derived-not-mandatory control), and `tools/run_flows.py` as a CI step.
 
 ## Debugging starting points
 
