@@ -1244,6 +1244,26 @@ async def main():
             "<li><a href=/c>Gamma Report</a> <span>(edition 33, id 433)</span></li>"
             "<li><a href=/d>Delta Report</a> <span>(edition 44, id 434)</span></li>"
             "</ul>"
+            # Q1o-Q1q: THE UNDER-CLIMB, four live sightings in one eval. #43 set the
+            # climb to one hop arguing "from a cell you reach the ROW" -- true only
+            # when the match is a DIRECT text child of the cell, which real pages
+            # almost never do. Wrap it in ANYTHING and one hop reaches the CELL, a
+            # FIELD of the record. Each of these three is a verbatim live shape, and
+            # each returned the label alone with the answer in the next cell.
+            # Q1o: postgresql.org error-code table.
+            "<table>"
+            "<tr><td><code>serialization_failure</code></td><td>40001</td></tr>"
+            "<tr><td><code>deadlock_detected</code></td><td>40P01</td></tr>"
+            "</table>"
+            # Q1p: httpd.apache.org module metadata -- the label is itself a LINK
+            # inside a <th>, so the <th>'s whole text IS the match.
+            "<table><tr><th><a href=/m>Module Identifier:</a></th>"
+            "<td>info_module</td></tr></table>"
+            # Q1q: html.spec.whatwg.org element metadata -- a <dl> whose <dt> wraps
+            # a link. Two hops: the <dt> is a field, the <dl> is the record.
+            "<dl><dt><a href=/cm>Content model</a></dt>"
+            "<dd>Phrasing content, but there must be no meter element descendants.</dd>"
+            "</dl>"
             "</body>")
         await meta.wait_for_timeout(150)
 
@@ -1308,6 +1328,28 @@ async def main():
         check("Q1n2 ...and NOT the sibling records, which would identify nothing",
               "Alpha Report" not in ctx and "Delta Report" not in ctx, f"context={ctx!r}")
 
+        # Q1o-Q1q: the climb reaches the RECORD even when the match is wrapped. All
+        # three FAIL against the one-hop rule, which is what makes them worth having.
+        r = await msearch("serialization_failure", contextChars=120)
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1o a match WRAPPED in a cell still reaches its row's other cells",
+              "40001" in ctx, f"context={ctx!r}")
+        # THE CONTROL that the record rule did not simply become the old 4-hop leak:
+        # <tr> is the record, <table> is the collection, and the sibling ROW must not
+        # appear -- otherwise a two-row lookup quotes an answer belonging to neither.
+        check("Q1o2 CONTROL: ...and NOT the sibling row, which is a different record",
+              "deadlock_detected" not in ctx and "40P01" not in ctx, f"context={ctx!r}")
+
+        r = await msearch("Module Identifier", contextChars=300)
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1p a label that is a LINK inside a <th> reaches its value cell",
+              "info_module" in ctx, f"context={ctx!r}")
+
+        r = await msearch("Content model", contextChars=200)
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1q a <dt> wrapping a link reaches the <dd> beside it",
+              "Phrasing content" in ctx, f"context={ctx!r}")
+
         check("Q1m CONTROL: context always contains the match verbatim",
               not bad, "; ".join(bad))
         await meta.close()
@@ -1368,6 +1410,43 @@ async def main():
         r = await query("th|||bad")
         check("Q7b an invalid selector is reported, not silently answered as 'none found'",
               bool(r.get("error")), f"error={r.get('error')!r}")
+
+        # ---- Q9: include_text CROSSES A SHADOW BOUNDARY, like read_page does.
+        # `innerText`/`textContent` both stop at the boundary, so a custom element
+        # rendering its content inside its own shadow root came back as just its
+        # light-DOM heading. read_page names the same element from the same content
+        # (#29/SH1, extended in #37), so the two tools disagreed about one subtree
+        # and the one that answers "what does this hold" was the wrong one. Found
+        # live on caniuse -- the site #37 used to justify SH1 -- where a browser
+        # support column read as "Safari" while it renders six version verdicts.
+        shq = await browser.new_page(viewport={"width": 1000, "height": 700})
+        await shq.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await shq.goto("about:blank")
+        await shq.set_content(
+            "<!doctype html><meta charset=utf-8><body>"
+            "<div id=col><span>Safari</span></div>"
+            "<script>"
+            "const h=document.getElementById('col');"
+            "const r=h.attachShadow({mode:'open'});"
+            "r.innerHTML='<i>3.1 - 13.1 : Not supported</i><i>16.0 : Supported</i>';"
+            "</script></body>")
+        await shq.wait_for_timeout(120)
+        rq = await shq.evaluate(
+            "(function(){ " + QUERY + "; return _queryElementsPage('#col', "
+            + json.dumps({"includeText": True}) + "); })()")
+        txt = (rq["rows"][0].get("text") or "") if rq.get("rows") else ""
+        check("Q9 include_text reads a host's SHADOW content, not just its light DOM",
+              "16.0" in txt and "Supported" in txt, f"text={txt!r}")
+        # THE CONTROL: an ordinary element is still read by innerText, which is what
+        # keeps CSS-aware line breaking for the 99% case. The deep walk is a
+        # fallback for what innerText cannot see, never a replacement (#29).
+        rq = await shq.evaluate(
+            "(function(){ " + QUERY + "; return _queryElementsPage('span', "
+            + json.dumps({"includeText": True}) + "); })()")
+        t2 = (rq["rows"][0].get("text") or "") if rq.get("rows") else ""
+        check("Q9b CONTROL: a plain element's text is unchanged",
+              t2 == "Safari", f"text={t2!r}")
+        await shq.close()
 
         # ---- QB1-QB1d: PRESENT-AND-EMPTY IS NOT ABSENT.
         # `getAttribute` returns null for a missing attribute and "" for one present

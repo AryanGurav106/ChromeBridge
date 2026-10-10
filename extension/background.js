@@ -11609,8 +11609,45 @@ function _searchTextPage(pattern, opts) {
   // So D5 ("<dt>Published:</dt> cannot reach its <dd>") and D9 (the over-climb) are
   // the same dial, and this is the setting that satisfies both: the <dl> is one hop
   // from the <dt>, and the <ul> is two from the <a>.
+  //
+  // ...AND THAT ARGUMENT WAS DERIVED FROM LINKS AND APPLIED TO CELLS IT HAD NOT
+  // TESTED. "From a cell you reach the ROW" is only true when the match is a DIRECT
+  // text child of the cell. Put anything around it -- and real pages always do --
+  // and one hop reaches the CELL, which is a FIELD of the record, not the record.
+  // Four sightings in one eval, four sites, four shapes, every one asking for
+  // context and getting the label back:
+  //    <td><code>serialization_failure</code></td><td>40001</td>   asked 120, got 0
+  //    {code,name,kana} row, code cell never included              asked 200, got name+kana
+  //    <th><a>Module Identifier:</a></th><td>info_module</td>      asked 300, got 21
+  //    <dt><a>Content model</a></dt><dd>Phrasing content…</dd>     asked 200, got 14
+  // Sightings 3 and 4 were PREDICTED from 1 and 2 before they happened.
+  //
+  // A HOP COUNT WAS THE WRONG KIND OF RULE -- it is a threshold, and #27/#28 took
+  // thresholds out of the paths that decide things. HTML already DECLARES which
+  // element is the record: <tr> groups the cells of one row, <li> IS one item, <dl>
+  // groups the <dt>/<dd> of one description. A <ul>, <ol>, <table> or <tbody> groups
+  // PEER RECORDS, which is what #43 was right to refuse to quote.
+  //
+  // So the target is decided ONCE from the DOM instead of counted: climb to the
+  // nearest declared record, and when there is none within the cap fall back to
+  // exactly one hop -- #43's setting, unchanged, for the prose case it was measured
+  // on. The aozora and gov.uk leaks stay fixed because <a> inside <li> reaches <li>
+  // and stops there; it is the COLLECTION above it that was the defect, and no
+  // record rule ever climbs into one.
+  const _RECORD = { TR: 1, LI: 1, DL: 1, FIGURE: 1, ARTICLE: 1 };
+  const _climbTo = (node) => {
+    try {
+      let n = node, d = 0;
+      while (n && d < 4) {
+        n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
+        d++;
+        if (n && _RECORD[n.tagName]) return d;
+      }
+    } catch (e) {}
+    return 1;
+  };
   const _wants = (p, src) =>
-    p.hops < 1 && (p.at < CTX || src.length - (p.at + p.len) < CTX);
+    p.hops < (p.climb || 1) && (p.at < CTX || src.length - (p.at + p.len) < CTX);
   const _ctx = (p, src, bnds) => {
     const s2 = Math.max(0, p.at - CTX);
     const e2 = Math.min(src.length, p.at + p.len + CTX);
@@ -11813,7 +11850,7 @@ function _searchTextPage(pattern, opts) {
           ref: ref,
         };
         hits.push(hit);
-        const p = { hit: hit, at: at0, len: len0, hops: 0 };
+        const p = { hit: hit, at: at0, len: len0, hops: 0, climb: _climbTo(node) };
         _ctx(p, full, bounds);
         if (_wants(p, full)) (pend || (pend = [])).push(p);
       }
@@ -11844,6 +11881,45 @@ function _queryElementsPage(selector, opts) {
   const MAX = Math.max(1, Math.min(500, o.maxResults == null ? 50 : o.maxResults));
   const WANT = Array.isArray(o.attributes) ? o.attributes.slice(0, 12) : null;
   const WANT_TEXT = o.includeText !== false;
+  // COMPOSED-TREE TEXT, INLINED. `innerText` and `textContent` both STOP at a
+  // shadow boundary, so a custom element that renders all its text inside its own
+  // shadow root reads as EMPTY here -- while read_page names the same element from
+  // the same content, because #29/SH1 taught the NAME path to cross boundaries and
+  // #37 extended it. `include_text` was never migrated, so the two tools disagreed
+  // about one subtree and the one that answers "what does this hold" was the wrong
+  // one. Found on caniuse, which is the very site #37 used to justify SH1: a
+  // support column came back as just "Safari" while it visibly renders six rows of
+  // version verdicts.
+  //
+  // INLINED AS A CLOSURE, NOT CALLED AS A SIBLING: this function is injected via
+  // runInTab -> executeScript({func}), which stringifies THIS FUNCTION ALONE, so a
+  // call to the collector's `_deepText` would be a free identifier whose
+  // ReferenceError lands in the nearest catch and yields a plausible empty string.
+  // That is #30's bug class exactly, and C11 fails on it.
+  const _SKIP_T = { STYLE: 1, SCRIPT: 1, TEMPLATE: 1, NOSCRIPT: 1, HEAD: 1 };
+  const _deepTextQ = (node, depth) => {
+    const d = depth || 0;
+    if (d > 6) return '';
+    try {
+      if (node.nodeType === 3) return node.nodeValue || '';
+      if (node.nodeType !== 1) return '';
+      if (_SKIP_T[String(node.tagName || '').toUpperCase()]) return '';
+      if (node.checkVisibility && !node.checkVisibility({ visibilityProperty: true })) return '';
+      if (node.tagName === 'SLOT' && node.assignedNodes) {
+        const an = node.assignedNodes({ flatten: true }) || [];
+        let s = '';
+        for (const n of an) s += _deepTextQ(n, d + 1) + ' ';
+        if (s.trim()) return s;
+      }
+      let s = '';
+      // A host with a shadow root renders its SHADOW content; its light children
+      // arrive through <slot>, so descending into both would print them twice.
+      const sr = node.shadowRoot || node.__abClosedRoot;
+      const kids = sr ? sr.childNodes : node.childNodes;
+      for (const c of kids) s += _deepTextQ(c, d + 1) + ' ';
+      return s;
+    } catch (e) { return ''; }
+  };
   const roots = [document];
   try {
     const collect = (r, d) => {
@@ -11877,6 +11953,14 @@ function _queryElementsPage(selector, opts) {
       if (WANT_TEXT) {
         let t = '';
         try { t = ((el.innerText != null ? el.innerText : el.textContent) || '').replace(/\s+/g, ' ').trim(); } catch (e) {}
+        // Only when the light-DOM read came back empty, for #29's reason: this
+        // does NOT reproduce innerText's CSS-aware line breaking, so it is a
+        // fallback for content innerText cannot see, never a replacement.
+        try {
+          if (!t && (el.shadowRoot || el.__abClosedRoot)) {
+            t = (_deepTextQ(el) || '').replace(/\s+/g, ' ').trim();
+          }
+        } catch (e) {}
         // One MARKED bound, for the reason #24 kept exactly one: a single essay
         // must not evict every other row from the caller's budget.
         if (t) row.text = t.length > 300 ? t.slice(0, 300) + '…(+' + (t.length - 300) + ')' : t;

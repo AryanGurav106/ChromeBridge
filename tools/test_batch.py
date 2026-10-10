@@ -109,6 +109,19 @@ async def fake_obs(tabId: int = None, value: str = "obs"):
     return f"observed {value} on {tabId}"
 
 
+async def fake_fill(fields: list, tabId: int = None, submit: bool = False):
+    """`fill_form`'s shape, registered under the REAL tool name.
+
+    Its `fields` entries may be keyed `ref`, `mmid` OR `selector` — the whole
+    point of B12. Named for the real tool for the same reason fake_create is: the
+    rule reads the ENTRY, and a hand-named stand-in would only prove that some
+    list contained a name.
+    """
+    RAN.append(("fill_form", tabId, tuple(sorted(
+        k for f in fields for k in f if k != "value"))))
+    return f"filled {len(fields)} field(s)"
+
+
 # Every page_fingerprint the batch asks for. The guard that skips them is only
 # worth having if it can be shown to skip, and only safe if it can be shown NOT to
 # skip when a ref is coming (B10/B10b).
@@ -122,7 +135,8 @@ def install(fingerprints):
     ms._BATCHABLE.clear()
     ms._BATCHABLE.update({"fake_tool": fake_tool, "navigate": fake_navigate,
                           "fake_act": fake_act, "computer": fake_computer,
-                          "tabs_create_mcp": fake_create, "fake_obs": fake_obs})
+                          "tabs_create_mcp": fake_create, "fake_obs": fake_obs,
+                          "fill_form": fake_fill})
     # NOTHING IS DECLARED SAFE HERE ANY MORE. This used to add `fake_tool` to an
     # `_OBSERVES` whitelist, which meant every check below was really testing
     # whether a name was in a set -- and a name missing from that set was stopped
@@ -338,6 +352,50 @@ async def main():
           and "FOCUS" in text_of(out)
           and "names a ref or coordinate" not in text_of(out),
           f"ran={[r[0] for r in RAN]} said={text_of(out)[-180:]!r}")
+
+    # ---- B12: a fill_form field keyed by SELECTOR is not a ref.
+    # Found by the generality eval, on the one task of 19 that was lost. The guard
+    # refused `[navigate, fill_form(selector=...)]` as "names a ref or coordinate
+    # planned against the PREVIOUS page" -- false of a CSS selector, which is
+    # resolved at dispatch time against whatever document exists when it runs, and
+    # is therefore the ref-FREE way to address a form across a page change.
+    # fill_form's own docstring advertises selectors, so the guard contradicted the
+    # parameter it was guarding.
+    install([SAME] * 8)
+    out = await ms.browser_batch([
+        {"name": "navigate", "input": {"url": "https://b.test/", "tabId": 1}},
+        {"name": "fill_form",
+         "input": {"tabId": 1, "fields": [{"selector": "#year", "value": "2012"}]}},
+    ])
+    check("B12 a fill_form keyed by SELECTOR survives a navigation",
+          [r[0] for r in RAN] == ["navigate", "fill_form"],
+          f"ran={[r[0] for r in RAN]} said={text_of(out)[-160:]!r}")
+
+    # THE CONTROL THAT KEEPS THE GUARD MEANINGFUL. A `ref` really is per-document
+    # and really does die with it; if this also ran, the fix would have deleted the
+    # protection rather than narrowed it.
+    install([SAME] * 8)
+    out = await ms.browser_batch([
+        {"name": "navigate", "input": {"url": "https://b.test/", "tabId": 1}},
+        {"name": "fill_form",
+         "input": {"tabId": 1, "fields": [{"ref": "ref_12", "value": "x"}]}},
+    ])
+    check("B12b CONTROL: a fill_form keyed by REF is still skipped",
+          [r[0] for r in RAN] == ["navigate"] and "SKIPPED" in text_of(out),
+          f"ran={[r[0] for r in RAN]}")
+
+    # MIXED IS CONSERVATIVE: one per-document key is enough to make the step stale,
+    # because fill_form writes the fields ATOMICALLY -- a list that is half valid
+    # is not half safe.
+    install([SAME] * 8)
+    out = await ms.browser_batch([
+        {"name": "navigate", "input": {"url": "https://b.test/", "tabId": 1}},
+        {"name": "fill_form", "input": {"tabId": 1, "fields": [
+            {"selector": "#a", "value": "1"}, {"mmid": 7, "value": "2"}]}},
+    ])
+    check("B12c CONTROL: a MIXED selector+mmid field list is still skipped",
+          [r[0] for r in RAN] == ["navigate"] and "SKIPPED" in text_of(out),
+          f"ran={[r[0] for r in RAN]}")
 
     # B5f2 IS THE OTHER DIRECTION, and it is what stops B5f being satisfied by
     # blacklisting the whole `computer` tool -- which is exactly what the old

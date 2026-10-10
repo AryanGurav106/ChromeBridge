@@ -110,7 +110,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 18 suites, 816 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 18 suites, 825 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -498,7 +498,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 18 suites, 816 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 18 suites, 825 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -3816,6 +3816,365 @@ granted in the side panel is refused with the same message the agent gets.
     no-create, before-the-create, and pre-flight-still-refuses controls), C20d
     (the guidance is in the channel subagents actually read).
 
+47. **THE FIRST HEAD-TO-HEAD THAT CLEARS ITS OWN BAR — and the defect it found
+    was ours, cost us a pair, and had been introduced by #43.** Nine tasks, 18
+    runs, strictly serial, arm order rotated per task, scored from TRANSCRIPTS
+    rather than self-reports. The other arm's code is UNCHANGED, so it measures
+    drift directly. Under test: #45 (`instructions=`) and #46 (batch tab
+    threading).
+
+    | task | CB | CIC | | task | CB | CIC |
+    |---|---|---|---|---|---|---|
+    | T1 | 4 | 9 | | T7 | 4 | 4 |
+    | T3 | 5 | 10 | | T8 | 3 | 8 |
+    | T4 | 6 | 10 | | T9 | 3 | 10 |
+    | T5 | 7 | 10 | | T10 | 3 | 7 |
+    | T6 | 5 | 5 | | **total** | **40** | **73** |
+
+    **H1: 7 of 7 decided pairs, 2 ties, p = 0.0156.** #39/#40/#41 all reported
+    ties; #43 cleared at p=0.0414 and was WEAKER than its own baseline. This is
+    the first one to clear cleanly. **H2 (turns to first page content): CB median
+    2, CIC median 4** — CB scored exactly 2 on all nine runs, no spread. **H3: 9/9
+    CB runs opened with the #46 one-turn batch; CB spent 0 tab-ceremony calls
+    against CIC's 6.** H3 is what explains H2: the gap is fixed overhead.
+    Correctness 18/18 both arms — saturated, pre-registered as a falsifier, did
+    not fire. Zero wrong-tab events on our arm (#46's specific falsifier).
+
+    **THE CONFOUND #45 COULD NOT REMOVE, REMOVED BY THE OTHER ARM'S OWN AGENT.**
+    #45 measured tab ceremony at 1.65 turns/run and then found the number was
+    produced by MY OWN prompt mandating it (1.02 create/run where named, 0.05
+    where not). #46 argued structurally instead that no docstring could remove a
+    turn the plumbing required. This eval's prompt says NOTHING about tabs, and
+    the control agent on T8 wrote, unprompted:
+    > tabs_create_mcp could not be fused with navigate because navigate inside
+    > browser_batch requires an explicit tabId, so the tab id had to be learned
+    > in its own turn.
+    That is exactly the defect #46 fixed, reported live on an arm that still has
+    it. **A structural check beat the A/B that was planned instead of it.**
+
+    **THE SECONDARY ANALYSIS DOES NOT CLEAR, AND SAYING ONLY THAT WOULD BE THE
+    MORE MISLEADING READING.** AMENDMENT 1 pre-specified a 6-strong-task subset:
+    4/4 to CB, p = 0.1250, which fails p<0.05. But **the best p reachable at n=4
+    IS 0.1250** — that subset could not have cleared with a perfect sweep, which
+    it got. Underpowered is not the same as disagreeing; direction identical,
+    zero losses. Cutting the other way, and stated because it is the weaker half:
+    T1/T8/T9 were marked WEAK IN ADVANCE for memorable hop-2 URLs and are 3 of
+    the 7 wins, including the two widest margins. `analyse.py` prints the
+    achievable-p beside every p for exactly this reason.
+
+    **WHAT IT DOES NOT SHOW.** Much of the other arm's cost is ITS OWN defects,
+    not our representation: ref clicks reporting success without navigating (3
+    runs), `read_page` returning an empty listing with `Viewport: 0x0` on loaded
+    pages (3), `find` omitting href (2), screenshots timing out at 30s (2), and
+    `navigate` without a tabId hijacking a PRE-EXISTING unrelated tab in 5 runs
+    while asserting those tabs were "yours to clean up" — the same defect #46
+    fixed on our side. Those are real costs to a real user and belong in a turn
+    count; they are NOT evidence for #45/#46. H2, H3 and the T8 quote are.
+    Also: wall clock is not reported (#35/#41's ~47s/task drift floor), n=7
+    decided pairs is small, and 2 of 9 tasks could not discriminate at all —
+    #39's instrument ceiling, still present.
+
+    **THE GATE WAS OFF FOR THE RUNS, AND THAT IS A STATED DEBT.** All 9 task
+    origins were ungranted, so every CB run would have stalled on a refusal.
+    `ALLOW_ALL_ORIGINS` was armed for the duration and restored after (#39's
+    precedent), recorded as AMENDMENT 2 BEFORE any run. The reason is that
+    per-origin consent is a ONE-TIME, PER-ORIGIN cost, not a per-task turn cost,
+    and counting it would charge us nine times for a security feature the other
+    arm does not have. **So this eval says NOTHING about the cost of the consent
+    model and must not be quoted as though it did.** Restore verified three ways:
+    the flag back to `false`, `git diff` empty, `test_permissions.js` 22/22 with
+    no "gate off" caveat.
+
+    **THE LIVE WORKER DOES NOT PICK UP A FLAG CHANGE WHILE THE BRIDGE IS
+    CONNECTED.** Editing `background.js` and watching the next op obey it works
+    only when the MV3 worker has been evicted — which our own persistent
+    WebSocket prevents. Measured both ways in one session: the arming took effect
+    with no reload (the worker had been idle through a compaction), and the
+    restore did NOT (two probes to an ungranted origin still succeeded minutes
+    later). **A flag restored on disk is not a flag restored in the browser**, and
+    the only reliable re-arm is an extension reload.
+
+    **THE DEFECT THE EVAL FOUND IN OUR CODE, PREDICTED BEFORE ITS LAST TWO
+    SIGHTINGS.** `search_page`'s climb stopped INSIDE the record whenever the
+    match sits in a cell. Four sightings, four sites, four shapes:
+
+    | shape | asked | got |
+    |---|---|---|
+    | `<td><code>serialization_failure</code></td><td>40001</td>` | 120 | nothing |
+    | `{code,name,kana}` row, code cell never included | 200 | name+kana |
+    | `<th><a>Module Identifier:</a></th><td>info_module</td>` | 300 | 21 chars |
+    | `<dt><a>Content model</a></dt><dd>Phrasing content…</dd>` | 200 | 14 chars |
+
+    **#43 INTRODUCED THIS WHILE FIXING THE OPPOSITE DEFECT, AND ITS OWN ARGUMENT
+    IS WHERE THE ERROR IS.** #43 set the climb to one hop reasoning "from a cell
+    you reach the ROW, from a link the LIST ITEM" — true only when the match is a
+    DIRECT text child of the cell, which real pages almost never do. Wrap it in a
+    `<code>` or an `<a>` and one hop reaches the CELL, a FIELD of the record. #43
+    derived the rule from LINK cases (aozora, gov.uk) and generalised it to cells
+    it had not tested. Its own headline — "one dial set two ways" — pointing back
+    at itself one entry later.
+
+    **A HOP COUNT WAS THE WRONG KIND OF RULE.** It is a threshold, and #27/#28
+    took thresholds out of the paths that decide things. HTML already declares
+    which element is the record: `<tr>` groups the cells of one row, `<li>` IS one
+    item, `<dl>` groups one description's `<dt>`/`<dd>`; a `<ul>`, `<table>` or
+    `<tbody>` groups PEER RECORDS, which is what #43 was right to refuse to quote.
+    The target is now decided ONCE from the DOM (`_climbTo`) rather than counted,
+    **falling back to exactly one hop when no record is in range — #43's setting,
+    unchanged, for the prose case it was actually measured on.** So both defects
+    are closed by one rule rather than by a dial between them.
+
+    Cost while it was live: one extra round trip on T1, T5 and T7. **On T7 it is
+    the whole margin — CB would have finished in 3 and taken the pair, and instead
+    tied at 4. Our own defect suppressed the result the eval was measuring**,
+    which is the strongest argument there is for running the instrument against
+    yourself rather than only against a competitor.
+
+    **Ablation is what makes the fixtures worth having** (#29): against the
+    one-hop rule Q1o/Q1p/Q1q fail and reproduce the live symptoms byte-exactly
+    (`serialization_failure`, `Module Identifier:`, `Content model` — the label
+    alone, every time), while Q1n/Q1n2, #43's OWN over-climb controls, stay green,
+    so the whole-list leak is still fixed. **Q1o2 is the control that this did not
+    just become the old 4-hop rule**: the sibling ROW is a different record and
+    must not appear.
+    **THE "SECOND DEFECT" RANKED BESIDE IT DOES NOT EXIST, and I was the one who
+    claimed it.** The eval note read: nothing tells a caller the climb stopped
+    short, so asking for 300 context chars and getting 21 is #22's silent-bound
+    class. Checked live on the granted origin BEFORE building anything:
+        context_chars=300 -> `Module Identifier: | info_module`  (no marker)
+        context_chars=8   -> `Status: | Extens…(+3)`             (true residual)
+    `markCut` already separates the two cases, which is the whole convention #22
+    established: a context with no `…(+N)` on either side is COMPLETE. The agent
+    was right about the symptom (21 chars) and wrong about the cause (a missing
+    signal); the cause was the climb. A sentence saying "this is all the text
+    here" would fire on every short record on the web — the always-on warning #15
+    priced as pure noise and #43 deleted `readyState` for being. **Investigated
+    and rejected, recorded so it is not re-opened** — and a reminder that a defect
+    reported alongside a real one does not inherit its credibility.
+
+    **Known and accepted:** from a `<dt>` in a long glossary `<dl>` the climb now
+    reaches the whole list and only the context window bounds the quote. Right for
+    a metadata block, noisier on a true glossary; not traded away for a size
+    threshold, which is the thing being removed.
+    **LIVE-VERIFIED on the shape that is hardest, and only that one.** #43's
+    process lesson is that 15 fixtured fixes with no live pass produced 7
+    regressions, so what was actually run is recorded rather than summarised.
+    Against the real httpd.apache.org page that produced the 21-character
+    sighting, in ONE batched turn after an extension reload:
+        <a "Module Identifier"@0> Module Identifier: | info_module
+    That is two hops through a `<th>` which is NOT itself a record, i.e. the
+    hardest of the four. The `<tr>` path is therefore live. **The `<dl>` path
+    (Q1q) is fixtured and ablated but NOT live**, because the gate correctly
+    refused the other two origins and they were not granted — which is the
+    consent model working, and is left stated rather than worked around.
+
+    **TWO SCORER DEFECTS, both found by a self-report DISAGREEING with the
+    transcript.** `SubagentHandback` — the harness's own reply mechanism — counted
+    as a turn, so run 1 scored 5 against a self-reported 4; and the seven-line
+    report lives INSIDE that payload, so answer extraction returned null for any
+    agent that handed back without a final text block. Both fixed mid-eval and
+    recorded as a SCORING CLARIFICATION rather than done quietly, with the reason
+    it is admissible: the handback appears exactly once in every run of both arms,
+    so it cannot change any pair's direction, cannot change `first_content_turn`
+    (an index of an earlier turn), and was only ever making the absolute total
+    wrong. **Changing an instrument after data exists is the move that invalidates
+    a pre-registration; the defence has to be checkable, not asserted.**
+
+    **THE RERUN: THE FIX IS CONFIRMED AT THE MECHANISM AND INVISIBLE IN THE
+    TOTAL, AND THAT IS THE RESULT.** Same 9 tasks, same prompts, same order, the
+    other arm unchanged as the drift control. AMENDMENT 3 pre-registered five
+    predictions BEFORE any run, because the mechanism says exactly where the turns
+    should go and a prediction that cannot be wrong is worth nothing.
+
+    | | predicted | actual |
+    |---|---|---|
+    | P1 CB drops ~3, concentrated on T1/T5/T7 | T1 -1, T5 -1, T7 -1 | **T1 0, T5 -1, T7 -1** |
+    | P2 T7 4 -> 3 and flips its tie | flip | **HIT, 3, flipped** |
+    | P3 T10 does not improve | no change | **HIT, 3 both times** |
+    | P4 CIC within drift of 73 | ~73 | **76 total, but ±5 PER TASK** |
+    | P5 H2 unchanged (CB median 2) | 2 | **HIT, 2 on all nine** |
+
+    **P2, P3 and P5 hit exactly. P1 is half right and the half that failed is the
+    informative half.** T5 went 7->6 and T7 went 4->3, each to the digit, and T7's
+    call sequence is the first eval's minus precisely the `get_page_text` fallback
+    the under-climb forced -- causal evidence as clean as this instrument can
+    produce. T1 did not move: the fix fired (the agent read both cells from one
+    quoted context) and the freed turn was immediately spent on a DIFFERENT
+    bottleneck, the off-viewport TOC links carrying no href, which is #44's
+    territory and was measured and deliberately not widened.
+
+    **THE INSTRUMENT'S NOISE IS LARGER THAN THE EFFECT IT WAS BUILT TO MEASURE.**
+    Per-task, on unchanged code: T3/cic 10->15, T4/cic 10->14, T8/cic 8->5,
+    T9/cic 10->7. On OUR arm, T4 went 6->10 for a reason unrelated to the fix.
+    The change under test is worth ~1 turn on 3 of 9 tasks; single tasks moved by
+    4-5. So the rerun's TOTALS (41 v 76) are directionally consistent with the
+    first eval and are NOT independent confirmation of it, and the honest
+    attribution is per-task and pre-registered, not aggregate. This is #35's wall
+    clock lesson arriving at TURNS: a metric can be the right one and still be too
+    noisy to resolve a small change, and the answer is a prediction about WHERE
+    the change lands, not a bigger total.
+
+    **The head-to-head came back stronger anyway, and one part of that is worth
+    more than the headline.** Primary 9/9, p=0.0039. **Secondary 6/6, p=0.0312 --
+    it CLEARS this time**, where in the first eval it could not reach p<0.05 at
+    n=4 even sweeping. Both former ties (T6, T7) broke, which is what took the
+    strong subset from n=4 to n=6. H2 is unmoved: CB first-content turn 2 on all
+    nine runs both times, CIC median 4. H3 9/9 again, 0 ceremony calls against 5.
+
+    **TWO NEW DEFECTS, both ours, both found only because the rerun existed.**
+    - **An observation chained after a CLICK races the navigation.** `[click(ref),
+      search_page(...)]` ran the search against the mid-navigation page and
+      returned `No match ... 91 text block(s) were searched` on a page that
+      contains the string. #38's rule cannot cover it: Layer 1 knows `navigate`
+      terminates (and #40 made it wait for commit), but whether a CLICK navigates
+      is not decidable from its input -- which is the entire basis of the
+      decide-from-the-input rule -- and Layer 2's fingerprint is only taken when
+      the next step names a ref, which an observation does not. **It failed LOUD,
+      not silent:** the readiness banner led with "1 network request in flight"
+      and said not to conclude absence, so it cost a round trip instead of a wrong
+      answer, which is #15 paying for itself. A fix must be priced first: waiting
+      for quiescence after every possibly-navigating click taxes the commonest
+      batch there is, and #38 measured a fingerprint at ~2-3ms against a ~24ms
+      read, so a settle wait is far more expensive than either.
+    - **Two correct hits that are byte-identical.** `search_page("Welsh")` on
+      loc.gov returns 2 matches as two lines identical in every printed field --
+      same tag, same `@22`, same context. Reported by BOTH evals' T9 agents
+      independently. **This is #42's D30 fixed one level too shallow:** D30 was
+      the same complaint, was retracted as a count defect, and was fixed by
+      printing `match@offset` -- an offset WITHIN the attributed element, which
+      separates two hits in one `<pre>` and cannot separate two hits in two
+      elements. The count is right; nothing printed differs. Costs a re-check, not
+      a round trip, and loc.gov really does render that table twice.
+
+    Suites: 820 checks. New — Q1o/Q1o2 (a wrapped match reaches its row, and NOT
+    the sibling row), Q1p (a label that is a link inside a `<th>`), Q1q (a `<dt>`
+    wrapping a link reaches its `<dd>`).
+
+48. **THE GENERALITY EVAL: 19 TASKS, 7 ARCHETYPES, AND THE FIRST TIME WALL CLOCK
+    CLEARED ITS OWN BAR.** Evals 1-2 (#47) both cleared, and both were weak in the
+    same two ways: n=9, where ONE bad task breaks the result, and a task set that
+    was ENTIRELY two-hop navigate-and-read -- precisely the shape our measured
+    advantage is made of, since 54-58% of the gap there was fixed STARTUP cost.
+    #25's rule applied to a benchmark instead of a corpus: a sample containing only
+    the shape you are best at cannot measure generality.
+
+    Tasks written blind (author told only "write 20 varied two-hop browser tasks",
+    given a deny-list of every domain used in #39-#47 and no knowledge that any
+    toolset was under test), ground truth re-derived INDEPENDENTLY by a referee
+    driving headless Chromium, 38 runs strictly serial, arm order rotated, prompts
+    ASSERTED identical modulo the namespace, scored from transcripts.
+
+    | | result |
+    |---|---|
+    | H1 PRIMARY (all 19) | **15/17 decided to CB, p = 0.0023** |
+    | H1 SECONDARY (16 strong) | **13/15, p = 0.0074** |
+    | H2 turns-to-first-content | CB median **2**, CIC median 4 -- MET |
+    | H3 one-turn start | **19/19**, ceremony **0 v 11** |
+    | correctness (falsifier) | **38/38 both arms** |
+    | turns | **117 v 240** |
+    | **wall clock** | **1,662s v 3,674s, 17/19 pairs, p = 0.0007** |
+
+    **WALL CLOCK CLEARED, WHICH IT NEVER HAD BEFORE.** #35 and #41 both measured a
+    ~47s/task drift floor that swallowed it -- #35 records the CONTROL arm
+    improving 47s on unchanged code. Here the median per-task gap is 65s, above
+    that floor, and the sign test on seconds (p=0.0007) is STRONGER than the one
+    on turns. 45% of their wall clock against 49% of their turns: two independent
+    measurements agreeing, which is #38's thesis confirmed from the other end --
+    it priced the model turn at 92-97% of a tool call, so turns ARE the latency.
+
+    **THE PRE-REGISTERED PREDICTION WAS HALF RIGHT, AND THE HALF IT GOT WRONG IS
+    THE USEFUL HALF.** P-GEN said the margin would be largest on navigate-heavy
+    archetypes and smallest -- possibly negative -- on interaction-heavy ones.
+
+    | archetype | CB/CIC turns | ratio |
+    |---|---|---|
+    | G SPA | 14 / 49 | **0.29** |
+    | B search-flow | 18 / 52 | 0.35 |
+    | D data-table | 10 / 23 | 0.43 |
+    | E drill-down | 18 / 40 | 0.45 |
+    | A doc-lookup | 9 / 15 | 0.60 |
+    | F non-Latin | 25 / 35 | 0.71 |
+    | **C form-lookup** | **23 / 26** | **0.88** |
+
+    RIGHT about C: form-lookup is the narrowest band and the only archetype we did
+    not win outright (1-1). WRONG about G, which P-GEN called interaction-heavy and
+    which came back WIDEST -- but not for a representational reason: their arm
+    could not render caniuse at all (0x0 viewport, 31 turns, answer finally
+    recovered by replaying the page's own POST endpoint). **So the ranking is
+    driven by where THEIR tooling fails, not by where our representation helps**,
+    and the one archetype where both arms worked cleanly is the one where we are
+    level. That sentence is the honest headline and it is not the flattering one.
+
+    **The decomposition MOVED, and that matters for how the earlier evals read.**
+    #47 measured 54-58% of the gap as fixed startup; here it is **31% startup /
+    69% in-task**, because longer harder tasks amortise a constant. Excluding the
+    four runs where their arm broke down entirely (18-31 turns) the totals are
+    **72 v 127 = 57%**, so the result survives removing its own outliers. The sign
+    test is immune to them by construction, which is why the bar was set there and
+    not on turn sums.
+
+    **FOUR DEFECTS OF OURS, and the eval cost us the pair on one of them.**
+    - **The batch guard treated a CSS SELECTOR as a ref. FIXED.**
+      `[navigate, fill_form(fields=[{"selector":"#mnuYear1",...}])]` was refused as
+      "names a ref or coordinate planned against the PREVIOUS page". A selector is
+      resolved at DISPATCH TIME against the live document -- it is the ref-FREE way
+      to address a form across a page change, and fill_form's own docstring
+      advertises it, so **the guard contradicted the parameter it was guarding**.
+      #38's rule is "decide from the step's own input"; the implementation read
+      `fields` and concluded REF because when it was written fill_form's keys WERE
+      refs. A selector key is the counterexample that rule never had, and it is
+      decidable from the entry, so the fix keeps #42's no-whitelist property.
+      Cost 2 round trips on T8 -- **the one task of 19 we lost, 19 to 18**.
+    - **`query_elements(include_text)` did not cross a shadow boundary. FIXED.**
+      A support column on caniuse came back as `"Safari"` while it renders six
+      version verdicts. read_page names the same element from the same content,
+      because #29/SH1 taught the NAME path to cross boundaries and #37 extended it
+      -- `include_text` was simply never migrated, the same un-migrated-older-path
+      shape #30 found in `near=`. **caniuse is the site #37 used to justify SH1**,
+      so this was that fix present in one tool and absent in its sibling. Inlined
+      as a closure, not called as a sibling, because this function is injected and
+      a free identifier there is #30's bug class (C11 would fail on it).
+    - **The modal banner fires on a dialog the collector knows is invisible. NOT
+      FIXED.** A Rijksmuseum cookie `aside` raised `*** A MODAL/DIALOG IS CURRENTLY
+      OPEN ***` and suppressed 32 elements, while a scoped read of that same ref
+      said "none passed the interactivity/visibility filters" and clicking it said
+      "not visible". Two passes over one element disagreeing, in the pass that
+      decides WHETHER TO SHOW THE PAGE. ~4 round trips.
+    - **The batch guard fires on a change the batch ITSELF caused. NOT FIXED.**
+      A fill opened the input's own `list=` datalist (1007 -> 1012 elements) and
+      the next step -- clicking that same form's submit -- was dropped as STALE.
+      The ref was fine. #43 answered this exact question one layer over ("a click
+      does not invalidate the keystrokes it was issued for"), but extending it to
+      refs is NOT safe by inspection: refs really are per-document, and the
+      element-count signal exists to catch a React re-render orphaning mmids
+      (fix #5). Needs measurement against B10c before it is touched.
+
+    **Also unfixed, with evidence:** a blocking JS `alert()` is indistinguishable
+    from a dead extension and the timeout message advises re-observing with
+    `read_page`, which is itself one of the ops that cannot answer (cost ~7 minutes
+    on T8, and is why that is our only wall-clock loss); `search_page` cannot match
+    a literal space against a `<br>`-induced newline in a table header
+    (`"Mean (deg. C)"` renders as `Mean\n(deg. C)`); the data-table hint counts
+    header `<th>` elements while the renderer EXPANDS COLSPANS, advertising
+    `155x11` for a table it renders as `155x28`; and three sightings across two
+    evals of an observation chained after a CLICK racing the navigation the click
+    caused -- `search_page`, `get_url` and `get_page_text`, one mechanism, all
+    three flagged LOUD by the readiness banner rather than answering falsely.
+
+    **A GRADER BUG OF MY OWN, caught by the falsifier firing on BOTH arms.**
+    Correctness first read 36/38, with T16 wrong on cb AND cic -- and both had
+    answered the referee's accept value. A failure that damns both arms identically
+    is the signature of a broken ruler, not a broken system (#16). The accept key
+    began `U+3123` (BOPOMOFO EN) where the answer is `U+310A` (BOPOMOFO T): my
+    transcription, not theirs. Fixed in the key and in the generator so it cannot
+    regenerate. **38/38.** Fourth measurement bug of this class in this log, and
+    the first one caught by a falsifier rather than by eye.
+
+    Suites: 825 checks. New -- B12/B12b/B12c (a selector is not a ref, with the
+    ref-still-stale and mixed-list controls), Q9/Q9b (shadow text in
+    `include_text`, with the plain-element control that innerText still governs
+    the ordinary case).
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -3867,12 +4226,16 @@ granted in the side panel is refused with the same message the agent gets.
 | A `search_page` hit reads `<pre ref_12> "SIGQUIT"@77 — …` | By design since #42 — the match and its character offset INSIDE the quoted context. Two matches in one element are quoted from the same window, so without it they arrive byte-identical and read as one position reported twice. Suppressed when the context IS the match, so a one-line listing pays nothing |
 | `search_page` context contains ` \| ` | By design since #42 — a boundary the page DECLARED between cells, list items or blocks, read off computed `display` and rendered into the context only. What is matched against is unchanged, and a boundary inside the match is skipped so the context always contains the match verbatim |
 | `search_page` context is now much longer than the element it names | By design since #42 — the climb fires whenever the element's own text cannot supply the `context_chars` you asked for, not only when the match exactly fills it. The old condition skipped every `<dt>Published:</dt>` and `<a>Errata-ID: 1543</a>`, which is how metadata blocks are marked up |
+| `search_page` returns the LABEL and not the value beside it | Fixed in #47 — the climb counted ONE hop, which reaches the CELL (a field) rather than the row whenever the match is wrapped in a `<code>`/`<a>`/`<span>`, i.e. on most real markup. It now climbs to the nearest ancestor HTML DECLARES a record (`tr`, `li`, `dl`, `figure`, `article`), decided once by `_climbTo`. If it recurs, the shape has no declared record in range and fell back to #43's one hop — check whether the page wraps its rows in `<div>`s |
+| `search_page` quotes a whole list / several records at once | That is the #43 defect and it is still guarded — the climb stops AT the record and never enters the collection above it (`ul`, `ol`, `table`, `tbody`). Pinned by Q1n2 and Q1o2. The one accepted exception is a `<dt>` inside a long glossary `<dl>`, where the `<dl>` IS the declared record and only `context_chars` bounds the quote |
 | `get_page_text`'s truncation note itemises `N body + M banner + K outline` | By design since #42 — the numbers were arithmetically fine and could not be RECONCILED, which is why four agents reported it as cutting below the budget. The parts plus the note now equal what came back, and the figure quoted as `max_chars=` is the caller's own (T25) |
 | An `options=` entry ends in `(disabled)` | By design since #42 — read via `:disabled`, so an `<optgroup disabled>` is caught too, the same spec rule `(disabled)` needs for `<fieldset>`. The marker sits OUTSIDE the quotes so the quoted text stays exactly the string to pass to `form_input` |
 | `(just appeared)` no longer fires when you scroll to a control | Fixed in #42 — the seen-set was seeded from the VIEWPORT-FILTERED `out`, so any below-fold control was announced new the moment the page scrolled to it, contradicting the flag's own contract. Seeded from the mmid registry now. **If you are using the flag as evidence an element was absent from the DOM, do not** — that inference is what made D19's diagnosis wrong |
 | `navigate` says the page has not supplied a `<title>` | By design since #42 — Chrome fills `tab.title` with the url minus its scheme until the document sets one, so the old line printed `title: nginx.org/en/docs/…` for a page whose title is `Module ngx_http_proxy_module`. It waits ~600ms and then says so, because substituting the url is indistinguishable from a page that genuinely declares none |
 | `Main heading` changed on a page with a cookie banner | Fixed in #42 — both headings are usually `<h2>`, so the declared-rank rule tied and fell back to document order while the consent overlay is injected at the top. `<main>` breaks the tie; rank still wins ACROSS the boundary (MH3b), and a page with no `<main>` is unchanged |
 | A batch opened with `tabs_create_mcp` and the later steps have no `tabId` | By design since #46 — they inherit the tab it just made. Before that they hit `resolveTab`'s active-tab fallback and drove the USER'S OWN tab while reporting success, because a created tab is `active: false` on purpose. Threaded from `tabs_create_mcp` only (it returns one id; `tabs_context_mcp` returns the group), only for steps AFTER it, and an explicit `tabId` always wins. Outside that batch a missing `tabId` still means the active tab |
+| A batch step using `fill_form(fields=[{"selector": ...}])` ran after a navigation | By design since #48 — a CSS selector is resolved at DISPATCH time against the live document, so it is the ref-FREE way to address a form across a page change. A `ref` or `mmid` key is still per-document and is still skipped (B12b), and a MIXED list is conservative because fill_form writes atomically (B12c) |
+| `query_elements(include_text=true)` now returns text read_page already showed | By design since #48 — `innerText`/`textContent` stop at a shadow boundary, so a host rendering its content in its own shadow root read as empty while read_page named it from that same content (#29/SH1, #37). Used ONLY when the light-DOM read came back empty: it does not reproduce innerText's CSS-aware line breaking (Q9b is the control) |
 | A batch kept going after `javascript_tool` or a second `navigate` | By design since #42 — the `_OBSERVES` whitelist is gone. A step is stopped only if it ADDRESSES the previous page, decided from its own input: a ref/coordinate, `back`/`forward`, or `computer(action="key"/"type")` whose target is the focused element. A whitelist had to be remembered every time a tool or parameter was added, and was not, three times in one day |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 

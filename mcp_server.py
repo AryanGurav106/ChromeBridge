@@ -3071,7 +3071,41 @@ async def browser_batch(
     # "safe tools" that would drift the moment a parameter is added.
     #
     # `fields` is here because fill_form maps ref -> value: its KEYS are refs.
+    # ...EXCEPT WHEN THEY ARE NOT. A field entry may be keyed `ref`, `mmid` OR
+    # `selector` (fill_form's own docstring advertises all three), and a CSS
+    # SELECTOR is resolved at dispatch time against the LIVE document -- it is
+    # exactly the ref-FREE way to address a form across a page change. Treating it
+    # as a ref made this guard contradict the parameter it was guarding:
+    # `[navigate, fill_form(fields=[{"selector":"#mnuYear1",...}])]` was refused
+    # with "names a ref or coordinate planned against the PREVIOUS page", which is
+    # false of a selector. Measured live: 2 wasted round trips, on the one task of
+    # 19 we lost in the generality eval.
+    # Decidable from the entry, so this keeps #42's no-whitelist property.
     _REF_KEYS = ("ref", "ref_id", "submit_ref", "coordinate")
+
+    def _fields_name_refs(fields):
+        """True when ANY field entry addresses the page by a PER-DOCUMENT handle.
+
+        `ref` and `mmid` are per-document and die with it; `selector` is matched
+        against whatever document exists when the step runs. A mixed list is
+        conservative: one per-document key is enough to make the step stale.
+        """
+        if not fields:
+            return False
+        try:
+            items = list(fields)
+        except TypeError:
+            return True                      # unparseable -> assume the strict case
+        if not items:
+            return False
+        for f in items:
+            if not isinstance(f, dict):
+                return True                  # not our shape -> assume strict
+            if f.get("ref") is not None or f.get("mmid") is not None:
+                return True
+            if f.get("selector") is None:
+                return True                  # no addressing key we recognise
+        return False
     # A keystroke and typed text have no ref and still address the PREVIOUS page:
     # their target is whatever has focus, which the page change moved. Every other
     # `computer` action either carries a coordinate (caught above) or has no target
@@ -3113,7 +3147,9 @@ async def browser_batch(
         inp = it.get("input") or {}
         # EXPLICIT: it names a ref or a coordinate. fill_form's `fields` maps
         # ref -> value, so its KEYS are refs.
-        if any(inp.get(k) is not None for k in _REF_KEYS) or inp.get("fields"):
+        if any(inp.get(k) is not None for k in _REF_KEYS):
+            return True
+        if _fields_name_refs(inp.get("fields")):
             return True
         # IMPLICIT: the target is carried by browser state the page change moved.
         if name == "navigate":
