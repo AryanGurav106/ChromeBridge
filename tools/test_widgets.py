@@ -1354,6 +1354,78 @@ async def main():
               not bad, "; ".join(bad))
         await meta.close()
 
+        # ---- Q1r-Q1w: A FORCED LINE BREAK IS TEXT (#48's last open item).
+        #
+        # <br> has no children, so the walk built '' for it and add() dropped it --
+        # fusing the lines either side. Measured: <th>Mean<br>(deg. C)</th> built
+        # `Mean(deg. C)`, a string on NO screen, where innerText gives
+        # `Mean\n(deg. C)`. Wrong in both directions at once, which is why the
+        # false-positive control below matters as much as the hit.
+        brp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await brp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await brp.goto("about:blank")
+        await brp.set_content(
+            "<!doctype html><meta charset=utf-8><body>"
+            "<table><tr><th>Mean<br>(deg. C)</th><td>12.3</td></tr></table>"
+            "<pre>alpha one\nbeta two</pre>"
+            "<address>Acme Ltd<br>12 High St<br>London</address></body>")
+        await brp.wait_for_timeout(60)
+
+        async def bsearch(pat, **o):
+            return await brp.evaluate(
+                "(a) => { " + SEARCH + "; return _searchTextPage(a[0], a[1]); }",
+                [pat, dict({"contextChars": 80}, **o)])
+
+        r = await bsearch("Mean (deg. C)")
+        check("Q1r a literal space matches a <br>-induced line break",
+              (r.get("total") or 0) >= 1,
+              f"total={r.get('total')} hits={len(r.get('hits') or [])}")
+
+        # THE OTHER DIRECTION, and it is the one that proves the fusion is gone
+        # rather than merely papered over by the whitespace rule: the fused string
+        # used to HIT, which is a false positive for text the page does not contain.
+        r = await bsearch("Mean(deg. C)")
+        check("Q1s CONTROL: the FUSED form no longer matches — it is on no screen",
+              (r.get("total") or 0) == 0, f"total={r.get('total')}")
+
+        # The <br> must contribute a NEWLINE, not a space: that is what innerText
+        # renders, and agreeing with it is what stops search_page and get_page_text
+        # describing one page differently (#30, #48).
+        r = await bsearch(r"Acme Ltd\n12 High St", regex=True)
+        check("Q1t a regex sees a REAL newline across <br>, as innerText does",
+              (r.get("total") or 0) >= 1, f"total={r.get('total')}")
+
+        # #39's RFC case: the regex path is untouched, so a newline-anchored
+        # pattern still stops at the end of a <pre> line rather than running on.
+        r = await bsearch(r"alpha [^\n]*", regex=True)
+        _m = (r.get("hits") or [{}])[0].get("match", "")
+        check("Q1u CONTROL: the regex path is untouched — [^\\n]* still stops at "
+              "the line end", "beta" not in _m, f"match={_m!r}")
+
+        # ONE LINE PER HIT. The result prints `  <tag ref_N> …context…`; a raw
+        # newline puts the rest on a line with no tag and no ref, where it reads as
+        # a separate finding. Swept over every hit at three budgets, because the
+        # match itself can hold the newline now that a literal space matches one.
+        bad2 = []
+        for cn in (20, 80, 200):
+            for pat in ["Mean (deg. C)", "deg. C", "alpha one", "Acme Ltd 12 High St",
+                        "12.3", "London"]:
+                rr = await bsearch(pat, contextChars=cn)
+                for h in (rr.get("hits") or []):
+                    c, m, at = h.get("context") or "", h.get("match") or "", h.get("at")
+                    if "\n" in c or "\n" in m:
+                        bad2.append(f"{pat!r}@{cn}: raw newline")
+                    elif m and m not in c:
+                        bad2.append(f"{pat!r}@{cn}: match not in context")
+                    elif isinstance(at, int) and m and c[at:at + len(m)] != m:
+                        bad2.append(f"{pat!r}@{cn}: @{at} misplaced")
+        check("Q1v no hit carries a raw newline, in the match or the context",
+              not bad2, "; ".join(bad2[:3]))
+        check("Q1w CONTROL: ...and the PRINTED match is still findable at the "
+              "PRINTED offset — the invariant Q1m pins, held in display terms",
+              not bad2, "; ".join(bad2[:3]))
+        await brp.close()
+
         # THE CONTROL THAT MAKES IT TRUSTWORTHY. A grep that reads hidden templates
         # answers "does this page say X" with text no user can see.
         r = await search("SECRET hidden marker")

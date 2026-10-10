@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 929 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 935 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 929 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 935 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -4188,8 +4188,9 @@ granted in the side panel is refused with the same message the agent gets.
     from a dead extension and the timeout message advises re-observing with
     `read_page`, which is itself one of the ops that cannot answer~~ **FIXED in
     #51** (cost ~7 minutes on T8, and is why that is our only wall-clock loss);
-    `search_page` cannot match a literal space against a `<br>`-induced newline in
-    a table header (`"Mean (deg. C)"` renders as `Mean\n(deg. C)`); ~~the
+    ~~`search_page` cannot match a literal space against a `<br>`-induced newline in
+    a table header (`"Mean (deg. C)"` renders as `Mean\n(deg. C)`)~~ **FIXED in
+    #52, and the reported half was the smaller one**; ~~the
     data-table hint counts header `<th>` elements while the renderer EXPANDS
     COLSPANS, advertising `155x11` for a table it renders as `155x28`~~ **FIXED in
     #51**; and ~~three sightings across two evals of an observation chained after a
@@ -4573,8 +4574,7 @@ granted in the side panel is refused with the same message the agent gets.
     #47's sighting reproduced byte-for-byte. That ablation doubles as the live
     degradation control: the missing op did not break the batch, it just stopped
     waiting.
-    **Still open:** `search_page` cannot match a literal space against a
-    `<br>`-induced newline.
+    **The one item left open here was closed in #52.**
 
     Suites: 929 checks. New — MV1-MV3 (the modal pass asks the collector's
     question, with the opacity:1 control), TB14 (the hint and the renderer count
@@ -4585,6 +4585,80 @@ granted in the side panel is refused with the same message the agent gets.
     controls — #19, and because an op that always answers "idle" is
     indistinguishable from a tab that always IS idle), DD1-DD3 (`dismiss_dialog`,
     with the no-dialog-is-a-fact control) and both new GATED entries, C21/C21b.
+
+52. **A FORCED LINE BREAK WAS NOT TEXT — and the reported half of that was the
+    smaller half.** #48's last open item read: "`search_page` cannot match a
+    literal space against a `<br>`-induced newline in a table header
+    (`"Mean (deg. C)"` renders as `Mean\n(deg. C)`)". Measuring it before
+    fixing it found something else underneath.
+
+    **MY FIRST HYPOTHESIS WAS WRONG, AND THE PROBE SAID SO.** I expected `&nbsp;`
+    and source newlines to be broken the same way — they are far more common than
+    `<br>` — and built a six-shape probe expecting a sweep. **NBSP, a source
+    newline and an inline wrap all already HIT**; only the forced break missed.
+    The walk collapses whitespace runs already, so there was nothing there to fix,
+    and claiming the wider bug would have been a flattering result taken on faith
+    (#16, pointed at a guess rather than at a measurement).
+
+    **WHAT WAS ACTUALLY WRONG IS THAT `<br>` CONTRIBUTED NOTHING.** It has no
+    children, so `walk()` returned `''` and `add()` dropped it — **fusing the lines
+    either side**. Measured on the reported markup: innerText gives
+    `Mean\n(deg. C)`, our walk built `Mean(deg. C)`. That is wrong in BOTH
+    directions at once, and only one of them was ever reported:
+    - searching the text as it reads MISSED (the sighting), and
+    - **searching the fused form HIT** — a false positive for a string that is on
+      no screen, which nobody had noticed because nobody would type it.
+    It also put `search_page` and `get_page_text` into disagreement about one page,
+    which is the defect class #30 found in `near=` and #48 found in
+    `include_text`. `<br>` now contributes `\n`, which is exactly what innerText
+    renders, so the two tools agree and a `\n`-anchored regex works over
+    `<br>`-formatted content (addresses, changelogs) the way #39 made it work
+    inside `<pre>`.
+
+    **CHROME'S OWN FIND IS NOT THE PRECEDENT I ASSUMED, which is why the second
+    change is argued rather than borrowed.** Measured with `window.find()` on that
+    markup: `'Mean (deg. C)'` is **false** and `'Mean\n(deg. C)'` is **true** — the
+    browser does NOT let a typed space match a line break. We do, in the LITERAL
+    path only, and the reason is the caller rather than the rule: a human watching
+    find-in-page fail sees it fail and retypes, while an agent gets `No match` and
+    concludes the page does not say it. A miss that reads identically to absence is
+    the silent-failure class #22 and #39 each closed once. **The regex path is
+    untouched**, so #39's `[^\n]*` RFC case is exact (Q1u is that control).
+
+    **AND FIXING IT EXPOSED A DISPLAY DEFECT THAT WAS ALREADY LIVE.** The result
+    prints one line per hit, `  <tag ref_N> …context…`; a raw newline puts the rest
+    of the context on a line with **no tag and no ref**, where it reads as a
+    separate finding. That was already true of every `<pre>` match — #39
+    deliberately keeps `\n` there — and emitting `\n` for `<br>` would have made it
+    ordinary rather than rare. A newline now renders as the SAME ` | ` a declared
+    block boundary gets, because it is the same kind of fact and a second notation
+    for it would be #21's one-concept-two-spellings.
+
+    **TWO INVARIANTS THEN COLLIDED, and the resolution is the interesting part.**
+    `context` must contain `match` verbatim (Q1m), and there must be one line per
+    hit. A match that SPANS a break satisfies only one at a time — and the literal
+    whitespace rule had just made that the common case rather than a rare
+    deliberate one. Resolved by applying the SAME display transform to the match
+    string as to the context, so the invariant holds in the terms that can actually
+    be checked by a reader: **the printed match is findable at the printed offset**.
+    `full` keeps the real newline, so matching, `at`, and `\n`-anchored regexes are
+    untouched. Swept over 39 hits across 11 patterns and 3 context budgets: no raw
+    newline anywhere, match present in context, `@N` exact.
+
+    **LIVE-VERIFIED BOTH WAYS**, through the real tool against a real Chrome, on a
+    `<th>` carrying the reported shape. Fixed: one row,
+    `<th "Mean | (per hr)"@17> Day | Requests | Mean | (per hr)`, with the fused
+    form correctly returning `No match`. Pre-fix collector, same page, same batch:
+    the rendered form returned `No match` and **the fused form returned a hit** —
+    #48's sighting and its unreported twin, reproduced together. `get_page_text`
+    showed the break in both arms, which is what makes "the two tools disagreed"
+    a fact rather than an inference.
+
+    Suites: 935 checks. New — Q1r/Q1s (both directions of the fusion, the
+    false-positive control being the one that proves it is fixed rather than
+    masked), Q1t (innerText parity over `<br>`), Q1u (the regex path is untouched),
+    Q1v/Q1w (one line per hit, and the printed match findable at the printed
+    offset, swept over three context budgets).
 
 ## Debugging starting points
 
@@ -4635,7 +4709,8 @@ granted in the side panel is refused with the same message the agent gets.
 | A field row says `(read-only)` | By design since #40 — `readonly`/`aria-readonly`, which is NOT `(disabled)`: the field still submits and its value is real contents, but a write will fail. It survives folding (W28g); if it ever stops appearing inside a fold, the member flag list dropped it — the same bug the comment above that list warns about |
 | A field row ends in `(post-key)` | By design since #41 — the identity shown is that field's HTML `name` attribute, i.e. what it POSTS under, not a visible label; the control has no accessible name. An `input[submit]`/`input[reset]` is NOT marked, because HTML-AAM makes its `value` the real name (NP2). It survives folding (NP5); if it stops appearing inside a fold, the member flag list dropped it — the third notation to need that rule |
 | A `search_page` hit reads `<pre ref_12> "SIGQUIT"@77 — …` | By design since #42 — the match and its character offset INSIDE the quoted context. Two matches in one element are quoted from the same window, so without it they arrive byte-identical and read as one position reported twice. Suppressed when the context IS the match, so a one-line listing pays nothing |
-| `search_page` context contains ` \| ` | By design since #42 — a boundary the page DECLARED between cells, list items or blocks, read off computed `display` and rendered into the context only. What is matched against is unchanged, and a boundary inside the match is skipped so the context always contains the match verbatim |
+| `search_page` context contains ` \| ` | By design since #42 — a boundary the page DECLARED between cells, list items or blocks, read off computed `display`. **Since #52 a LINE BREAK renders the same way**, including one inside the match, because the result is one line per hit and a raw newline would put the rest of a context on a line with no tag and no ref. `full` keeps the real `\n`, so offsets and a `\n`-anchored regex are unaffected, and the PRINTED match stays findable at the PRINTED offset |
+| `search_page` misses text that is broken across two lines | Fixed in #52 — `<br>` has no children, so the walk built `''` for it and dropped it, FUSING the lines: `<th>Mean<br>(deg. C)</th>` became `Mean(deg. C)`, a string on no screen. It contributes `\n` now, which is what `innerText` renders, so `search_page` and `get_page_text` describe the same page. A literal pattern also matches any whitespace where it has a space, so the `Mean (deg. C)` a reader would type is found; the REGEX path is untouched |
 | `search_page` context is now much longer than the element it names | By design since #42 — the climb fires whenever the element's own text cannot supply the `context_chars` you asked for, not only when the match exactly fills it. The old condition skipped every `<dt>Published:</dt>` and `<a>Errata-ID: 1543</a>`, which is how metadata blocks are marked up |
 | `search_page` returns the LABEL and not the value beside it | Fixed in #47 — the climb counted ONE hop, which reaches the CELL (a field) rather than the row whenever the match is wrapped in a `<code>`/`<a>`/`<span>`, i.e. on most real markup. It now climbs to the nearest ancestor HTML DECLARES a record (`tr`, `li`, `dl`, `figure`, `article`), decided once by `_climbTo`. If it recurs, the shape has no declared record in range and fell back to #43's one hop — check whether the page wraps its rows in `<div>`s |
 | `search_page` quotes a whole list / several records at once | That is the #43 defect and it is still guarded — the climb stops AT the record and never enters the collection above it (`ul`, `ol`, `table`, `tbody`). Pinned by Q1n2 and Q1o2. The one accepted exception is a `<dt>` inside a long glossary `<dl>`, where the `<dl>` IS the declared record and only `context_chars` bounds the quote |

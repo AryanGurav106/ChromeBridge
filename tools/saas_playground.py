@@ -391,6 +391,10 @@ def report_page(user):
     The TABLE's first row carries a colspan=2, so counting cell ELEMENTS gives
     3 while the renderer expands to 4. The hint advertised `155x11` for a table
     it rendered as `155x28`.
+
+    Its last header also carries a <br>, which is the HK Observatory shape from
+    #48: `Mean (deg. C)` renders as `Mean\n(per hr)` here, and <br> used to
+    contribute NOTHING -- fusing it to `Mean(per hr)`, a string on no screen.
     """
     rows = "".join(
         f'<tr><td>{d}</td><td>{a}</td><td>{b}</td><td>{c}</td></tr>'
@@ -402,7 +406,7 @@ def report_page(user):
 <div class="card">
   <table id="metrics">
     <thead>
-      <tr><th>Day</th><th colspan="2">Requests</th><th>Ratio</th></tr>
+      <tr><th>Day</th><th colspan="2">Requests</th><th>Mean<br>(per hr)</th></tr>
     </thead>
     <tbody>{rows}</tbody>
   </table>

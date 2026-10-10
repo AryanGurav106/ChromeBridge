@@ -11672,9 +11672,26 @@ function _searchTextPage(pattern, opts) {
   let re;
   try {
     const flags = o.caseSensitive ? 'g' : 'gi';
+    // IN A LITERAL SEARCH, WHITESPACE IS WHITESPACE. A run of spaces, tabs or
+    // newlines in the pattern matches any run in the page, so a header rendered
+    // `Mean\n(deg. C)` across a <br> is found by the `Mean (deg. C)` a reader
+    // would type. The escape runs FIRST and does not touch whitespace, so this
+    // cannot collide with it.
+    //
+    // CHROME'S OWN FIND DOES NOT DO THIS -- measured, not assumed:
+    // window.find('Mean (deg. C)') is false on exactly that markup while
+    // window.find('Mean\n(deg. C)') is true. The divergence is deliberate and
+    // the reason is the caller, not the rule: a human watching find-in-page fail
+    // sees it fail and retypes, while an agent gets `No match` and concludes the
+    // page does not say it. That asymmetry -- a miss that reads identically to
+    // absence -- is the silent-failure class #22 and #39 each closed once.
+    //
+    // THE REGEX PATH IS UNTOUCHED. A caller who wrote `\n` or `[^\n]*` meant it,
+    // and #39's RFC case depends on that still being exact.
     re = o.regex
       ? new RegExp(pattern, flags)
-      : new RegExp(String(pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
+      : new RegExp(String(pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                                  .replace(/\s+/g, '\\s+'), flags);
   } catch (e) {
     return { error: 'invalid pattern: ' + (e && e.message) };
   }
@@ -11841,6 +11858,48 @@ function _searchTextPage(pattern, opts) {
       body = body.slice(0, off - lead) + SEP + body.slice(off);
       if (off <= atLocal) atLocal += SEP.length - lead;
     }
+    // A NEWLINE IN A CONTEXT SPLITS ONE HIT INTO TWO UNATTRIBUTED ROWS. The
+    // result is one line per hit, `  <tag ref_N> …context…`; a raw newline puts
+    // the rest of the context on a line with no tag and no ref, where it reads
+    // as a separate finding. That was already true for every <pre> match (#39
+    // deliberately keeps `\n` there so `[^\n]*` can anchor), and emitting `\n`
+    // for <br> above would have made it ordinary rather than rare.
+    //
+    // Rendered as the SAME separator a declared block boundary gets, because it
+    // is the same kind of fact -- the page stating where one run of text ends --
+    // and a second notation for it would be #21's one-concept-two-spellings.
+    // `full` is untouched, so the match text, the offsets and a `\n`-anchored
+    // regex all still see the real newline.
+    //
+    // A RUN INSIDE THE MATCH IS RENDERED TOO, AND SO IS THE MATCH ITSELF (see
+    // `match:` below). The invariant two comments up -- `context` contains
+    // `match` -- then holds in the terms that matter, which are the PRINTED
+    // ones: the string the caller is shown as the match is findable in the
+    // string it is shown as the context. Leaving these raw instead would have
+    // kept a byte-level invariant nobody can check and broken a line-level one
+    // every reader depends on, in what is now the COMMON case: a literal
+    // `Mean (deg. C)` matches across the break, so the match itself holds the
+    // newline.
+    const _nl = /\n+/g;
+    const _runs = [];
+    let _mm;
+    while ((_mm = _nl.exec(body)) !== null) {
+      const a = _mm.index, b = a + _mm[0].length;
+      _runs.push([a, b]);
+    }
+    for (let k = _runs.length - 1; k >= 0; k--) {
+      const [a, b] = _runs[k];
+      // Absorb the spaces either side: a line break's surrounding whitespace is
+      // not rendered, and leaving it gives `230.00  |  Sh` with doubled gaps —
+      // the same reason the boundary insertion above absorbs its leading space.
+      let lo = a, hi = b;
+      while (lo > 0 && body.charAt(lo - 1) === ' ') lo--;
+      while (hi < body.length && body.charAt(hi) === ' ') hi++;
+      body = body.slice(0, lo) + SEP + body.slice(hi);
+      // Only a run entirely BEFORE the match moves its start; one inside the
+      // match changes the match's length, which `at` does not express.
+      if (hi <= atLocal) atLocal += SEP.length - (hi - lo);
+    }
     const pre = s2 > 0 ? '…(+' + s2 + ')' : '';
     p.hit.context = pre + body + (e2 < src.length ? '…(+' + (src.length - e2) + ')' : '');
     // WHERE THE MATCH IS INSIDE THE STRING WE JUST QUOTED. Without it, two
@@ -11964,6 +12023,28 @@ function _searchTextPage(pattern, opts) {
               : wsKeepNL ? _raw.replace(/[^\S\n]+/g, ' ')
               : _raw.replace(/\s+/g, ' '), false, false, null);
         } else if (c.nodeType === 1) {
+          // A FORCED LINE BREAK IS TEXT, AND IT CONTRIBUTED NOTHING.
+          //
+          // <br> has no children, so walk() returned '' and add() dropped it --
+          // fusing the lines either side into a string that is on NO screen.
+          // Measured: a <th>Mean<br>(deg. C)</th> built `Mean(deg. C)`, where
+          // innerText gives `Mean\n(deg. C)`. Wrong in BOTH directions at once:
+          // searching the rendered text missed, and searching the fused form
+          // HIT -- a false positive for a string the page does not contain.
+          // It also put `search_page` and `get_page_text` into disagreement
+          // about one page, which is the defect class #30 (`near=`) and #48
+          // (`include_text`) each record once.
+          //
+          // `\n` rather than a space, because that is what innerText renders and
+          // agreeing with it is the whole point; a caller's `\n`-anchored regex
+          // then works over <br>-formatted content (addresses, changelogs,
+          // poetry) the same way #39 made it work inside <pre>.
+          if (String(c.tagName || '').toUpperCase() === 'BR') {
+            // A leading break renders nothing, and two in a row are one
+            // separation as far as a reader is concerned.
+            if (full && !/\n$/.test(full)) full += '\n';
+            continue;
+          }
           const r = walk(c, depth + 1);
           add(r.t, true, !r.inline, r);
         }
@@ -12003,7 +12084,12 @@ function _searchTextPage(pattern, opts) {
           }
         } catch (e) {}
         const hit = {
-          match: m[0],
+          // RENDERED THE SAME WAY THE CONTEXT IS. A match that spans a line break
+          // holds a newline, and this string is printed inline as `"match"@N`, so
+          // a raw one would split that row exactly as it would split the context.
+          // One transform, applied to both, is what keeps the printed match
+          // findable in the printed context (#21: one concept, one spelling).
+          match: String(m[0]).replace(/[^\S\n]*\n+[^\S\n]*/g, SEP),
           // A BARE ELLIPSIS SAYS A CUT HAPPENED AND NOT HOW BIG IT IS, which is the
           // difference between "the section ends here" and "there are 2,800 more
           // characters you have not seen". markCut's `…(+N)` convention, applied on

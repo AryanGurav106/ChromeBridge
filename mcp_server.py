@@ -1662,8 +1662,10 @@ async def search_page(
         lines.append(f'  <{h.get("tag", "?")}{ref}{loc}> {ctx}')
     if _located:
         lines.append('  (`"text"@N` is the match and its character offset in the context '
-                     "quoted on that line; ` | ` marks a boundary the page declared between "
-                     "cells, list items or blocks.)")
+                     "quoted on that line; ` | ` marks a boundary the page declared — between "
+                     "cells, list items or blocks, or a line break. A literal "
+                     "pattern matches any whitespace where it has a space, so "
+                     "text broken across lines is found as it reads.)")
     if total > len(hits):
         lines.append(f"  … {total - len(hits)} more match(es) not shown — raise max_results "
                      f"or narrow with css_scope.")
