@@ -122,6 +122,9 @@ ChromeBridge/
 │   ├── audit_thresholds_static.py  # every hardcoded NUMBER, and whether one deletes
 │   ├── measure_retention.py    #   presence / answerability / findability vs tokens
 │   ├── bench_mind2web.py       #   the only out-of-sample number in the project
+│   ├── bench_turns/            #   the LIVE head-to-head harness (#47/#48) — prereg,
+│   │                           #     tasks, prompts, scorer, analysis. In the repo because
+│   │                           #     six earlier evals lived in /tmp and are unreproducible
 │   ├── test_*.py / test_*.js   #   the 18 suites (see tools/README.md — do not duplicate it)
 │   └── diag_*.py               #   one-off LIVE probes via ExtensionDriver (needs the bridge)
 ├── temp/                       # ~1.2 GB, GITIGNORED. Frozen corpus + mind2web live here,
@@ -4063,6 +4066,31 @@ granted in the side panel is refused with the same message the agent gets.
     toolset was under test), ground truth re-derived INDEPENDENTLY by a referee
     driving headless Chromium, 38 runs strictly serial, arm order rotated, prompts
     ASSERTED identical modulo the namespace, scored from transcripts.
+
+    **THE HARNESS IS IN THE REPO, AND IT WAS NOT BEFORE — that was a defect.**
+    `tools/bench_turns/` holds the pre-registration, the task list, the referee's
+    accept/reject key, the 38 prompts, the generator, the scorer and the analysis,
+    for THIS eval (`eval3/`) and the two that preceded it (`eval12/`). Six live
+    head-to-heads are reported in #39-#48 and until now every one of them lived in
+    a session scratchpad under /tmp and died with the session: **a result nobody
+    can re-derive is an anecdote with a p-value.** #45 is the concrete cost —
+    its headline had to be withdrawn when the prompt turned out to MANDATE the
+    behaviour it measured, and that was only catchable because the prompt file
+    happened to still exist. `analyse.py` reproduces the table below from
+    `runs.tsv` on a fresh checkout.
+
+    The 19 tasks, so the sample is inspectable rather than described:
+    man7 open(2) ERRORS, git-config, kernel.org sysctl/vm (A); gov.uk bank
+    holidays, Companies House, Rijksmuseum (B); fueleconomy.gov, Unicode utils
+    (C); NASA planetary fact sheet, HK Observatory normals (D); Cornell US Code,
+    legislation.gov.uk, ITIS taxonomy (E); JMA past weather (ja, image-map),
+    MOE Mandarin dictionary (zh-Hant), Standard Korean dictionary (ko) (F);
+    caniuse, PubChem, RSC periodic table (G). **Two were dropped or reworded
+    BEFORE any run by the referee**, which is the step that makes the rest
+    trustworthy: an EDGAR "company search form" that is an error page with zero
+    <form> elements, and a caniuse question whose own footnote 3 contradicted the
+    phrase it asked about ("Safari 14.0 - 15.6 has full support") -- two
+    defensible answers is worse than no task.
 
     | | result |
     |---|---|

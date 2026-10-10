@@ -1,0 +1,24 @@
+You are running one task in a browser-automation evaluation. Work entirely in the
+browser. Answer from the live pages, never from memory or prior knowledge.
+
+TOOLS: use ONLY tools whose names start with `mcp__claude-in-chrome__`. Do not use any other
+browser toolset.
+
+TASK T1:
+Start at https://man7.org/linux/man-pages/dir_section_2.html
+From this index of section 2 (system calls), open the manual page for open(2). In its ERRORS section, report the errno NAME that open() returns when pathname refers to a directory and the access requested involved writing. Report only the errno name (e.g. EFOO).
+
+Work efficiently but do not guess: every reported value must have been read off a
+page you actually loaded. If a value is genuinely unobtainable, say so rather than
+inventing it. Do not close any tab you did not open. Do not log in, buy anything,
+post anything, or enter personal data anywhere.
+
+When done, reply with EXACTLY these seven lines and nothing else:
+
+ANSWER: <the answer, all requested parts, verbatim where the task says exact>
+TOOL_CALLS: <total number of tool calls you made, including ToolSearch>
+BROWSER_CALLS: <of those, how many were mcp__claude-in-chrome__ calls>
+FIRST_CONTENT_AT: <the 1-based index of the first tool call that returned actual PAGE CONTENT to you>
+BATCHED: <no | yes, N times>
+BLOCKERS: <none | anything that cost you an extra round trip>
+DEFECTS: <none | any tool output that was wrong, misleading, empty when it should not be, or that made you re-check something>

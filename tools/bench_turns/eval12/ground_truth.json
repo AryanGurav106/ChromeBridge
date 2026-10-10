@@ -1,0 +1,92 @@
+{
+  "T1": {
+    "status": "OK",
+    "answer": "40001",
+    "evidence": "https://www.postgresql.org/docs/current/errcodes-appendix.html — table row 'Class 40 — Transaction Rollback … 40000 transaction_rollback / 40002 transaction_integrity_constraint_violation / 40001 serialization_failure / 40003 statement_completion_unknown / 40P01 deadlock_detected'",
+    "hop1": "https://www.postgresql.org/docs/current/index.html",
+    "hop2": "https://www.postgresql.org/docs/current/errcodes-appendix.html",
+    "weak": true,
+    "notes": "Link text on page 1 is exactly 'A. PostgreSQL Error Codes'. Row is '40001 serialization_failure'. WEAK: the appendix URL is a well-known fixed path and 40001 is a very widely memorized constant, so an agent can answer without ever loading page 1. Grade on the string 40001."
+  },
+  "T2": {
+    "status": "AMBIGUOUS",
+    "answer": "1.380 649 x 10-23 J K-1",
+    "evidence": "https://physics.nist.gov/cgi-bin/cuu/Value?k (inner frame of https://physics.nist.gov/cgi-bin/cuu/Value?k|search_for=abbr_in!) — 'Boltzmann constant | Numerical value  1.380 649  x 10-23 J K-1 | Standard uncertainty (exact) | Relative standard uncertainty (exact) | Concise form 1.380 649 x 10-23 J K-1'. Source: 2022 CODATA.",
+    "hop1": "https://physics.nist.gov/cuu/Constants/index.html",
+    "hop2": "https://physics.nist.gov/cgi-bin/cuu/Category?view=html&Frequently+used+constants.x=..&...y=.. then https://physics.nist.gov/cgi-bin/cuu/Value?k|search_for=abbr_in!",
+    "weak": false,
+    "notes": "TASK AUTHOR'S RISK CONFIRMED, in a different way than flagged. (1) There is NO 'Frequently used constants' TABLE in HTML view: the category page (reached by clicking the 'Frequently used constants' IMAGE SUBMIT BUTTON on page 1, there is no <a> link) renders as a bare list of constant NAMES with no symbol column and no value column. Symbols only exist in the gif/pdf renderings, which are images. So 'find the row whose symbol is k' cannot be done from the HTML; the agent must already know k = Boltzmann constant (or read an image). (2) The value page is a FRAMESET; the data lives in the inner frame /cgi-bin/cuu/Value?k, and the top URL stays Value?k|search_for=abbr_in!. (3) The field is labelled 'Numerical value', not 'Value'; 'Concise form' shows the identical string (the 2022 CODATA value is exact). (4) As printed, -23 and -1 are <sup> superscripts and the digit groups are separated by NBSP: rendered '1.380 649 x 10^-23 J K^-1'. Recommend accepting any of: '1.380 649 x 10-23 J K-1', '1.380649 x 10-23 J K-1', '1.380 649 × 10⁻²³ J K⁻¹'. Marked AMBIGUOUS because the task's stated navigation step is not performable as written, not because the number is in doubt."
+  },
+  "T3": {
+    "status": "OK",
+    "answer": "Michael",
+    "evidence": "https://www.ssa.gov/cgi-bin/popularnames.cgi — 'Popularity in 1985 / Rank | Male name | Female name / 1 Michael Jessica / 2 Christopher Ashley / 3 Matthew Jennifer'",
+    "hop1": "https://www.ssa.gov/OACT/babynames/",
+    "hop2": "https://www.ssa.gov/cgi-bin/popularnames.cgi (HTTP POST of form name='popnames', field year=1985)",
+    "weak": false,
+    "notes": "Task premise is slightly wrong: there is no separate 'popular-names-by-birth-year lookup' PAGE to follow a link to — the Birth Year form (name='popnames', action=/cgi-bin/popularnames.cgi, method=POST, input#year defaulting to 2025) is ON page 1. So the task is 'change the year field to 1985 and submit', one navigation. Result is POST-only, so the URL cannot be guessed — a real form interaction is required, which makes it a good discriminator. Female rank 1 is Jessica (distractor if the agent reads the wrong column)."
+  },
+  "T4": {
+    "status": "OK",
+    "answer": "30.06.2017",
+    "evidence": "https://www.gesetze-im-internet.de/bdsg_2018/BJNR209710017.html — 'Bundesdatenschutzgesetz (BDSG) / Nichtamtliches Inhaltsverzeichnis / BDSG / Ausfertigungsdatum: 30.06.2017 / Vollzitat: \"Bundesdatenschutzgesetz vom 30. Juni 2017 (BGBl. I S. 2097), das zuletzt durch Artikel 3 des Gesetzes vom 3. Juli 2026 … geändert worden ist\"'",
+    "hop1": "https://www.gesetze-im-internet.de/aktuell.html -> https://www.gesetze-im-internet.de/Teilliste_B.html (link text 'BDSG')",
+    "hop2": "https://www.gesetze-im-internet.de/bdsg_2018/index.html -> https://www.gesetze-im-internet.de/bdsg_2018/BJNR209710017.html",
+    "weak": false,
+    "notes": "This is really THREE hops: aktuell.html -> Teilliste_B.html -> bdsg_2018/index.html -> BJNR209710017.html. The 'law page' bdsg_2018/index.html is only the Inhaltsübersicht and does NOT contain the word Ausfertigungsdatum; it is on the Gesamtausgabe (HTML link at the top of that page). An agent that stops at index.html will report not-found. Alphabetical index entry is literally 'BDSG' on Teilliste_B.html (there is also a decoy 'BwBDSGOWiZustV'). Same date appears as '30. Juni 2017' in the Vollzitat — the task demands DD.MM.YYYY, so only '30.06.2017' is correct."
+  },
+  "T5": {
+    "status": "OK",
+    "answer": "100-0013",
+    "evidence": "https://www.post.japanpost.jp/cgi-zip/zipcode.php?pref=13&city=1131010&cmp=1 — under heading 'カ行': '<strong>霞が関（次のビルを除く・霞が関ビル）</strong> カスミガセキ(ツギノビルヲノゾク・カスミガセキビル) … <a>100-0013</a>' (copy button carries data-zip=\"1000013\" data-pref=\"東京都\" data-addr=\"霞が関（次のビルを除く・霞が関ビル）\"). Preceding entry is 鍛冶町 101-0044.",
+    "hop1": "https://www.post.japanpost.jp/zipcode/ (302 -> https://www.post.japanpost.jp/service/search/zipcode/), link 東京 -> https://www.post.japanpost.jp/cgi-zip/zipcode.php?pref=13",
+    "hop2": "https://www.post.japanpost.jp/cgi-zip/zipcode.php?pref=13&city=1131010&cmp=1 (link text 千代田区チヨダク)",
+    "weak": false,
+    "notes": "AUTHOR'S RISK DID NOT MATERIALISE: the drill-down is plain server-rendered HTML <ul class=zipList>, no JS gating, no consent wall. Page 1 redirects to /service/search/zipcode/. The city id 1131010 is opaque and not guessable, so this is a genuine two-hop task. ONE AMBIGUITY TO GRADE AROUND: the label is not bare 霞が関 — the general entry reads 霞が関（次のビルを除く・霞が関ビル） = 100-0013, and it is followed by ~30 building-floor entries 霞が関霞が関ビル（Nn階）with codes 100-6010, 100-6011, … and 100-6090. Only 100-0013 is the postal code for Kasumigaseki itself. Rows are <li>, not <tr>, which may matter for table-oriented extraction."
+  },
+  "T6": {
+    "status": "OK",
+    "answer": "103",
+    "evidence": "https://www.gutenberg.org/ebooks/103 — bibliographic record rows: 'Author | Verne, Jules, 1828-1905', 'Title | Around the World in Eighty Days', 'Category | Text', 'eBook-No. | 103', 'Release Date | Jan 1, 1994', 'Downloads | 17536 downloads in the last 30 days.'",
+    "hop1": "https://www.gutenberg.org/ -> https://www.gutenberg.org/ebooks/search/?query=Jules+Verne",
+    "hop2": "https://www.gutenberg.org/ebooks/103",
+    "weak": false,
+    "notes": "Top search result for 'Jules Verne' is Around the World in Eighty Days = ebook 103 (Category: Text, Towle translation). DISTRACTOR: a second entry with the identical title and author exists, https://www.gutenberg.org/ebooks/28947, but its 'Category' is Sound (audiobook) and its eBook-No. is 28947. Accept 103 only; if a run answers 28947 it opened the audiobook record. Field label is literally 'eBook-No.'. Memory risk: Gutenberg #103 is a well-known id, so a run could answer without searching — check its hop URLs if that matters."
+  },
+  "T7": {
+    "status": "OK",
+    "answer": "info_module",
+    "evidence": "https://httpd.apache.org/docs/2.4/mod/mod_info.html — table.module: 'Description: Provides a comprehensive overview of the server configuration | Status: Extension | Module Identifier: info_module | Source File: mod_info.c'",
+    "hop1": "https://httpd.apache.org/docs/2.4/mod/",
+    "hop2": "https://httpd.apache.org/docs/2.4/mod/mod_info.html",
+    "weak": false,
+    "notes": "On page 1 the description 'Provides a comprehensive overview of the server configuration' is the <dd> immediately after <dt>mod_info</dt>, so the mapping is readable only from page 1 (or from Apache knowledge). Note the markup uses a non-breaking space inside the label: 'Module&nbsp;Identifier:'. Unambiguous single value."
+  },
+  "T8": {
+    "status": "OK",
+    "answer": "2013-08-26",
+    "evidence": "https://www.sqlite.org/changes.html — '<a name=\"version_3_8_0\"></a><h3>2013-08-26 (3.8.0)</h3>' followed by 'Add support for partial indexes …'. Neighbouring headings: '2013-08-29 (3.8.0.1)', '2013-09-03 (3.8.0.2)', '2013-05-20 (3.7.17)'.",
+    "hop1": "https://www.sqlite.org/docs.html",
+    "hop2": "https://www.sqlite.org/changes.html",
+    "weak": true,
+    "notes": "Link text on page 1 is 'Release History' (not 'change log'). Headings are already YYYY-MM-DD, so no reformatting is needed. DISTRACTORS: patch releases 3.8.0.1 (2013-08-29) and 3.8.0.2 (2013-09-03); also the body text of a later entry contains the literal string '3.8.0 - 2013-08-26' inside a bug note, which happens to give the right date but is not the release heading. WEAK: https://www.sqlite.org/changes.html is a famous fixed URL an agent can go to directly without reading page 1."
+  },
+  "T9": {
+    "status": "OK",
+    "answer": "wel is the bibliographic (B) code and cym is the terminology (T) code",
+    "evidence": "https://www.loc.gov/standards/iso639-2/php/code_list.php — row 'wel (B) / cym (T) | cy | Welsh | gallois | Kymrisch', between 'cus Cushitic languages' and 'cze (B) ces (T) cs Czech'. Page header states: 'There are 21 languages that have alternative codes for bibliographic or terminology purposes … designated as \"B\" (bibliographic) or \"T\" (terminology).'",
+    "hop1": "https://www.loc.gov/standards/iso639-2/ -> https://www.loc.gov/standards/iso639-2/langhome.html (link text 'ISO 639-2 Code List')",
+    "hop2": "https://www.loc.gov/standards/iso639-2/php/code_list.php (link text 'ISO 639-2 Code' on langhome.html)",
+    "weak": true,
+    "notes": "Really THREE hops: the only code-list link on page 1 goes to langhome.html, and the complete list is one further click ('ISO 639-2 Code'). Equally valid landing pages giving the same answer: php/English_list.php, php/French_list.php, ascii_8bits.html, php/langcodes-search.php. The alpha-2 code cy is on the same row (distractor). Codes last updated 2026-01-15. WEAK: wel/cym is a very widely known pair and code_list.php is a stable guessable URL."
+  },
+  "T10": {
+    "status": "OK",
+    "answer": "Phrasing content, but there must be no meter element descendants.",
+    "evidence": "https://html.spec.whatwg.org/multipage/form-elements.html#the-meter-element — definition list for 4.10.14 The meter element: 'Categories: Flow content. Phrasing content. Labelable element. Palpable content. | Contexts…: Where phrasing content is expected. | Content model: Phrasing content, but there must be no meter element descendants. | Tag omission in text/html: Neither tag is omissible.'",
+    "hop1": "https://html.spec.whatwg.org/multipage/",
+    "hop2": "https://html.spec.whatwg.org/multipage/form-elements.html#the-meter-element",
+    "weak": false,
+    "notes": "TOC link text is '4.10.14 The meter element'. DISTRACTOR: the TOC also has '15.5.14 The meter element' -> rendering.html#the-meter-element-2, which has no Content model line. Second distractor: the SAME page form-elements.html also holds button/select/progress etc.; a naive 'find Content model near meter' scrape can pick up the button element's much longer Content model line ('Phrasing content, but there must be no interactive content descendant …'). In the printed DOM 'meter' is wrapped in <code>/<a> but renders as plain text; the trailing full stop is part of the line."
+  }
+}

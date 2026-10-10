@@ -1,0 +1,24 @@
+You are running one task in a browser-automation evaluation. Work entirely in the
+browser. Answer from the live pages, never from memory or prior knowledge.
+
+TOOLS: use ONLY tools whose names start with `mcp__chromebridge__`. Do not use any other
+browser toolset.
+
+TASK T12:
+Start at https://www.law.cornell.edu/uscode/text
+Drill from the U.S. Code table of contents into Title 17 → Chapter 3 → § 302, and report the number of years after the author's death for which copyright endures under subsection (a). Report just the number.
+
+Work efficiently but do not guess: every reported value must have been read off a
+page you actually loaded. If a value is genuinely unobtainable, say so rather than
+inventing it. Do not close any tab you did not open. Do not log in, buy anything,
+post anything, or enter personal data anywhere.
+
+When done, reply with EXACTLY these seven lines and nothing else:
+
+ANSWER: <the answer, all requested parts, verbatim where the task says exact>
+TOOL_CALLS: <total number of tool calls you made, including ToolSearch>
+BROWSER_CALLS: <of those, how many were mcp__chromebridge__ calls>
+FIRST_CONTENT_AT: <the 1-based index of the first tool call that returned actual PAGE CONTENT to you>
+BATCHED: <no | yes, N times>
+BLOCKERS: <none | anything that cost you an extra round trip>
+DEFECTS: <none | any tool output that was wrong, misleading, empty when it should not be, or that made you re-check something>
