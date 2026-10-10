@@ -130,8 +130,9 @@ async function refreshBadge() {
   let paused = false;
   try { const s = await chrome.storage.local.get([PAUSE_KEY]); paused = !!s[PAUSE_KEY]; } catch (e) {}
   if (paused) return await setBadge("II", "#b45309");
-  return await setBadge(lastStatus.connected ? "ON" : "OFF",
-                        lastStatus.connected ? "#16a34a" : "#dc2626");
+  // Connected is the normal state, so it wears no badge: a permanent green "ON"
+  // on the toolbar icon was noise. Only the states that need attention speak.
+  return await setBadge(lastStatus.connected ? "" : "OFF", lastStatus.connected ? null : "#dc2626");
 }
 
 // Rolling op history for the side panel's activity feed. Kept in
