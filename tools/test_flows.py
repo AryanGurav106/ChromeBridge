@@ -300,8 +300,15 @@ async def record_and_replay():
     exp = flow.steps[0].expect
     check("FR3b ...and all three kinds survive: url, search hit count, element count",
           exp.get("url") == "https://app.test/done"
-          and exp["search"] == {"pattern": "Welcome", "min": 2}
-          and exp["query"] == {"selector": "tr", "min": 7}, str(exp))
+          and exp["search"] == {"pattern": "Welcome", "min": 1, "observed": 2}
+          and exp["query"] == {"selector": "tr", "count": 7}, str(exp))
+    check("FR3d a COUNT is recorded exactly, not as a floor — 'at least N' is a "
+          "weaker claim than the run made and cannot see a row being ADDED "
+          "(measured live: an injected row left the flow green at min=4)",
+          exp["query"].get("count") == 7 and "min" not in exp["query"])
+    check("FR3e ...while a page-wide TEXT search records presence, because a "
+          "toast legitimately turns one hit into two",
+          exp["search"]["min"] == 1 and exp["search"]["observed"] == 2)
     check("FR3c the recorded ref is GONE from the step input — a per-document "
           "handle in a saved file is a wrong click waiting to happen",
           "ref" not in flow.steps[0].input and "tabId" not in flow.steps[0].input,
@@ -425,6 +432,13 @@ async def record_and_replay():
           "pre-flights against it, and a bare **kw wrapper refuses every batch "
           "with \"missing required argument(s) kw\"",
           not _bad and _ok, f"opaque={_bad} distinguishes_tools={_ok}")
+
+    check("FD17c a query MISS reads as 0, not as an unreadable result — the "
+          "zero case is prose, and conflating it with a parse failure makes the "
+          "runner blame the contract for a page that simply lacks the element",
+          query_total("No element matches 'tbody tr' in the rendered document.") == 0
+          and query_total("some unrelated text") is None
+          and "No element matches" in (ROOT / "mcp_server.py").read_text(encoding="utf-8"))
 
     check("FD17b ...and a readiness banner in front of them does not blind the "
           "parser, which is exactly when a flow is most likely to be running",

@@ -190,7 +190,12 @@ class Run:
             if tot is None:
                 return (f'could not read a total out of query_elements for '
                         f'{q["selector"]!r} — the result-string contract moved')
-            if tot < q["min"]:
+            # `count` is the recorded observation and must match exactly;
+            # `min` is the hand-relaxed form for a list that legitimately grows.
+            if "count" in q and tot != q["count"]:
+                return (f'query_elements({q["selector"]!r}) counted {tot}, '
+                        f'recorded exactly {q["count"]}')
+            if "min" in q and tot < q["min"]:
                 return (f'query_elements({q["selector"]!r}) counted {tot}, '
                         f'recorded at least {q["min"]}')
         return ""

@@ -54,8 +54,22 @@ def search_hits(result: str) -> Optional[int]:
 
 
 def query_total(result: str) -> Optional[int]:
+    """Matches, or None when the answer could not be read at all.
+
+    ZERO IS AN ANSWER. query_elements reports a miss in prose ("No element
+    matches …") rather than as "0 element(s) match", so reading only the
+    numeric line conflates "nothing matched" with "I could not parse this" --
+    and the runner then blames the contract for a page that simply does not
+    have the thing. Measured live: a session expiring mid-flow bounced the run
+    to the login page, the flow correctly FAILED, and the reason it printed was
+    "the result-string contract moved" instead of "counted 0, recorded at
+    least 4". search_hits already handled its own miss; this did not, which is
+    the asymmetry (#21) rather than a new idea.
+    """
     m = _QUERY_TOTAL.search(result or "")
-    return int(m.group(1)) if m else None
+    if m:
+        return int(m.group(1))
+    return 0 if "No element matches" in (result or "") else None
 
 
 class Recorder:
@@ -193,10 +207,24 @@ class Recorder:
                 hits = search_hits(res)
                 pat = r["input"].get("pattern")
                 if hits and pat:
-                    exp.setdefault("search", {"pattern": pat, "min": hits})
+                    # PRESENCE, not the exact tally. A page-wide text search is
+                    # genuinely volatile -- a toast saying "Created echo-gateway"
+                    # legitimately turns 1 hit into 2 -- and the question this
+                    # assertion is really asking is "is it there". The observed
+                    # count is kept for the reader, not asserted on.
+                    exp.setdefault("search",
+                                   {"pattern": pat, "min": 1, "observed": hits})
             elif name == "query_elements":
                 tot = query_total(res)
                 sel = r["input"].get("selector")
                 if tot and sel:
-                    exp.setdefault("query", {"selector": sel, "min": tot})
+                    # EXACT, because that is what was observed. Recording "at
+                    # least N" is a weaker claim than the run actually made, and
+                    # it cannot see anything being ADDED: measured live, a row
+                    # injected above the table left the flow green at min=4
+                    # against 5 rendered. A count that legitimately grows is a
+                    # real case -- edit the file to {"min": N} for it -- but the
+                    # default must be the observation, or the flow quietly stops
+                    # being able to fail (#15).
+                    exp.setdefault("query", {"selector": sel, "count": tot})
         return exp
