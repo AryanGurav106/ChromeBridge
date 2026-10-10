@@ -24,6 +24,15 @@ before: the flow used to type `beta-svc` and then search for the recorded
 `atlas-svc`. Its password is never in the file; export
 `CB_SECRET_ACME_CREATE_PROJECT_PASSWORD` before replaying.
 
+`saucedemo-login.flow.json` is the first flow recorded against a REAL
+third-party app — Sauce Labs' published sample application, driven in a
+throwaway profile with its public credentials. It is an example, not a CI test
+(`--local-only` skips it, because a suite that needs the public internet fails
+for reasons that are not the code's). It exists because every other flow here
+targets `tools/saas_playground.py`, which we wrote: the descriptor half was
+measured on 37 real sites (#49), the record -> replay loop never was. Replaying
+it needs `CB_SECRET_SAUCEDEMO_LOGIN_PASSWORD`.
+
 ## The one thing to get right when recording
 
 **Start the recording BEFORE the `navigate` that establishes the page state.**

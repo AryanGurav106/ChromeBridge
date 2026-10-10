@@ -620,14 +620,24 @@ async def record_and_replay():
     # AND THE RESOLUTION HALF. Storing the placeholder is useless if the runner
     # checks for the placeholder text; this is the end the live failure was at.
     fbv6 = FakeBridge(fbv.entries)
-    fbv6.search_result = '1 match(es) for "beta-svc":\n  <td> x'
-    fbv6.query_result = "5 element(s) match 'tbody tr':"
+    # Match what FV6 recorded, so the postcondition holds on the first
+    # evaluation. Since #55 a failing postcondition is RE-ASKED for a few
+    # seconds before it is reported, so a fake that disagrees with the
+    # recording turns a unit check into a six-second poll.
+    fbv6.query_total = 5
+    fbv6.search_hits = 1
     rr6 = await start(vf5, 1, fbv6.call, fbv6.entries_fn,
                       overrides={"project_name": "beta-svc"})
     asked = [i.get("pattern") for t, i in fbv6.calls if t == "search_page"]
+    # THE INVARIANT IS *WHAT* IT ASKS FOR, not how many times. The first
+    # version asserted exactly one call, which was only ever true because the
+    # runner checked once; #55 gave a postcondition a bounded window to become
+    # true, and the check failed on the retry count while the thing it exists
+    # to pin was still correct. Same rewrite as #30's TR8d.
     check("FV6c an override changes what the ASSERTION looks for, not only "
           "what is typed",
-          asked == ["beta-svc"], f"search_page called with {asked}")
+          asked and set(asked) == {"beta-svc"},
+          f"search_page called with {asked}")
 
     # ---- FP: preconditions — the state the flow starts from ---------------
     fbp = FakeBridge([E(80, "button", name="New project")])

@@ -1,0 +1,102 @@
+{
+  "schema": 1,
+  "name": "saucedemo-login",
+  "origin": "https://www.saucedemo.com",
+  "recorded_at": "2026-10-11T02:46:28",
+  "viewport": null,
+  "vars": {
+    "username": "standard_user"
+  },
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "https://www.saucedemo.com/"
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "fill_form",
+      "input": {
+        "fields": [
+          {
+            "value": "{{username}}"
+          },
+          {
+            "value": "${CHROMEBRIDGE_SECRET:CB_SECRET_SAUCEDEMO_LOGIN_PASSWORD}"
+          }
+        ],
+        "submit": true
+      },
+      "targets": {
+        "submit_ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "submit",
+            "name": "Login"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "submit",
+            "name": "Login",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        },
+        "fields.0": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "Username"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "Username",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        },
+        "fields.1": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "password",
+            "name": "Password"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "password",
+            "name": "Password",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "url": "https://www.saucedemo.com/inventory.html",
+        "query": {
+          "selector": ".inventory_item",
+          "count": 6
+        },
+        "search": {
+          "pattern": "Sauce Labs Backpack",
+          "min": 1,
+          "observed": 1
+        }
+      },
+      "on_fail": "ask"
+    }
+  ]
+}

@@ -4821,6 +4821,91 @@ granted in the side panel is refused with the same message the agent gets.
     the ASSERTION looks for, which is the end the live failure was at),
     FR12/FR12b (a grown count names its causes), FR12c (the shrank control).
 
+55. **THE FIRST FLOW RECORDED AGAINST A REAL APP — which found the defect that
+    only a real app can show, and one I could not explain.** #54 closed with the
+    honest residue that every end-to-end flow targets `saas_playground.py`,
+    which I wrote: the LOCATOR half is measured on 37 real sites, the
+    record → replay loop never was. This closes it, on Sauce Labs' published
+    sample application, driven in a throwaway profile with its public
+    credentials and the gate GRANTED into that profile (`ALLOW_ALL_ORIGINS`
+    stays false).
+
+    **THE DEFECT A FIXTURE CANNOT PRODUCE: the runner asked too early.** The
+    recorder captures what the agent OBSERVED, which is necessarily after the
+    agent took a moment; the runner asked the moment the step returned. So the
+    flow failed every replay with `search_page('Sauce Labs Backpack') found 0,
+    recorded at least 1` — the login had worked, and the SPA had simply not
+    painted the grid yet. The url and row-count checks passed, because those are
+    true the instant the document commits; the text search is true a few hundred
+    milliseconds later. **A server-rendered fixture is true all at once, which is
+    why a year of playground flows never showed this.** A postcondition now gets
+    a bounded window to BECOME true (6s, polled). That does not weaken it — it
+    must still become true, within a bound — and the falsifier is untouched: a
+    login that genuinely failed never reaches the recorded url and still fails,
+    just later. Every retrying runner (Playwright's auto-waiting assertions,
+    Cypress's retry-ability) does this for the same reason.
+
+    **AND THE FIX BROKE A CHECK THAT HAD ENCODED THE OLD BEHAVIOUR.** FV6c
+    asserted `search_page` was called exactly once — true only because the
+    runner asked once. Its invariant is WHAT the assertion looks for, which is
+    unchanged. Rewritten to that, the same way #30 rewrote TR8d.
+
+    **WHAT I MEASURED AND COULD NOT EXPLAIN, recorded as open rather than
+    guessed at.** `computer(left_click)` on saucedemo's `/inventory.html`
+    reports success and the page receives NOTHING:
+    - the button is `add-to-cart-sauce-labs-backpack`, rect `(420,339,160,34)`,
+      and the click dispatches at `(500,356)` — dead centre
+    - `elementFromPoint(500,356)` IS that button; dpr 1, `scrollY` 0, no zoom
+    - `debug_targets`: attached, one frame, correct url — so NOT #12's
+      cross-extension refusal
+    - a capturing `document` listener records **zero** events, for the ref click
+      AND for three raw coordinate clicks anywhere on the page
+    - `el.click()` from `javascript_tool` works: badge `1`, one Remove button
+    - **the LOGIN page of the same origin, same browser, same run, accepts input
+      normally** — so it is not blanket-headless either
+    That is #12's exact signature ("Chrome drops `Input.dispatchMouseEvent` for a
+    hidden RenderWidget while `Runtime.evaluate` keeps working"), on the site #12
+    was discovered on, and its `ensureInputReady` fix does not cover this case.
+    A fresh attach does not help; reaching the page by an explicit `navigate`
+    instead of a form submit does not help. My hypothesis is that the focus
+    emulation is attach-scoped and not re-applied per document, but it does not
+    fit all four observations, so it is NOT shipped as a fix. #12's own lesson
+    is that four theories were burned there before anyone measured.
+    **Consequence for the flow:** the add-to-cart step is deliberately not
+    recorded. Recording a step that silently does nothing would bake a
+    cannot-fail assertion into the file, which this feature has already done
+    once (#54).
+
+    **THREE OF MY OWN PROBES WERE WRONG BEFORE THE PRODUCT WAS**, and the first
+    was nearly reported as a major defect. `read_page` appeared to omit
+    saucedemo's entire product grid — 4 rows on a page with 24 controls. It does
+    not: the grid is FOLDED, `6× div, identical siblings … #6 button: 82:"Add to
+    cart" 94:… `, every member carrying its own ref, exactly matching what
+    `query_elements` reports. My `ref_of()` helper only matched `ref_N |` rows
+    and could not read a fold line, so a reader with that bug sees a page with
+    four controls on it. Fourth measurement bug of this class in this log; #16's
+    rule caught it. The other two: a harness that recorded NOTHING because it
+    called the module globals rather than the wrapped registry, and a fold
+    parser that worked run-to-run and then did not — replaced by asking
+    `query_elements` for the id the page declares, which is deterministic.
+
+    **WHAT THE REAL APP CONFIRMED WORKING**, which is the other half of the
+    point: `origin` populated (`https://www.saucedemo.com`, the #54 fix on a
+    real site); the password redacted to `CB_SECRET_SAUCEDEMO_LOGIN_PASSWORD`
+    with no plaintext in the file; `username` extracted as a variable; three
+    postconditions that each witness the login (url, `.inventory_item` count 6,
+    a text search) — none of them true on the page it started from; a descriptor
+    that resolved six identical "Add to cart" buttons at **level 3** using
+    `near="$29.99 Add to cart"`, which is the rung #49 nearly deleted on its
+    median and kept on its distribution; **PASSED 2/2 in 0.67s**, idempotent
+    across runs because a fresh profile resets the session; and the falsifier
+    (`vars={"username":"locked_out_user"}`) failing with
+    `url is 'https://www.saucedemo.com/', recorded '…/inventory.html'`.
+
+    Suites: 947 checks. `flows/saucedemo-login.flow.json` is an example, not a
+    CI test — `--local-only` skips it, because a suite that needs the public
+    internet fails for reasons that are not the code's.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -4894,6 +4979,8 @@ granted in the side panel is refused with the same message the agent gets.
 | A flow fails on a `vars` override, searching for the RECORDED value | Fixed in #54 — `resolve_vars` reached the step's input and not its `expect`, so an override typed `beta-svc` and then asserted `search_page('atlas-svc')`. The recorder stores a variable's value in an expectation as `{{name}}` (exact equality only, never substring), and the runner resolves expectations at the same point it resolves inputs |
 | A recorded flow ships `origin: ""` | Fixed in #54 — the field was declared and nothing ever filled it, because `_FlowRecorder` is constructed without one. Harmless only because `run_flows._origins()` falls back to parsing step urls, i.e. an empty contract covered by a workaround. Taken from the first navigate now |
 | A flow passed once and fails on the next run with a bigger count | Working as designed, and #54 made it say so. A flow that CREATES something changes the count it recorded, so replaying in place leaves the app one row further on each time. Replay against a reset fixture (`run_flows.py --playground` resets before every run), or record a flow that cleans up after itself. The message lists this as one of three causes — the data changing underneath and a genuine regression are the others, and they need different answers |
+| A flow recorded against an SPA fails every replay on one assertion | Fixed in #55 — the recorder captures what the agent observed, which is necessarily after the agent took a moment; the runner asked INSTANTLY. A postcondition now gets a bounded window (6s, polled) to BECOME true. It is not weakened — it must still become true — and a genuine failure still fails, just later. Server-rendered fixtures never show this, which is why a year of playground flows did not |
+| `computer` click reports success and the page gets nothing, with the debugger attached | Measured on saucedemo's /inventory.html (#55) and NOT yet explained: `elementFromPoint` at the clicked coordinate IS the target, dpr 1, no scroll, no zoom, `debug_targets` says attached with one frame — and three raw coordinate clicks produce ZERO events at a capturing document listener, while `Runtime.evaluate` works and `el.click()` drives the page correctly. The LOGIN page of the same origin in the same browser accepts input normally. #12's signature; its `ensureInputReady` fix does not cover this case. Instrument the PAGE before theorising |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---

@@ -30,6 +30,7 @@ THREE RULES THAT ARE NOT NEGOTIABLE, each paid for by someone else's bug:
 from __future__ import annotations
 
 import re
+import asyncio
 import time
 import uuid
 from typing import Any, Callable, Optional
@@ -201,8 +202,41 @@ class Run:
         })
 
     # ------------------------------------------------------------------
+    # How long a POSTCONDITION may take to become true, and how often it is
+    # re-asked. Not a settle delay: a check that holds immediately costs one
+    # evaluation and no wait at all.
+    SETTLE_MS = 6000
+    POLL_MS = 400
+
     async def _check(self, step: Step) -> str:
-        return await self._verify(step.expect or {})
+        """A postcondition gets a bounded window to BECOME true.
+
+        Found by recording against a real app. The recorder captures what the
+        agent observed, which is necessarily after the agent took a moment; the
+        runner asked instantly, so a flow recorded on saucedemo failed every
+        replay with `search_page('Sauce Labs Backpack') found 0, recorded at
+        least 1` -- the login had worked and the SPA simply had not painted the
+        grid yet. The url and row-count checks passed because they are true the
+        moment the document commits; the text search is true a few hundred
+        milliseconds later. Server-rendered fixtures never show this, which is
+        why a year of playground flows did not.
+        
+        THIS DOES NOT WEAKEN THE ASSERTION. It must still become true, and
+        within a bound; what changes is that "not yet" stops being reported as
+        "not at all". Every retrying test runner works this way (Playwright's
+        auto-waiting assertions, Cypress's retry-ability) for the same reason.
+        The falsifier is unaffected -- a login that genuinely failed never
+        reaches the recorded url, so it still fails, just later.
+        """
+        exp = step.expect or {}
+        if not exp:
+            return ""
+        deadline = time.time() + self.SETTLE_MS / 1000.0
+        while True:
+            bad = await self._verify(exp)
+            if not bad or time.time() >= deadline:
+                return bad
+            await asyncio.sleep(self.POLL_MS / 1000.0)
 
     async def _verify(self, exp: dict) -> str:
         """Every assertion, live. Returns '' when they all hold.
