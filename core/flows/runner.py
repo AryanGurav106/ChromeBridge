@@ -210,7 +210,16 @@ class Run:
         Used for BOTH the flow's precondition and each step's postcondition:
         the same declared checks, asked at two different moments. Two copies
         would drift and each would be exercised by only half the tests (#21).
+
+        VARIABLES ARE RESOLVED HERE TOO, not only in the inputs. An assertion
+        that kept the recorded literal while the input took an override is a
+        flow that types one thing and checks for another -- which is how
+        `run_flow(vars={"project_name": "beta-svc"})` failed on the very flow
+        that feature exists for. Resolved at the same point and in the same
+        order as the input (variables, then the live call), so there is one
+        rule rather than two.
         """
+        exp, _unknown = resolve_vars(exp or {}, self.vars)
         if "url" in exp:
             res = await self.call("get_url", {"tabId": self.tab_id})
             m = re.search(r'"url"\s*:\s*"([^"]+)"', str(res))

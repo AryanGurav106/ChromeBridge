@@ -1,9 +1,15 @@
 {
   "schema": 1,
   "name": "acme-create-project",
-  "origin": "",
-  "recorded_at": "2026-10-10T22:38:11",
+  "origin": "http://127.0.0.1:8787",
+  "recorded_at": "2026-10-11T02:19:02",
   "viewport": null,
+  "vars": {
+    "work_email": "ada@acme.test",
+    "project_name": "atlas-svc",
+    "region": "eu-west-1",
+    "plan": "Team"
+  },
   "steps": [
     {
       "name": "navigate",
@@ -17,7 +23,7 @@
       "input": {
         "fields": [
           {
-            "value": "ada@acme.test"
+            "value": "{{work_email}}"
           },
           {
             "value": "${CHROMEBRIDGE_SECRET:CB_SECRET_ACME_CREATE_PROJECT_PASSWORD}"
@@ -83,7 +89,7 @@
       },
       "expect": {
         "query": {
-          "selector": "tbody tr",
+          "selector": "table tbody tr",
           "count": 4
         }
       },
@@ -121,13 +127,13 @@
       "input": {
         "fields": [
           {
-            "value": "echo-gateway"
+            "value": "{{project_name}}"
           },
           {
-            "value": "ap-south-1"
+            "value": "{{region}}"
           },
           {
-            "value": "Team"
+            "value": "{{plan}}"
           }
         ],
         "submit": true
@@ -208,11 +214,11 @@
       },
       "expect": {
         "query": {
-          "selector": "tbody tr",
+          "selector": "table tbody tr",
           "count": 5
         },
         "search": {
-          "pattern": "echo-gateway",
+          "pattern": "{{project_name}}",
           "min": 1,
           "observed": 1
         }

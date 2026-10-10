@@ -221,10 +221,60 @@ class Recorder:
                 on_fail="ask",
             ))
 
+        # AN ASSERTION MUST FOLLOW THE VARIABLE ITS INPUT USES.
+        #
+        # `_var` parameterises the typed VALUE, and `_checks` records what was
+        # OBSERVED -- and until now nothing connected them, so a flow recorded
+        # creating "atlas-svc" asserted `search_page("atlas-svc")` forever.
+        # Measured: run_flow(vars={"project_name": "beta-svc"}) typed beta-svc
+        # and then failed with `search_page('atlas-svc') found 0, recorded at
+        # least 1`. That is the headline use of the feature -- "running the
+        # flow with a different project name is a run_flow argument instead of
+        # a re-record" -- failing on its own example.
+        #
+        # EXACT EQUALITY ONLY, never substring. Replacing every occurrence of a
+        # short value like "Team" inside unrelated prose or a CSS selector is a
+        # guess, and the rule #27/#28 settled on is the one that cannot be
+        # wrong. The cost is stated rather than hidden: a pattern that merely
+        # CONTAINS the value (`search_page("Created atlas-svc")`) keeps the
+        # literal and still needs a re-record.
+        def _paramize(obj):
+            if isinstance(obj, str):
+                for nm, val in variables.items():
+                    if isinstance(val, str) and val and obj == val:
+                        return "{{" + nm + "}}"
+                return obj
+            if isinstance(obj, dict):
+                return {k: _paramize(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_paramize(v) for v in obj]
+            return obj
+
+        for st in kept:
+            if st.expect:
+                st.expect = _paramize(st.expect)
+        _require = _paramize(self._require_before(live))
+
+        # THE ORIGIN THE FLOW ACTS ON, which was a declared field that nothing
+        # ever filled: `_FlowRecorder(name, entries_fn)` is constructed without
+        # one, so every flow ever recorded shipped `origin: ""`. Harmless only
+        # because run_flows._origins() falls back to parsing step urls -- i.e. a
+        # field whose emptiness was covered by a workaround, which is how a
+        # contract rots quietly (#30's `delta` and C12). Taken from the first
+        # navigate, which is the step that decides where the flow runs.
+        if not self.origin:
+            for r in live:
+                u = (r.get("input") or {}).get("url")
+                if isinstance(u, str):
+                    m = re.match(r"^(https?://[^/]+)", u)
+                    if m:
+                        self.origin = m.group(1)
+                        break
+
         flow = Flow(
             name=self.name, origin=self.origin,
             recorded_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
-            vars=variables, require=self._require_before(live),
+            vars=variables, require=_require,
             steps=kept,
         )
         report = {

@@ -546,6 +546,53 @@ async def record_and_replay():
           "password" not in " ".join(lf.vars) and lf.vars.get("work_email"),
           str(lf.vars))
 
+    # ---- FV6: AN ASSERTION MUST FOLLOW THE VARIABLE ITS INPUT USES.
+    #
+    # `_var` parameterised the typed VALUE and `_checks` recorded what was
+    # OBSERVED, and nothing connected them -- so a flow recorded creating
+    # "echo-gateway" asserted search_page("echo-gateway") forever. Measured
+    # live before this existed: run_flow(vars={"project_name": "beta-svc"})
+    # typed beta-svc and then failed with `search_page('echo-gateway') found 0,
+    # recorded at least 1`, i.e. the headline use of the feature failing on its
+    # own example. A flow that types one thing and checks for another is worse
+    # than one with no assertion, because it reports red on a correct run.
+    fbv5 = FakeBridge(fbv.entries)
+    rv5 = Recorder("mk2", fbv5.entries_fn)
+    vi5 = {"fields": [{"ref": "ref_70", "value": "echo-gateway"}],
+           "submit": True, "submit_ref": "ref_71", "tabId": 1}
+    vt5 = await rv5.before("fill_form", vi5)
+    rv5.after("fill_form", vi5, "Filled 1/1", vt5)
+    # The observation the agent makes next IS the postcondition (#49).
+    si5 = {"pattern": "echo-gateway", "tabId": 1}
+    rv5.after("search_page", si5, '1 match(es) for "echo-gateway":\n  <td> x', {})
+    qi5 = {"selector": "tbody tr", "tabId": 1}
+    rv5.after("query_elements", qi5, "5 element(s) match 'tbody tr':", {})
+    vf5, _ = rv5.compile()
+    exp5 = (vf5.steps[0].expect or {})
+    check("FV6 an expectation whose value IS a variable is stored as the "
+          "variable, not the literal",
+          (exp5.get("search") or {}).get("pattern") == "{{project_name}}",
+          json.dumps(exp5, ensure_ascii=False))
+    # EXACT EQUALITY, NEVER SUBSTRING. Replacing every occurrence of a short
+    # value inside a CSS selector or unrelated prose is a guess, and #27/#28's
+    # rule is to prefer the one that cannot be wrong.
+    check("FV6b CONTROL: a value that is not a variable is left alone — the "
+          "selector keeps its literal",
+          (exp5.get("query") or {}).get("selector") == "tbody tr",
+          json.dumps(exp5, ensure_ascii=False))
+
+    # AND THE RESOLUTION HALF. Storing the placeholder is useless if the runner
+    # checks for the placeholder text; this is the end the live failure was at.
+    fbv6 = FakeBridge(fbv.entries)
+    fbv6.search_result = '1 match(es) for "beta-svc":\n  <td> x'
+    fbv6.query_result = "5 element(s) match 'tbody tr':"
+    rr6 = await start(vf5, 1, fbv6.call, fbv6.entries_fn,
+                      overrides={"project_name": "beta-svc"})
+    asked = [i.get("pattern") for t, i in fbv6.calls if t == "search_page"]
+    check("FV6c an override changes what the ASSERTION looks for, not only "
+          "what is typed",
+          asked == ["beta-svc"], f"search_page called with {asked}")
+
     # ---- FP: preconditions — the state the flow starts from ---------------
     fbp = FakeBridge([E(80, "button", name="New project")])
     rp = Recorder("pre", fbp.entries_fn)

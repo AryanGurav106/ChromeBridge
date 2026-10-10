@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 941 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 944 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 941 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 944 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -4719,6 +4719,85 @@ granted in the side panel is refused with the same message the agent gets.
     differ carry nothing — a discriminator that always fires is the noise #15
     priced).
 
+54. **A STATUS CHECK ON THE FLOW FEATURE, AND THE SHIPPED EXAMPLE WAS TESTING
+    THE HALF THAT EXISTED WHEN IT WAS MADE.** Asked where the feature stood,
+    and answered it by running it rather than reciting it (#25's rule applied
+    to a feature instead of a corpus). The code was in better shape than the
+    artefacts, and running it found three things reading never would have.
+
+    **WHAT WAS ALREADY TRUE, verified rather than claimed:** 31 tools over the
+    wire with `record_flow`/`run_flow` present, 74/74 flow checks, and
+    `run_flows.py --playground --local-only` green end to end through a real
+    Chrome, the real extension, the real bridge and the real MCP tools.
+
+    **BOTH SHIPPED FLOWS PREDATED #50.** Recorded 2026-10-10, before variables
+    and preconditions existed, so both carried `vars: []` and `require: null`
+    — the CI test exercised the feature as it was two entries earlier. Nothing
+    was broken; the evidence was simply stale, which is the artefact version of
+    the "listed from reading rather than running" failure #25 names.
+
+    **RE-RECORDING IT FOUND THE REAL DEFECT, and it is in the headline use.**
+    `_var` parameterises the typed VALUE and `_checks` records what was
+    OBSERVED, and **nothing connected them**: `resolve_vars` was applied to a
+    step's `input` and never to its `expect`. Measured live:
+    `run_flow(vars={"project_name": "beta-svc"})` typed beta-svc and then
+    failed with `search_page('atlas-svc') found 0, recorded at least 1`. #50's
+    own sentence — "running the same flow with a different project name is a
+    `run_flow` argument rather than a re-record" — failing on its own example.
+    A flow that types one thing and checks for another is worse than one with
+    no assertion, because it reports red on a correct run. Fixed at both ends:
+    the recorder stores `{{name}}` in an expectation whose value IS a
+    variable, and `_verify` resolves expectations where it already resolved
+    inputs. **EXACT EQUALITY, NEVER SUBSTRING** — replacing every occurrence of
+    a short value like `Team` inside a CSS selector or unrelated prose is a
+    guess, and #27/#28's rule is the one that cannot be wrong. The cost is
+    stated rather than hidden: `search_page("Created atlas-svc")` keeps the
+    literal and still needs a re-record.
+
+    **AND MY FIRST TWO RE-RECORDINGS WERE BOTH WORSE THAN WHAT THEY REPLACED.**
+    The first recorded nothing — "no state-changing step survived the compile"
+    — because the recorder wraps the REGISTRY (`_tool_manager._tools[n].fn` and
+    `_BATCHABLE`) and my harness called the module globals, which are the
+    unwrapped originals. A real agent arrives through MCP dispatch and cannot
+    hit this. The second recorded a flow that **could not fail**: it asserted 4
+    table rows before the create and 4 after, because the modal's Region
+    combobox and Plan select are `(required)`/`(unselected)` and filling only
+    the name submitted an invalid form. The listing said so on every row and I
+    had not read it. Both were caught by printing what the run actually
+    observed instead of trusting that it had worked — and the second is exactly
+    the "a weak check is worse than none" the recorder's own docstring warns
+    about, produced by the person who wrote it.
+
+    **A COUNT POSTCONDITION IS ONLY AS REPRODUCIBLE AS THE STARTING STATE.** A
+    third recording shipped `count: 6` because my earlier runs had left rows
+    behind; `run_flows --playground` resets first, so the committed numbers
+    have to be recorded against a reset fixture or CI fails on arithmetic that
+    was true once. Re-recorded after `/api/reset`: 4 → 5.
+
+    **`origin` WAS A DECLARED FIELD NOTHING EVER FILLED.** `_FlowRecorder` is
+    constructed without one, so every flow ever recorded shipped `origin: ""`.
+    It was harmless only because `run_flows._origins()` falls back to parsing
+    step urls — an empty contract covered by a workaround, which is how
+    `delta` stayed dead for its whole life (#30). Taken from the first navigate.
+
+    **AND A NAME THAT MISLED IN CI OUTPUT.** `playground-idempotent` targets
+    **shadcn/ui's** playground, not `tools/saas_playground.py`, so every CI run
+    printed `SKIP playground-idempotent needs https://ui.shadcn.com` — which
+    reads as the local fixture being unreachable. Renamed
+    `shadcn-playground-idempotent`.
+
+    **VERIFIED IN ALL THREE DIRECTIONS**, because an exit code means nothing
+    until it has been seen to go both ways (#50): the CI flow passes (4/4,
+    4.46s); an override of TWO variables passes, where it failed before this;
+    and it still FAILS where it should — chaos `rename` stops it at step 1
+    naming the target it cannot resolve, and chaos `insert` trips the
+    postcondition itself with `counted 6, recorded exactly 4`.
+
+    Suites: 944 checks. New — FV6 (an expectation whose value is a variable is
+    stored as the variable), FV6b (the control that a non-variable literal is
+    left alone — exact equality, not substring), FV6c (an override changes what
+    the ASSERTION looks for, which is the end the live failure was at).
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -4789,6 +4868,8 @@ granted in the side panel is refused with the same message the agent gets.
 | A batch step says `waited Nms for the navigation step N-1 started` | By design since #51 — that step acted on the page and started a navigation, and the next step would otherwise have read the document being replaced (#47/#48, three sightings). The batch asks `await_navigation`, a Map lookup in the service worker fed by Chrome's own main-frame events, so a settled tab costs 0.80ms and prints nothing. SETTLED means DOMContentLoaded, not `complete` — waiting on subresources is the trigger #43 deleted. A wait that TIMED OUT says so, and that the read may belong to either page |
 | Every batch step after the first is slow by ~5s | A tab is stuck marked navigating — a commit whose `onDOMContentLoaded` never arrived. A timed-out wait drops the state so it self-heals after one step, and a navigation that neither commits nor errors expires after 15s. If it persists, check that the SETTLE listeners (`onDOMContentLoaded`/`onErrorOccurred`) registered: they sit in their own `try`, BEFORE the start listeners, because the half that pins tabs busy is the dangerous half to have alone |
 | Two `search_page` hits look identical | Fixed in #53 — they ARE different elements with the same text, and nothing printed said so. A colliding group now carries the cheapest handle that separates it: the page's own `id` when one is declared and VERIFIED unique (usable as `css_scope`), otherwise `[#N in document order]`. Rows that already differ, and single hits, carry nothing. With refs present there is no collision — this is specifically a FIRST search, before `read_page` has stamped mmids |
+| A flow fails on a `vars` override, searching for the RECORDED value | Fixed in #54 — `resolve_vars` reached the step's input and not its `expect`, so an override typed `beta-svc` and then asserted `search_page('atlas-svc')`. The recorder stores a variable's value in an expectation as `{{name}}` (exact equality only, never substring), and the runner resolves expectations at the same point it resolves inputs |
+| A recorded flow ships `origin: ""` | Fixed in #54 — the field was declared and nothing ever filled it, because `_FlowRecorder` is constructed without one. Harmless only because `run_flows._origins()` falls back to parsing step urls, i.e. an empty contract covered by a workaround. Taken from the first navigate now |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---

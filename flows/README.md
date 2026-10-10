@@ -5,10 +5,24 @@
 
 Flows for a real app belong in git next to the code they test — they are tests.
 
-`playground-idempotent.flow.json` is the one worked example, kept because it is
+`shadcn-playground-idempotent.flow.json` is a worked example, kept because it is
 the live verification referenced in #49, and it is **an example, not a CI test**:
 it drives a third-party page (shadcn/ui's playground) that will drift, and
-nothing in `run_tests.py` runs it.
+nothing in `run_tests.py` runs it. It was called `playground-idempotent` until
+#54 — a name that reads as *our* playground while targeting someone else's, so
+CI's own `SKIP playground-idempotent needs https://ui.shadcn.com` looked like
+the local fixture was unreachable.
+
+`acme-create-project.flow.json` is the CI test: it runs end to end against
+`tools/saas_playground.py` on every commit via
+`python tools/run_flows.py --playground --local-only`. It logs in, creates a
+project, and asserts the row count and a text search afterwards. It carries
+four variables (`work_email`, `project_name`, `region`, `plan`), so
+`run_flow(vars={"project_name": "beta-svc"})` reruns it with different input —
+and since #54 the ASSERTIONS follow those variables too, which they did not
+before: the flow used to type `beta-svc` and then search for the recorded
+`atlas-svc`. Its password is never in the file; export
+`CB_SECRET_ACME_CREATE_PROJECT_PASSWORD` before replaying.
 
 ## The one thing to get right when recording
 
