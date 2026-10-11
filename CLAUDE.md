@@ -6175,6 +6175,30 @@ granted in the side panel is refused with the same message the agent gets.
     `sw_info` reported **no** stale server files, which is #61's detector
     saying the running process is the code on disk rather than staying silent.
 
+    **AND I REPORTED 60 COMMITS CARRYING ATTRIBUTION TRAILERS WHEN THE
+    PUBLISHED HISTORY HAD NONE.** The count came from `git log --all`, which
+    walks LOCAL-ONLY refs, and was then described as the repo's history. Both
+    numbers re-derived against the right population: `git log master` and
+    `git log origin/master` each return **0** over 134 commits, and the remote
+    holds exactly one ref. The 118 trailer lines lived in a branch and a tag
+    left by an earlier strip, neither ever pushed — so nothing on GitHub was
+    ever affected and **no force-push was needed**. #16's rule, on a claim that
+    damned the project rather than flattering it, which is the direction that
+    gets believed too readily.
+    **Removing them then needed a THIRD ref nobody enumerates.** Deleting the
+    branch and the tag, expiring every reflog and running `gc --prune=now` left
+    `git log --all` still reporting 118 — because `git filter-branch` writes
+    `refs/original/refs/heads/master` as its own undo, and
+    `for-each-ref refs/heads refs/tags refs/remotes` does not reach that
+    namespace while `--all` does. Enumerating three namespaces and calling it
+    "every ref" is the same count-is-not-an-inventory shape as #64's tool swap
+    that kept the total at 31 and #66's auditor scanning a file that does not
+    exist — third instance, in three different tools. The backup was proven
+    redundant BEFORE deleting it, by tree rather than by subject: its tip tree
+    is byte-identical to master's `5feeb2c`, so no content was only there.
+    Final state: 0 trailers anywhere, `c409700` gone from the object store,
+    `git fsck` clean, and master still exactly `origin/master`.
+
     Suites: 1042 checks. New — SV1 (a wired svg is named by its own title;
     FAILS against the pre-change collector), SV1b (a child's title is not the
     drawing's name), SV1c (the icon-button path still resolves it, which passes
