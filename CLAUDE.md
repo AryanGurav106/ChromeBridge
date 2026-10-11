@@ -6153,6 +6153,28 @@ granted in the side panel is refused with the same message the agent gets.
     entry does not retract the heading**, and nothing mechanical catches a
     sentence that is merely out of date.
 
+    **LIVE-VERIFIED ON THE USER'S OWN CHROME after an extension reload**, which
+    #43 made non-optional, and against a controlled probe injected into a
+    GRANTED origin — the same method #55/#56 used, because the shape is rare
+    enough that hunting for a real page carrying it costs more than building
+    one. All four directions:
+    - `find("Sort by date")` -> `ref_553 | svg "Sort by date"`. Pre-fix that row
+      was `ref_553 | svg`, no identity at all.
+    - `find("one bar of the chart")` -> **NO CONFIDENT MATCH**. A `<title>` on a
+      `<g>` CHILD is not hoisted onto the drawing (SV1b, live).
+    - `find("Delete item")` -> the `<button>` AND the svg nested under it. The
+      long-working icon-button path is untouched (SV1c, live).
+    - `search_page("Sort by date")` -> **No match**, which is the honest residue
+      now written into the README: an svg `<title>` is an accessible name and a
+      tooltip, not rendered text, so the text tools cannot see it and
+      `read_page`/`find` can.
+    Three other things confirmed themselves in the same run, unasked: the
+    readiness banner carried #65's resource types (`2 network request(s) in
+    flight (2 xmlhttprequest)`), the batch pre-flight refused a tabId-less
+    `query_elements` with `NOTHING in this batch ran` (#32/#46), and
+    `sw_info` reported **no** stale server files, which is #61's detector
+    saying the running process is the code on disk rather than staying silent.
+
     Suites: 1042 checks. New — SV1 (a wired svg is named by its own title;
     FAILS against the pre-change collector), SV1b (a child's title is not the
     drawing's name), SV1c (the icon-button path still resolves it, which passes
