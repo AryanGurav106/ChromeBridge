@@ -260,7 +260,7 @@ class Unresolved(Exception):
 
 
 def resolve(target: dict, entries: list[dict],
-            notes: Optional[list] = None) -> str:
+            notes: Optional[list] = None, allow_alt: bool = True) -> str:
     """Descriptor -> the ONE mmid it names, or raise Unresolved.
 
     The rule, and every branch of it is load-bearing:
@@ -282,11 +282,17 @@ def resolve(target: dict, entries: list[dict],
     whenever that fallback is what resolved the step, because a run that
     matched on a different key than it recorded is not quite a clean pass and
     the caller has to be able to say so.
+
+    `allow_alt=False` asks the RECORDED descriptor alone. The runner uses it
+    for every attempt inside its settle window, because a name that has not
+    RENDERED yet is not a name that CHANGED -- offering the destination early
+    collapses the two things that window exists to tell apart (#59), and the
+    patch it then proposes is a mid-render reading.
     """
     try:
         return _resolve_recorded(target, entries)
     except Unresolved as exc:
-        alt = target.get("alt")
+        alt = target.get("alt") if allow_alt else None
         if not alt:
             raise
         pool = [e for e in entries if _targetable(e)]

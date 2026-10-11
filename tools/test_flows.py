@@ -775,6 +775,58 @@ async def record_and_replay():
           rnev["status"] in (NEEDS, FAILED) and "no element" in str(rnev["reason"]),
           f"status={rnev['status']} reason={str(rnev['reason'])[:80]}")
 
+    # ---- FR14: THE WINDOW BELONGS TO THE RECORDED DESCRIPTOR -------------
+    #
+    # Found on the first REAL-APP run of the href fallback, which is the only
+    # place it could have been found. The step resolved on the destination in
+    # 3.87s and reported the name had moved from 'Investors 43' to
+    # 'Investors' -- and that is not a drift, it is the count badge not having
+    # rendered yet. The proposed patch would have written the MID-RENDER name
+    # into the flow. "Not there yet" and "the label changed" are exactly the
+    # two things FR13's window exists to separate, and offering the alternate
+    # on the first attempt collapsed them again one entry later.
+    class BadgeBridge(FakeBridge):
+        """The name arrives late; the href is there from the start, like an SPA."""
+
+        def __init__(self, settles_on=3, final_name="Investors 43"):
+            self.settles_on, self.final_name = settles_on, final_name
+            super().__init__([])
+            self.fetches = 0
+
+        async def entries_fn(self, tabId=None):
+            self.fetches += 1
+            nm = self.final_name if self.fetches >= self.settles_on else "Investors"
+            return [E(80, "a", name=nm, href="/pipeline/investors"),
+                    E(81, "a", name="Contacts", href="/pipeline/contacts")]
+
+    rb = Recorder("badge", BadgeBridge(settles_on=1).entries_fn)
+    bi = {"ref": "ref_80", "tabId": 1}
+    bt = await rb.before("computer", bi)
+    rb.after("computer", bi, "clicked", bt)
+    fbadge, _ = rb.compile()
+    assert (list(fbadge.steps[0].targets.values())[0]).get("alt"), "fixture lost the alt"
+
+    late = BadgeBridge(settles_on=3)
+    rlate = await start(fbadge, 1, late.call, late.entries_fn)
+    check("FR14 a name that has not RENDERED yet is waited for, not routed "
+          "around — the recorded descriptor gets its whole window before the "
+          "declared destination is offered",
+          rlate["status"] == PASSED and not rlate.get("drifted")
+          and late.fetches >= 3,
+          f"status={rlate['status']} drifted={rlate.get('drifted')} "
+          f"fetches={late.fetches}")
+
+    # THE CONTROL, and without it "never use the alternate" would pass FR14
+    # while deleting the feature. A name that never comes back IS a drift, and
+    # there the destination must carry the step -- and say so.
+    gone = BadgeBridge(settles_on=10_000, final_name="never")
+    rgone = await start(fbadge, 1, gone.call, gone.entries_fn)
+    check("FR14b CONTROL: a name that never comes back IS a drift, so the "
+          "destination carries the step and the run reports it",
+          rgone["status"] == PASSED and len(rgone.get("drifted") or []) == 1
+          and (rgone["drifted"][0].get("alt") or {}).get("href") == "/pipeline/investors",
+          f"status={rgone['status']} drifted={rgone.get('drifted')}")
+
     # ---- FS6: THE SETTLE WINDOW IS MEASURED, NOT CHOSEN ------------------
     #
     # The shipped window was a flat 6s. On a real app whose create ->

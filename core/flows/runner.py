@@ -152,7 +152,18 @@ class Run:
             unresolved = None
             while True:
                 try:
-                    inp, healed = await self._bind(step, binding)
+                    # THE RECORDED DESCRIPTOR GETS ITS WHOLE WINDOW FIRST, and
+                    # the declared destination is not offered inside it. Found
+                    # live on the first real-app run of the fallback: the step
+                    # resolved on href in 3.87s and reported the name had moved
+                    # from 'Investors 43' to 'Investors' -- which is not a drift
+                    # at all, it is the badge not having rendered yet, and the
+                    # proposed patch would have written the MID-RENDER name into
+                    # the flow. "Not there yet" and "the label changed" are
+                    # exactly the two things #59 added this window to tell
+                    # apart, and offering the alternate on the first attempt
+                    # collapsed them again one entry later.
+                    inp, healed = await self._bind(step, binding, allow_alt=False)
                     unresolved = None
                     break
                 except Unresolved as exc:
@@ -160,6 +171,14 @@ class Run:
                     if time.time() >= deadline:
                         break
                     await asyncio.sleep(self.POLL_MS / 1000.0)
+            if unresolved is not None:
+                # The window is spent and the recorded descriptor never matched.
+                # NOW the name really has changed, so ask the destination.
+                try:
+                    inp, healed = await self._bind(step, binding, allow_alt=True)
+                    unresolved = None
+                except Unresolved:
+                    pass
             if unresolved is not None:
                 why = unresolved.reason + self._surface_note() \
                     + await self._viewport_note()
@@ -291,7 +310,8 @@ class Run:
                 f"and re-run before concluding the control is gone.")
 
     # ------------------------------------------------------------------
-    async def _bind(self, step: Step, binding: Optional[str]) -> tuple:
+    async def _bind(self, step: Step, binding: Optional[str],
+                    allow_alt: bool = True) -> tuple:
         if not step.targets:
             return dict(step.input), False
         entries = await self.entries_fn(self.cur_tab)
@@ -306,7 +326,8 @@ class Run:
                 binding = None
             else:
                 notes: list = []
-                ref = resolve(target, entries, notes)
+                ref = resolve(target, entries, notes if allow_alt else None,
+                              allow_alt=allow_alt)
                 for n in notes:
                     self.drifted.append({"step": self.i, "name": step.name,
                                          "path": path, "via": n["via"],

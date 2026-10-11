@@ -3847,7 +3847,9 @@ def _flow_report(res: dict) -> str:
         out.append(f'  {len(drifted)} step(s) matched on their declared DESTINATION '
                    f'because the recorded name no longer matches. The run was still '
                    f'deterministic — nothing was guessed and nothing was asked — but '
-                   f"the page's labels have moved:")
+                   f"the page's labels have moved, and each such step spent its whole "
+                   f"settle window waiting for the recorded name first (applying the "
+                   f"patch below removes that wait):")
         for d in drifted:
             was = (d.get("was") or {}).get("name") or "(no name recorded)"
             out.append(f'    step {d["step"]} {d["name"]}: name {was!r} is gone; '

@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 990 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 992 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 990 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 992 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5316,6 +5316,23 @@ granted in the side panel is refused with the same message the agent gets.
     the apps this feature actually runs against (internal tools generally do
     ship `data-testid`), not another candidate attribute.
 
+    **AND THE FIRST REAL-APP RUN OF THE FALLBACK FOUND A DEFECT IN IT, which
+    is the only place it could have been found.** The Boxsy step resolved on
+    the destination in 3.87s and reported the name had moved from
+    `'Investors 43'` to `'Investors'` -- which is not a drift at all. It is the
+    count badge not having RENDERED yet, and the proposed patch would have
+    written the mid-render name into the flow. "Not there yet" and "the label
+    changed" are exactly the two things #59 added the resolve window to tell
+    apart, and offering the alternate on the first attempt collapsed them again
+    one entry later. **The recorded descriptor now gets its WHOLE window before
+    the destination is offered at all.** Cost, stated rather than buried: a step
+    whose name has genuinely drifted spends the full window before the fallback
+    carries it -- measured end to end at 6.58s against 0.4s clean -- which is
+    paid only by a drifted step, and the report now says so and points at the
+    patch that removes it. FR14 fails against the old ordering with the live
+    symptom exactly (one entries fetch, a drift reported on a page that had
+    merely not rendered).
+
     **A pass that matched on a different key is still news**, so it is reported
     separately from a rebind -- no decision was asked for and nothing was
     guessed, but the page's labels moved and the run says which. It also feeds
@@ -5398,7 +5415,10 @@ granted in the side panel is refused with the same message the agent gets.
     failure this can have is binding to something plausible -- plus the
     DEGRADATION pair: the extension is installed by hand, so a stack that
     supplies no `href` at all is the normal skew, and there the only acceptable
-    answer is the behaviour that shipped before the alternate existed). Probes:
+    answer is the behaviour that shipped before the alternate existed), and
+    FR14/FR14b (the window belongs to the recorded descriptor; the control is
+    that a name which never comes back IS a drift and must still be carried,
+    or "never use the alternate" would pass FR14 while deleting the feature). Probes:
     `tools/audit_href_rung.py`; `audit_flow_resolve.py` grew the
     `counter-in-name` mutation and a same-pass ablation arm. AN7/AN7b/AN7c in
     `test_ops.js` for `get_url` (the settled-tab and does-not-wait controls);
@@ -5487,6 +5507,7 @@ granted in the side panel is refused with the same message the agent gets.
 | A flow fails at step 1 on an SPA with "no element matches" | Fixed in #59 — target resolution had no settle window, so a control that had not RENDERED yet was reported exactly like one that does not exist. It now retries on the same bound as a postcondition, re-fetching entries each attempt. If it still fails after the window, the control really is absent — or its NAME is data-dependent, which is the other half of #59 |
 | A flow's descriptor stops matching after data changes | Its identity is data-dependent: a nav tab's accessible name is `"Investors 38"` because AccName 2F concatenates the badge, so adding a record makes it `"Investors 39"`. Since #61 a LINK recovers by itself — the step resolves on its declared destination and the run says `name 'X' is gone — matched href='/y'`. A BUTTON with a badge does not: nothing else is declared, so it still pauses and you rebind with `run_flow(resume_id=…, bind="ref_N")`, which proposes a patch and never applies it |
 | A flow step reports `matched href=…` | By design since #61 — the recorded name no longer matches and the step resolved on the link's declared destination instead. Deterministic, nothing guessed and nothing asked, but NOT a clean pass: the page's labels moved, and the proposed patch says to what. Recorded only where the href was unique at record time, and only for `<a>`/`<area>` |
+| A flow step that reports `matched href=…` is also SLOW | By design since #61 — the recorded descriptor gets its whole settle window first, because a name that has not RENDERED yet is not a name that CHANGED (#59), and routing around it early proposes a mid-render patch. Measured at 6.58s against 0.4s clean. Only a genuinely drifted step pays it; applying the proposed patch removes it |
 | A recorded flow has no `alt` key on a link target | The MCP server was loaded before #61. It reads `descriptor.py` and `core/flows/*` at CONNECT time, and the old one answers normally while writing a slightly older format — `/mcp` reconnect, then CHECK THE SAVED FILE rather than the live result |
 | A flow says a step FAILED but the action plainly worked | Fixed in #60 — the postcondition window was a flat 6s and a real app's create -> table-refresh took longer, so the flow reported FAILED for a record that HAD been created. Each step now carries `settle_ms`, measured at record time from the timestamps the recorder already kept, and the replay allows the default PLUS that. A flow recorded before #60 carries 0 and is unchanged |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
