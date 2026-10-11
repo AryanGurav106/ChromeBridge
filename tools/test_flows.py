@@ -1163,6 +1163,20 @@ async def record_and_replay():
           ((flast.steps[0].expect or {}).get("query") or {}).get("count") == 5,
           json.dumps(flast.steps[0].expect))
 
+    # FE5 -- a big settle margin is NAMED, because it is the agent's own latency
+    # and nothing said so. 22,550ms was recorded for a CSS fade-in; every replay
+    # of that step then waits 22.5s before reporting a genuine failure.
+    _srcm = (ROOT / "mcp_server.py").read_text(encoding="utf-8")
+    check("FE5 the stop message explains a large settle margin instead of leaving "
+          "the agent's own turn baked in silently",
+          "settle margin" in _srcm and "YOUR OWN calls" in _srcm,
+          "named" if "settle margin" in _srcm else "NOT MENTIONED")
+    check("FE5b form_input says how to CLEAR a field, since an empty string "
+          "cannot reach it through some clients",
+          "TO CLEAR A FIELD" in _srcm
+          and "fill_form" in _srcm.split("TO CLEAR A FIELD")[1][:240],
+          "documented" if "TO CLEAR A FIELD" in _srcm else "NOT DOCUMENTED")
+
     # ---- FS6: THE SETTLE WINDOW IS MEASURED, NOT CHOSEN ------------------
     #
     # The shipped window was a flat 6s. On a real app whose create ->

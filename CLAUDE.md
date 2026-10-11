@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 1022 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 1024 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1022 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1024 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5770,7 +5770,15 @@ granted in the side panel is refused with the same message the agent gets.
     committed its document and is still painting rows is outside what it
     measures. Neither is fixed and neither should be guessed at.
 
-    Suites: 1022 checks. New -- FE1d/FE1e (an unwitnessed absence is dropped
+    **TWO THINGS I SAID I WOULD DO AND HAD NOT**, found by asking "is anything
+    left" and grepping rather than recalling: the stop message never mentioned
+    `settle_ms` (0 hits) though R2-D2 ends "what it CAN do is say so", and
+    `form_input` never documented how to clear a field (0 hits) though R2-D5
+    ends "the useful response is to say so in the tool description". Both now
+    exist and are pinned by FE5/FE5b. A commitment in a findings file is not a
+    change in the code.
+
+    Suites: 1024 checks. New -- FE1d/FE1e (an unwitnessed absence is dropped
     and named), FW1b/FW4 (all-vs-some), plus the attrs/flags round trip through
     FE2. C24/C24b. `tools/bench_flows/ROUND2.md` carries the per-flow
     before/after.
@@ -5864,6 +5872,8 @@ granted in the side panel is refused with the same message the agent gets.
 | `query_elements(attributes=["value"])` now returns typed text | Fixed in #63 — it read the ATTRIBUTE, which is the authored default, while `value`/`checked`/`selected`/`indeterminate` are the four IDL attributes whose PROPERTY is the live state. A field holding typed text used to print nothing while a radio printed fine |
 | `navigate` stopped claiming a REDIRECT on a non-Latin url | Fixed in #63 — `_same` compared the decoded request against the encoded landing url, so every navigate to a non-ASCII url claimed a redirect that never happened |
 | A flow fails with "reported that it did NOT act" | By design since #62 — the step's tool returned one of our own refusal strings (`*** NOT DELIVERED`, `NAVIGATION DID NOT COMMIT`, `Permission required`, `ChromeBridge is PAUSED`, `did NOT land`). None of those RAISE, so before this the run carried on and either failed later on an unrelated-looking assertion or PASSED outright when the step had no postcondition. The reason quotes the tool verbatim because its message already carries the recovery |
+| `form_input` is rejected with `"value": ,` in the payload | Known since #63/#64 and NOT ours: some MCP clients drop an empty string while serialising top-level arguments, producing malformed JSON before the call leaves the client. The identical value survives NESTED inside another tool's arguments, which is what identifies it. To clear a field use `fill_form([{"ref": …, "value": ""}])` or the same `form_input` inside `browser_batch` |
+| A recorded step carries a multi-second `settle_ms` | Since #64 the stop message names it. The number is the gap between YOUR OWN calls, so whenever a check only changed answer after a model turn (~3.6s, #38) that turn is inside it — 22,550ms was recorded for a CSS fade-in. It is an upper bound the recorder cannot subtract from, because it can only measure between observations. Re-record with the confirming observation in the same batch as the action |
 | A flow file is refused with "declares on_fail=…" | By design since #62 — `on_fail` is `ask` (pause and hand the choice to the agent) or `fail` (stop). `"heal"` was declared from the first commit, never written, never branched on, and silently became `"ask"`; it was deleted rather than implemented, because an automatic rebind means ranking candidates and that is what rule 3 of the runner forbids. Edit the file to a valid value |
 | A flow step reports `matched href=…` | By design since #61 — the recorded name no longer matches and the step resolved on the link's declared destination instead. Deterministic, nothing guessed and nothing asked, but NOT a clean pass: the page's labels moved, and the proposed patch says to what. Recorded only where the href was unique at record time, and only for `<a>`/`<area>` |
 | A flow step that reports `matched href=…` is also SLOW | By design since #61 — the recorded descriptor gets its whole settle window first, because a name that has not RENDERED yet is not a name that CHANGED (#59), and routing around it early proposes a mid-render patch. Measured at 6.58s against 0.4s clean. Only a genuinely drifted step pays it; applying the proposed patch removes it |

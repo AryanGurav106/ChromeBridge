@@ -2697,7 +2697,15 @@ async def form_input(
 ) -> str:
     """Set the value of a form element (text input, textarea, select, ARIA combobox,
     checkbox, radio, rich editor) by ref. Handles Radix/shadcn/HeadlessUI/MUI
-    dropdowns and React controlled inputs correctly."""
+    dropdowns and React controlled inputs correctly.
+
+    TO CLEAR A FIELD, use fill_form([{"ref": ..., "value": ""}]) or put this same
+    call inside browser_batch. An empty string passed to THIS tool directly is
+    dropped by some MCP clients while serialising the arguments, which arrives
+    as malformed JSON ({"ref": "ref_9", "value": , ...}) and is rejected before
+    the call reaches the browser. Measured three times across two sites; the
+    identical value survives when nested inside another tool's argument object,
+    which is what identifies it as the client rather than this schema."""
     b = await _bridge()
     selector = _ref_to_selector(ref)
     text = _as_text(value)
@@ -3904,6 +3912,25 @@ async def record_flow(
                  f'{report["asserted"]} with assertions.',
                  f'  dropped: {report["dropped_errors"]} failed call(s), '
                  f'{report["dropped_observations"]} observation(s) folded in or discarded.']
+        # WHERE A BIG SETTLE MARGIN CAME FROM. `settle_ms` is measured between
+        # the agent's own observations, so it can only ever be an UPPER bound:
+        # whenever a check changed answer across a model turn (~3.6s, #38) that
+        # turn is inside the number. Measured: 22,550ms recorded for a CSS
+        # fade-in of a few hundred milliseconds, which then lets every replay
+        # of that step wait 22.5s before reporting a genuine failure. The
+        # recorder cannot subtract what it cannot see, so it says so -- the
+        # same answer as naming the unasserted steps rather than only counting
+        # them.
+        _slow = [(i, st) for i, st in enumerate(flow.steps) if (st.settle_ms or 0) > 8000]
+        for _i, _st in _slow:
+            lines.append(
+                f'  NOTE: step {_i} ({_st.name}) carries a '
+                f'{(_st.settle_ms or 0) / 1000:.1f}s settle margin. That is the gap '
+                f'between YOUR OWN calls, not a measurement of the app — if a check '
+                f'only changed answer after you took a turn, your turn is inside this '
+                f'number. Every replay of that step will wait that long before '
+                f'reporting a failure. Re-record with the confirming observation in '
+                f'the same batch as the action to shrink it.')
         for _n2, _kind, _which in (report.get("unwitnessed_absence") or []):
             lines.append(
                 f'  NOT recorded: step {_n2}\'s {_kind} for {_which!r} found NOTHING, '
