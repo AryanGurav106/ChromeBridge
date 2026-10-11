@@ -6082,6 +6082,16 @@ granted in the side panel is refused with the same message the agent gets.
     "suite" appearing shortly before the count instead, which is the failure
     mode of the check immediately below it, reproduced by its own author.
 
+    **THE FEATURE'S OWN DOC DESCRIBED FOUR FLOWS OF FOURTEEN**, and omitted
+    the repair loop entirely — `record_flow(action="patch")`, the preconditions,
+    `settle_ms` and `--check-only` were all absent from `flows/README.md`, which
+    is the page a reader lands on from the README's "More reading". Its sample
+    output was also INVENTED rather than quoted; the real strings are now pasted
+    from a run. Finding that turned up **two renderers of one sentence**: the
+    CLI printed `is gone — matched href=…` and the MCP tool `is gone; matched
+    href=…` for the same drift fact, so an agent grepping its own context for
+    the phrase would find it under one spelling only (#21, in prose). Aligned.
+
     Suites: 1039 checks. New — SV1 (a wired svg is named by its own title;
     FAILS against the pre-change collector), SV1b (a child's title is not the
     drawing's name), SV1c (the icon-button path still resolves it, which passes

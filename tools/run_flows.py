@@ -365,8 +365,12 @@ async def main() -> int:
                 for d in (res.get("drifted") or []):
                     # A pass that matched on a different key than it recorded is
                     # still a pass, and still news: the page's labels moved.
+                    # SAME SENTENCE AS mcp_server's run_flow renderer. Two
+                    # renderers for one result object had drifted to "; matched"
+                    # and " — matched" (#21: one concept, two spellings), so a
+                    # reader grepping for the phrase found it under one only.
                     print(f"        step {d['step']} {d['name']}: name "
-                          f"{(d.get('was') or {}).get('name')!r} is gone — matched "
+                          f"{(d.get('was') or {}).get('name')!r} is gone; matched "
                           f"href={(d.get('alt') or {}).get('href')!r}")
                 if res["status"] != PASSED:
                     print(f"        {res['reason']}")
