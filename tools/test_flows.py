@@ -277,6 +277,22 @@ def main():
           "matches on the empty string",
           build(nohref[0], nohref).get("alt") is None)
 
+    # The extension is installed BY HAND, so a version skew between it and the
+    # server is the normal condition rather than an edge case (that is why the
+    # handshake carries PROTOCOL_VERSION at all). `href` only exists at
+    # detail="brief", so a flow recorded with an alternate can be replayed by a
+    # stack that does not supply one -- and the only acceptable answer there is
+    # the behaviour that shipped before the alternate existed.
+    stripped = [{k: v for k, v in e.items() if k != "href"} for e in later]
+    check("FA9 DEGRADATION: entries carrying no href at all fall back to the "
+          "recorded descriptor and refuse exactly as they did before the "
+          "alternate existed — never to a match on the empty string",
+          _raises(lambda: resolve(t, stripped, []), "no element on the page matches"))
+    check("FA9b ...and the same stripped entries still resolve a step whose "
+          "recorded NAME matches, so the degradation costs nothing else",
+          resolve(t, [{k: v for k, v in e.items() if k != "href"} for e in nav],
+                  []) == "10")
+
     # ---- FD15: the field-name contract -------------------------------------
     # Every check above runs on dicts THIS FILE wrote. If the collector spells
     # a field differently from fields(), all of them stay green and nothing

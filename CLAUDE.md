@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 988 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 990 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 988 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 990 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5392,10 +5392,13 @@ granted in the side panel is refused with the same message the agent gets.
     it says where the tab is GOING as well as where it still is -- and it costs
     a Map lookup.
 
-    Suites: 988 checks. New -- FA1-FA8 (the alternate key, with the
+    Suites: 990 checks. New -- FA1-FA9b (the alternate key, with the
     still-matches, link-gone, two-links-same-destination, shared-href,
-    not-a-link and no-href controls -- six of the eight are controls, because
-    the failure this can have is binding to something plausible). Probes:
+    not-a-link and no-href controls -- most of them are controls, because the
+    failure this can have is binding to something plausible -- plus the
+    DEGRADATION pair: the extension is installed by hand, so a stack that
+    supplies no `href` at all is the normal skew, and there the only acceptable
+    answer is the behaviour that shipped before the alternate existed). Probes:
     `tools/audit_href_rung.py`; `audit_flow_resolve.py` grew the
     `counter-in-name` mutation and a same-pass ablation arm. AN7/AN7b/AN7c in
     `test_ops.js` for `get_url` (the settled-tab and does-not-wait controls);
