@@ -1336,9 +1336,25 @@ async def get_url(
 ) -> str:
     """Get a tab's CURRENT url and title. Use after an action that may have
     navigated (form submit, search, link click) to confirm where you actually
-    ended up — action results report what they did, not where the page went."""
+    ended up — action results report what they did, not where the page went.
+
+    If a navigation is still IN FLIGHT this says so and names the destination,
+    because until the new document commits Chrome still reports the page being
+    left. It does not wait: this is also the op that keeps answering when every
+    page op has hung, which is how a blocked main thread is told from a dead
+    extension."""
     b = await _bridge()
     res = await b.call("get_url", tabId=tabId)
+    d = res if isinstance(res, dict) else {}
+    nv = d.get("navigating") if isinstance(d.get("navigating"), dict) else None
+    if nv:
+        d = {k: v for k, v in d.items() if k != "navigating"}
+        d["note"] = (
+            f"A navigation to {nv.get('to') or '(unknown)'} is IN FLIGHT "
+            f"({nv.get('phase')}). The url and title above belong to the document "
+            f"being REPLACED — Chrome does not update them until the new one "
+            f"commits. Re-ask, or let browser_batch settle it for you.")
+        return json.dumps(d)
     return json.dumps(res)
 
 

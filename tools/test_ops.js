@@ -1339,6 +1339,45 @@ const FIELDS3 = () => ([
       r.ok && r.result.settled === false && r.result.waited_ms >= 30
         && r.result.was === "pending",
       JSON.stringify(r.result || r.error));
+
+    // AN7 -- `get_url` reads the SAME state, and the reason is a live defect.
+    // tab.url and tab.title do not change until the new document COMMITS, so
+    // between a click and that commit get_url answers with the page being left
+    // -- at exactly the moment its own docstring says to call it. Measured
+    // against the fixture under `slow`: 8 clicks, 8 in-flight navigations, 8
+    // answers naming the previous document, nothing saying so.
+    resetState();
+    fire(listeners.navBefore, { tabId: 1, frameId: 0, url: "https://b.test/next" });
+    r = await callOp("get_url", { tabId: 1 });
+    check("AN7 get_url names an IN-FLIGHT navigation, so the url it returns is not "
+      + "mistaken for where the tab ended up",
+      r.ok && r.result && r.result.navigating
+        && r.result.navigating.to === "https://b.test/next"
+        && r.result.navigating.phase === "pending"
+        && typeof r.result.url === "string",
+      JSON.stringify(r.result || r.error));
+
+    // AN7b -- THE CONTROL, and without it "always warn" would pass AN7 while
+    // making the note meaningless (#15: a probe that never stops firing is
+    // indistinguishable from one that is always right).
+    fire(listeners.navDOM, { tabId: 1, frameId: 0 });
+    r = await callOp("get_url", { tabId: 1 });
+    check("AN7b CONTROL: a settled tab carries no such note",
+      r.ok && r.result && r.result.navigating === undefined,
+      JSON.stringify(r.result || r.error));
+
+    // AN7c -- and it must NOT have become a waiting op. get_url is what keeps
+    // answering when every page op has hung, which is how a blocked main thread
+    // is told from a dead extension; a get_url that can block for seconds
+    // destroys that signal.
+    resetState();
+    fire(listeners.navBefore, { tabId: 1, frameId: 0, url: "https://slow.test/" });
+    const _t0 = Date.now();
+    r = await callOp("get_url", { tabId: 1 });
+    check("AN7c CONTROL: it reports and does NOT wait — still instant with a "
+      + "navigation in flight",
+      r.ok && (Date.now() - _t0) < 200, `took ${Date.now() - _t0}ms`);
+    fire(listeners.navDOM, { tabId: 1, frameId: 0 });
   });
 
   await test("navigate reports the DECLARED title, never a rendering of the url", async () => {

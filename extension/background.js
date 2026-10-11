@@ -12825,7 +12825,26 @@ async function handleOp({ id, op, params }) {
       }
       case "get_url": {
         const t = await resolveTab(params);
-        result = { url: t.url, title: t.title }; break;
+        // A TAB MID-NAVIGATION STILL REPORTS THE PAGE IT IS LEAVING. `tab.url`
+        // and `tab.title` do not change until the new document COMMITS, so
+        // between a click and that commit this answers with the previous page
+        // -- confidently, and at exactly the moment the tool exists for
+        // ("confirm where you actually ended up"). MEASURED with the fixture's
+        // `slow` flag: 8 clicks, 8 in-flight navigations, 8 answers naming the
+        // document being replaced.
+        //
+        // IT DOES NOT WAIT, on purpose. get_url is also the op you reach for
+        // when everything else has hung -- the debugging table's own test for
+        // a blocked page main thread is that get_url and sw_info keep
+        // answering instantly while page ops time out -- and a get_url that
+        // can block for seconds destroys that signal. Naming the destination
+        // is strictly more than waiting would give anyway: it says where the
+        // tab is going as well as where it still is. Free: a Map lookup in the
+        // worker, the same state #51's await_navigation reads.
+        const nv = _navState.get(t.id);
+        result = { url: t.url, title: t.title };
+        if (nv) result.navigating = { phase: nv.phase, to: nv.url || '' };
+        break;
       }
       case "page_tools": {
         const t = await resolveTab(params);

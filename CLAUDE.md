@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 985 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 988 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 985 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 988 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5349,12 +5349,37 @@ granted in the side panel is refused with the same message the agent gets.
     warns you; the old server answers normally and writes a slightly older
     format. CHECK A SAVED ARTEFACT BEFORE TRUSTING A LIVE RESULT.
 
-    Suites: 985 checks. New -- FA1-FA8 (the alternate key, with the
+    **AND A SECOND DEFECT CAME OUT OF THE SAME RECORDING SESSION, by refuting
+    the theory rather than confirming it.** A `get_url` right after a click
+    returned `title: "127.0.0.1:8787/projects"` -- Chrome's url display string
+    -- for a page whose `<title>` is "Projects · Acme Ops". The obvious theory
+    was #42's stale-title race one tool over, so the first move was to
+    reproduce it: 8 real navigations, **0 url-shaped titles**, theory not
+    supported. Forcing the condition instead (the fixture's `slow` flag, so a
+    navigation is genuinely in flight when `get_url` is asked) found something
+    worse and fully deterministic: **`tab.url` and `tab.title` do not change
+    until the new document COMMITS**, so between a click and that commit
+    `get_url` answers with the page being LEFT -- 8 clicks, 8 in-flight
+    navigations, 8 answers naming the previous document, nothing saying so --
+    at exactly the moment its own docstring says to call it ("confirm where you
+    actually ended up"). The url-shaped title remains UNREPRODUCED and nothing
+    was shipped for it, which is #50's rule.
+    It now names the in-flight destination, reading the same `_navState` #51
+    built. **It deliberately does NOT wait**, which the control pins: `get_url`
+    is the op that keeps answering when every page op has hung, and the
+    debugging table's own test for a blocked main thread is that it stays
+    instant. Naming the destination is more than waiting would give anyway --
+    it says where the tab is GOING as well as where it still is -- and it costs
+    a Map lookup.
+
+    Suites: 988 checks. New -- FA1-FA8 (the alternate key, with the
     still-matches, link-gone, two-links-same-destination, shared-href,
     not-a-link and no-href controls -- six of the eight are controls, because
     the failure this can have is binding to something plausible). Probes:
     `tools/audit_href_rung.py`; `audit_flow_resolve.py` grew the
-    `counter-in-name` mutation and a same-pass ablation arm.
+    `counter-in-name` mutation and a same-pass ablation arm. AN7/AN7b/AN7c in
+    `test_ops.js` for `get_url` (the settled-tab and does-not-wait controls);
+    AN7 fails against the pre-fix op with the previous page's url in hand.
 
 ## Debugging starting points
 
@@ -5400,6 +5425,7 @@ granted in the side panel is refused with the same message the agent gets.
 | `find` returns a miss with a `PAGE IS STILL SETTLING` banner on top | By design since #39 — `find` could never see readiness (the banner is prepended to the STRING listing and `find` asks for structured output), so `NO CONFIDENT MATCH` and "not there yet" were byte-identical. Fetched on the FAILURE paths only, so a confident `Found N` costs no extra round trip |
 | `find` ranks a `(disabled)` / `(required)` element first | By design since #39 — the words the legend prints are queryable, scored like a role word. They are credited to type coverage only, never CONTENT coverage, so a state word alone can never make a match confident (F36). English only: a state word names OUR output, not the page |
 | A docstring/description change seems to have no effect, but behaviour changes DO land | **RE-MEASURED and the old advice here was WRONG.** This row used to say descriptions are cached for the session's lifetime and that only a NEW session can test prose. Tested directly: edit a docstring, `/mcp` reconnect, then spawn a subagent and have it read the description back — it receives the NEW text (`bridge_ms_total` resetting to ~0 is what proves the stdio process actually respawned rather than the client merely re-handshaking). So a reconnect is enough for subagents, which is what every live fan-out uses. The earlier claim was recorded from one observation and then quoted forward for several entries without being re-run — the same "listed from reading rather than running" failure #25 names. **Still verify rather than assume, in BOTH directions:** `tools/list` against a fresh process proves the SERVER changed, and a throwaway subagent reading the description back proves the AGENT sees it. Whether the parent session's own already-loaded schema refreshes is untested and did not matter |
+| `get_url` says a navigation is IN FLIGHT | By design since #61 — `tab.url`/`tab.title` do not change until the new document commits, so the url it returned is the page being LEFT. Measured under the fixture's `slow` flag: 8 clicks, 8 in-flight navigations, 8 answers naming the previous document. Re-ask, or chain through `browser_batch`, which settles it (#51). It does NOT wait, on purpose: get_url staying instant while page ops hang is how a blocked main thread is told from a dead extension |
 | `navigate` says NAVIGATION DID NOT COMMIT | Working as designed since #40. The tab really did not move — anything you read now belongs to the OLD page. Retry the same url (the second attempt usually commits), then confirm with `get_url`. Before #40 this printed `Navigated to <the page it failed to leave>`, which is how two eval runs lost ~9 calls |
 | `navigate("back")` says BACK DID NOT MOVE | By design since #40 — a tab the agent opened starts with no history, so goBack is a silent no-op. Navigate by url instead |
 | A field row says `(read-only)` | By design since #40 — `readonly`/`aria-readonly`, which is NOT `(disabled)`: the field still submits and its value is real contents, but a write will fail. It survives folding (W28g); if it ever stops appearing inside a fold, the member flag list dropped it — the same bug the comment above that list warns about |
