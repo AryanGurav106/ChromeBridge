@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 1040 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 1042 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1040 checks, ~90s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1042 checks, ~90s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -6111,14 +6111,43 @@ granted in the side panel is refused with the same message the agent gets.
     — a redaction now does not reach it, and nothing should force-push over
     published history without being asked.
 
-    Suites: 1040 checks. New — SV1 (a wired svg is named by its own title;
+    **CI THEN FAILED ONCE AND NAMED EVERYTHING EXCEPT THE CAUSE** — the
+    fifth instance this session of a check that cannot report its own failure.
+    The run printed `ChromeBridge cannot act on about:blank` and `NAVIGATION
+    DID NOT COMMIT`, both true, neither the cause, and the word *fixture*
+    appeared nowhere; it passed on the commit before and three times locally.
+    `_pg_reset` — which gives each flow the state it was recorded against, and
+    runs PER FLOW — was `except Exception: return`. The 30s startup probe
+    proves the fixture answered ONCE; nothing checked that it still did. Its
+    own chaos branch already printed its failure while the more important half
+    did not (#21, one concept two handlings). It returns a sentence now and
+    both call sites STOP: verified in both directions and at both sites, exit 1
+    naming the fixture, exit 0 and 2/2 when it works. **And the exit code had
+    to be re-read** — `echo $?` after a pipe reports `tail`, which is the same
+    misreading this log already records once.
+    Second defect in the same log line: only `Unresolved` was caught around the
+    resolve loop, so a bridge or gate error escaped `start()` and the caller
+    reported it with a hardcoded `at: 0` — `0/4 step(s) in 0.04s`, no step
+    named, two steps after the navigate that actually failed. The step is named
+    now (FR16), with FR16b the control that a merely ABSENT target still takes
+    the Unresolved path and its settle window rather than this branch.
+    **Also found and deliberately NOT fixed:** check ids collide within three
+    suites (`W1`, `W9`, `W10` in widgets; `F32`, `F33` in find — and `C22`/`C26`
+    legitimately, since those re-report one id from an `except` branch). A
+    failure naming `W10` is ambiguous. Renumbering would invalidate the ~70
+    places this file cites those ids, and a tripwire would need a baseline list
+    of permitted duplicates, which is the maintained list this project keeps
+    deleting. Recorded rather than re-derived next time.
+
+    Suites: 1042 checks. New — SV1 (a wired svg is named by its own title;
     FAILS against the pre-change collector), SV1b (a child's title is not the
     drawing's name), SV1c (the icon-button path still resolves it, which passes
     both ways and is therefore the regression control), C26/C26b (a browserless
     validation flag actually validates), C27–C27c (the README's tool table, in
     both directions, with three planted-violation controls), C28 (every suite
     on disk has a row in `tools/README.md`), C29 (no excluded flow's origin leaks
-    into a tracked file, with a planted-leak control).
+    into a tracked file, with a planted-leak control), FR16/FR16b (an unreadable
+    page names its step; an absent target still takes the settle window).
 
 ## Debugging starting points
 

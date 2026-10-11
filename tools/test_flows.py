@@ -866,6 +866,41 @@ async def record_and_replay():
           rnev["status"] in (NEEDS, FAILED) and "no element" in str(rnev["reason"]),
           f"status={rnev['status']} reason={str(rnev['reason'])[:80]}")
 
+    # ---- FR16/FR16b: READING THE PAGE CAN FAIL FOR REASONS THAT ARE NOT THE
+    # TARGET, and only Unresolved was caught. A bridge or gate error escaped
+    # start() entirely, so the caller reported it with a hardcoded step count
+    # of 0 and no step name. Measured on a CI run: a navigate that did not
+    # commit left the tab at about:blank, and the run surfaced `cannot act on
+    # about:blank [op=get_interactive_elements]` as `0/4 step(s) in 0.04s` —
+    # true, and two steps after the cause, with nothing saying which step was
+    # reading the page.
+    class DeadPageBridge(FakeBridge):
+        async def entries_fn(self, tabId=None):
+            raise RuntimeError("ChromeBridge cannot act on about:blank")
+
+    dp = DeadPageBridge([E(70, "button", name="Create")])
+    rd = Recorder("dead", FakeBridge([E(70, "button", name="Create")]).entries_fn)
+    di = {"ref": "ref_70", "tabId": 1}
+    dt = await rd.before("computer", di)
+    rd.after("computer", di, "clicked", dt)
+    fdead, _ = rd.compile()
+    dres = await start(fdead, 1, dp.call, dp.entries_fn)
+    check("FR16 a page that cannot be READ names the step, instead of escaping "
+          "as a bare exception with no step and a count of 0",
+          dres["status"] == FAILED
+          and "step 0 (computer)" in str(dres.get("reason"))
+          and "about:blank" in str(dres.get("reason")),
+          f"status={dres['status']} reason={str(dres.get('reason'))[:100]}")
+    # THE CONTROL: a target that is merely ABSENT must still take the
+    # Unresolved path and its settle window, not this one — otherwise the new
+    # branch would have swallowed FR13's whole reason for existing.
+    gone = FakeBridge([E(71, "button", name="Somethingelse")])
+    gres = await start(fdead, 1, gone.call, gone.entries_fn)
+    check("FR16b CONTROL: a merely ABSENT target still takes the Unresolved "
+          "path, so the settle window is not bypassed",
+          "no element" in str(gres.get("reason")),
+          f"status={gres['status']} reason={str(gres.get('reason'))[:90]}")
+
     # ---- FR14: THE WINDOW BELONGS TO THE RECORDED DESCRIPTOR -------------
     #
     # Found on the first REAL-APP run of the href fallback, which is the only

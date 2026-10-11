@@ -372,7 +372,7 @@ in three places (`core/bridge/server.py`, `extension/background.js`,
 .venv/bin/python tools/run_tests.py                    # POSIX (run on macOS; CI runs it on Linux)
 ```
 
-19 suites, 1,040 checks, about 90 seconds. Nine are browser-free; the other ten
+19 suites, 1,042 checks, about 90 seconds. Nine are browser-free; the other ten
 drive headless Chromium and need two extra packages that are deliberately not
 runtime dependencies:
 

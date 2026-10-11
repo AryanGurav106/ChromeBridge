@@ -122,22 +122,42 @@ def _fixture_secret_names(flows) -> list:
     return sorted(set(out))
 
 
-def _pg_reset(chaos: str = "") -> None:
-    """Seed state, then flags. ORDER IS THE POINT: /api/reset clears chaos."""
+def _pg_reset(chaos: str = "") -> str:
+    """Seed state, then flags. ORDER IS THE POINT: /api/reset clears chaos.
+
+    Returns "" on success, or a sentence naming what went wrong.
+
+    A FAILED RESET USED TO RETURN IN SILENCE, which is the same defect the 30s
+    startup wait was added to end, one function over. The startup probe proves
+    the fixture answered ONCE; this call is what gives each flow the state it
+    was recorded against, and it runs per flow. If the app dies after the probe
+    -- or never finishes binding -- the reset quietly did nothing and the flows
+    replayed against whatever was there. Measured on a CI run: both flows
+    failed with `ChromeBridge cannot act on about:blank` and `NAVIGATION DID
+    NOT COMMIT`, both true, neither the cause, and the word *fixture* appeared
+    nowhere in the log. The chaos branch below already reported its own
+    failure while the more important one did not -- one concept, two handlings
+    (#21).
+    """
     import urllib.request as _u
     try:
-        _u.urlopen(_u.Request("http://127.0.0.1:8787/api/reset", method="POST"), timeout=2)
-    except Exception:
-        return
+        _u.urlopen(_u.Request("http://127.0.0.1:8787/api/reset", method="POST"), timeout=5)
+    except Exception as exc:
+        return (f"the fixture app at 127.0.0.1:8787 did not accept /api/reset "
+                f"({type(exc).__name__}: {exc}). It answered when the run started, so "
+                f"it has since died or stopped responding. Nothing was replayed from "
+                f"this point: a flow run against an un-reset fixture asserts against "
+                f"whatever the last run left behind.")
     flags = [f.strip() for f in (chaos or "").split(",") if f.strip()]
     if not flags:
-        return
+        return ""
     try:
         _u.urlopen(_u.Request("http://127.0.0.1:8787/api/chaos", method="POST",
                               data=json.dumps({"flags": flags}).encode(),
                               headers={"Content-Type": "application/json"}), timeout=2)
+        return ""
     except Exception as exc:
-        print(f"  could not set chaos flags: {exc}")
+        return f"could not set chaos flags: {exc}"
 
 
 async def main() -> int:
@@ -290,7 +310,11 @@ async def main() -> int:
             print(f"  fixture app came up after {waited:.1f}s")
         # A known starting state, or the flow's own precondition is measuring
         # whatever the last run left behind.
-        _pg_reset(args.chaos)
+        _err = _pg_reset(args.chaos)
+        if _err:
+            print(f"FAIL: {_err}")
+            pg.terminate()
+            return 1
         if args.chaos:
             print(f"  chaos: {args.chaos}")
         # THE FIXTURE'S OWN SEEDED CREDENTIAL, for every flow that asks for one.
@@ -347,7 +371,18 @@ async def main() -> int:
                 # state it was recorded against, which is what a per-test
                 # fixture means.
                 if args.playground:
-                    _pg_reset(args.chaos)
+                    _err = _pg_reset(args.chaos)
+                    if _err:
+                        # STOP, do not replay. Everything after this point
+                        # would assert against an unknown state and fail with
+                        # messages about about:blank that name no cause.
+                        print(f"  FAIL  {flow.name:<28} fixture reset failed")
+                        print(f"        {_err}")
+                        results.append({"status": "failed", "flow": flow.name,
+                                        "at": 0, "of": len(flow.steps),
+                                        "reason": _err, "log": [], "patches": [],
+                                        "candidates": [], "seconds": 0.0})
+                        break
                 t0 = time.time()
                 try:
                     res = await flow_start(flow, tab_id, ms._flow_call,

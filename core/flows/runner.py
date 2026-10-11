@@ -181,6 +181,20 @@ class Run:
                     if time.time() >= deadline:
                         break
                     await asyncio.sleep(self.POLL_MS / 1000.0)
+                except Exception as exc:
+                    # READING THE PAGE CAN FAIL FOR REASONS THAT ARE NOT THE
+                    # TARGET. Only Unresolved was caught, so a bridge or gate
+                    # error escaped `start()` entirely and the caller reported
+                    # it with a hardcoded at:0 — measured on a CI run, where a
+                    # navigate that did not commit left the tab at about:blank
+                    # and the run surfaced `cannot act on about:blank
+                    # [op=get_interactive_elements]` with no step named and a
+                    # step count of 0/4, two steps after the actual cause. The
+                    # step is named now, and the preceding step's result is
+                    # already in the log, which is what points at the navigate.
+                    return self._stop(FAILED,
+                                      f"step {self.i} ({step.name}): could not read "
+                                      f"the page to resolve its target — {exc}")
             if unresolved is not None:
                 # The window is spent and the recorded descriptor never matched.
                 # NOW the name really has changed, so ask the destination.
