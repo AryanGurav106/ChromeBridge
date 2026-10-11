@@ -112,8 +112,12 @@ closes, and Chrome evicts the service worker on its own schedule.
   elements with accessible names, current values, placeholders, on-screen boxes,
   and flags for required / disabled / below-fold / occluded / in-dialog /
   in-iframe / offscreen.
-- Recurses into open shadow roots, same-origin iframes (including `srcdoc`) and
-  cross-origin iframes.
+- Recurses into open **and closed** shadow roots, same-origin iframes
+  (including `srcdoc`) and cross-origin iframes. Closed roots are reached
+  because `listener_tag.js` wraps `attachShadow` at `document_start`, so
+  nothing can create one without handing the extension a reference — no
+  debugger attach, which matters because the limitation below refuses that
+  attach on exactly the login pages that need it.
 - Reads page text, with collapsed subtrees hidden and code-editor gutters
   stripped.
 - Leads an observation with a readiness banner when the page is still changing
@@ -142,7 +146,6 @@ window, switch your tab, or un-minimize anything; that would defeat the point.
 
 ## What it does not do
 
-- Closed shadow roots.
 - Chrome's own surfaces: `chrome://`, other extensions' pages, `devtools://`,
   `view-source:`, `about:`. No grant can unlock these — Chrome refuses script
   injection and debugger attach there.
