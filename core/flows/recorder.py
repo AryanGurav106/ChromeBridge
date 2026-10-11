@@ -47,6 +47,50 @@ _SEARCH_HITS = re.compile(r"(?m)^(\d+) match\(es\) for ")
 _QUERY_TOTAL = re.compile(r"(?m)^(\d+) element\(s\) match ")
 
 
+# WHEN A TOOL SAYS IT DID NOT DO THE THING. The runner only ever caught
+# EXCEPTIONS, and none of these raise: every one is a STRING the tool returns
+# while the call itself succeeds. Measured with a fake bridge -- a click
+# reported `*** NOT DELIVERED` left the flow PASSING whenever that step carried
+# no postcondition, which is a false green in a test runner and the worst
+# direction there is. Where a postcondition did catch it, the reported reason
+# was `query_elements('tr') counted 0, recorded exactly 5` -- true, useless, and
+# #33's class exactly: the cause was sitting in our own output and the message
+# did not name it.
+#
+# THIS IS NOT THE WORDLIST CLASS #24 DELETED, and the distinction is #39's.
+# Those read PAGE TEXT, guessing an author's words in languages nobody
+# enumerated. These are strings WE emit, in English, from code in this repo --
+# a contract with ourselves, the same kind as the two parsers below, and
+# mitigated the same way: FD19 pins every one against the file that emits it,
+# so a reworded message fails a test instead of silently disarming the guard.
+#
+# Each phrase is the DISTINCTIVE part of its message rather than a fragment,
+# because `fill_form` echoes the page's own validation errors and a short
+# fragment could in principle arrive from a site.
+REFUSALS = (
+    "*** NOT DELIVERED:",                                   # #56, trusted input dropped
+    "NAVIGATION DID NOT COMMIT",                            # #40
+    "DID NOT MOVE — the tab is still at",                   # #40, back/forward
+    "Permission required: ChromeBridge is not allowed",     # the gate
+    "ChromeBridge is PAUSED",                               # the kill switch
+    "the write reported success but did NOT land",          # #24 readback
+)
+
+
+def refused(result) -> Optional[str]:
+    """The tool's own words, when it reported that nothing happened.
+
+    Returns the matched marker, or None. Deliberately NOT a judgement about
+    whether the step "worked" -- only whether the tool SAID it did not, which
+    is a fact already in hand.
+    """
+    text = result if isinstance(result, str) else str(result or "")
+    for m in REFUSALS:
+        if m in text:
+            return m
+    return None
+
+
 def search_hits(result: str) -> Optional[int]:
     m = _SEARCH_HITS.search(result or "")
     if m:

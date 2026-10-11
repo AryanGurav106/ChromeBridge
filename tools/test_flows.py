@@ -34,7 +34,10 @@ from core.flows.descriptor import (  # noqa: E402
 )
 from core.flows import model as FM  # noqa: E402
 from core.flows import secrets as FS  # noqa: E402
-from core.flows.recorder import Recorder, query_total, search_hits  # noqa: E402
+from core.flows.recorder import (  # noqa: E402
+    REFUSALS as FR_REFUSALS, Recorder, query_total,
+    refused as FR_refused, search_hits,
+)  # noqa: E402
 from core.flows.runner import FAILED, NEEDS, PASSED, Run, resume, start  # noqa: E402
 
 # TEST-ONLY TIMING. `SETTLE_MS` is the window a target or a postcondition gets
@@ -337,6 +340,27 @@ def main():
             _bad_flows.append(f"{_fp.name}:unreadable({type(exc).__name__})")
     check("FO4 no recorded flow on disk declares an on_fail this build refuses",
           not _bad_flows, f"{_bad_flows[:4]}" if _bad_flows else "all loadable")
+
+    # ---- FD19: the REFUSAL markers, pinned against their emitters ---------
+    # The runner stops a step whose tool REPORTED that nothing happened. Those
+    # are strings this repo emits, so the guard is a contract with ourselves --
+    # the same family as FD17's two parsers, and mitigated the same way. A
+    # reworded message must fail a TEST, not silently disarm the guard: before
+    # this existed, a click reported `*** NOT DELIVERED` left the flow PASSING
+    # whenever the step carried no postcondition.
+    _emitters = ((ROOT / "mcp_server.py").read_text(encoding="utf-8")
+                 + (ROOT / "extension" / "background.js").read_text(encoding="utf-8"))
+    _orphan = [m for m in FR_REFUSALS if m not in _emitters]
+    check("FD19 every refusal marker the runner watches for is a string the "
+          "server or the extension really emits",
+          not _orphan, f"NOT EMITTED ANYWHERE: {_orphan}" if _orphan
+          else f"{len(FR_REFUSALS)} marker(s) all present")
+
+    check("FD19b CONTROL: an ordinary success is not read as a refusal — "
+          "a guard that fired on everything would stop every flow",
+          FR_refused("left_click at (500,356) on [mmid='70'].") is None
+          and FR_refused("Navigated to https://x.test/, title: X") is None
+          and FR_refused("") is None)
 
     # ---- FD15: the field-name contract -------------------------------------
     # Every check above runs on dicts THIS FILE wrote. If the collector spells
@@ -896,6 +920,46 @@ async def record_and_replay():
           "genuinely different behaviours and not one spelled twice",
           rfail["status"] == FAILED,
           f"status={rfail['status']}")
+
+    # ---- FR15: A TOOL THAT SAID IT DID NOT ACT STOPS THE FLOW ------------
+    #
+    # None of these RAISE. The call succeeds and returns a string saying
+    # nothing happened, so the runner -- which only caught exceptions -- left
+    # the run PASSING whenever the step carried no postcondition. Measured with
+    # a fake bridge before the fix: a click reported `*** NOT DELIVERED` gave
+    # status=passed on a page that had received nothing.
+    class DeadInput(FakeBridge):
+        async def call(self, tool, inp):
+            self.calls.append((tool, dict(inp)))
+            if tool == "computer":
+                return ("left_click at (500,356) on [mmid='70'].\n *** NOT DELIVERED: "
+                        "Chrome accepted the input command and the page recorded no "
+                        "mouse event, so nothing landed. VERIFIED RECOVERY: open a "
+                        "new tab with tabs_create_mcp and act there.")
+            return await super().call(tool, inp)
+
+    dents = [E(70, "button", name="Create")]
+    rd = Recorder("dead", FakeBridge(dents).entries_fn)
+    di = {"ref": "ref_70", "tabId": 1}
+    dt = await rd.before("computer", di)
+    rd.after("computer", di, "clicked", dt)
+    fdead, _ = rd.compile()
+    fdead.steps[0].expect = {}            # the sharp case: nothing asserts on it
+
+    rdead = await start(fdead, 1, DeadInput(dents).call, DeadInput(dents).entries_fn)
+    check("FR15 a step whose tool reported it did NOT act fails the flow even "
+          "with no postcondition — a false green is the worst direction a test "
+          "runner can fail in",
+          rdead["status"] == FAILED and "NOT DELIVERED" in rdead["reason"],
+          f"status={rdead['status']} reason={rdead['reason'][:90]}")
+
+    # THE CONTROL. Without it "always fail" would satisfy FR15 while making the
+    # runner useless, which is the shape #38's B10b exists for.
+    good = FakeBridge(dents)
+    rgood = await start(fdead, 1, good.call, good.entries_fn)
+    check("FR15b CONTROL: the same flow with a tool that acted normally still "
+          "passes",
+          rgood["status"] == PASSED, f"status={rgood['status']}")
 
     # ---- FS6: THE SETTLE WINDOW IS MEASURED, NOT CHOSEN ------------------
     #

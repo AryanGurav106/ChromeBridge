@@ -39,7 +39,7 @@ from typing import Any, Callable, Optional
 from . import secrets
 from .descriptor import Unresolved, build, resolve
 from .model import Flow, Step, resolve_vars, set_ref
-from .recorder import query_total, search_hits
+from .recorder import query_total, refused, search_hits
 
 PASSED, FAILED, NEEDS = "passed", "failed", "needs_decision"
 
@@ -213,6 +213,21 @@ class Run:
             except Exception as exc:
                 return self._stop(FAILED,
                                   f"step {self.i} ({step.name}) raised: {exc}")
+
+            # A TOOL THAT SAID IT DID NOT ACT STOPS THE FLOW HERE, rather than
+            # being left for a postcondition that may not exist. None of these
+            # raise -- the call succeeds and returns a string saying nothing
+            # happened -- so until now a dead click left the run PASSING unless
+            # some later assertion happened to catch it. The tool's own words
+            # already carry the cause and the recovery; repeating them beats
+            # reporting `counted 0, recorded 5` two steps later (#33).
+            _ref = refused(result)
+            if _ref:
+                return self._stop(FAILED,
+                                  f"step {self.i} ({step.name}) reported that it did "
+                                  f"NOT act — the flow stopped rather than asserting "
+                                  f"against a page nothing was done to.\n  the tool "
+                                  f"said: {str(result).strip()[:400]}")
 
             # A TAB THIS FLOW JUST MADE IS THE TAB THIS FLOW MEANT -- the same
             # rule browser_batch threads (#46), and deliberately the same shape:
