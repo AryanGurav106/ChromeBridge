@@ -496,16 +496,20 @@ def main() -> int:
     # cannot find is not a capability), and a PHANTOM one is a promise the clone
     # will not keep.
     _rd = read("README.md")
-    try:
-        _tbl = _rd[_rd.index("| **Tabs** |"):_rd.index("Three of those are")]
-    except ValueError:
-        _tbl = ""
+    # ANCHORED ON THE HEADING, not on a sentence. The first version sliced
+    # between the literal "| **Tabs** |" and "Three of those are" — both of
+    # which moved the first time the README was restructured, and the check
+    # then reported "the slice is empty" rather than anything about tools. A
+    # tripwire that a reasonable rewording disarms is the silent-no-op shape
+    # #30 and #39 both record; a section heading is the stable landmark.
+    _m = re.search(r"^## What Claude gets\s*$(.*?)^## ", _rd, re.S | re.M)
+    _tbl = _m.group(1) if _m else ""
     # Tool names only: the table also back-ticks PARAMETERS (`ref_id`, `detail`)
     # and literal values (`back`, `forward`), which are not tools and must not be
     # reported as phantoms.
     _tbl_named = set(re.findall(r"`([a-z_0-9]+)`", _tbl)) & (set(_decorated) | {"__none__"})
     _tbl_missing = sorted(set(_decorated) - _tbl_named)
-    check("C27 the README tool table names every registered tool",
+    check("C27 the README's tool section names every registered tool",
           bool(_tbl) and not _tbl_missing,
           ("the table markers moved — the slice is empty" if not _tbl
            else f"NOT IN THE README: {', '.join(_tbl_missing)}"))
@@ -526,7 +530,9 @@ def main() -> int:
     check("C27b ...and names no tool that does not exist",
           not _tbl_phantom,
           f"PHANTOM: {', '.join(_tbl_phantom)}" if _tbl_phantom else "")
-    _claimed = re.search(r"^(\d+) MCP tools\.", _rd, re.M)
+    # Tolerates markup around the number (`**31 MCP tools.**`), because bolding
+    # a figure is not a contract change.
+    _claimed = re.search(r"\*{0,2}(\d+)\*{0,2} MCP tools", _rd)
     check("C27c ...and the count it states is the count it serves",
           bool(_claimed) and int(_claimed.group(1)) == len(_decorated),
           f"README says {_claimed.group(1) if _claimed else '?'}, "
