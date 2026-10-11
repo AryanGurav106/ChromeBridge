@@ -1,0 +1,168 @@
+{
+  "schema": 1,
+  "name": "ev-arxiv-advanced-search",
+  "origin": "https://arxiv.org",
+  "recorded_at": "2026-10-11T20:06:55",
+  "viewport": {
+    "width": 1512,
+    "height": 812
+  },
+  "vars": {
+    "search_term": "quantum computing",
+    "field_to_search": "Title"
+  },
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "https://arxiv.org/search/advanced"
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": "{{search_term}}"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "Search term"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "Search term",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "input#terms-0-term",
+          "count": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 22516
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": "{{field_to_search}}"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "select",
+            "role": "",
+            "type": "",
+            "name": "Field to search"
+          },
+          "full": {
+            "tag": "select",
+            "role": "",
+            "type": "",
+            "name": "Field to search",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "select#terms-0-field option:checked",
+          "count": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 10
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": true
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "checkbox",
+            "name": "Computer Science (cs)"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "checkbox",
+            "name": "Computer Science (cs)",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "input#classification-computer_science:checked",
+          "count": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 7
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click"
+      },
+      "targets": {
+        "ref": {
+          "level": 3,
+          "desc": {
+            "tag": "button",
+            "role": "",
+            "type": "",
+            "name": "Search",
+            "section": "form",
+            "under": "",
+            "near": "Add another term + Search"
+          },
+          "full": {
+            "tag": "button",
+            "role": "",
+            "type": "",
+            "name": "Search",
+            "section": "form",
+            "under": "",
+            "near": "Add another term + Search"
+          }
+        }
+      },
+      "expect": {
+        "url": "https://arxiv.org/search/advanced",
+        "search": {
+          "pattern": "Showing",
+          "min": 1,
+          "observed": 1
+        },
+        "query": {
+          "selector": "li.arxiv-result",
+          "count": 50
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 20319
+    }
+  ]
+}

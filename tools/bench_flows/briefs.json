@@ -1,0 +1,58 @@
+{
+  "ev-httpbin-pizza-form": {
+    "url": "https://httpbin.org/forms/post",
+    "origin": "https://httpbin.org",
+    "shape": "form",
+    "steps": ["Type `Ada Lovelace` into the \"Customer name\" field.", "Type `ada@example.com` into \"E-mail address\".", "Click the \"Medium\" radio under Pizza Size and tick the \"Bacon\" checkbox.", "Type `ring twice` into the \"Delivery instructions\" textarea.", "Click the \"Submit order\" button."],
+    "check": "The browser lands on https://httpbin.org/post and the JSON body contains \"custname\": \"Ada Lovelace\", \"size\": \"medium\" and \"topping\": \"bacon\"."
+  },
+  "ev-arxiv-advanced-search": {
+    "url": "https://arxiv.org/search/advanced",
+    "origin": "https://arxiv.org",
+    "shape": "search-filter",
+    "steps": ["Type `quantum computing` into the first \"Search term...\" field.", "Choose \"Title\" in the field dropdown beside it.", "Tick the \"Computer Science (cs)\" subject checkbox.", "Leave \"Date: All dates\" selected and click the \"Search\" button."],
+    "check": "The results URL contains terms-0-field=title and classification-computer_science=y, and the page shows a results header of the form \"Showing 1-50 of N results\"."
+  },
+  "ev-datatables-zero-config": {
+    "url": "https://datatables.net/examples/core/basic_init/zero_configuration.html",
+    "origin": "https://datatables.net",
+    "shape": "data-table",
+    "steps": ["Type `Edinburgh` into the table's \"Search:\" box.", "Click the \"Age\" column header to sort ascending.", "Change the \"Show [10] entries\" dropdown to 25.", "Clear the search box."],
+    "check": "After step 1 the table body holds exactly 9 rows, every one with Office = \"Edinburgh\", and the info line reads \"Showing 1 to 9 of 9 entries (filtered from 57 total entries)\"."
+  },
+  "ev-todomvc-react": {
+    "url": "https://todomvc.com/examples/react/dist/",
+    "origin": "https://todomvc.com",
+    "shape": "spa-routing",
+    "steps": ["Type `write the eval` into the \"What needs to be done?\" input and press Enter.", "Type `ship it` into the same input and press Enter.", "Click the round toggle checkbox on the first todo to mark it done.", "Click the \"Completed\" link in the footer filter bar."],
+    "check": "The URL becomes .../#/completed with no full page load, exactly 1 todo row is visible (\"write the eval\"), and the footer counter reads \"1 item left\"."
+  },
+  "ev-jawiki-tokyo-tower": {
+    "url": "https://ja.wikipedia.org/wiki/%E3%83%A1%E3%82%A4%E3%83%B3%E3%83%9A%E3%83%BC%E3%82%B8",
+    "origin": "https://ja.wikipedia.org",
+    "shape": "non-latin",
+    "steps": ["Click the search field in the header (placeholder/aria-label `Wikipedia内を検索`).", "Type `東京タワー`.", "Press Enter (or click the 検索 button) to go to the article.", "On the article, click the 履歴表示 tab in the tab strip."],
+    "check": "The URL is https://ja.wikipedia.org/w/index.php?title=東京タワー&action=history and the document title is 「東京タワー」の変更履歴 - Wikipedia."
+  },
+  "ev-bootstrap-modal-demo": {
+    "url": "https://getbootstrap.com/docs/5.3/components/modal/",
+    "origin": "https://getbootstrap.com",
+    "shape": "modal",
+    "steps": ["Scroll to the \"Live demo\" section.", "Click the \"Launch demo modal\" button.", "Read the dialog body.", "Click the \"Close\" button in the modal footer."],
+    "check": "After step 2 a dialog is on screen titled \"Modal title\" whose body reads \"Woo-hoo, you're reading this text in a modal!\", with footer buttons \"Close\" and \"Save changes\". After step 4 it is gone."
+  },
+  "ev-apg-select-only-combobox": {
+    "url": "https://www.w3.org/WAI/ARIA/apg/patterns/combobox/examples/combobox-select-only/",
+    "origin": "https://www.w3.org",
+    "shape": "combobox",
+    "steps": ["Click the combobox labelled \"Favorite Fruit\", which initially reads \"Choose a Fruit\".", "Click the option \"Durian\" in the listbox that opens.", "Click the combobox again to reopen it.", "Type `g` to jump to \"Grape\", then press Enter."],
+    "check": "The combobox displays the text \"Grape\", its aria-expanded is back to \"false\", and the Grape option carries aria-selected=\"true\"."
+  },
+  "ev-python-docs-controlflow": {
+    "url": "https://docs.python.org/3/tutorial/controlflow.html",
+    "origin": "https://docs.python.org",
+    "shape": "docs-nav",
+    "steps": ["In the sidebar \"Table of Contents\", click the entry \"The range() Function\".", "Click the entry \"match Statements\" in the same TOC.", "Click \"Defining Functions\".", "Type `enumerate` into the \"Quick search\" box in the top nav bar and click \"Go\"."],
+    "check": "The browser lands on https://docs.python.org/3/search.html?q=enumerate and the #search-results panel fills with hits."
+  }
+}

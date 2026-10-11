@@ -1,0 +1,209 @@
+{
+  "schema": 1,
+  "name": "ev-python-docs-controlflow",
+  "origin": "https://docs.python.org",
+  "recorded_at": "2026-10-11T20:27:32",
+  "viewport": {
+    "width": 1512,
+    "height": 812
+  },
+  "vars": {
+    "quick_search": "enumerate"
+  },
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "https://docs.python.org/3/tutorial/controlflow.html"
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "4.3. The range() Function"
+          },
+          "full": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "4.3. The range() Function",
+            "section": "nav",
+            "under": "Table of Contents",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "url": "https://docs.python.org/3/tutorial/controlflow.html#the-range-function"
+      },
+      "on_fail": "ask",
+      "settle_ms": 1637
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "4.7. match Statements"
+          },
+          "full": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "4.7. match Statements",
+            "section": "nav",
+            "under": "Table of Contents",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "url": "https://docs.python.org/3/tutorial/controlflow.html#match-statements"
+      },
+      "on_fail": "ask",
+      "settle_ms": 1698
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "4.8. Defining Functions"
+          },
+          "full": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "4.8. Defining Functions",
+            "section": "nav",
+            "under": "Table of Contents",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "url": "https://docs.python.org/3/tutorial/controlflow.html#defining-functions"
+      },
+      "on_fail": "ask",
+      "settle_ms": 1629
+    },
+    {
+      "name": "fill_form",
+      "input": {
+        "fields": [
+          {
+            "value": "{{quick_search}}"
+          }
+        ],
+        "submit": true
+      },
+      "targets": {
+        "submit_ref": {
+          "level": 2,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "submit",
+            "name": "Go",
+            "section": "form",
+            "under": ""
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "submit",
+            "name": "Go",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        },
+        "fields.0": {
+          "level": 2,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "search",
+            "name": "Quick search",
+            "section": "form",
+            "under": ""
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "search",
+            "name": "Quick search",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "url": "https://docs.python.org/3/search.html?q=enumerate",
+        "query": {
+          "selector": "#search-results ul.search li",
+          "count": 58
+        },
+        "search": {
+          "pattern": "Built-in functions",
+          "min": 1,
+          "observed": 4
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 19520
+    }
+  ]
+}

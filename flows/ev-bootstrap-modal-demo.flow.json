@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "name": "ev-bootstrap-modal-demo",
+  "origin": "https://getbootstrap.com",
+  "recorded_at": "2026-10-11T20:21:23",
+  "viewport": {
+    "width": 1512,
+    "height": 812
+  },
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "https://getbootstrap.com/docs/5.3/components/modal/"
+      },
+      "expect": {
+        "url": "https://getbootstrap.com/docs/5.3/components/modal/",
+        "query": {
+          "selector": "button[data-bs-toggle=modal]",
+          "count": 23
+        },
+        "search": {
+          "pattern": "Live demo",
+          "min": 1,
+          "observed": 3
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 18548
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "targets": {
+        "ref": {
+          "level": 2,
+          "desc": {
+            "tag": "button",
+            "role": "",
+            "type": "button",
+            "name": "Launch demo modal",
+            "section": "main",
+            "under": "Live demo"
+          },
+          "full": {
+            "tag": "button",
+            "role": "",
+            "type": "button",
+            "name": "Launch demo modal",
+            "section": "main",
+            "under": "Live demo",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "#exampleModalLive.show .modal-title",
+          "count": 1
+        },
+        "search": {
+          "pattern": "reading this text in a modal",
+          "min": 1,
+          "observed": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 16465
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "targets": {
+        "ref": {
+          "level": 3,
+          "desc": {
+            "tag": "button",
+            "role": "",
+            "type": "button",
+            "name": "Close",
+            "section": "dialog",
+            "under": "Modal title",
+            "near": ""
+          },
+          "nth": 1,
+          "of": 2
+        }
+      },
+      "on_fail": "ask"
+    }
+  ]
+}

@@ -1,0 +1,243 @@
+{
+  "schema": 1,
+  "name": "ev-httpbin-pizza-form",
+  "origin": "https://httpbin.org",
+  "recorded_at": "2026-10-11T20:03:18",
+  "viewport": {
+    "width": 1512,
+    "height": 868
+  },
+  "vars": {
+    "customer_name": "Ada Lovelace",
+    "e_mail_address": "ada@example.com",
+    "delivery_instructions": "ring twice"
+  },
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "https://httpbin.org/forms/post"
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": "{{customer_name}}"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "",
+            "name": "Customer name:"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "",
+            "name": "Customer name:",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "input[name=\"custname\"]",
+          "count": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 2468
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": "{{e_mail_address}}"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "email",
+            "name": "E-mail address:"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "email",
+            "name": "E-mail address:",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "radio",
+            "name": "Medium"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "radio",
+            "name": "Medium",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "input[name=\"size\"]:checked",
+          "count": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 2245
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "checkbox",
+            "name": "Bacon"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "checkbox",
+            "name": "Bacon",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "input[name=\"topping\"]:checked",
+          "count": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 2166
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": "{{delivery_instructions}}"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "textarea",
+            "role": "",
+            "type": "",
+            "name": "Delivery instructions:"
+          },
+          "full": {
+            "tag": "textarea",
+            "role": "",
+            "type": "",
+            "name": "Delivery instructions:",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "button",
+            "role": "",
+            "type": "",
+            "name": "Submit order"
+          },
+          "full": {
+            "tag": "button",
+            "role": "",
+            "type": "",
+            "name": "Submit order",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "url": "https://httpbin.org/post",
+        "search": {
+          "pattern": "\"custname\": \"Ada Lovelace\"",
+          "min": 1,
+          "observed": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 9488
+    }
+  ]
+}

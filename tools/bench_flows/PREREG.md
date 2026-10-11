@@ -66,3 +66,36 @@ not what this feature claims.
 - M3 > 0 — a silent mis-bind is the #10/#11/#12 family and is disqualifying.
 - M1 < 4/8 — the loop does not generalise and the five-app demonstration was
   the sample flattering itself (#25).
+
+---
+
+## AMENDMENT 1 — the gate is armed off for the run
+
+Recorded BEFORE any app is driven. The section above says the gate stays on
+and the user grants eight origins by hand; the user asked instead to allow all
+origins for the duration. Changing an instrument after data exists is the move
+that invalidates a pre-registration, so this is written while there is no data,
+and the defence has to be checkable rather than asserted (#47's AMENDMENT 2
+set this precedent and its reasoning is reused).
+
+**Why it does not touch any metric here.** M1-M5 ask whether a recorded flow
+replays, whether it binds to the right element, and whether the recording
+asserts anything real. The gate decides only whether the FIRST op on a new
+origin is refused; it has no path into descriptor resolution, postcondition
+evaluation or the recorder's compile. Contrast #47, where the same decision
+needed defending because the metric was TURNS and a refusal costs one.
+
+**What this eval therefore cannot say.** Nothing whatever about the consent
+model, its first-run path, or what per-origin granting costs. It must not be
+quoted as evidence about any of those.
+
+**Restore, verified three ways** (#47 found a flag restored on disk is NOT
+restored in the browser while the bridge holds a live socket, because the MV3
+worker is never evicted to re-read it):
+
+1. `ALLOW_ALL_ORIGINS` back to `false` in `extension/background.js`
+2. `git diff` on that file empty
+3. `node tools/test_permissions.js` reporting 22/22 with NO "gate off" caveat
+
+and an extension RELOAD, which is the only thing that makes the worker re-read
+the flag. The window is the eval and nothing else.

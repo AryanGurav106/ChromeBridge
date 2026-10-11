@@ -1,0 +1,219 @@
+{
+  "schema": 1,
+  "name": "ev-todomvc-react",
+  "origin": "https://todomvc.com",
+  "recorded_at": "2026-10-11T20:14:44",
+  "viewport": {
+    "width": 1512,
+    "height": 812
+  },
+  "vars": {
+    "new_todo_input": "write the eval",
+    "new_todo_input_2": "ship it"
+  },
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "https://todomvc.com/examples/react/dist/"
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": "{{new_todo_input}}"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "New Todo Input"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "New Todo Input",
+            "section": "header",
+            "under": "todos",
+            "near": ""
+          }
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "key",
+        "coordinate": null,
+        "text": "Enter",
+        "modifiers": null,
+        "ref": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "expect": {
+        "query": {
+          "selector": ".todo-list li",
+          "count": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 2284
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": "{{new_todo_input_2}}"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "New Todo Input"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "New Todo Input",
+            "section": "header",
+            "under": "todos",
+            "near": ""
+          }
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "key",
+        "coordinate": null,
+        "text": "Enter",
+        "modifiers": null,
+        "ref": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "expect": {
+        "query": {
+          "selector": ".todo-list li",
+          "count": 2
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 1906
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "targets": {
+        "ref": {
+          "level": 3,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "checkbox",
+            "name": "",
+            "section": "main",
+            "under": "todos",
+            "near": ""
+          },
+          "nth": 0,
+          "of": 2
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": ".todo-list li.completed",
+          "count": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 2639
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "Completed"
+          },
+          "full": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "Completed",
+            "section": "footer",
+            "under": "todos",
+            "near": ""
+          },
+          "alt": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "href": "/examples/react/dist/#/completed"
+          }
+        }
+      },
+      "expect": {
+        "url": "https://todomvc.com/examples/react/dist/#/completed",
+        "query": {
+          "selector": ".todo-list li",
+          "count": 1
+        },
+        "search": {
+          "pattern": "1 item left",
+          "min": 1,
+          "observed": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 6205
+    }
+  ]
+}

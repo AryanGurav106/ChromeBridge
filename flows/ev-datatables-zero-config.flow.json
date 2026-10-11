@@ -1,0 +1,244 @@
+{
+  "schema": 1,
+  "name": "ev-datatables-zero-config",
+  "origin": "https://datatables.net",
+  "recorded_at": "2026-10-11T20:11:28",
+  "viewport": {
+    "width": 1512,
+    "height": 812
+  },
+  "vars": {
+    "search": "Edinburgh",
+    "entries_per_page": "25"
+  },
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "https://datatables.net/examples/core/basic_init/zero_configuration.html"
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": "{{search}}"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "search",
+            "name": "Search:"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "search",
+            "name": "Search:",
+            "section": "main",
+            "under": "Zero configuration",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "#example tbody tr",
+          "count": 9
+        },
+        "search": {
+          "pattern": "Showing 1 to 9 of 9 entries (filtered from 57 total entries)",
+          "min": 1,
+          "observed": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 8685
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "div",
+            "role": "button",
+            "type": "",
+            "name": "Age: Activate to sort"
+          },
+          "full": {
+            "tag": "div",
+            "role": "button",
+            "type": "",
+            "name": "Age: Activate to sort",
+            "section": "table-header",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "#example thead th[aria-sort]",
+          "count": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 8665
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": 25.0
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "select",
+            "role": "",
+            "type": "",
+            "name": "entries per page"
+          },
+          "full": {
+            "tag": "select",
+            "role": "",
+            "type": "",
+            "name": "entries per page",
+            "section": "main",
+            "under": "Zero configuration",
+            "near": ""
+          }
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": 25.0
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "select",
+            "role": "",
+            "type": "",
+            "name": "entries per page"
+          },
+          "full": {
+            "tag": "select",
+            "role": "",
+            "type": "",
+            "name": "entries per page",
+            "section": "main",
+            "under": "Zero configuration",
+            "near": ""
+          }
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "fill_form",
+      "input": {
+        "fields": [
+          {
+            "value": "{{entries_per_page}}"
+          }
+        ],
+        "submit_ref": null,
+        "submit": false
+      },
+      "targets": {
+        "fields.0": {
+          "level": 1,
+          "desc": {
+            "tag": "select",
+            "role": "",
+            "type": "",
+            "name": "entries per page"
+          },
+          "full": {
+            "tag": "select",
+            "role": "",
+            "type": "",
+            "name": "entries per page",
+            "section": "main",
+            "under": "Zero configuration",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "select option:checked",
+          "count": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 6848
+    },
+    {
+      "name": "fill_form",
+      "input": {
+        "fields": [
+          {
+            "value": ""
+          }
+        ],
+        "submit_ref": null,
+        "submit": false
+      },
+      "targets": {
+        "fields.0": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "search",
+            "name": "Search:"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "search",
+            "name": "Search:",
+            "section": "main",
+            "under": "Zero configuration",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "#example tbody tr",
+          "count": 25
+        },
+        "search": {
+          "pattern": "Showing 1 to 25 of 57 entries",
+          "min": 1,
+          "observed": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 4685
+    }
+  ]
+}

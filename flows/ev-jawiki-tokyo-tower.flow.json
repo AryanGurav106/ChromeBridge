@@ -1,0 +1,144 @@
+{
+  "schema": 1,
+  "name": "ev-jawiki-tokyo-tower",
+  "origin": "https://ja.wikipedia.org",
+  "recorded_at": "2026-10-11T20:17:40",
+  "viewport": {
+    "width": 1512,
+    "height": 812
+  },
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "https://ja.wikipedia.org/wiki/メインページ"
+      },
+      "expect": {
+        "url": "https://ja.wikipedia.org/wiki/%E3%83%A1%E3%82%A4%E3%83%B3%E3%83%9A%E3%83%BC%E3%82%B8"
+      },
+      "on_fail": "ask",
+      "settle_ms": 17
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "search",
+            "name": "Wikipedia内を検索"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "search",
+            "name": "Wikipedia内を検索",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "type",
+        "coordinate": null,
+        "text": "東京タワー",
+        "modifiers": null,
+        "ref": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
+      },
+      "expect": {
+        "query": {
+          "selector": "input[name=\"search\"]",
+          "count": 2
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 2587
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "key",
+        "text": "Enter"
+      },
+      "expect": {
+        "url": "https://ja.wikipedia.org/wiki/%E6%9D%B1%E4%BA%AC%E3%82%BF%E3%83%AF%E3%83%BC",
+        "search": {
+          "pattern": "東京タワー",
+          "min": 1,
+          "observed": 318
+        },
+        "query": {
+          "selector": "#ca-history a",
+          "count": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 16484
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "履歴を表示"
+          },
+          "full": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "履歴を表示",
+            "section": "nav",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "url": "https://ja.wikipedia.org/w/index.php?title=%E6%9D%B1%E4%BA%AC%E3%82%BF%E3%83%AF%E3%83%BC&action=history",
+        "query": {
+          "selector": "#pagehistory li",
+          "count": 50
+        },
+        "search": {
+          "pattern": "変更履歴",
+          "min": 1,
+          "observed": 1
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 5535
+    }
+  ]
+}
