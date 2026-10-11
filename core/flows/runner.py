@@ -345,7 +345,12 @@ class Run:
         exp = step.expect or {}
         if not exp:
             return ""
-        deadline = time.time() + self.SETTLE_MS / 1000.0
+        # THE DEFAULT PLUS WHAT THIS APP ACTUALLY NEEDED. `settle_ms` is the
+        # time the recording measured between this action and its checks
+        # holding, so an app that answered instantly keeps the plain default
+        # and a slow one gets the margin it demonstrated. A flow recorded
+        # before this existed carries 0 and is unchanged.
+        deadline = time.time() + (self.SETTLE_MS + (step.settle_ms or 0)) / 1000.0
         while True:
             bad = await self._verify(exp)
             if not bad or time.time() >= deadline:

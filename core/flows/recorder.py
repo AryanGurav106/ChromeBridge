@@ -225,6 +225,7 @@ class Recorder:
                 name=r["name"], input=inp, targets=r["targets"],
                 expect=self._expect_after(live, i),
                 on_fail="ask",
+                settle_ms=self._settle_after(live, i),
             ))
             action_ix.append(i)
 
@@ -377,6 +378,29 @@ class Recorder:
                 break                       # the next action starts a new state
             run.append(r)
         return cls._checks(run)
+
+    @classmethod
+    def _settle_after(cls, live: list, i: int) -> int:
+        """Milliseconds the agent actually waited for step i's checks to hold.
+
+        MEASURED, not chosen. The shipped window was a flat 6s, and on a real
+        app whose create -> table-refresh cycle takes ~11s the flow reported
+        FAILED for an action that had SUCCEEDED -- the record was there, just
+        not yet. A false negative is the safe direction and still a wrong
+        answer, and the one number that would have fixed it was already in the
+        recording: every call is timestamped.
+
+        Only an observation that CONTRIBUTED a check counts, and the LAST of
+        them, so a trailing unrelated read does not inflate the bound.
+        """
+        base = live[i].get("ts") or 0
+        last = 0.0
+        for r in live[i + 1:]:
+            if r["mutates"]:
+                break
+            if cls._checks([r]):
+                last = max(last, r.get("ts") or 0)
+        return int(max(0.0, last - base) * 1000) if (last and base) else 0
 
     @classmethod
     def _checks_before(cls, live: list, i: int) -> dict:

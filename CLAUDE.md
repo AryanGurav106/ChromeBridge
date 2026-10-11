@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 973 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 976 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 973 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 976 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5188,6 +5188,40 @@ granted in the side panel is refused with the same message the agent gets.
     one that never renders still fails), FVP2b (a HEIGHT-only difference says
     nothing).
 
+60. **A FALSE FAILED, AND THE NUMBER THAT FIXED IT WAS ALREADY IN THE
+    RECORDING.** Replaying the real-app create flow while its owner watched:
+    `FAILED … search_page('ZZ Flow Watch One') found 0, recorded at least 1`.
+    The record HAD been created — a search a moment later found it. **The flow
+    reported failure for an action that succeeded**, which is the safe
+    direction and still a wrong answer, and on a team it is a CI investigation
+    into nothing.
+
+    **The cause was a number I chose.** #55 gave postconditions a bounded
+    window and I set it to a flat 6s; that app's create → table-refresh cycle
+    runs longer and VARIES — 13s on one run, under 5s on the next. No constant
+    fits both, and raising it would just be a bigger guess.
+
+    **The recorder already timestamps every call, and was not using it.** Each
+    step now carries `settle_ms`: the time measured between that action and its
+    checks first holding, when the flow was recorded. The replay allows the
+    default PLUS that, so an app that answered instantly records 0 and keeps
+    the plain default while a slow one gets exactly the margin it
+    demonstrated. Measured on the live app, per step: navigate 9,896ms (the SPA
+    rendering its table), open-menu 2,042ms, open-dialog 3,065ms, submit
+    13,077ms. Same move this log keeps making — replace a number I picked with
+    one the system demonstrates (#27/#28 for thresholds, #49 for the descriptor
+    ladder, #44 for a predicate).
+
+    **FS6c is the control that the margin is EARNED**, not handed out: a
+    recording whose checks held immediately carries no extra time at all.
+    Without it the change would read as "make the timeout bigger", which is
+    the thing it exists not to be.
+
+    After the fix, the same flow PASSED 5/5 in 9.28s on the same app.
+
+    Suites: 976 checks. New — FS6/FS6b (the time is measured and survives the
+    file format), FS6c (the control that an instant app earns no margin).
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -5269,6 +5303,7 @@ granted in the side panel is refused with the same message the agent gets.
 | A flow step after `tabs_create_mcp` runs in the NEW tab | By design since #58 — the runner used to force the flow's starting tabId on every step, so a recorded `tabs_create_mcp` made a tab that was then ignored and the flow carried on in the old one. Same rule `browser_batch` threads (#46) and only from `tabs_create_mcp`, which returns exactly one id it just made. A create whose id cannot be read FAILS rather than silently continuing in the previous tab |
 | A flow fails at step 1 on an SPA with "no element matches" | Fixed in #59 — target resolution had no settle window, so a control that had not RENDERED yet was reported exactly like one that does not exist. It now retries on the same bound as a postcondition, re-fetching entries each attempt. If it still fails after the window, the control really is absent — or its NAME is data-dependent, which is the other half of #59 |
 | A flow's descriptor stops matching after data changes | Its identity is data-dependent. Measured live on a real app: a nav tab's accessible name is `"Investors 38"` — the live count is INSIDE the name (AccName 2F concatenates descendant text), so adding a record makes it `"Investors 39"`. Rebind with `run_flow(resume_id=…, bind="ref_N")`, which proposes a patch; the durable fix is an `href` rung, which is unmeasured and therefore unshipped |
+| A flow says a step FAILED but the action plainly worked | Fixed in #60 — the postcondition window was a flat 6s and a real app's create -> table-refresh took longer, so the flow reported FAILED for a record that HAD been created. Each step now carries `settle_ms`, measured at record time from the timestamps the recorder already kept, and the replay allows the default PLUS that. A flow recorded before #60 carries 0 and is unchanged |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---

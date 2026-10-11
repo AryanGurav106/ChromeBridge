@@ -687,6 +687,48 @@ async def record_and_replay():
           rnev["status"] in (NEEDS, FAILED) and "no element" in str(rnev["reason"]),
           f"status={rnev['status']} reason={str(rnev['reason'])[:80]}")
 
+    # ---- FS6: THE SETTLE WINDOW IS MEASURED, NOT CHOSEN ------------------
+    #
+    # The shipped window was a flat 6s. On a real app whose create ->
+    # table-refresh cycle takes ~11s the flow reported FAILED for an action
+    # that had SUCCEEDED -- the record was there, just not yet. A false
+    # negative is the safe direction and still a wrong answer, and the number
+    # that fixes it was already in the recording: every call is timestamped.
+    import time as _t
+    fb6 = FakeBridge([E(70, "button", name="Create")])
+    r6 = Recorder("slow", fb6.entries_fn)
+    ai6 = {"ref": "ref_70", "tabId": 1}
+    at6 = await r6.before("computer", ai6)
+    r6.after("computer", ai6, "clicked", at6)
+    # The agent checked, got nothing, waited, checked again -- which is what a
+    # slow backend looks like from the outside.
+    r6.raw[-1]["ts"] = _t.time() - 9.0
+    r6.after("query_elements", {"selector": "tr", "tabId": 1},
+             "No element matches 'tr'", {})
+    r6.raw[-1]["ts"] = _t.time() - 6.0
+    r6.after("query_elements", {"selector": "tr", "tabId": 1},
+             "5 element(s) match 'tr'", {})
+    r6.raw[-1]["ts"] = _t.time() - 1.0
+    f6, _ = r6.compile()
+    check("FS6 the flow records how long the app ACTUALLY took for its checks "
+          "to hold",
+          7500 <= f6.steps[0].settle_ms <= 8500, f"settle_ms={f6.steps[0].settle_ms}")
+    check("FS6b ...and it survives the file format",
+          FM.Flow.from_json(f6.to_json()).steps[0].settle_ms == f6.steps[0].settle_ms,
+          str(FM.Flow.from_json(f6.to_json()).steps[0].settle_ms))
+
+    # CONTROL. An app that answered immediately records nothing, so its replay
+    # keeps the plain default — the margin is earned, not handed out.
+    fb7 = FakeBridge([E(70, "button", name="Create")])
+    r7 = Recorder("fast", fb7.entries_fn)
+    at7 = await r7.before("computer", ai6)
+    r7.after("computer", ai6, "clicked", at7)
+    r7.after("query_elements", {"selector": "tr", "tabId": 1},
+             "5 element(s) match 'tr'", {})
+    f7, _ = r7.compile()
+    check("FS6c CONTROL: an app that answered at once records no extra margin",
+          f7.steps[0].settle_ms < 500, f"settle_ms={f7.steps[0].settle_ms}")
+
     # ---- FT: A FLOW MAY SPAN TABS ---------------------------------------
     #
     # `tabs_create_mcp` is already an ACTION (it is in MUTATES), so the recorder

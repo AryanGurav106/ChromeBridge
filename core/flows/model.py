@@ -79,6 +79,12 @@ class Step:
     expect: dict = field(default_factory=dict)   # checked LIVE, never healed
     on_fail: str = "ask"                        # fail | heal | ask
     note: str = ""                              # why this step is here
+    # HOW LONG THIS APP ACTUALLY TOOK, measured at record time rather than
+    # chosen. A fixed window cannot fit every app: 6s was too short for a real
+    # one whose create -> table-refresh cycle took ~11s, and the flow reported
+    # FAILED for an action that had SUCCEEDED. The recording already knows the
+    # answer, because it timestamps every call.
+    settle_ms: int = 0
 
     def to_json(self) -> dict:
         d = {"name": self.name, "input": self.input}
@@ -87,6 +93,8 @@ class Step:
         if self.expect:
             d["expect"] = self.expect
         d["on_fail"] = self.on_fail
+        if self.settle_ms:
+            d["settle_ms"] = self.settle_ms
         if self.note:
             d["note"] = self.note
         return d
@@ -95,7 +103,8 @@ class Step:
     def from_json(d: dict) -> "Step":
         return Step(name=d["name"], input=d.get("input") or {},
                     targets=d.get("targets") or {}, expect=d.get("expect") or {},
-                    on_fail=d.get("on_fail") or "ask", note=d.get("note") or "")
+                    on_fail=d.get("on_fail") or "ask", note=d.get("note") or "",
+                    settle_ms=int(d.get("settle_ms") or 0))
 
 
 @dataclass
