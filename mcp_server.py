@@ -3701,6 +3701,18 @@ async def record_flow(
                 f'  {len(report["secrets"])} password field(s) were NOT written to '
                 f'the file. Export these before replaying: '
                 + ", ".join(report["secrets"]))
+        # AN ASSERTION THAT WAS ALREADY TRUE WITNESSES NOTHING, and a flow that
+        # cannot fail does not look wrong -- it passes, in CI, forever. Said here
+        # because this is the moment it is cheap to fix: the agent is still
+        # driving, and one more observation after the action settles it. A
+        # warning, not a refusal: an idempotent step legitimately leaves state
+        # alone, and the recorder does not get to overrule the person who drove it.
+        for _st, _ks in report.get("hollow") or []:
+            lines.append(
+                f"  WARNING: step {_st}'s {_ks} assertion was ALREADY TRUE before "
+                f"that step ran, so it does not witness it — this flow would pass "
+                f"even if the step did nothing. Check the step actually worked, "
+                f"then re-record with an observation that changes because of it.")
         if report["asserted"] == 0:
             lines.append("  NOTE: no step carries an assertion, so this flow can only "
                          "detect a control going missing, not a wrong RESULT. Re-record "

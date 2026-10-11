@@ -639,6 +639,50 @@ async def record_and_replay():
           asked and set(asked) == {"beta-svc"},
           f"search_page called with {asked}")
 
+    # ---- FW: AN ASSERTION THAT WAS ALREADY TRUE WITNESSES NOTHING ---------
+    #
+    # The most dangerous thing this feature can produce is a flow that cannot
+    # fail, and it does not look wrong -- it passes, in CI, forever. Recorded
+    # TWICE while building this: a playground flow asserting 4 table rows BEFORE
+    # the create and 4 after (the form had silently refused, two required fields
+    # unfilled), and a real-app flow asserting a product name that is on the page
+    # whether or not anything was clicked. Both were caught by a human reading
+    # the numbers; neither had to be.
+    async def _hollow(after_result):
+        fb = FakeBridge([E(70, "button", name="Create")])
+        rr = Recorder("h", fb.entries_fn)
+        qi = {"selector": "tr", "tabId": 1}
+        rr.after("query_elements", qi, "4 element(s) match 'tr'", {})   # BEFORE
+        ai = {"ref": "ref_70", "tabId": 1}
+        at = await rr.before("computer", ai)
+        rr.after("computer", ai, "clicked", at)
+        rr.after("query_elements", qi, after_result, {})                # AFTER
+        return rr.compile()
+
+    _f, _rep = await _hollow("4 element(s) match 'tr'")
+    check("FW1 an assertion that was already true before the step is reported as "
+          "witnessing nothing",
+          _rep.get("hollow") == [(0, "query")], f"hollow={_rep.get('hollow')}")
+
+    # THE CONTROL THAT MAKES IT WORTH HAVING. A check that CHANGED because of the
+    # action is exactly what a postcondition should be, and warning there would be
+    # the noise #15 priced -- it would fire on every correct flow.
+    _f, _rep = await _hollow("5 element(s) match 'tr'")
+    check("FW2 CONTROL: an assertion that CHANGED is not flagged",
+          not _rep.get("hollow"), f"hollow={_rep.get('hollow')}")
+
+    # Nothing observed before the action means nothing to compare against, and an
+    # unknown must not be reported as a finding (the same rule as #56's ID3).
+    fb3 = FakeBridge([E(70, "button", name="Create")])
+    r3 = Recorder("h3", fb3.entries_fn)
+    ai3 = {"ref": "ref_70", "tabId": 1}
+    at3 = await r3.before("computer", ai3)
+    r3.after("computer", ai3, "clicked", at3)
+    r3.after("query_elements", {"selector": "tr", "tabId": 1}, "4 element(s) match 'tr'", {})
+    _f3, _rep3 = r3.compile()
+    check("FW3 CONTROL: with nothing observed beforehand there is no claim to make",
+          not _rep3.get("hollow"), f"hollow={_rep3.get('hollow')}")
+
     # ---- FP: preconditions — the state the flow starts from ---------------
     fbp = FakeBridge([E(80, "button", name="New project")])
     rp = Recorder("pre", fbp.entries_fn)

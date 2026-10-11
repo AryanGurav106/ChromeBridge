@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 958 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 961 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 958 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 961 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5014,6 +5014,61 @@ granted in the side panel is refused with the same message the agent gets.
     delivered click says nothing extra), ID3 (the control that a navigating
     click's unknown answer claims nothing).
 
+57. **THE FLOW THAT CANNOT FAIL, CAUGHT AT THE MOMENT IT IS CHEAP TO FIX.** The
+    most dangerous thing this feature can produce is a flow whose assertions
+    were already true, because it does not look wrong — it passes, in CI,
+    forever. **I recorded one twice while building the feature**, and both were
+    caught by a human reading the numbers rather than by anything in the code:
+    a playground flow asserting 4 table rows BEFORE the create and 4 after (the
+    submit had silently refused, two required fields unfilled), and a real-app
+    flow asserting a product name that is on that page whether or not anything
+    was clicked.
+
+    **It is decidable from what the recording already holds.** If a check had
+    the SAME value the last time the agent observed it, the action did not move
+    what the check measures. The recorder says so at `record_flow(stop)` —
+    the one moment it is cheap, because the agent is still driving and one more
+    observation settles it.
+
+    **MY FIRST RULE WAS TOO NARROW AND THE LIVE RUN SAID SO.** It compared
+    against the observations *immediately* before the action, stopping at the
+    previous action — and the real shape is `count rows → click to open a modal
+    → fill it → count rows`, so the row count sits two steps back with an action
+    in between and there was nothing to compare against. Reproducing my own bad
+    recording was what showed it: the fixtures passed while the live case went
+    unflagged. It scans back across actions for the LATEST prior value of each
+    check now (`_checks` uses `setdefault`, so feeding it reverse-chronologically
+    keeps the most recent). The residual false positive — a value one action
+    changed and another changed back — is worth flagging anyway.
+
+    **A WARNING, NEVER A REFUSAL.** "Already true" is not always wrong: an
+    idempotent step legitimately leaves state alone, and the recorder does not
+    get to overrule the person who drove it.
+
+    **VERIFIED IN BOTH DIRECTIONS LIVE, by re-recording the exact mistake.**
+    Filling only the project name and leaving the two required fields empty
+    reproduces 4 rows before and 4 after, and the stop report now says *"step 3's
+    query assertion was ALREADY TRUE before that step ran … this flow would pass
+    even if the step did nothing"*. The correct recording of the same flow —
+    4 → 5 rows — emits nothing, which is the half that matters: a warning that
+    fires on every flow is the noise #15 priced.
+
+    **Also audited and acted on: which declared fields nothing reads.** #54 found
+    `origin` written by nobody; the same question asked of the whole format finds
+    `schema` (read, version-checked) and `on_fail` (read) fine, `recorded_at`
+    honest human metadata, and **`viewport` both never populated and never read**
+    — a declaration with no half of a contract behind it. Left in place for now
+    and recorded here rather than quietly: it should either be populated AND
+    compared (a flow recorded at 1280x900 and replayed narrow can hit a
+    responsive layout where the control genuinely does not exist, which is worth
+    naming as a cause when a target cannot be resolved) or deleted. Shipping one
+    half is how `delta` stayed dead for its whole life (#30).
+
+    Suites: 961 checks. New — FW1 (an already-true assertion is reported), FW2
+    (the control that a check which CHANGED is not flagged — without it the
+    warning could fire on every flow and still pass), FW3 (the control that
+    nothing observed beforehand makes no claim, the same rule as #56's ID3).
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -5091,6 +5146,7 @@ granted in the side panel is refused with the same message the agent gets.
 | `computer` click reports success and the page gets nothing, with the debugger attached | Measured on saucedemo's /inventory.html (#55) and NOT yet explained: `elementFromPoint` at the clicked coordinate IS the target, dpr 1, no scroll, no zoom, `debug_targets` says attached with one frame — and three raw coordinate clicks produce ZERO events at a capturing document listener, while `Runtime.evaluate` works and `el.click()` drives the page correctly. The LOGIN page of the same origin in the same browser accepts input normally. #12's signature; its `ensureInputReady` fix does not cover this case. Instrument the PAGE before theorising |
 | `computer` click says `*** NOT DELIVERED ***` | Working as designed since #56 — Chrome ACCEPTED the input command and the page recorded no event, so nothing was clicked. The tab's trusted-input channel is dead. It is not ours (Playwright's own mouse fails identically on that tab) and it survives detach+re-attach, a forced focus-emulation re-apply, and a mouse release. VERIFIED recovery: a NEW TAB. `read_page`, `get_page_text`, `search_page`, `query_elements`, `fill_form`, `form_input` and `javascript_tool` all keep working on the dead tab |
 | `computer(type)` says "into whatever holds editing focus" | By design since #56 — `Input.insertText` targets the EDITING context, not `document.activeElement`. Measured: with an `<h1 tabindex=-1>` focused, the text still landed in a previously focused `<input>`. Pass a ref and the message names it, because then we focused it ourselves |
+| `record_flow(stop)` warns that an assertion was ALREADY TRUE | By design since #57 — the check had that same value the last time the agent observed it, so the step did not move what it measures and the flow would pass even if the step did nothing. Usually the step silently failed (a required field left unfilled is the one that caused this twice). A warning, not a refusal: an idempotent step legitimately leaves state alone |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---

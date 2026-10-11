@@ -165,6 +165,8 @@ class Recorder:
             variables[nm] = value
             return "{{" + nm + "}}"
 
+        action_ix: list = []   # live index each kept step came from
+        hollow: list = []      # (step, checks) that were already true
         for i, r in enumerate(live):
             if not r["mutates"]:
                 dropped_obs += 1
@@ -220,6 +222,7 @@ class Recorder:
                 expect=self._expect_after(live, i),
                 on_fail="ask",
             ))
+            action_ix.append(i)
 
         # AN ASSERTION MUST FOLLOW THE VARIABLE ITS INPUT USES.
         #
@@ -249,6 +252,29 @@ class Recorder:
             if isinstance(obj, list):
                 return [_paramize(v) for v in obj]
             return obj
+
+        # AN ASSERTION THAT WAS ALREADY TRUE WITNESSES NOTHING.
+        #
+        # The most dangerous thing this feature can produce is a flow that cannot
+        # fail, and it does not look wrong: it passes, in CI, forever. I recorded
+        # one TWICE while building this -- a playground flow asserting 4 table rows
+        # BEFORE the create and 4 after (the form had silently refused, because two
+        # required fields were unfilled), and a saucedemo flow asserting a product
+        # name that is on that page whether or not anything was clicked.
+        #
+        # It is detectable at exactly the moment it can still be fixed cheaply:
+        # the agent is here, driving. If a check had the SAME value immediately
+        # before the action, that action did not change what the check measures.
+        # Said as a warning, never as a refusal -- "already true" is not always
+        # wrong (an idempotent step legitimately leaves state alone), and the
+        # recorder does not get to overrule the person who drove it.
+        for _n, (idx, st) in enumerate(zip(action_ix, kept)):
+            if not st.expect:
+                continue
+            prior = self._checks_before(live, idx)
+            same = [k for k, v in st.expect.items() if k in prior and prior[k] == v]
+            if same:
+                hollow.append((_n, ", ".join(sorted(same))))
 
         for st in kept:
             if st.expect:
@@ -288,6 +314,7 @@ class Recorder:
             "secrets": sorted(set(redacted)),
             "vars": sorted(variables),
             "require": sorted(flow.require),
+            "hollow": hollow,
             "notes": self.notes,
         }
         return flow, report
@@ -345,6 +372,24 @@ class Recorder:
                 break                       # the next action starts a new state
             run.append(r)
         return cls._checks(run)
+
+    @classmethod
+    def _checks_before(cls, live: list, i: int) -> dict:
+        """The most recent value the agent had seen for each check before step i.
+
+        NOT "the run of observations immediately before", which was the first
+        version and was too narrow to catch the case it was written for: the real
+        shape is `count rows -> click to open a modal -> fill it -> count rows`,
+        so the row count sits two steps back with an action in between, and
+        stopping at that action found nothing to compare.
+
+        Scans backwards across actions and takes the LATEST value per check --
+        `_checks` uses setdefault, so feeding it reverse-chronologically keeps
+        the most recent. The residual false positive is a value an intermediate
+        action changed and another changed back, which is worth flagging anyway.
+        Used ONLY to ask whether a postcondition witnesses anything.
+        """
+        return cls._checks([r for r in reversed(live[:i]) if not r["mutates"]])
 
     @classmethod
     def _require_before(cls, live: list) -> dict:
