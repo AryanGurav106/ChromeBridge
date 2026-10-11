@@ -1177,6 +1177,63 @@ async def record_and_replay():
           and "fill_form" in _srcm.split("TO CLEAR A FIELD")[1][:240],
           "documented" if "TO CLEAR A FIELD" in _srcm else "NOT DOCUMENTED")
 
+    # ---- FP6: THE SELF-HEAL LOOP CLOSES, WITHOUT THE RUNNER EVER WRITING --
+    #
+    # #49's third non-negotiable is that a rebinding PROPOSES a patch and never
+    # edits the flow. That forbids the RUNNER acting on its own; it does not
+    # forbid the AGENT acting deliberately -- and until now there was no way
+    # to, so "self-healing" stopped at a suggestion somebody had to hand-edit.
+    import importlib.util as _il
+    _sp = _il.spec_from_file_location("_msp", ROOT / "mcp_server.py")
+    _msp = _il.module_from_spec(_sp)
+    _sp.loader.exec_module(_msp)
+
+    _tmp = ROOT / "flows" / "zz-patch-test.flow.json"
+    _ents = [E(80, "a", name="Investors 43", href="/pipeline/investors"),
+             E(81, "a", name="Contacts", href="/pipeline/contacts")]
+    _rp3 = Recorder("zz-patch-test", FakeBridge(_ents).entries_fn)
+    _pi3 = {"ref": "ref_80", "tabId": 1}
+    _pt3 = await _rp3.before("computer", _pi3)
+    _rp3.after("computer", _pi3, "clicked", _pt3)
+    _rp3.after("get_url", {"tabId": 1}, '{"url": "https://a.test/x", "title": "t"}', {})
+    _fp3, _ = _rp3.compile()
+    FM.save(_fp3, _tmp)
+    try:
+        _before = json.loads(_tmp.read_text(encoding="utf-8"))
+        _msp._LAST_PATCHES["zz-patch-test"] = [{
+            "step": 0, "name": "computer", "path": "ref",
+            "was": {"name": "Investors 43"}, "now": {"name": "Investors 44"},
+            "target": {"level": 1, "desc": {"tag": "a", "role": "", "type": "",
+                                            "name": "Investors 44"}},
+        }]
+        _r = await _msp.mcp._tool_manager._tools["record_flow"].fn(
+            action="patch", name="zz-patch-test")
+        _after = json.loads(_tmp.read_text(encoding="utf-8"))
+        check("FP6 an agent can APPLY a proposed descriptor change, so the "
+              "self-heal loop ends in an updated flow instead of a suggestion "
+              "nobody can act on",
+              "Updated" in _r
+              and _after["steps"][0]["targets"]["ref"]["desc"]["name"] == "Investors 44"
+              and _before["steps"][0]["targets"]["ref"]["desc"]["name"] == "Investors 43",
+              _r.splitlines()[0][:90])
+
+        check("FP6b ...and the proposal is CONSUMED, so the same patch cannot be "
+              "applied twice over a file that has already moved on",
+              "No proposed patch" in await _msp.mcp._tool_manager._tools["record_flow"].fn(
+                  action="patch", name="zz-patch-test"))
+
+        # THE CONTROL, and it is the whole safety property: a REPLAY still
+        # writes nothing. Without this, "the loop closes" would also describe a
+        # runner that silently rewrites your test while running it.
+        _mt = _tmp.stat().st_mtime
+        _fb3 = FakeBridge(_ents)
+        await start(FM.load(_tmp), 1, _fb3.call, _fb3.entries_fn)
+        check("FP6c CONTROL: replaying a flow NEVER writes to it — only the "
+              "explicit patch call does",
+              _tmp.stat().st_mtime == _mt, "file untouched by the run")
+    finally:
+        _tmp.unlink(missing_ok=True)
+
     # ---- FS6: THE SETTLE WINDOW IS MEASURED, NOT CHOSEN ------------------
     #
     # The shipped window was a flat 6s. On a real app whose create ->

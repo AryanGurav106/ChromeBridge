@@ -370,10 +370,17 @@ class Run:
         e = next((x for x in entries if str(x.get("mmid")) == str(ref)), None)
         if e is None:
             return
+        built = build(e, entries)
         self.patches.append({
             "step": self.i, "name": step.name, "path": path,
             "was": step.targets.get(path, {}).get("desc"),
-            "now": build(e, entries).get("desc"),
+            "now": built.get("desc"),
+            # THE WHOLE REBUILT TARGET, not only the part shown. A patch that
+            # carries the display diff and nothing else cannot be APPLIED --
+            # `full`, the ordinal and the href alternate all move with the
+            # descriptor, and replacing only `desc` would leave a target
+            # describing two different page states at once.
+            "target": built,
         })
 
     # ------------------------------------------------------------------

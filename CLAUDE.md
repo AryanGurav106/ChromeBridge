@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 1024 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 1027 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1024 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1027 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5783,6 +5783,59 @@ granted in the side panel is refused with the same message the agent gets.
     FE2. C24/C24b. `tools/bench_flows/ROUND2.md` carries the per-flow
     before/after.
 
+65. **THE SELF-HEAL LOOP ENDED IN A SUGGESTION NOBODY COULD ACT ON.** Asked
+    whether the feature was full-fledged — the recording AND the self-improving
+    half — and the honest answer was no, for a reason no entry had stated: a
+    replay that rebinds a step, or matches on a link's declared destination
+    because the recorded name has moved (#61), PROPOSES a descriptor change and
+    writes nothing. **There was no way for the agent to apply it.** The patch
+    was printed and a human edited JSON, so "self-healing" stopped one step
+    short of healing anything.
+
+    **THE RULE IT LOOKS LIKE THIS BREAKS IS INTACT, and the distinction is the
+    whole design.** #49's third non-negotiable is that a rebinding proposes a
+    patch and never edits the flow, because a runner that rewrites your test
+    while replaying it turns a visible failure into an invisible one — ReUseIt's
+    own LLM judge agreed with a human at kappa=0.528, and workflow-use calls its
+    fallback "currently really bad". That forbids **the RUNNER** acting on its
+    own. It does not forbid **the AGENT** acting deliberately, and #49's own
+    words say what makes that acceptable: "the decision appears in the
+    transcript, costs a visible turn, and nothing is re-bound behind the user's
+    back." `record_flow(action="patch")` is exactly that — a separate call, made
+    after reading the diff. **`record_flow` owns the FILE; `run_flow` owns the
+    RUN, and nothing a replay does writes.** FP6c is that control, because "the
+    loop closes" would otherwise also describe a runner that silently rewrites
+    your test.
+
+    A proposal had to grow a body to be applicable: it carried the display diff
+    (`was` -> `now`) and nothing else, and `full`, the ordinal and the href
+    alternate all move with a descriptor — replacing only `desc` would leave a
+    target describing two page states at once. It now carries the rebuilt
+    target. The proposal is also CONSUMED on apply, so the same patch cannot be
+    replayed onto a file that has moved on (FP6b).
+
+    **AND THE MOST-REPEATED COMPLAINT OF BOTH EVAL ROUNDS GOT ITS FACT BACK.**
+    Five agents said the readiness banner could not separate "still building"
+    from "ready but chatty" on an SPA — it fired after an explicit 3s wait on
+    content that was complete and verified, and once reported MORE requests in
+    flight on the usable read than on the blank one. The resource TYPE of every
+    pending request was already in `_netPending` and was being thrown away, so
+    `2 network request(s) in flight` is now
+    `2 network request(s) in flight (xmlhttprequest, image)`. An
+    `xmlhttprequest` is probably the page fetching the thing you are waiting
+    for; a `ping` or an `image` usually is not. **No quiet-period threshold was
+    added** — that would be a chosen number in a path #27/#28 took them out of.
+    This states a fact we already hold and leaves the judgement with the reader.
+
+    **TWO THINGS I HAD SAID I WOULD DO AND HAD NOT**, found by grepping rather
+    than recalling: `settle_ms` had 0 mentions in `mcp_server.py` though R2-D2
+    ends "what it CAN do is say so", and `form_input` never documented how to
+    clear a field though R2-D5 ends "say so in the tool description". A
+    commitment in a findings file is not a change in the code.
+
+    Suites: 1027 checks. New — FP6/FP6b/FP6c (apply, consume, and the control
+    that a REPLAY never writes), FE5/FE5b.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -5875,6 +5928,8 @@ granted in the side panel is refused with the same message the agent gets.
 | `form_input` is rejected with `"value": ,` in the payload | Known since #63/#64 and NOT ours: some MCP clients drop an empty string while serialising top-level arguments, producing malformed JSON before the call leaves the client. The identical value survives NESTED inside another tool's arguments, which is what identifies it. To clear a field use `fill_form([{"ref": …, "value": ""}])` or the same `form_input` inside `browser_batch` |
 | A recorded step carries a multi-second `settle_ms` | Since #64 the stop message names it. The number is the gap between YOUR OWN calls, so whenever a check only changed answer after a model turn (~3.6s, #38) that turn is inside it — 22,550ms was recorded for a CSS fade-in. It is an upper bound the recorder cannot subtract from, because it can only measure between observations. Re-record with the confirming observation in the same batch as the action |
 | A flow file is refused with "declares on_fail=…" | By design since #62 — `on_fail` is `ask` (pause and hand the choice to the agent) or `fail` (stop). `"heal"` was declared from the first commit, never written, never branched on, and silently became `"ask"`; it was deleted rather than implemented, because an automatic rebind means ranking candidates and that is what rule 3 of the runner forbids. Edit the file to a valid value |
+| A run proposed a descriptor change and nothing happened | By design — a replay never writes. Apply it with `record_flow(action="patch", name="…")`, which is a separate call you make after reading the diff (#65). The proposal is held for the session, consumed on apply, and a replay of the same flow leaves the file byte-identical |
+| The readiness banner names resource types | By design since #65 — `2 network request(s) in flight (xmlhttprequest, image)`. Five agents said the bare count could not separate "still building" from "ready but chatty" on an SPA; the type was already known and was being discarded. An `xmlhttprequest` is probably what you are waiting for, a `ping` or `image` usually is not |
 | A flow step reports `matched href=…` | By design since #61 — the recorded name no longer matches and the step resolved on the link's declared destination instead. Deterministic, nothing guessed and nothing asked, but NOT a clean pass: the page's labels moved, and the proposed patch says to what. Recorded only where the href was unique at record time, and only for `<a>`/`<area>` |
 | A flow step that reports `matched href=…` is also SLOW | By design since #61 — the recorded descriptor gets its whole settle window first, because a name that has not RENDERED yet is not a name that CHANGED (#59), and routing around it early proposes a mid-render patch. Measured at 6.58s against 0.4s clean. Only a genuinely drifted step pays it; applying the proposed patch removes it |
 | A recorded flow has no `alt` key on a link target | The MCP server was loaded before #61. It reads `descriptor.py` and `core/flows/*` at CONNECT time, and the old one answers normally while writing a slightly older format — `/mcp` reconnect, then CHECK THE SAVED FILE rather than the live result |

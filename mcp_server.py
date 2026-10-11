@@ -3825,7 +3825,7 @@ async def dismiss_dialog(
 
 @mcp.tool()
 async def record_flow(
-    action: Annotated[str, Field(description='"start", "stop", "cancel" or "status".')],
+    action: Annotated[str, Field(description='"start", "stop", "cancel", "status", or "patch" — apply the descriptor changes the last run of a flow PROPOSED (nothing is written until you ask).')],
     name: Annotated[Optional[str], Field(description="Flow name (start/stop). Saved to flows/<name>.flow.json.")] = None,
 ) -> str:
     """Record what you do next as a replayable frontend test.
@@ -3837,6 +3837,12 @@ async def record_flow(
     and the observations you made after each action become that step's
     postconditions. So check your work as you go -- a search_page or
     query_elements after an action is what makes the replay able to FAIL.
+
+    action="patch" CLOSES THE LOOP. When a replay rebinds a step, or matches on
+    a link's declared destination because the recorded name has moved, it
+    PROPOSES a descriptor change and writes nothing. This applies it, in a
+    separate call you make after reading the diff -- so a flow is only ever
+    rewritten because you decided to, never because a replay decided for you.
     """
     global _REC
     if action == "start":
@@ -3846,6 +3852,59 @@ async def record_flow(
         return (f'Recording "{_REC.name}". Drive the happy path with ordinary tool calls, '
                 f'then record_flow(action="stop"). Check your work as you go: the '
                 f'observations you make after an action become its assertions.')
+    if action == "patch":
+        # THE LOOP CLOSES HERE, and the rule it looks like it breaks is intact.
+        # #49's third non-negotiable is that a REBINDING proposes a patch and
+        # never edits the flow -- because a runner that rewrites your test
+        # while replaying it turns a visible failure into an invisible one
+        # (ReUseIt's own judge agreed with a human at kappa=0.528). That
+        # forbids the RUNNER acting on its own. It does not forbid the AGENT
+        # acting deliberately, and until now there was no way to: the patch was
+        # printed and someone edited JSON by hand, so "self-healing" stopped at
+        # a suggestion.
+        #
+        # This is a separate call, made after reading the diff, and it appears
+        # in the transcript as its own turn -- which is exactly what #49 asked
+        # for ("the decision appears in the transcript, costs a visible turn,
+        # and nothing is re-bound behind the user's back"). record_flow owns
+        # the FILE; run_flow owns the RUN. Nothing a replay does writes.
+        if not name:
+            return ('record_flow(action="patch", name="...") needs the flow name. '
+                    + (f'Proposals are held for: {", ".join(sorted(_LAST_PATCHES))}.'
+                       if _LAST_PATCHES else 'No run has proposed one yet.'))
+        pats = _LAST_PATCHES.get(name)
+        if not pats:
+            return (f'No proposed patch for "{name}" in this session. A patch is '
+                    f'proposed when a step is rebound or matches on its declared '
+                    f'destination — run the flow first.')
+        path = _flow_path(name)
+        if not path.exists():
+            return f"No flow at {path}."
+        flow = _flow_load(path)
+        applied, skipped = [], []
+        for pt in pats:
+            i, where = pt.get("step"), pt.get("path")
+            if not (isinstance(i, int) and 0 <= i < len(flow.steps)) or not pt.get("target"):
+                skipped.append(f'step {i} {where}')
+                continue
+            tgts = flow.steps[i].targets or {}
+            if where not in tgts:
+                skipped.append(f'step {i} {where}')
+                continue
+            tgts[where] = pt["target"]
+            flow.steps[i].targets = tgts
+            applied.append(f'step {i} {flow.steps[i].name} {where}: '
+                           f'{pt.get("was")} -> {pt.get("now")}')
+        if not applied:
+            return f'Nothing applied to "{name}" — {len(skipped)} proposal(s) no longer fit the file.'
+        _flow_save(flow, path)
+        _LAST_PATCHES.pop(name, None)
+        return (f'Updated {path} — {len(applied)} target(s) rewritten:\n  '
+                + "\n  ".join(applied)
+                + (f'\n  {len(skipped)} skipped (no longer fit the file).' if skipped else "")
+                + f'\n  Re-run the flow to confirm it passes CLEANLY now: a rebind that '
+                  f'still needs a rebind means the descriptor is not the problem.')
+
     if _REC is None:
         return 'Not recording. record_flow(action="start", name="...") first.'
     if action == "status":
@@ -3972,7 +4031,7 @@ async def record_flow(
         for nte in report["notes"][:6]:
             lines.append(f"  - {nte}")
         return "\n".join(lines)
-    raise ValueError('action must be "start", "stop", "cancel" or "status"')
+    raise ValueError('action must be "start", "stop", "cancel", "status" or "patch"')
 
 
 @mcp.tool()
@@ -4021,7 +4080,14 @@ async def _flow_call(tool: str, inp: dict):
     return await fn(**inp)
 
 
+# THE LAST RUN'S PROPOSED PATCHES, per flow. Kept so the agent can APPLY them
+# in a separate, deliberate call -- see record_flow(action="patch").
+_LAST_PATCHES: dict = {}
+
+
 def _flow_report(res: dict) -> str:
+    if res.get("patches"):
+        _LAST_PATCHES[res["flow"]] = res["patches"]
     head = {"passed": "PASSED", "failed": "FAILED",
             "needs_decision": "PAUSED — a step needs your decision"}[res["status"]]
     out = [f'{head}: flow "{res["flow"]}", {res["at"]}/{res["of"]} step(s) run '
@@ -4055,6 +4121,8 @@ def _flow_report(res: dict) -> str:
         out.append("  proposed descriptor changes (not applied):")
         for p in res["patches"]:
             out.append(f'    step {p["step"]} {p["name"]}: {p["was"]} -> {p["now"]}')
+        out.append(f'  Apply them with record_flow(action="patch", name="{res["flow"]}") '
+                   f'— nothing is written until you do.')
     asserted = sum(1 for l in res["log"] if l.get("asserted"))
     out.append(f'  {asserted} of {len(res["log"])} completed step(s) had their '
                f'postconditions checked.')

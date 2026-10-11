@@ -2106,11 +2106,29 @@ async function readinessNote(tabId) {
   // Ignore long-lived streams: an open EventSource/WebSocket-ish fetch would
   // otherwise mark a finished page as permanently loading.
   let net = 0;
-  if (pend) for (const t of pend.values()) if (t !== 'websocket' && t !== 'media') net++;
+  const kinds = new Map();
+  if (pend) for (const t of pend.values()) {
+    if (t === 'websocket' || t === 'media') continue;
+    net++;
+    kinds.set(t || 'other', (kinds.get(t || 'other') || 0) + 1);
+  }
   if (!r) return '';
   const bits = [];
   if (r.imgs) bits.push(`${r.imgs} image(s) still loading`);
-  if (net) bits.push(`${net} network request(s) in flight`);
+  // NAME THE KINDS. "2 network request(s) in flight" cannot be acted on, and
+  // five agents across two eval rounds said exactly that: the banner fired on
+  // an SPA whose content was complete and verified, and once reported MORE
+  // requests in flight on the usable read than on the blank one, so it could
+  // not separate "still building" from "ready but chatty". The resource TYPE is
+  // already in `_netPending` and was being thrown away -- an `xmlhttprequest`
+  // is probably the page fetching what you are waiting for, while `ping`,
+  // `image` or `script` usually is not. This states the fact and leaves the
+  // judgement where it belongs, rather than inventing a quiet-period threshold.
+  if (net) {
+    const parts = [...kinds.entries()].sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => (n > 1 ? `${n} ${k}` : k)).slice(0, 4);
+    bits.push(`${net} network request(s) in flight (${parts.join(', ')})`);
+  }
   if (r.prog) bits.push(`${r.prog} progress indicator(s) visible`);
   if (r.busy) bits.push(`${r.busy} region(s) marked aria-busy`);
   // readyState IS NOT A SIGNAL ON ITS OWN, measured across a 24-task live bench:
