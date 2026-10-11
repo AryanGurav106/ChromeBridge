@@ -606,3 +606,39 @@ That compaction is #7's deliberate token-discipline trade for ARIA grids and
 listboxes ≥10 cells, and it is not obviously wrong — but two independent agents
 flagged the same friction, and one noted that a reader scanning for ordinary
 rows would conclude the entries were not listed at all.
+
+---
+
+## D18 — INVESTIGATED AND NOT REPRODUCED; the mitigation is verified working
+
+Reported on app 8: `query_elements` returned
+`"enumerate (Python function, in Built-in functions)"` and `search_page` for
+that exact string found nothing, the rendered text having no space after the
+link.
+
+Two shapes were constructed to reproduce it:
+
+| markup | innerText | query_elements | search_page |
+|---|---|---|---|
+| `<a>x</a>(text)` — no source space | `x(text)` | `x(text)` | `x(text)` |
+| `<a>x</a><span style="display:block">(text)</span>` | `x\n(text)` | `x (text)` | `x \| (text)` |
+
+The first agrees everywhere. The second differs in RENDERING — `query_elements`
+collapses the line break to a space, `search_page` shows it as the declared
+boundary #52 introduced — **and the string `query_elements` prints still
+matches**:
+
+```
+search_page('zip (Python function)')  -> 1 hit   <- the exact query_elements string
+search_page('zip(Python function)')   -> 0 hits
+```
+
+#52's rule is what saves it: a literal space matches any whitespace, so a
+pattern copied out of one tool works in the other across a line break.
+
+**The live case is therefore NOT explained by either shape**, and nothing was
+changed on the strength of a mechanism that does not reproduce (#50: an
+unreproducible report cannot be fixed by guessing at it; #16: re-derive before
+believing). What IS established is that the obvious failure mode is already
+mitigated and measured. If it recurs, the thing to capture is the live markup
+around the match, not another constructed fixture.
