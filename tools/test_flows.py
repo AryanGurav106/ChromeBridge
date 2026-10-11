@@ -961,6 +961,141 @@ async def record_and_replay():
           "passes",
           rgood["status"] == PASSED, f"status={rgood['status']}")
 
+    # ---- FE: WHAT AN ASSERTION IS WORTH (#63's D13, D17, D5) -------------
+    #
+    # The generality eval recorded 8 flows against 8 real apps and 7 replayed
+    # green -- while an agent's confirmation that a modal had CLOSED was
+    # discarded three times over, and the flow with the strongest summary line
+    # in the whole eval asserted `#combo1 == 1` on the two steps that pick an
+    # option, which is true on an untouched page.
+    class EvalBridge(FakeBridge):
+        """Answers each observation from a script, so a run can be replayed."""
+
+        def __init__(self, entries, script):
+            super().__init__(entries)
+            self.script = list(script)
+
+        async def call(self, tool, inp):
+            self.calls.append((tool, dict(inp)))
+            # Answers REPEAT rather than being consumed: a failing check is
+            # re-asked for the whole settle window (#55), and a one-shot script
+            # makes the reported reason come from a later retry instead of the
+            # answer under test.
+            for t, key, res in self.script:
+                if t == tool and key in json.dumps(inp):
+                    return res
+            return await super().call(tool, inp)
+
+    ents = [E(70, "button", name="Close")]
+    rec = Recorder("gone", FakeBridge(ents).entries_fn)
+    ci = {"ref": "ref_70", "tabId": 1}
+    ct = await rec.before("computer", ci)
+    rec.after("computer", ci, "clicked", ct)
+    rec.after("query_elements", {"selector": ".modal.show", "tabId": 1},
+              "No element matches '.modal.show' in the rendered document.", {})
+    rec.after("search_page", {"pattern": "reading this text", "tabId": 1},
+              'No match for "reading this text". 11 text block(s) were searched.', {})
+    fgone, _ = rec.compile()
+    gexp = fgone.steps[0].expect or {}
+    check("FE1 an observation that something is GONE becomes an assertion — "
+          "zero was falsy, so a confirmed disappearance was thrown away and "
+          "the step saved with nothing that could fail",
+          (gexp.get("query") or {}).get("count") == 0
+          and (gexp.get("search") or {}).get("absent") is True,
+          json.dumps(gexp))
+
+    fb_still = FakeBridge(ents)
+    fb_still.query_total, fb_still.search_hits = 3, 2
+    rstill = await start(fgone, 1, fb_still.call, fb_still.entries_fn)
+    check("FE1b ...and it FAILS when the thing is still there, which is the "
+          "whole point of recording a disappearance",
+          rstill["status"] == FAILED and "found NONE" in rstill["reason"],
+          f"{rstill['status']}: {rstill['reason'][:80]}")
+
+    fb_gone = FakeBridge(ents)
+    fb_gone.query_total, fb_gone.search_hits = 0, 0
+    rg = await start(fgone, 1, fb_gone.call, fb_gone.entries_fn)
+    check("FE1c CONTROL: and PASSES when it really is gone",
+          rg["status"] == PASSED, f"{rg['status']}: {rg['reason'][:70]}")
+
+    # FE2 -- the text that was read is kept, so a CONTENT check does not
+    # degrade into an existence check.
+    rec2 = Recorder("pick", FakeBridge(ents).entries_fn)
+    pi = {"ref": "ref_70", "tabId": 1}
+    pt = await rec2.before("computer", pi)
+    rec2.after("computer", pi, "clicked", pt)
+    rec2.after("query_elements", {"selector": "#combo1", "tabId": 1},
+               '1 element(s) match \'#combo1\':\n  <div ref_9> "Durian" aria-expanded="false"', {})
+    fpick, _ = rec2.compile()
+    pexp = (fpick.steps[0].expect or {}).get("query") or {}
+    check("FE2 a single-match query keeps the TEXT it read, so `#combo1 == 1` "
+          "stops being the whole assertion",
+          pexp.get("text") == "Durian" and pexp.get("count") == 1,
+          json.dumps(pexp))
+
+    wrong = EvalBridge(ents, [("query_elements", "#combo1",
+                               '1 element(s) match \'#combo1\':\n  <div ref_9> "Choose a Fruit"')])
+    rw = await start(fpick, 1, wrong.call, wrong.entries_fn)
+    check("FE2b ...and the step FAILS when the element still reads what it "
+          "read before the action — the exact shape that passed in the eval",
+          rw["status"] == FAILED and "Durian" in rw["reason"],
+          f"{rw['status']}: {rw['reason'][:90]}")
+
+    right = EvalBridge(ents, [("query_elements", "#combo1",
+                               '1 element(s) match \'#combo1\':\n  <div ref_9> "Durian"')])
+    rr = await start(fpick, 1, right.call, right.entries_fn)
+    check("FE2c CONTROL: and passes when it reads what was recorded",
+          rr["status"] == PASSED, f"{rr['status']}: {rr['reason'][:70]}")
+
+    # FE3 -- two checks of the same kind after one action both survive.
+    rec3 = Recorder("two", FakeBridge(ents).entries_fn)
+    ti = {"ref": "ref_70", "tabId": 1}
+    tt = await rec3.before("computer", ti)
+    rec3.after("computer", ti, "clicked", tt)
+    rec3.after("query_elements", {"selector": "tbody tr", "tabId": 1},
+               "9 element(s) match 'tbody tr'", {})
+    rec3.after("query_elements", {"selector": "tbody td.office", "tabId": 1},
+               "9 element(s) match 'tbody td.office'", {})
+    ftwo, _ = rec3.compile()
+    qs = (ftwo.steps[0].expect or {}).get("query")
+    check("FE3 two query checks after one action BOTH survive — the dropped "
+          "one was the content check in the eval, so the flow asserted a row "
+          "count where the agent had checked what the rows said",
+          isinstance(qs, list) and len(qs) == 2
+          and {q["selector"] for q in qs} == {"tbody tr", "tbody td.office"},
+          json.dumps(qs))
+
+    # FE4 -- an observation that says it read the page being REPLACED is not a
+    # postcondition. This is what baked a pre-navigation url into the arXiv
+    # flow and made it fail on every replay.
+    rec4 = Recorder("stale", FakeBridge(ents).entries_fn)
+    si = {"ref": "ref_70", "tabId": 1}
+    st4 = await rec4.before("computer", si)
+    rec4.after("computer", si, "clicked", st4)
+    rec4.after("get_url", {"tabId": 1},
+               '{"url": "https://app.test/old", "title": "t", "note": "A navigation to '
+               'https://app.test/new is IN FLIGHT (pending). The url and title above '
+               'belong to the document being REPLACED"}', {})
+    rec4.after("get_url", {"tabId": 1}, '{"url": "https://app.test/new", "title": "t"}', {})
+    fstale, _ = rec4.compile()
+    check("FE4 a get_url that NAMES an in-flight navigation is not compiled "
+          "into an assertion, and the settled read after it is",
+          (fstale.steps[0].expect or {}).get("url") == "https://app.test/new",
+          json.dumps(fstale.steps[0].expect))
+
+    # FE4b -- and the general rule underneath it: LAST wins, because later is
+    # more settled and everything before the next action belongs to this step.
+    rec5 = Recorder("last", FakeBridge(ents).entries_fn)
+    li5 = {"ref": "ref_70", "tabId": 1}
+    lt5 = await rec5.before("computer", li5)
+    rec5.after("computer", li5, "clicked", lt5)
+    rec5.after("query_elements", {"selector": "tr", "tabId": 1}, "2 element(s) match 'tr'", {})
+    rec5.after("query_elements", {"selector": "tr", "tabId": 1}, "5 element(s) match 'tr'", {})
+    flast, _ = rec5.compile()
+    check("FE4b two looks at the SAME check keep the last, not the first",
+          ((flast.steps[0].expect or {}).get("query") or {}).get("count") == 5,
+          json.dumps(flast.steps[0].expect))
+
     # ---- FS6: THE SETTLE WINDOW IS MEASURED, NOT CHOSEN ------------------
     #
     # The shipped window was a flat 6s. On a real app whose create ->

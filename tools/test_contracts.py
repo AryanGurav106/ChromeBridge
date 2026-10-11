@@ -439,6 +439,25 @@ def main() -> int:
     except Exception as _e:
         check("C22 the staleness probe runs", False, f"{type(_e).__name__}: {_e}")
 
+    # C23: NO AGENT-FACING json.dumps MAY ESCAPE NON-ASCII. Four times now:
+    # #11(d) fixed `find`, #42 fixed `query_elements`, and #63 found `get_url`
+    # printing a Japanese title as \uXXXX -- in a function I had edited two
+    # hours earlier, with the rule written in `_q`'s docstring 600 lines above
+    # it. A rule living in prose is a rule a human has to remember; this is the
+    # tripwire that should have existed after the first one.
+    _ms = (_Path(__file__).resolve().parents[1] / "mcp_server.py").read_text(encoding="utf-8")
+    _bare = []
+    for _m in re.finditer(r"json\.dumps\(", _ms):
+        _seg = _ms[_m.start(): _m.start() + 220]
+        _line = _ms[:_m.start()].count("\n") + 1
+        if "ensure_ascii" in _seg.split("\n")[0] or "ensure_ascii" in _seg[:120]:
+            continue
+        _bare.append(_line)
+    check("C23 every json.dumps in mcp_server.py passes ensure_ascii=False — "
+          "escaping non-Latin text to \\uXXXX has shipped four times",
+          not _bare, f"bare json.dumps at line(s) {_bare[:8]}" if _bare
+          else f"all {_ms.count('json.dumps(')} call(s) explicit")
+
     check("C11 every function injected via runInTab is self-contained "
           "(executeScript stringifies only that function)",
           not _bad,

@@ -39,13 +39,22 @@ from typing import Any, Callable, Optional
 from . import secrets
 from .descriptor import Unresolved, build, resolve
 from .model import Flow, Step, resolve_vars, set_ref
-from .recorder import query_total, refused, search_hits
+from .recorder import query_first_text, query_total, refused, search_hits
 
 PASSED, FAILED, NEEDS = "passed", "failed", "needs_decision"
 
 # Live runs, so a resume continues from the stopped step instead of replaying
 # the side effects of every step before it.
 RUNS: dict = {}
+
+
+def _as_list(v) -> list:
+    """One check or several. A step may assert on several selectors or several
+    patterns since #63/D5; files recorded before that carry a bare dict, and
+    both shapes read the same way here rather than needing a schema bump."""
+    if v is None:
+        return []
+    return list(v) if isinstance(v, list) else [v]
 
 
 def _created_tab(result) -> Optional[int]:
@@ -430,19 +439,26 @@ class Run:
             got = m.group(1) if m else str(res)
             if got != exp["url"]:
                 return f'url is {got!r}, recorded {exp["url"]!r}'
-        if "search" in exp:
-            s = exp["search"]
+        for s in _as_list(exp.get("search")):
             res = await self.call("search_page",
                                   {"tabId": self.cur_tab, "pattern": s["pattern"]})
             hits = search_hits(str(res))
             if hits is None:
                 return (f'could not read a hit count out of search_page for '
                         f'{s["pattern"]!r} — the result-string contract moved')
-            if hits < s["min"]:
+            # ABSENCE IS AN ASSERTION. Recorded when the agent looked and found
+            # nothing, which is half of what a UI test checks -- a dialog
+            # closed, an error cleared, a row deleted (#63/D13).
+            if s.get("absent"):
+                if hits:
+                    return (f'search_page({s["pattern"]!r}) found {hits}, and the '
+                            f'recording found NONE — this step is supposed to make '
+                            f'that text go away')
+                continue
+            if hits < s.get("min", 1):
                 return (f'search_page({s["pattern"]!r}) found {hits}, '
                         f'recorded at least {s["min"]}')
-        if "query" in exp:
-            q = exp["query"]
+        for q in _as_list(exp.get("query")):
             res = await self.call("query_elements",
                                   {"tabId": self.cur_tab, "selector": q["selector"],
                                    "max_results": 1})
@@ -450,6 +466,17 @@ class Run:
             if tot is None:
                 return (f'could not read a total out of query_elements for '
                         f'{q["selector"]!r} — the result-string contract moved')
+            # THE TEXT THAT WAS READ, when one was recorded. Without this a
+            # content check degrades to an existence check and the step cannot
+            # fail (#63/D17). Compared with `in` rather than `==`: the recorded
+            # string came from this same renderer, and a surrounding label the
+            # page adds later should not break a step whose point is the value.
+            if q.get("text") is not None and tot:
+                got = query_first_text(str(res))
+                if got is None or q["text"] not in got:
+                    return (f'query_elements({q["selector"]!r}) reads '
+                            f'{(got if got is not None else "(no text)")!r}, '
+                            f'recorded {q["text"]!r}')
             # `count` is the recorded observation and must match exactly;
             # `min` is the hand-relaxed form for a list that legitimately grows.
             if "count" in q and tot != q["count"]:

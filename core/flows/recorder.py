@@ -27,6 +27,7 @@ afterwards would describe whatever replaced it.
 """
 from __future__ import annotations
 
+import json
 import re
 import time
 from typing import Any, Callable, Optional
@@ -74,6 +75,7 @@ REFUSALS = (
     "Permission required: ChromeBridge is not allowed",     # the gate
     "ChromeBridge is PAUSED",                               # the kill switch
     "the write reported success but did NOT land",          # #24 readback
+    "WARNING: no option matching",                          # #63, a pick that matched nothing
 )
 
 
@@ -96,6 +98,33 @@ def search_hits(result: str) -> Optional[int]:
     if m:
         return int(m.group(1))
     return 0 if "No match for" in (result or "") else None
+
+
+_ROW = re.compile(r'(?m)^\s*<[^>\n]*>\s+(?=")')
+
+
+def query_first_text(result: str) -> Optional[str]:
+    """The TEXT of the first element query_elements printed, or None.
+
+    The tool already returns it -- `<div ref_9> "Durian" aria-expanded="false"`
+    -- and the recorder threw it away, so an agent that checked an element's
+    CONTENT recorded only how many matched (#63/D17). Measured live: the flow
+    with the strongest summary line in the whole eval ("5 of 5 steps had their
+    postconditions checked") asserted `#combo1 == 1` on the two steps that pick
+    an option, which is true on an untouched page.
+
+    Parsed with a real JSON decoder rather than a quote-to-quote regex, because
+    the renderer now emits the text json-quoted for exactly this reason: a
+    label containing a double quote has to come back whole.
+    """
+    m = _ROW.search(result or "")
+    if not m:
+        return None
+    try:
+        txt, _ = json.JSONDecoder().raw_decode(result[m.end():])
+    except ValueError:
+        return None
+    return txt if isinstance(txt, str) and txt.strip() else None
 
 
 def query_total(result: str) -> Optional[int]:
@@ -185,7 +214,15 @@ class Recorder:
         # not work. Replaying it would replay the mistake. ReUseIt turns these
         # into pre-condition checks; that is the obvious next thing to build
         # here and is deliberately NOT guessed at now.
-        live = [r for r in self.raw if not r.get("error")]
+        # ...AND SO IS A CALL THAT RETURNED A WARNING INSTEAD OF ACTING. None
+        # of those raise: the call succeeds and returns a string saying nothing
+        # happened, so `form_input(ref, 25)` answering `WARNING: no option
+        # matching "25.0"` was compiled into the flow TWICE as a real step,
+        # while the report said `dropped: 0 failed call(s)` (#63/D7). #62
+        # taught the RUNNER to stop on these strings; a string meaning "this
+        # did not happen" has to mean the same thing at record time.
+        live = [r for r in self.raw
+                if not r.get("error") and not (r.get("mutates") and refused(r.get("result")))]
         dropped_err = len(self.raw) - len(live)
 
         # Focus is established by the last step that NAMED a ref. That is #43's
@@ -370,7 +407,7 @@ class Recorder:
         return flow, report
 
     @staticmethod
-    def _checks(records: list) -> dict:
+    def _checks(records: list, keep_first: bool = False) -> dict:
         """Turn a run of OBSERVATIONS into declared checks.
 
         One function for both directions: the observations after an action are
@@ -383,34 +420,92 @@ class Recorder:
         answer is a number or a url -- never the prose of a listing, which
         changes for a hundred innocent reasons. A weak check is worse than
         none, because a flow that cannot fail still reports green.
+
+        THREE THINGS THE GENERALITY EVAL (#63) FOUND HERE, all in `setdefault`:
+
+        * ZERO IS AN ANSWER and it was being thrown away. `if hits`/`if tot`
+          treats a miss as nothing observed, so an observation that something
+          is GONE could not become an assertion -- an agent confirmed a modal
+          had closed three separate ways and all three were discarded, leaving
+          a step that passes if Close does nothing. `query_total`'s own
+          docstring argues zero must be distinguishable from an unreadable
+          result, and returns 0 rather than None for exactly that; this
+          collapsed them again one function later.
+        * THE FIRST OBSERVATION WON, so a stale read beat a fresh one. After a
+          navigating click the first `get_url` read the document being
+          REPLACED; the agent re-read it a moment later and got the right one;
+          the recorder kept the first and baked a wrong url into the flow.
+          Later is strictly more settled, and everything before the next ACTION
+          still belongs to this step -- so last wins. `keep_first` is for
+          `_checks_before`, which feeds records in REVERSE and therefore wants
+          the first it encounters.
+        * ONE SLOT PER KIND discarded the rest. Two `query_elements` after one
+          action kept only the first, and the dropped one was the content check
+          -- so the flow asserted a row COUNT where the agent had checked that
+          every row said "Edinburgh". Checks are now keyed by what they look
+          at, so different selectors and different patterns coexist.
         """
         exp: dict = {}
+        _q: dict = {}
+        _s: dict = {}
+
+        def _put(d, k, v):
+            if keep_first:
+                d.setdefault(k, v)
+            else:
+                d[k] = v
+
         for r in records:
             name, res = r["name"], r["result"] or ""
             if name == "get_url":
+                # AN OBSERVATION THAT SAYS IT READ THE WRONG PAGE IS NOT A
+                # POSTCONDITION. #61 made get_url name an in-flight navigation;
+                # compiling that read into an assertion is how the arXiv flow
+                # came to assert the url it was navigating AWAY from.
+                if "IN FLIGHT" in res:
+                    continue
                 m = re.search(r'"url"\s*:\s*"([^"]+)"', res)
                 if m:
-                    exp.setdefault("url", m.group(1))
+                    _put(exp, "url", m.group(1))
             elif name == "search_page":
                 hits = search_hits(res)
                 pat = r["input"].get("pattern")
-                if hits and pat:
+                if hits == 0 and pat:
+                    # ABSENCE, asserted as absence. The agent looked and it was
+                    # not there, which is half of what a UI test checks.
+                    _put(_s, pat, {"pattern": pat, "absent": True})
+                elif hits and pat:
                     # PRESENCE, not the exact tally. A page-wide text search is
                     # genuinely volatile -- a toast saying "Created X"
                     # legitimately turns 1 hit into 2 -- and the question this
                     # check is really asking is "is it there". The observed
                     # count is kept for the reader, not asserted on.
-                    exp.setdefault("search",
-                                   {"pattern": pat, "min": 1, "observed": hits})
+                    _put(_s, pat, {"pattern": pat, "min": 1, "observed": hits})
             elif name == "query_elements":
                 tot = query_total(res)
                 sel = r["input"].get("selector")
-                if tot and sel:
+                if tot is not None and sel:
                     # EXACT, because that is what was observed. "At least N" is
                     # a weaker claim than the run made and cannot see anything
                     # being ADDED: measured live, a row injected above the
                     # table left the flow green at min=4 against 5 rendered.
-                    exp.setdefault("query", {"selector": sel, "count": tot})
+                    chk = {"selector": sel, "count": tot}
+                    # THE TEXT THAT WAS READ, when the query named ONE element.
+                    # Without it a content check compiles to an existence check:
+                    # `#combo1 == 1` is true whatever the combobox displays.
+                    # Only for a single match -- across several the text belongs
+                    # to no particular one -- and never when the step's own
+                    # input was what produced it, which `_paramize` turns into a
+                    # variable so an override follows.
+                    if tot == 1:
+                        txt = query_first_text(res)
+                        if txt:
+                            chk["text"] = txt
+                    _put(_q, sel, chk)
+        if _s:
+            exp["search"] = list(_s.values()) if len(_s) > 1 else next(iter(_s.values()))
+        if _q:
+            exp["query"] = list(_q.values()) if len(_q) > 1 else next(iter(_q.values()))
         return exp
 
     @classmethod
@@ -434,17 +529,55 @@ class Recorder:
         answer, and the one number that would have fixed it was already in the
         recording: every call is timestamped.
 
-        Only an observation that CONTRIBUTED a check counts, and the LAST of
-        them, so a trailing unrelated read does not inflate the bound.
+        ONLY WHERE THE APP DEMONSTRATED IT WAS SLOW, which is the correction
+        #63/D14 forced. The first version took the gap from the action to the
+        last contributing observation -- which on a REAL recording is mostly
+        the agent's own model turns (~3.6s each, #38), not the page. Measured:
+        18,548ms recorded for a navigate and 16,465ms for a modal that opens in
+        well under a second, so every replay then allowed ~18s of slack on
+        steps needing none. The Boxsy figures #60 reported are inflated the
+        same way.
+
+        The fixture that motivated #60 had the right shape all along: an agent
+        that checks, gets one answer, waits, and checks again and gets a
+        DIFFERENT one. That change is the app saying "I was not ready yet". A
+        single look says only that the agent got round to looking.
+
+        So the bound is the gap from the action to the last moment any check
+        CHANGED its answer, and with nothing changing it is zero. Note this had
+        to be the answer CHANGING rather than a look that found nothing: since
+        #63/D13 a zero IS an answer, so "found nothing" is a legitimate
+        assertion rather than a failed attempt.
         """
         base = live[i].get("ts") or 0
-        last = 0.0
+        if not base:
+            return 0
+        first: dict = {}           # check key -> the FIRST answer seen for it
+        best = 0.0
         for r in live[i + 1:]:
             if r["mutates"]:
                 break
-            if cls._checks([r]):
-                last = max(last, r.get("ts") or 0)
-        return int(max(0.0, last - base) * 1000) if (last and base) else 0
+            for key, val in cls._check_items(cls._checks([r])).items():
+                if key in first:
+                    if first[key] != val:
+                        best = max(best, r.get("ts") or 0)
+                else:
+                    first[key] = val
+        return int(max(0.0, best - base) * 1000) if best else 0
+
+    @staticmethod
+    def _check_items(exp: dict) -> dict:
+        """Each check as key -> answer, so two looks at one thing are comparable."""
+        out: dict = {}
+        if "url" in exp:
+            out[("url",)] = exp["url"]
+        sv = exp.get("search")
+        for s in (sv if isinstance(sv, list) else [sv] if sv else []):
+            out[("search", s.get("pattern"))] = (s.get("absent"), s.get("observed"))
+        qv = exp.get("query")
+        for q in (qv if isinstance(qv, list) else [qv] if qv else []):
+            out[("query", q.get("selector"))] = (q.get("count"), q.get("text"))
+        return out
 
     @classmethod
     def _checks_before(cls, live: list, i: int) -> dict:
@@ -462,7 +595,8 @@ class Recorder:
         action changed and another changed back, which is worth flagging anyway.
         Used ONLY to ask whether a postcondition witnesses anything.
         """
-        return cls._checks([r for r in reversed(live[:i]) if not r["mutates"]])
+        return cls._checks([r for r in reversed(live[:i]) if not r["mutates"]],
+                           keep_first=True)
 
     @classmethod
     def _require_before(cls, live: list) -> dict:

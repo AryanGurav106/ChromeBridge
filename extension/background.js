@@ -12426,10 +12426,24 @@ function _queryElementsPage(selector, opts) {
             // malformed one. The provenance was right and the rendering destroyed
             // it; the raw attribute now travels under its own key.
             const _attr = el.getAttribute(name);
-            let v = (name === 'href' || name === 'src') && el[name] != null
-              ? el[name] : _attr;
-            const _prov = ((name === 'href' || name === 'src')
-                           && _attr != null && _attr !== v) ? String(_attr) : null;
+            // LIVE STATE vs INITIAL STATE. HTML defines `value`, `checked`,
+            // `selected` and `indeterminate` as the only IDL attributes whose
+            // property does NOT reflect the content attribute: the attribute is
+            // the DEFAULT the page authored, the property is what the control
+            // holds now. Reading the attribute therefore answers a different
+            // question from the one asked, and silently: a field holding typed
+            // text printed nothing at all, because the page never set a `value`
+            // attribute, while a radio printed fine because `value="medium"` is
+            // authored. Three agents across three sites hit it (#63/D1) and
+            // none could tell "has no value" from "I only looked at the
+            // attribute". NOT a general property fallback -- that would print
+            // `disabled=false` on every element that simply lacks it.
+            const _LIVE = (name === 'value' || name === 'checked'
+                           || name === 'selected' || name === 'indeterminate');
+            const _url = (name === 'href' || name === 'src');
+            let v = (_url || _LIVE) && el[name] != null ? el[name] : _attr;
+            const _prov = ((_url || _LIVE)
+                           && _attr != null && String(_attr) !== String(v)) ? String(_attr) : null;
             // PRESENT-AND-EMPTY IS NOT ABSENT. `getAttribute` returns null when the
             // attribute is missing and "" when it is present with no value, and the
             // guard here collapsed those into one silence — so asking for an
@@ -13152,7 +13166,16 @@ async function handleOp({ id, op, params }) {
         const want = isHistory ? null : normalizeNavUrl(dest);
         // Compare ignoring a trailing slash, which Chrome adds to a bare origin:
         // asking for "https://example.com" lands on "https://example.com/".
-        const _same = (a, b) => String(a || "").replace(/\/+$/, "") === String(b || "").replace(/\/+$/, "");
+        // DECODED, because a non-ASCII url is percent-encoded by the browser and
+        // not by the caller. Comparing raw strings made EVERY navigate to such a
+        // url claim a redirect: `/wiki/メインページ` against
+        // `/wiki/%E3%83%A1%E3%82%A4%E3%83%B3%E3%83%9A%E3%83%BC%E3%82%B8` is the
+        // same page, and the notice told the agent its assertions were about a
+        // different one -- the inverse of the defect it exists to prevent, on an
+        // entire class of the web (#63/D10). decodeURI can throw on a malformed
+        // sequence, so each side falls back to its raw form.
+        const _dec = (u) => { try { return decodeURI(String(u || "")); } catch (e) { return String(u || ""); } };
+        const _same = (a, b) => _dec(a).replace(/\/+$/, "") === _dec(b).replace(/\/+$/, "");
         let before = "";
         try { before = (await chrome.tabs.get(t.id)).url || ""; } catch (e) {}
         // Re-navigating to where we already are is a RELOAD: the URL will not

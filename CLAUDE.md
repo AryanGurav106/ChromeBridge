@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 1006 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 1016 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1006 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1016 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5521,6 +5521,147 @@ granted in the side panel is refused with the same message the agent gets.
     is where `"heal"` came from, and a plan that still specifies a value the
     implementation deliberately refuses is how it would come back.
 
+63. **EIGHT REAL APPS, EIGHT AGENTS: THE LOCATOR HELD AND THE LOOP BROKE IN
+    FIFTEEN WAYS.** Every number this feature had was about the LOCATOR -- 37
+    frozen sites, 12,030 controls, 2,726 descriptors at 0% WRONG under six
+    mutations. The record-and-replay LOOP was demonstrated on five apps, two of
+    which I wrote, and CI replayed one. `tools/bench_flows/` is the eval that
+    measured it: pre-registration written before the app list existed, apps
+    named by an agent told only to describe public browser interactions, eight
+    recording agents run SERIALLY (#39: six parallel agents corrupted each
+    other's tab groups), and every metric scored from the saved `*.flow.json`
+    and `run_flow`'s own output rather than from any agent's prose (#47 found
+    two scorer defects that way).
+
+    | | pre-registered | actual |
+    |---|---|---|
+    | M1 replays green | >= 6/8 | **7/8** |
+    | **M3 a step binding to the WRONG element and reporting success** | **0** | **0** |
+    | M4 witness check fires | >= 1 | 1/8 |
+    | M5 defect classes no fixture models | >= 2 | **15** |
+
+    **P2 was wrong and that is the useful part:** I predicted failures in SPA
+    settle timing, non-reproducible postconditions and a popup left open. None
+    happened. **The result is that the part which was measured held** -- every
+    descriptor resolved to the element it was recorded for, on a React SPA, a
+    MediaWiki skin that swaps its search input for a Vue combobox on focus, an
+    ARIA combobox with no native `<select>`, a client-filtered table and a docs
+    sidebar -- **and every single defect was in the loop around it.**
+
+    **WHAT A GREEN FLOW WAS ACTUALLY WORTH, which is the finding.**
+    - **A DISAPPEARANCE COULD NOT BE ASSERTED.** `if hits and pat:` /
+      `if tot and sel:` -- zero is falsy. An agent confirmed a modal had closed
+      THREE separate ways and all three were discarded; the step saved with no
+      `expect` at all, so the replay passes if Close does nothing. And
+      `query_total`'s own docstring argues ZERO IS AN ANSWER and returns 0
+      rather than None precisely so a miss can be told from a parse failure --
+      then `if tot` collapses them one function later. Half of all UI
+      assertions are disappearances.
+    - **A CONTENT CHECK COMPILED INTO AN EXISTENCE CHECK.** `query_elements`
+      observations stored selector+count and threw away the text the tool had
+      returned. The flow with the strongest summary line in the eval -- "5 of 5
+      steps had their postconditions checked" -- asserted `#combo1 == 1` on the
+      two steps that PICK an option. Verified on an untouched page: `1
+      element(s) match '#combo1': <div> "Choose a Fruit"`. Two of its five
+      assertions could not fail.
+    - **#57'S WITNESS CHECK CANNOT CATCH THAT CLASS, correctly.** It compares a
+      check against its own value BEFORE the step, and `#combo1` had no prior
+      value, so there was no claim to make (FW3). #57 catches "already true
+      before this step"; this is "true regardless of any step".
+    - **THE FIRST OBSERVATION WON, so a stale read beat a fresh one.** After a
+      navigating click the first `get_url` read the document being REPLACED;
+      the agent re-read it and got the right one; `setdefault` kept the first.
+      That baked a pre-navigation url into the arXiv flow, which then failed
+      deterministically on every replay -- **the eval's only failure, and ours
+      rather than the app's**.
+    - **ONE SLOT PER KIND discarded the rest**: two `query_elements` after one
+      action kept only the first, and the dropped one was the content check.
+    - **AND THE SETTLE RACES THE NAVIGATION'S OWN ANNOUNCEMENT.** `_settle` IS
+      asked before every step from `i > 0`; it asked before `get_url` and
+      answered **idle**, and `get_url` one round trip later reported
+      `IN FLIGHT`. #51 deliberately ASKS rather than predicts, and this is the
+      cost: `onBeforeNavigate` can land in the gap between the probe and the
+      step it protects, and two ops over one socket cannot be made atomic. It
+      failed LOUD -- #61's note, shipped hours earlier, is the only reason the
+      agent knew the read was stale.
+
+    **`settle_ms` MEASURED MY OWN THINK TIME. #60 is corrected.** The file
+    carried 18,548ms for a navigate and 16,465ms for a modal that opens in well
+    under a second, because `base` is the action's timestamp and `last` the
+    final contributing observation -- the gap is mostly model turns (~3.6s
+    each, #38). **So the Boxsy figures #60 quotes are not what that entry says
+    they are.** The fixture had the right shape all along (check, get nothing,
+    wait, check again) and the implementation generalised past it to "the last
+    observation that contributed", which is simply whenever the agent looked.
+    It is now the last moment any check CHANGED its answer -- and that had to
+    be *changed* rather than *failed*, because since the zero fix a miss is a
+    legitimate answer rather than a failed attempt.
+
+    **ONE BUG WAS EIGHT.** `get_url` printed a Japanese title as `\uXXXX` --
+    `json.dumps` with no `ensure_ascii=False`, in a function #61 had edited two
+    hours earlier, with the rule written in `_q`'s docstring 600 lines above
+    it. It was fixed for `find` (#11d), fixed again for `query_elements` (#42),
+    and shipped a fourth time. **C23 is the tripwire that should have existed
+    after the first one, and it immediately found SEVEN MORE** -- including
+    `tabs_context_mcp`, which returns page-controlled tab TITLES. A rule in
+    prose is a rule a human has to remember.
+
+    **THREE MORE TOOL DEFECTS, each one rule stated wrong.**
+    - `query_elements(attributes=["value"])` read the ATTRIBUTE, so a field
+      holding typed text printed nothing while a radio printed fine. HTML makes
+      `value`/`checked`/`selected`/`indeterminate` the only IDL attributes
+      whose property does NOT reflect -- the attribute is the authored default,
+      the property is the live state. Those four now read the property; a
+      general fallback was rejected because it would print `disabled=false` on
+      every element that merely lacks it.
+    - `navigate` claimed a REDIRECT on **every** non-ASCII url, because
+      `_same` compared the decoded request against the encoded landing url. It
+      told the agent its assertions were about a different page when they were
+      about the right one -- the inverse of the defect the notice prevents,
+      across an entire class of the web.
+    - `form_input(ref, 25)` sent `"25.0"`: the schema takes
+      `Union[str, bool, float]`, so an int is coerced and stringified. One
+      `_as_text` for both form tools, since they are one concept (#21) and the
+      eval hit it through one of them only by luck.
+
+    **A SEARCH MISS NEVER CONSIDERED THE CHARACTER.** Two of eight apps, two
+    agents, two classes: arXiv renders an EN DASH in `Showing 1–50 of` and
+    Bootstrap a curly apostrophe in `you’re`, while the message offered
+    pagination, frames and genuine absence. It now names what the PATTERN
+    contains -- the caller's own string, which we have -- and never guesses at
+    the page. Whether matching should normalise quotes is a real question with
+    arguments both ways; saying it in the message costs nothing and cannot be
+    wrong.
+
+    **AND THE SUMMARY LINE HID THE PATTERN.** Three agents independently said
+    they could not tell WHICH steps ended up unasserted. The stop message names
+    them now -- and in the eval that would have shown the unasserted steps were
+    **the TYPING ones, every time**, because until the `value` fix no tool
+    could assert what had been typed.
+
+    **I GOT TWO THINGS WRONG MID-EVAL AND THE ARTEFACTS CORRECTED ME BOTH
+    TIMES:** I recorded that app 4's unasserted steps were its two `Enter`
+    presses (they were the two `form_input`s), and I logged app 7 as the
+    cleanest in the eval before checking what its assertions said. Scoring from
+    artefacts is what caught both; an agent's self-report would not have.
+
+    **NOT FIXED, with reasons.** `find` cannot survive a one-particle
+    difference in an agglutinative label (`履歴表示` against `履歴を表示`) --
+    #20 established it is lexical and rejected ranking here, and #39's census
+    routed the agent to `query_elements`, which answered in one call. Every ref
+    click reports the same coordinate because each scrolls its target to the
+    same place; the ref in the same line is what identifies it. A ≥10-cell
+    listbox or TOC prints as one `mmid:label` line rather than rows (#7's
+    deliberate fold), which two agents found awkward and neither was blocked by.
+
+    Suites: 1016 checks. New -- FE1-FE4b (a disappearance is an assertion and
+    FAILS when the thing is still there; the text that was read is kept and
+    FAILS when the element still reads what it did before; two checks of one
+    kind both survive; an in-flight read is not compiled; last wins), C23 (the
+    escaping tripwire, which found seven sites on its first run). Live-verified
+    through a real Chrome and the real op router: D1, D6, D9, D10, D11, D13.
+    Harness, findings and results in `tools/bench_flows/`.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -5603,6 +5744,12 @@ granted in the side panel is refused with the same message the agent gets.
 | A flow step after `tabs_create_mcp` runs in the NEW tab | By design since #58 — the runner used to force the flow's starting tabId on every step, so a recorded `tabs_create_mcp` made a tab that was then ignored and the flow carried on in the old one. Same rule `browser_batch` threads (#46) and only from `tabs_create_mcp`, which returns exactly one id it just made. A create whose id cannot be read FAILS rather than silently continuing in the previous tab |
 | A flow fails at step 1 on an SPA with "no element matches" | Fixed in #59 — target resolution had no settle window, so a control that had not RENDERED yet was reported exactly like one that does not exist. It now retries on the same bound as a postcondition, re-fetching entries each attempt. If it still fails after the window, the control really is absent — or its NAME is data-dependent, which is the other half of #59 |
 | A flow's descriptor stops matching after data changes | Its identity is data-dependent: a nav tab's accessible name is `"Investors 38"` because AccName 2F concatenates the badge, so adding a record makes it `"Investors 39"`. Since #61 a LINK recovers by itself — the step resolves on its declared destination and the run says `name 'X' is gone — matched href='/y'`. A BUTTON with a badge does not: nothing else is declared, so it still pauses and you rebind with `run_flow(resume_id=…, bind="ref_N")`, which proposes a patch and never applies it |
+| A flow step asserts `absent: true` or `count: 0` | By design since #63 — an observation that something is GONE is an assertion. Before that a zero was falsy and the check was silently discarded, so a step confirming a dialog had closed saved with nothing that could fail |
+| A step's `query` assertion carries a `text` | By design since #63 — a single-match query keeps the text it read, because `#combo1 == 1` is true whatever the element displays. Compared with `in`, not `==`, so a label the page adds around it later does not break a step whose point is the value |
+| A step's `expect.query` is a LIST | By design since #63 — two checks of the same kind after one action both survive. Files recorded earlier carry a bare dict and both shapes read the same way, so there was no schema bump |
+| `settle_ms` is much smaller than before | Fixed in #63 — it used to measure the gap from the action to the last contributing observation, which on a real recording is mostly the AGENT's model turns (18,548ms for a navigate). It is now the last moment a check CHANGED its answer, which is the app saying it was not ready. A flow recorded before this carries the inflated number and only replays more slowly |
+| `query_elements(attributes=["value"])` now returns typed text | Fixed in #63 — it read the ATTRIBUTE, which is the authored default, while `value`/`checked`/`selected`/`indeterminate` are the four IDL attributes whose PROPERTY is the live state. A field holding typed text used to print nothing while a radio printed fine |
+| `navigate` stopped claiming a REDIRECT on a non-Latin url | Fixed in #63 — `_same` compared the decoded request against the encoded landing url, so every navigate to a non-ASCII url claimed a redirect that never happened |
 | A flow fails with "reported that it did NOT act" | By design since #62 — the step's tool returned one of our own refusal strings (`*** NOT DELIVERED`, `NAVIGATION DID NOT COMMIT`, `Permission required`, `ChromeBridge is PAUSED`, `did NOT land`). None of those RAISE, so before this the run carried on and either failed later on an unrelated-looking assertion or PASSED outright when the step had no postcondition. The reason quotes the tool verbatim because its message already carries the recovery |
 | A flow file is refused with "declares on_fail=…" | By design since #62 — `on_fail` is `ask` (pause and hand the choice to the agent) or `fail` (stop). `"heal"` was declared from the first commit, never written, never branched on, and silently became `"ask"`; it was deleted rather than implemented, because an automatic rebind means ranking candidates and that is what rule 3 of the runner forbids. Edit the file to a valid value |
 | A flow step reports `matched href=…` | By design since #61 — the recorded name no longer matches and the step resolved on the link's declared destination instead. Deterministic, nothing guessed and nothing asked, but NOT a clean pass: the page's labels moved, and the proposed patch says to what. Recorded only where the href was unique at record time, and only for `<a>`/`<area>` |

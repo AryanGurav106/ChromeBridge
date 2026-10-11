@@ -963,7 +963,7 @@ async def tabs_context_mcp(
     so you know what tabs exist. Prefer creating a new tab per conversation."""
     b = await _bridge()
     res = await b.call("tabs_context", createIfEmpty=createIfEmpty)
-    return json.dumps(res)
+    return json.dumps(res, ensure_ascii=False)
 
 
 @mcp.tool()
@@ -971,7 +971,7 @@ async def tabs_create_mcp() -> str:
     """Create a new empty tab in the MCP tab group (creates the group if needed)."""
     b = await _bridge()
     res = await b.call("tabs_create")
-    return json.dumps(res)
+    return json.dumps(res, ensure_ascii=False)
 
 
 @mcp.tool()
@@ -981,7 +981,7 @@ async def tabs_close_mcp(
     """Close a tab in the MCP tab group by its ID."""
     b = await _bridge()
     res = await b.call("tabs_close", tabId=tabId)
-    return json.dumps(res)
+    return json.dumps(res, ensure_ascii=False)
 
 
 # ----------------------------------------------------------------------------
@@ -1378,7 +1378,7 @@ async def sw_info(
                     "what makes this worth saying.")
         except Exception:
             pass
-        return json.dumps(out, default=str)
+        return json.dumps(out, default=str, ensure_ascii=False)
     except Exception:
         return str(res)
 
@@ -1407,8 +1407,8 @@ async def get_url(
             f"({nv.get('phase')}). The url and title above belong to the document "
             f"being REPLACED — Chrome does not update them until the new one "
             f"commits. Re-ask, or let browser_batch settle it for you.")
-        return json.dumps(d)
-    return json.dumps(res)
+        return json.dumps(d, ensure_ascii=False)
+    return json.dumps(res, ensure_ascii=False)
 
 
 @mcp.tool()
@@ -1641,6 +1641,31 @@ async def get_page_text(
     return res
 
 
+# Characters whose TYPOGRAPHIC form a publisher routinely substitutes for the
+# one a person types. Two of eight apps in #63's eval missed for exactly this
+# and neither agent could see why: arXiv renders `Showing 1–50 of` with an EN
+# DASH and Bootstrap renders `you’re` with a curly apostrophe, while the miss
+# message offered pagination, frames and genuine absence.
+#
+# This names what the PATTERN contains -- the caller's own string, which we
+# have -- and never guesses at what the page holds. It does not change
+# matching: whether a straight quote should silently match a curly one is a
+# real question with arguments both ways, and answering it in the MESSAGE
+# costs nothing and cannot be wrong.
+_TYPO = {"'": "a straight apostrophe (pages often render ’)",
+         '"': "a straight quote (pages often render “ ”)",
+         "-": "a hyphen (pages often render – or —)",
+         " ": "a plain space (pages sometimes render a non-breaking space)",
+         "...": "three dots (pages often render …)"}
+
+
+def _typographic_hint(pattern: str) -> str:
+    got = [v for k, v in _TYPO.items() if k != " " and k in (pattern or "")]
+    if not got and "  " in (pattern or ""):
+        got = [_TYPO[" "]]
+    return "; ".join(got[:2])
+
+
 @mcp.tool()
 async def search_page(
     pattern: Annotated[str, Field(description="Text to find, or a regular expression when regex=True.")],
@@ -1704,7 +1729,15 @@ async def search_page(
                 f"below a lazy-loading boundary, or inside a collapsed section, a closed menu "
                 f"or an unopened tab. If you are checking whether a record exists, filter or "
                 f"search within the app itself first, or count with query_elements — those "
-                f"reach rows this cannot.")
+                f"reach rows this cannot."
+                + (f" A LITERAL also has to match CHARACTER FOR CHARACTER, and published "
+                   f"prose rarely uses the characters you type: this pattern contains "
+                   f"{_typographic_hint(pattern)}, where the page may render the typographic "
+                   f"form. Retry with regex=True and `.` in that position, or with a "
+                   f"substring that avoids it. Note query_elements reads text through "
+                   f"innerText and this reads the rendered run, so the two can differ by a "
+                   f"space where a page has none."
+                   if (not regex and _typographic_hint(pattern)) else ""))
     # NOT !r. Python's repr DOUBLES every backslash, so a caller who passed the
     # regex `425 \(Too Early\)` was shown `'425 \\(Too Early\\)'` and had to wonder
     # whether the pattern had been mangled on the way in. The matching was correct;
@@ -1841,7 +1874,13 @@ async def query_elements(
            + (f", showing the first {len(rows)}:" if total > len(rows) else ":")]
     for r in rows:
         ref = f' ref_{r["ref"]}' if r.get("ref") else ""
-        txt = (f' "{r["text"]}"' if r.get("text")
+        # JSON-QUOTED, not raw-quoted. A text containing a double quote used to
+        # produce output nothing could parse unambiguously -- latent while only a
+        # human read it, load-bearing now that the flow recorder compiles an
+        # element's TEXT into an assertion and has to read it back (#63/D17).
+        # Normal text renders identically; only a quote, a backslash or a control
+        # character differs, and there the new form is the correct one.
+        txt = (f' {json.dumps(r["text"], ensure_ascii=False)}' if r.get("text")
                else (" (no text)" if include_text else ""))
         # ensure_ascii=False: json.dumps escapes every non-ASCII character to
         # \uXXXX, which is #11(d) exactly -- the defect that silently undid the
@@ -2626,6 +2665,27 @@ async def find(
 # ----------------------------------------------------------------------------
 
 
+def _as_text(value) -> str:
+    """A tool argument as the string the page will see.
+
+    AN INTEGER MUST NOT ARRIVE AS "25.0". The schema accepts
+    `Union[str, bool, float]`, so pydantic coerces the int 25 to 25.0 and
+    `str()` then produces a value no `<option>25</option>` can match --
+    measured live, `form_input(ref, 25)` answered `WARNING: no option matching
+    "25.0"` twice while `fill_form` with "25" worked first try (#63/D6). A
+    float that is exactly integral is written the way it was typed; a genuine
+    2.5 keeps its fraction.
+
+    Shared by form_input and fill_form because they are one concept (#21) and
+    the eval hit it through one of them only by luck.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
 @mcp.tool()
 async def form_input(
     ref: Annotated[str, Field(description="Element ref from read_page/find (e.g. \"ref_12\").")],
@@ -2640,7 +2700,7 @@ async def form_input(
     dropdowns and React controlled inputs correctly."""
     b = await _bridge()
     selector = _ref_to_selector(ref)
-    text = ("true" if value else "false") if isinstance(value, bool) else str(value)
+    text = _as_text(value)
     res = await b.call("fill_field", selector=selector, text=text, tabId=tabId)
     await _record_action_frame(tabId, f"form_input {ref}")
     return str(res)
@@ -2672,7 +2732,7 @@ async def fill_form(
         if not sel:
             raise ValueError(f"field missing ref/selector/mmid: {f!r}")
         val = f.get("value", f.get("text", ""))
-        text = ("true" if val else "false") if isinstance(val, bool) else str(val)
+        text = _as_text(val)
         norm.append({"selector": sel, "text": text, "trusted": bool(f.get("trusted"))})
     submit_mmid = None
     if submit_ref:
@@ -2880,8 +2940,8 @@ async def javascript_tool(
     res = await b.call("javascript_exec", code=text, tabId=tabId)
     if isinstance(res, dict) and "result" in res:
         val = res["result"]
-        return val if isinstance(val, str) else json.dumps(val, default=str)
-    return res if isinstance(res, str) else json.dumps(res, default=str)
+        return val if isinstance(val, str) else json.dumps(val, default=str, ensure_ascii=False)
+    return res if isinstance(res, str) else json.dumps(res, default=str, ensure_ascii=False)
 
 
 @mcp.tool()
@@ -2907,7 +2967,7 @@ async def read_console_messages(
         limit=limit,
         clear=clear,
     )
-    return res if isinstance(res, str) else json.dumps(res)
+    return res if isinstance(res, str) else json.dumps(res, ensure_ascii=False)
 
 
 @mcp.tool()
@@ -2926,7 +2986,7 @@ async def read_network_requests(
     res = await b.call(
         "read_network_requests", tabId=tabId, urlPattern=urlPattern, limit=limit, clear=clear
     )
-    return res if isinstance(res, str) else json.dumps(res)
+    return res if isinstance(res, str) else json.dumps(res, ensure_ascii=False)
 
 
 # ----------------------------------------------------------------------------
@@ -3804,10 +3864,22 @@ async def record_flow(
             return ("Nothing to save: no state-changing step survived the compile. "
                     + ("Notes: " + "; ".join(report["notes"]) if report["notes"] else ""))
         path = _flow_save(flow, _flow_path(rec.name))
+        # NAME THE STEPS THAT CARRY NOTHING. "4 of 7 with assertions" invites the
+        # question it then refuses to answer, and three agents in #63's eval
+        # independently said they could not tell WHICH steps went unverified
+        # without opening the file. The answer costs one line, and in that eval
+        # it would have shown the unasserted steps were the TYPING ones every
+        # time -- the pattern no summary number made visible.
+        _bare = [f'{i} {st.name}' for i, st in enumerate(flow.steps) if not st.expect]
         lines = [f'Saved {path} — {report["steps"]} step(s), '
                  f'{report["asserted"]} with assertions.',
                  f'  dropped: {report["dropped_errors"]} failed call(s), '
                  f'{report["dropped_observations"]} observation(s) folded in or discarded.']
+        if _bare:
+            lines.append(
+                f'  NOT asserted, so a regression in these steps cannot be caught: '
+                + ", ".join(f'step {b}' for b in _bare)
+                + '. Add a search_page or query_elements after each one and re-record.')
         if report.get("secrets"):
             lines.append(
                 f'  {len(report["secrets"])} password field(s) were NOT written to '
