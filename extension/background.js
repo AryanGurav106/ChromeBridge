@@ -12565,6 +12565,13 @@ function _pageFingerprintPage(mmids) {
     url: location.href,
     textLen: (document.body ? document.body.innerText.length : 0),
     elements: document.querySelectorAll('*').length,
+    // THE VIEWPORT, because a flow recorded wide and replayed narrow can meet a
+    // responsive layout where the target genuinely does not exist -- a nav bar
+    // that became a hamburger. It rides a round trip the caller was taking
+    // anyway, and the flow runner names it as a CAUSE when a target cannot be
+    // resolved rather than asserting anything about it (#57).
+    vw: window.innerWidth || 0,
+    vh: window.innerHeight || 0,
   };
   // DO THE REFS STILL RESOLVE? The element COUNT is only ever a proxy for that
   // question, and a bad one: a <datalist> opening under its own input adds

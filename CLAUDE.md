@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 961 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 966 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 961 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 966 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5053,7 +5053,34 @@ granted in the side panel is refused with the same message the agent gets.
     4 → 5 rows — emits nothing, which is the half that matters: a warning that
     fires on every flow is the noise #15 priced.
 
-    **Also audited and acted on: which declared fields nothing reads.** #54 found
+    **THE `viewport` FIELD NOW HAS BOTH HALVES.** It was declared, serialized,
+    deserialized — and never populated and never read, which is the shape that
+    kept `delta` dead for its whole life (#30) and left `origin` empty until
+    #54. The recorder stores the size at stop; the runner names a difference as
+    a CAUSE when a target cannot be resolved, which is the same job
+    `_surface_note` does for an open popup: "no element matches" is true and
+    useless when the real answer is that a responsive layout does not have that
+    control at this width.
+    **No threshold, deliberately** — a "material" difference would be a chosen
+    number, and #27/#28 took those out of the paths that decide things. Any
+    difference is reported, and ONLY on a resolve failure, where the reader is
+    already looking for causes; fetched lazily there, so a passing flow never
+    asks (#38). A flow recorded before this existed carries no viewport and
+    makes no claim (FVP4).
+    **AND THE FIRST CAPTURE SILENTLY DID NOTHING.** It fetched with
+    `tabId=None`, which falls back to the ACTIVE tab — in a headless harness
+    the extension's own panel, a CLOSED_SCHEME the gate refuses — so the call
+    threw, the catch swallowed it, and `viewport` stayed null while the code
+    looked like it had run. Caught by reading the saved file rather than by
+    trusting the edit, which is the same check that found `origin` empty.
+    It takes the tab the RECORDING ran in now.
+    **Verified live in three directions:** recorded `{'width': 1280, 'height':
+    900}` from a real run; replayed at 500x800 with a forced resolve failure →
+    *"The window is also a different size than when this was recorded: 500x800
+    now against 1280x900 then"*; and the SAME failure at 1280x900 → no such
+    clause, which is the half that keeps it readable.
+
+    **Also audited: which declared fields nothing reads.** #54 found
     `origin` written by nobody; the same question asked of the whole format finds
     `schema` (read, version-checked) and `on_fail` (read) fine, `recorded_at`
     honest human metadata, and **`viewport` both never populated and never read**

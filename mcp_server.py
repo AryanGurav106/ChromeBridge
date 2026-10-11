@@ -3555,6 +3555,19 @@ async def _flow_entries(tabId: Optional[int]) -> list:
     return ents if isinstance(ents, list) else []
 
 
+async def _flow_viewport(tabId: Optional[int]) -> Optional[dict]:
+    """The tab's current viewport, or None if it cannot be read.
+
+    Used ONLY to name a cause when a flow step fails to resolve its target, so
+    it is fetched lazily on that path and a passing flow never calls it.
+    """
+    b = await _bridge()
+    fp = await b.call("page_fingerprint", tabId=tabId)
+    if isinstance(fp, dict) and fp.get("vw") and fp.get("vh"):
+        return {"width": int(fp["vw"]), "height": int(fp["vh"])}
+    return None
+
+
 def _flow_path(name: str) -> Path:
     # Same rule as save_as_pdf's filename: strip only what a FILESYSTEM
     # forbids, never an allowlist. #32 shipped `[^\w.()-]+` here and
@@ -3687,6 +3700,26 @@ async def record_flow(
         rec, _REC = _REC, None
         if name:
             rec.name = name
+        # THE VIEWPORT THE FLOW WAS RECORDED AT, taken once at stop. Non-fatal
+        # for the same reason `_fp` is: a flow that cannot read it must still
+        # save, it just loses one cause the runner could have named later.
+        # THE TAB THE RECORDING RAN IN, not the active one. `tabId=None` falls
+        # back to whatever is active, which in a headless harness is the
+        # extension's own panel -- a CLOSED_SCHEME the gate refuses, so the
+        # fetch threw, the catch swallowed it, and `viewport` stayed null while
+        # looking like it had been captured. Found by reading the saved file
+        # rather than by trusting that the code ran.
+        try:
+            _vt = next((r["input"].get("tabId") for r in reversed(rec.raw)
+                        if isinstance(r.get("input"), dict)
+                        and r["input"].get("tabId") is not None), None)
+            if _vt is not None:
+                b = await _bridge()
+                fp = await b.call("page_fingerprint", tabId=_vt)
+                if isinstance(fp, dict) and fp.get("vw") and fp.get("vh"):
+                    rec.viewport = {"width": int(fp["vw"]), "height": int(fp["vh"])}
+        except Exception:
+            pass
         flow, report = rec.compile()
         if not flow.steps:
             return ("Nothing to save: no state-changing step survived the compile. "
@@ -3757,6 +3790,7 @@ async def run_flow(
             return (f"No flow at {path}." + (f" Recorded flows: {', '.join(have)}" if have
                     else " Nothing recorded yet — record_flow(action='start', name='...')."))
         res = await _flow_start(_flow_load(path), tabId, _flow_call, _flow_entries,
+                                viewport_fn=_flow_viewport,
                                 overrides=vars or None)
     return _flow_report(res)
 

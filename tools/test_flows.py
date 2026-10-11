@@ -639,6 +639,54 @@ async def record_and_replay():
           asked and set(asked) == {"beta-svc"},
           f"search_page called with {asked}")
 
+    # ---- FVP: the viewport, populated AND compared --------------------
+    #
+    # It was a declared field that nothing wrote and nothing read -- the shape
+    # that kept `delta` dead for its whole life (#30) and left `origin` empty
+    # until #54. Shipping one half is what makes that happen, so both halves
+    # land together: the recorder stores the size, and the runner names a
+    # difference as a CAUSE when a target cannot be resolved.
+    vpf = FakeBridge([E(70, "button", name="Create")])
+    rvp = Recorder("vp", vpf.entries_fn, viewport={"width": 1280, "height": 900})
+    vpi = {"ref": "ref_70", "tabId": 1}
+    vpt = await rvp.before("computer", vpi)
+    rvp.after("computer", vpi, "clicked", vpt)
+    fvp, _ = rvp.compile()
+    check("FVP1 the recorded flow carries the viewport it was recorded at",
+          fvp.viewport == {"width": 1280, "height": 900}, str(fvp.viewport))
+    check("FVP1b ...and it survives a round trip through the file format",
+          FM.Flow.from_json(fvp.to_json()).viewport == {"width": 1280, "height": 900},
+          str(FM.Flow.from_json(fvp.to_json()).viewport))
+
+    # A target that cannot be resolved AND a different window size: the size is
+    # named as one cause among others, never as the diagnosis (#33).
+    gone = FakeBridge([E(9, "button", name="Something else")])
+    async def _vp_small(tab_id):
+        return {"width": 400, "height": 800}
+    r_vp = await start(fvp, 1, gone.call, gone.entries_fn, viewport_fn=_vp_small)
+    check("FVP2 a failed resolve names the size difference as a cause",
+          r_vp["status"] == NEEDS and "400x800" in r_vp["reason"]
+          and "1280x900" in r_vp["reason"], str(r_vp["reason"])[:200])
+
+    # THE CONTROL. Same failure, same size as the recording: saying nothing is
+    # what keeps the note readable when it does fire (#15).
+    async def _vp_same(tab_id):
+        return {"width": 1280, "height": 900}
+    gone2 = FakeBridge([E(9, "button", name="Something else")])
+    r_vp2 = await start(fvp, 1, gone2.call, gone2.entries_fn, viewport_fn=_vp_same)
+    check("FVP3 CONTROL: the same size as the recording is not mentioned",
+          r_vp2["status"] == NEEDS and "different size" not in r_vp2["reason"],
+          str(r_vp2["reason"])[:160])
+
+    # And a flow recorded before this existed has no viewport, so there is
+    # nothing to compare and nothing to say.
+    fvp_old = FM.Flow.from_json({**fvp.to_json(), "viewport": None})
+    gone3 = FakeBridge([E(9, "button", name="Something else")])
+    r_vp3 = await start(fvp_old, 1, gone3.call, gone3.entries_fn, viewport_fn=_vp_small)
+    check("FVP4 CONTROL: an older flow with no recorded viewport makes no claim",
+          r_vp3["status"] == NEEDS and "different size" not in r_vp3["reason"],
+          str(r_vp3["reason"])[:160])
+
     # ---- FW: AN ASSERTION THAT WAS ALREADY TRUE WITNESSES NOTHING ---------
     #
     # The most dangerous thing this feature can produce is a flow that cannot

@@ -221,7 +221,8 @@ async def main() -> int:
                 t0 = time.time()
                 try:
                     res = await flow_start(flow, tab_id, ms._flow_call,
-                                           ms._flow_entries, overrides=overrides)
+                                           ms._flow_entries, overrides=overrides,
+                                           viewport_fn=ms._flow_viewport)
                 except Exception as exc:
                     res = {"status": "failed", "flow": flow.name, "at": 0,
                            "of": len(flow.steps), "reason": f"{type(exc).__name__}: {exc}",

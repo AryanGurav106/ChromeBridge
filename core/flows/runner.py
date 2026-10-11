@@ -49,11 +49,12 @@ RUNS: dict = {}
 
 class Run:
     def __init__(self, flow: Flow, tab_id: int, call: Callable, entries_fn: Callable,
-                 overrides: Optional[dict] = None):
+                 overrides: Optional[dict] = None, viewport_fn: Optional[Callable] = None):
         self.id = "run_" + uuid.uuid4().hex[:8]
         self.flow = flow
         self.tab_id = tab_id
         self.call = call
+        self.viewport_fn = viewport_fn
         self.entries_fn = entries_fn
         self.i = 0
         # Recorded defaults, overridden per run. A flow that creates a record
@@ -99,7 +100,8 @@ class Run:
             try:
                 inp, healed = await self._bind(step, binding)
             except Unresolved as exc:
-                why = exc.reason + self._surface_note()
+                why = exc.reason + self._surface_note() \
+                    + await self._viewport_note()
                 if step.on_fail == "fail":
                     return self._stop(FAILED, f"step {self.i} ({step.name}): {why}",
                                       candidates=exc.candidates)
@@ -140,6 +142,41 @@ class Run:
             self.i += 1
 
         return self._stop(PASSED, "")
+
+    async def _viewport_note(self) -> str:
+        """Name a size difference, but only while explaining a failure.
+
+        A flow recorded wide and replayed narrow can meet a responsive layout
+        where the target genuinely does not exist -- a nav bar that became a
+        hamburger -- and "no element matches" is then true and useless, the same
+        shape `_surface_note` exists for.
+
+        NO THRESHOLD, and that is deliberate: a "material" difference would be a
+        chosen number, and #27/#28 took those out of the paths that decide
+        things. Any difference is reported, and it is only reported HERE, on a
+        resolve failure, where the reader is already looking for causes. A note
+        that fired on every run because the window was two pixels narrower would
+        be the noise #15 priced.
+
+        Fetched lazily and only on failure, so a passing flow pays nothing --
+        #38's rule that a round trip is taken where its answer can change what
+        happens next.
+        """
+        rec = self.flow.viewport or {}
+        if not rec.get("width") or not self.viewport_fn:
+            return ""
+        try:
+            live = await self.viewport_fn(self.tab_id)
+        except Exception:
+            return ""
+        if not live or not live.get("width"):
+            return ""
+        if (int(live["width"]), int(live["height"])) == (int(rec["width"]), int(rec["height"])):
+            return ""
+        return (f" The window is also a different size than when this was recorded: "
+                f"{int(live['width'])}x{int(live['height'])} now against "
+                f"{int(rec['width'])}x{int(rec['height'])} then. A responsive layout "
+                f"can genuinely not have this control at one of those sizes.")
 
     def _surface_note(self) -> str:
         """Name the cause when it is sitting in our own output.
@@ -328,8 +365,9 @@ class Run:
 
 
 async def start(flow: Flow, tab_id: int, call: Callable, entries_fn: Callable,
-                overrides: Optional[dict] = None) -> dict:
-    return await Run(flow, tab_id, call, entries_fn, overrides).go()
+                overrides: Optional[dict] = None,
+                viewport_fn: Optional[Callable] = None) -> dict:
+    return await Run(flow, tab_id, call, entries_fn, overrides, viewport_fn).go()
 
 
 async def resume(run_id: str, binding: str) -> dict:
