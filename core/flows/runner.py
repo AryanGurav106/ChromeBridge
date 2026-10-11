@@ -182,6 +182,10 @@ class Run:
             if unresolved is not None:
                 why = unresolved.reason + self._surface_note() \
                     + await self._viewport_note()
+                # The enum is validated at LOAD (model.ON_FAIL), so there is
+                # no third value to fall through here. There used to be:
+                # "heal" was declared, never written, never branched on, and a
+                # flow asking for it got "ask" in silence.
                 if step.on_fail == "fail":
                     return self._stop(FAILED, f"step {self.i} ({step.name}): {why}",
                                       candidates=unresolved.candidates)

@@ -293,6 +293,51 @@ def main():
           resolve(t, [{k: v for k, v in e.items() if k != "href"} for e in nav],
                   []) == "10")
 
+    # ------------------------------------------------------------------ FO
+    # `on_fail` declared THREE values and the runner implemented two. A flow
+    # asking for the third silently got "ask" -- the same quiet fallthrough
+    # that kept `delta` dead for its whole life (#30). It was closed by
+    # DELETING the value, not by implementing it: an automatic heal means
+    # ranking candidates and binding to the winner, which the three rules at
+    # the top of runner.py forbid and which #24 removed from the submit picker.
+    for v in FM.ON_FAIL:
+        check(f"FO1 on_fail={v!r} round-trips through save and load",
+              FM.Step.from_json({"name": "computer", "on_fail": v}).on_fail == v)
+    check("FO1b an omitted on_fail still defaults to 'ask'",
+          FM.Step.from_json({"name": "computer"}).on_fail == "ask")
+
+    try:
+        FM.Step.from_json({"name": "computer", "on_fail": "heal"})
+        _of_msg = None
+    except ValueError as exc:
+        _of_msg = str(exc)
+    check("FO2 an on_fail this build does not implement is REFUSED at load, "
+          "naming the valid set — before, it quietly became 'ask'",
+          _of_msg and "heal" in _of_msg and "ask, fail" in _of_msg,
+          (_of_msg or "ACCEPTED SILENTLY")[:90])
+
+    # FO3: the tripwire. A value the runner branches on that is NOT in ON_FAIL
+    # is the defect this entry fixed, pointed the other way -- the enum would
+    # say one thing and the code another (#21, one concept one spelling).
+    _rsrc = (ROOT / "core" / "flows" / "runner.py").read_text(encoding="utf-8")
+    _branched = set(re.findall(r"step\.on_fail\s*[!=]=\s*[\"']([^\"']+)[\"']", _rsrc))
+    check("FO3 every on_fail value the RUNNER branches on is in ON_FAIL",
+          _branched <= set(FM.ON_FAIL),
+          f"runner branches on {sorted(_branched)}; ON_FAIL={list(FM.ON_FAIL)}")
+
+    # FO4: and no flow ON DISK carries a dead value, which is what would make
+    # a committed test file unloadable by the build that reads it.
+    _bad_flows = []
+    for _fp in sorted((ROOT / "flows").glob("*.flow.json")):
+        try:
+            for _st in (json.loads(_fp.read_text(encoding="utf-8")).get("steps") or []):
+                if (_st.get("on_fail") or "ask") not in FM.ON_FAIL:
+                    _bad_flows.append(f"{_fp.name}:{_st.get('on_fail')}")
+        except Exception as exc:
+            _bad_flows.append(f"{_fp.name}:unreadable({type(exc).__name__})")
+    check("FO4 no recorded flow on disk declares an on_fail this build refuses",
+          not _bad_flows, f"{_bad_flows[:4]}" if _bad_flows else "all loadable")
+
     # ---- FD15: the field-name contract -------------------------------------
     # Every check above runs on dicts THIS FILE wrote. If the collector spells
     # a field differently from fields(), all of them stay green and nothing
@@ -826,6 +871,31 @@ async def record_and_replay():
           rgone["status"] == PASSED and len(rgone.get("drifted") or []) == 1
           and (rgone["drifted"][0].get("alt") or {}).get("href") == "/pipeline/investors",
           f"status={rgone['status']} drifted={rgone.get('drifted')}")
+
+    # FO5/FO6 -- THE CONTROLS, and without them FO1-FO4 would all pass over a
+    # runner that had stopped distinguishing the two values at all. Validating
+    # an enum is worth nothing if both members then behave the same.
+    missing = LateBridge([E(70, "button", name="Create")], appear_on=10_000)
+    fask, _ = Recorder("ask", FakeBridge([E(70, "button", name="Create")]).entries_fn), None
+    ai = {"ref": "ref_70", "tabId": 1}
+    at = await fask.before("computer", ai)
+    fask.after("computer", ai, "clicked", at)
+    fa, _ = fask.compile()
+
+    fa.steps[0].on_fail = "ask"
+    rask = await start(fa, 1, missing.call, missing.entries_fn)
+    check("FO5 CONTROL: on_fail='ask' PAUSES and hands back the question, "
+          "which is the only place the agent gets to decide",
+          rask["status"] == NEEDS and rask.get("run_id"),
+          f"status={rask['status']}")
+
+    missing2 = LateBridge([E(70, "button", name="Create")], appear_on=10_000)
+    fa.steps[0].on_fail = "fail"
+    rfail = await start(fa, 1, missing2.call, missing2.entries_fn)
+    check("FO6 CONTROL: on_fail='fail' STOPS instead, so the two values are "
+          "genuinely different behaviours and not one spelled twice",
+          rfail["status"] == FAILED,
+          f"status={rfail['status']}")
 
     # ---- FS6: THE SETTLE WINDOW IS MEASURED, NOT CHOSEN ------------------
     #

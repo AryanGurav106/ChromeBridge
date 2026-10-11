@@ -71,13 +71,44 @@ def slug(s: str, upper: bool = False) -> str:
     return out.upper() if upper else out.lower()
 
 
+# WHAT A STEP DOES WHEN ITS TARGET CANNOT BE RESOLVED. Exactly two answers,
+# and the third one that used to be declared here was DELETED rather than
+# implemented.
+#
+#   "ask"   stop, hand back the reason and the candidates, and let the agent
+#           answer with run_flow(resume_id=…, bind="ref_N"). The decision then
+#           appears in the transcript, costs a visible turn, and proposes a
+#           patch it never applies.
+#   "fail"  stop and report. For a step whose absence IS the result.
+#
+# `"heal"` was in this enum from the first commit, nothing ever wrote it, and
+# the runner only ever branched on "fail" -- so a flow asking for it silently
+# got "ask". Closing that gap by IMPLEMENTING it was never available: an
+# automatic heal means ranking the candidates and binding to the winner, which
+# is precisely what the three rules at the top of runner.py forbid, and what
+# #24 removed from the submit picker. ReUseIt's own LLM judge agreed with a
+# human at kappa=0.528 and workflow-use calls its fallback "currently really
+# bad"; a value promising that is a promise this design will not keep. So it
+# is gone, and an unknown value is now REFUSED at load rather than quietly
+# becoming "ask" -- which was the actual danger, and the same silent
+# fallthrough that kept `delta` dead for its whole life (#30).
+#
+# WHAT WOULD ADD A THIRD VALUE: a recorded flow containing a step that is
+# CONDITIONALLY PRESENT -- a consent banner, an onboarding tooltip -- where
+# "not there" is a normal outcome rather than a drift. That is `"skip"`, it is
+# a different idea from healing, and it is not built because no flow recorded
+# so far has needed it. Shipping an enum value before its case exists is how
+# this entry happened.
+ON_FAIL = ("ask", "fail")
+
+
 @dataclass
 class Step:
     name: str                                   # the MCP tool to call
     input: dict                                 # its arguments, refs removed
     targets: dict = field(default_factory=dict)  # input path -> descriptor
     expect: dict = field(default_factory=dict)   # checked LIVE, never healed
-    on_fail: str = "ask"                        # fail | heal | ask
+    on_fail: str = "ask"                        # see ON_FAIL
     note: str = ""                              # why this step is here
     # HOW LONG THIS APP ACTUALLY TOOK, measured at record time rather than
     # chosen. A fixed window cannot fit every app: 6s was too short for a real
@@ -101,9 +132,21 @@ class Step:
 
     @staticmethod
     def from_json(d: dict) -> "Step":
+        of = d.get("on_fail") or "ask"
+        if of not in ON_FAIL:
+            # LOUDLY, at LOAD, naming the valid set. The alternative is what
+            # shipped: an unrecognised value fell through to "ask" and the
+            # flow ran, so a file asking for behaviour this build does not
+            # have was indistinguishable from one that did not ask.
+            raise ValueError(
+                f"step {d.get('name')!r} declares on_fail={of!r}, which this "
+                f"build does not implement. Valid: {', '.join(ON_FAIL)}. "
+                f"(\"heal\" was removed: an automatic rebind means ranking "
+                f"candidates, which this runner refuses to do — \"ask\" hands "
+                f"the choice to the agent and records it.)")
         return Step(name=d["name"], input=d.get("input") or {},
                     targets=d.get("targets") or {}, expect=d.get("expect") or {},
-                    on_fail=d.get("on_fail") or "ask", note=d.get("note") or "",
+                    on_fail=of, note=d.get("note") or "",
                     settle_ms=int(d.get("settle_ms") or 0))
 
 

@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 994 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 1002 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 994 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1002 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5451,6 +5451,53 @@ granted in the side panel is refused with the same message the agent gets.
     `test_ops.js` for `get_url` (the settled-tab and does-not-wait controls);
     AN7 fails against the pre-fix op with the previous page's url in hand.
 
+62. **A DECLARED ENUM VALUE NOTHING IMPLEMENTED — closed by DELETING it, which
+    was the only close available.** Asked to walk through the flow feature's
+    logic, and describing `on_fail` out loud is what exposed it: the dataclass
+    declared `fail | heal | ask`, the recorder has only ever written `"ask"`,
+    and the runner only ever branched on `"fail"`. So a flow asking for
+    `"heal"` got `"ask"` IN SILENCE -- a file requesting behaviour this build
+    does not have, indistinguishable from one that requested nothing. That is
+    the quiet fallthrough that kept `delta` dead for its whole life (#30) and
+    that `origin` (#54) and `viewport` (#57) were two more instances of.
+
+    **IMPLEMENTING IT WAS NEVER AN OPTION, and that is the interesting part.**
+    An automatic heal means ranking the candidates and binding to the winner.
+    That is exactly what the three non-negotiable rules at the top of
+    `runner.py` forbid, what #24 removed from the submit picker, and what the
+    prior art warns about from both directions -- ReUseIt's own LLM judge
+    agreed with a human at **kappa = 0.528**, and workflow-use calls its
+    fallback *"currently really bad"*. A value promising an automatic rebind is
+    a promise this design refuses to keep, so the honest close is removal
+    (#24's precedent, the most reliable move in this log). `ON_FAIL` is
+    `("ask", "fail")`.
+
+    **THE REAL DANGER WAS THE FALLTHROUGH, NOT THE VALUE.** An unknown
+    `on_fail` is now REFUSED AT LOAD, naming the valid set and saying why
+    `"heal"` is gone -- the same shape as the schema-version refusal beside it,
+    and the same reasoning as the precondition (#50): say it in one sentence
+    before anything runs rather than behaving differently deep inside.
+
+    **WHAT WOULD ADD A THIRD VALUE, written down so it is not re-invented:** a
+    recorded flow containing a step that is CONDITIONALLY PRESENT -- a consent
+    banner, an onboarding tooltip -- where "not there" is a normal outcome
+    rather than a drift. That is `"skip"`, it is a different idea from healing,
+    and it is NOT built because no flow recorded so far has needed one.
+    Shipping an enum value before its case exists is how this entry happened.
+
+    **FOUR CHECKS AND TWO CONTROLS, because validating an enum is worth nothing
+    if both members then behave identically.** FO5 pins that `"ask"` PAUSES and
+    hands back a `run_id`; FO6 that `"fail"` STOPS. Without them every other
+    check here would pass over a runner that had stopped distinguishing them.
+    FO3 is the mechanical tripwire -- every value the RUNNER branches on must
+    be in `ON_FAIL`, so the enum and the code cannot drift apart (#21) -- and
+    FO4 refuses to let a flow ON DISK carry a value this build would reject.
+    Both fire on their own planted violation and only their own.
+
+    Suites: 1002 checks. New -- FO1-FO6. `FLOW_RECORDER_PLAN.md` corrected: it
+    is where `"heal"` came from, and a plan that still specifies a value the
+    implementation deliberately refuses is how it would come back.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -5533,6 +5580,7 @@ granted in the side panel is refused with the same message the agent gets.
 | A flow step after `tabs_create_mcp` runs in the NEW tab | By design since #58 — the runner used to force the flow's starting tabId on every step, so a recorded `tabs_create_mcp` made a tab that was then ignored and the flow carried on in the old one. Same rule `browser_batch` threads (#46) and only from `tabs_create_mcp`, which returns exactly one id it just made. A create whose id cannot be read FAILS rather than silently continuing in the previous tab |
 | A flow fails at step 1 on an SPA with "no element matches" | Fixed in #59 — target resolution had no settle window, so a control that had not RENDERED yet was reported exactly like one that does not exist. It now retries on the same bound as a postcondition, re-fetching entries each attempt. If it still fails after the window, the control really is absent — or its NAME is data-dependent, which is the other half of #59 |
 | A flow's descriptor stops matching after data changes | Its identity is data-dependent: a nav tab's accessible name is `"Investors 38"` because AccName 2F concatenates the badge, so adding a record makes it `"Investors 39"`. Since #61 a LINK recovers by itself — the step resolves on its declared destination and the run says `name 'X' is gone — matched href='/y'`. A BUTTON with a badge does not: nothing else is declared, so it still pauses and you rebind with `run_flow(resume_id=…, bind="ref_N")`, which proposes a patch and never applies it |
+| A flow file is refused with "declares on_fail=…" | By design since #62 — `on_fail` is `ask` (pause and hand the choice to the agent) or `fail` (stop). `"heal"` was declared from the first commit, never written, never branched on, and silently became `"ask"`; it was deleted rather than implemented, because an automatic rebind means ranking candidates and that is what rule 3 of the runner forbids. Edit the file to a valid value |
 | A flow step reports `matched href=…` | By design since #61 — the recorded name no longer matches and the step resolved on the link's declared destination instead. Deterministic, nothing guessed and nothing asked, but NOT a clean pass: the page's labels moved, and the proposed patch says to what. Recorded only where the href was unique at record time, and only for `<a>`/`<area>` |
 | A flow step that reports `matched href=…` is also SLOW | By design since #61 — the recorded descriptor gets its whole settle window first, because a name that has not RENDERED yet is not a name that CHANGED (#59), and routing around it early proposes a mid-render patch. Measured at 6.58s against 0.4s clean. Only a genuinely drifted step pays it; applying the proposed patch removes it |
 | A recorded flow has no `alt` key on a link target | The MCP server was loaded before #61. It reads `descriptor.py` and `core/flows/*` at CONNECT time, and the old one answers normally while writing a slightly older format — `/mcp` reconnect, then CHECK THE SAVED FILE rather than the live result |

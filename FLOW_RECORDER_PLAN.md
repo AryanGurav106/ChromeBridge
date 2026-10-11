@@ -182,9 +182,19 @@ review, and a machine writes it. One step:
     "search": "Draft a changelog entry"
   },
 
-  "on_fail": "heal"          // "fail" | "heal" | "ask"
+  "on_fail": "ask"           // "ask" | "fail"
 }
 ```
+
+> **`"heal"` was in this plan and is NOT in the implementation.** It survived
+> into the dataclass, nothing ever wrote it, and the runner only branched on
+> `"fail"` — so a flow asking for it silently got `"ask"`. It was closed by
+> DELETING it rather than implementing it, because an automatic heal means
+> ranking the candidates and binding to the winner, which is what rule 3 three
+> paragraphs above this forbids. An unknown `on_fail` is now refused at load
+> instead of falling through. A third value would be `"skip"` — for a step
+> that is CONDITIONALLY present, like a consent banner — and that is a
+> different idea, unbuilt because no recorded flow has needed it yet.
 
 Plus a header carrying the origin (so the gate's answer is predictable), the
 viewport it was recorded at, variables extracted from typed values, and the
