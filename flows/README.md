@@ -5,6 +5,19 @@
 
 Flows for a real app belong in git next to the code they test — they are tests.
 
+`todomvc-add-items.flow.json` is the first real-app flow that INTERACTS rather
+than only navigating: it types two items into a third-party React TodoMVC and
+asserts the list length after each one, plus a text search. It carries two
+variables taken from the typed values, and the search assertion follows them —
+`run_flow(vars={"what_needs_to_be_done_2": "…"})` types the new text and checks
+for the new text. Example, not a CI test (needs the public internet).
+
+It exists because `saucedemo-login.flow.json` could not include a click:
+a trusted click whose effect NAVIGATES kills that tab's input channel (#56),
+and TodoMVC's interactions do not navigate. `the-internet.herokuapp.com` was
+the first choice and is unreachable from this browser — plain Playwright with
+no extension times out on it, which is the network rather than our navigate.
+
 `shadcn-playground-idempotent.flow.json` is a worked example, kept because it is
 the live verification referenced in #49, and it is **an example, not a CI test**:
 it drives a third-party page (shadcn/ui's playground) that will drift, and

@@ -4965,6 +4965,28 @@ granted in the side panel is refused with the same message the agent gets.
     verified, and `clickTrusted`'s own effect check already covers the
     escalation path by a different route.
 
+    **AND THE FLOW THAT #55 COULD NOT RECORD NOW EXISTS.** #55 shipped a
+    real-app flow that only navigates, because a trusted click whose effect
+    navigates kills the tab. The trigger is now known, so the fix is to record
+    against an app whose interactions do NOT navigate:
+    `flows/todomvc-add-items.flow.json` types two items into a third-party
+    React TodoMVC and asserts the list length after each, plus a text search.
+    Five steps, two with assertions, **PASSED 5/5 in 0.31s and again in 0.29s**
+    (idempotent: a throwaway profile starts with empty localStorage). Two
+    variables came out of the typed values and the search assertion FOLLOWS
+    them — `vars={"what_needs_to_be_done_2": "a different second item"}` typed
+    the new text and checked for the new text, which is #54's chain confirmed
+    on a real app rather than on a fixture. Falsified deliberately by editing
+    the recorded count to 3: `counted 2, recorded exactly 3` after 6.4s, which
+    is #55's settle window doing its job, and with no "count GREW" clause
+    because it did not grow (FR12c's rule).
+    **`the-internet.herokuapp.com` was the first choice and is unreachable from
+    this browser** — plain Playwright with no extension times out on it after
+    25s while saucedemo loads in 0.2s, so that was the network and not our
+    `navigate`. Worth recording because the symptom (a `navigate` that never
+    returns) looks exactly like a product bug until a no-extension control is
+    run.
+
     Suites: 951 checks. New — ID1/ID1b (a click the page never received is not
     reported as one, and names the verified recovery), ID2 (the control that a
     delivered click says nothing extra), ID3 (the control that a navigating

@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "name": "todomvc-add-items",
+  "origin": "https://demo.playwright.dev",
+  "recorded_at": "2026-10-11T11:14:51",
+  "viewport": null,
+  "vars": {
+    "what_needs_to_be_done": "record the happy path",
+    "what_needs_to_be_done_2": "replay it on a real app"
+  },
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "https://demo.playwright.dev/todomvc/"
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": "{{what_needs_to_be_done}}"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "",
+            "name": "What needs to be done?"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "",
+            "name": "What needs to be done?",
+            "section": "header",
+            "under": "todos",
+            "near": "todos"
+          }
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "key",
+        "text": "Return"
+      },
+      "expect": {
+        "query": {
+          "selector": ".todo-list li",
+          "count": 1
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": "{{what_needs_to_be_done_2}}"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "",
+            "name": "What needs to be done?"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "",
+            "name": "What needs to be done?",
+            "section": "header",
+            "under": "todos",
+            "near": "todos"
+          }
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "key",
+        "text": "Return"
+      },
+      "expect": {
+        "query": {
+          "selector": ".todo-list li",
+          "count": 2
+        },
+        "search": {
+          "pattern": "{{what_needs_to_be_done_2}}",
+          "min": 1,
+          "observed": 1
+        }
+      },
+      "on_fail": "ask"
+    }
+  ]
+}
