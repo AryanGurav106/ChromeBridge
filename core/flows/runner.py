@@ -97,6 +97,11 @@ class Run:
         self.checked_require = False
         self.log: list = []
         self.patches: list = []
+        # Steps that resolved on their DECLARED DESTINATION after the recorded
+        # descriptor stopped matching (#61). Not a rebind -- no decision was
+        # asked for and nothing was guessed -- but not a clean pass either, so
+        # it is reported separately from both.
+        self.drifted: list = []
         self._last_entries: list = []
         self.started = time.time()
         # Accumulated EXECUTION time, not wall time. A paused run waits for a
@@ -300,7 +305,13 @@ class Run:
                 self._propose_patch(step, path, ref, entries)
                 binding = None
             else:
-                ref = resolve(target, entries)
+                notes: list = []
+                ref = resolve(target, entries, notes)
+                for n in notes:
+                    self.drifted.append({"step": self.i, "name": step.name,
+                                         "path": path, "via": n["via"],
+                                         "was": n["was"], "alt": n["alt"]})
+                    self._propose_patch(step, path, ref, entries)
             set_ref(inp, path, f"ref_{ref}")
         return inp, healed
 
@@ -441,7 +452,7 @@ class Run:
             "status": status, "run_id": self.id, "flow": self.flow.name,
             "at": self.i, "of": len(self.flow.steps), "reason": reason,
             "candidates": candidates or [],
-            "log": self.log, "patches": self.patches,
+            "log": self.log, "patches": self.patches, "drifted": self.drifted,
             "seconds": round(self.elapsed, 2),
         }
 

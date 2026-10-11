@@ -165,8 +165,34 @@ def mut_twin_elsewhere(entries, tgt):
     return list(entries) + [twin], tgt
 
 
+def mut_counter_in_name(entries, tgt):
+    """A number INSIDE the accessible name changes. The control does not.
+
+    This is #59's live failure, modelled exactly rather than approximated: a
+    nav tab reading "Investors 38" becomes "Investors 43" because AccName 2F
+    concatenates a badge that is a descendant. The element is the same element
+    and the step still means it, so REFUSING here is safe but costs a model
+    turn every time the data moves -- and a rebind can only ever propose
+    another count-bearing name.
+
+    A target with no digits in its name is left alone, so this mutation
+    measures the population it is about rather than the whole corpus.
+    """
+    import re as _re
+    def bump(v):
+        return _re.sub(r"\d+", lambda m: str(int(m.group(0)) + 5), v or "")
+    out, touched = [], False
+    for e in entries:
+        if gt(e) == gt(tgt) and _re.search(r"\d", (e.get("name") or "") + (e.get("label") or "")):
+            e = dict(e, name=bump(e.get("name")), label=bump(e.get("label")))
+            touched = True
+        out.append(e)
+    return (out, tgt) if touched else (None, tgt)
+
+
 MUTATIONS = [
-    ("rename-target", mut_rename_target, "REFUSED"),
+    ("rename-target", mut_rename_target, "REFUSED*"),
+    ("counter-in-name", mut_counter_in_name, "CORRECT-or-REFUSED"),
     ("delete-target", mut_delete_target, "REFUSED"),
     ("insert-twin", mut_insert_twin, "REFUSED"),
     ("twin-elsewhere", mut_twin_elsewhere, "CORRECT-or-REFUSED"),
@@ -176,7 +202,7 @@ MUTATIONS = [
 
 async def collect(page) -> list[dict]:
     return await page.evaluate(
-        "(function(){ " + COLLECT + "; return _collectInteractivePage(true, null, 'compact'); })()"
+        "(function(){ " + COLLECT + "; return _collectInteractivePage(true, null, 'brief'); })()"
     ) or []
 
 
@@ -228,16 +254,32 @@ async def run_site(browser, name, url, rng) -> dict | None:
            "ruler_overlap": round(len(ma & mb) / max(len(ma | mb), 1), 4)}
     base = Counter()
     muts = {m: Counter() for m, _, _ in MUTATIONS}
+    # THE ABLATION ARM, measured on the SAME target in the SAME pass. #19's
+    # rule applied to an audit: running the corpus once with the fallback and
+    # once without would let run-order drift align exactly with the arm, which
+    # is the artefact that produced three false CLIFF verdicts in #19.
+    noalt = {m: Counter() for m, _, _ in MUTATIONS}
+    noalt["base"] = Counter()
+    alts = 0
 
     for e in targets:
         t = build(e, a)
+        if t.get("alt"):
+            alts += 1
+        t0 = {k: v for k, v in t.items() if k != "alt"}
         base[verdict(t, e, b)] += 1
+        noalt["base"][verdict(t0, e, b)] += 1
         for mname, fn, _expect in MUTATIONS:
             mb, want = fn(b, e)
+            if mb is None:                      # mutation does not apply here
+                continue
             muts[mname][verdict(t, want, mb)] += 1
+            noalt[mname][verdict(t0, want, mb)] += 1
 
     row["base"] = dict(base)
     row["muts"] = {k: dict(v) for k, v in muts.items()}
+    row["noalt"] = {k: dict(v) for k, v in noalt.items()}
+    row["alts"] = alts
     return row
 
 
@@ -293,16 +335,26 @@ async def main() -> int:
               f"resolver error cannot be told from a corpus one: {bad}")
         print(f"  (these are EXCLUDED from the totals above)")
 
+    na = sum(r.get("alts", 0) for r in scored)
+    print(f"\n  descriptors carrying the href ALT key: {na} of {n}  {na/n:.1%}")
     print(f"\nMUTATIONS  (expected outcome in brackets; WRONG is the only defect)")
+    print(f"  * rename-target now resolves for a LINK whose destination is unchanged "
+          f"and unique:\n    the href is what the step meant, and the run REPORTS "
+          f"that it matched on it.")
     for mname, _fn, expect in MUTATIONS:
-        mt = Counter()
+        mt, mz = Counter(), Counter()
         for r in scored:
             mt.update(r["muts"][mname])
+            mz.update(r["noalt"][mname])
         m = sum(mt.values()) or 1
+        z = sum(mz.values()) or 1
         flag = "" if mt.get("WRONG", 0) == 0 else "   <-- SILENT MIS-BIND"
-        print(f"  {mname:<18}[{expect:<7}]  correct={mt.get('CORRECT',0)/m:>6.1%}"
+        print(f"  {mname:<18}[{expect:<18}]  correct={mt.get('CORRECT',0)/m:>6.1%}"
               f"  refused={mt.get('REFUSED',0)/m:>6.1%}"
               f"  WRONG={mt.get('WRONG',0)/m:>6.1%}{flag}")
+        print(f"  {'':<18} no-alt ablation      correct={mz.get('CORRECT',0)/z:>6.1%}"
+              f"  refused={mz.get('REFUSED',0)/z:>6.1%}"
+              f"  WRONG={mz.get('WRONG',0)/z:>6.1%}")
 
     worst = sorted(scored, key=lambda r: -pct(Counter(r["base"]), "WRONG"))[:5]
     if pct(Counter(worst[0]["base"]), "WRONG") > 0:

@@ -3549,9 +3549,19 @@ async def _flow_entries(tabId: Optional[int]) -> list:
     _collectInteractivePage directly and would not notice the op router or the
     JSON hop changing the shape underneath it. The recorder and the runner both
     come through here, so they exercise it on every single call.
+
+    detail="brief" FOR ZERO TOKENS. `href` is only computed at brief/full, and
+    the descriptor's ALT key needs it (#59's data-dependent accessible name).
+    #10 priced detail at x1.39 median tokens and that price is on the STRING
+    listing; this is the STRUCTURED array, which is parsed in Python and never
+    printed, so the cost here is one URL resolve per link and nothing at all to
+    the agent. `brief` rather than `full` because it is the more stable key as
+    well as the smaller one -- same-origin links become a bare path, so a
+    staging-to-production host change does not break a recorded step.
     """
     b = await _bridge()
-    ents = await b.call("get_interactive_elements", tabId=tabId, structured=True)
+    ents = await b.call("get_interactive_elements", tabId=tabId,
+                        structured=True, detail="brief")
     return ents if isinstance(ents, list) else []
 
 
@@ -3816,6 +3826,16 @@ def _flow_report(res: dict) -> str:
         out.append(f'  Continue with run_flow(name="{res["flow"]}", tabId=…, '
                    f'resume_id="{res["run_id"]}", bind="ref_N"), or read the page '
                    f'first if none of these is right.')
+    drifted = res.get("drifted") or []
+    if drifted:
+        out.append(f'  {len(drifted)} step(s) matched on their declared DESTINATION '
+                   f'because the recorded name no longer matches. The run was still '
+                   f'deterministic — nothing was guessed and nothing was asked — but '
+                   f"the page's labels have moved:")
+        for d in drifted:
+            was = (d.get("was") or {}).get("name") or "(no name recorded)"
+            out.append(f'    step {d["step"]} {d["name"]}: name {was!r} is gone; '
+                       f'matched href={(d.get("alt") or {}).get("href")!r}')
     healed = [l for l in res["log"] if l.get("healed")]
     if healed:
         out.append(f'  {len(healed)} step(s) needed a rebind — this run is NOT the '

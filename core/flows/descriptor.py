@@ -74,6 +74,43 @@ LEVELS: tuple[tuple[str, ...], ...] = (
 )
 FULL = len(LEVELS) - 1
 
+# THE ALTERNATE KEY, and it is NOT a rung. #59 recorded the failure it exists
+# for: on a real app a nav tab's accessible name is "Investors 38", because
+# AccName 2F concatenates descendant text and the badge is a descendant. The
+# identity rung is therefore DATA-DEPENDENT -- adding a record made it
+# "Investors 43" and a flow that had passed minutes earlier stopped resolving,
+# and a rebind can only ever propose another count-bearing name that breaks
+# again at 44. A link's `href` is declared and does not move, so it was the
+# obvious fix.
+#
+# IT IS NOT THE OBVIOUS FIX, and tools/audit_href_rung.py is why. 28 frozen
+# sites, 4,069 linked controls of 10,151 targetable:
+#
+#   coverage (targetable controls declaring an href)   40.1%
+#   unique by tag+role+type+href                       62.1% median (worst 28%)
+#   unique by tag+role+type+name                       79.2% median (worst 35%)
+#   href stable across two loads of one source        100.0% median
+#   name stable across two loads of one source        100.0% median
+#   href resolves where name CANNOT                     4.15%
+#   name resolves where href CANNOT                    12.83%
+#   the two keys land on DIFFERENT elements             0.00%
+#
+# So href is a WORSE primary key -- lower on 22 of 28 sites -- and promoting it
+# ahead of the identity rung would trade a 79% hit rate for a 62% one in order
+# to fix a minority case. What the numbers DO license is a fallback: the two
+# keys never disagree, so where href is unique it names the same element the
+# name would have, and it is exactly as stable. Recorded only where it is
+# unique AT RECORD TIME, and tried only after the recorded descriptor has
+# failed, so it can convert a REFUSAL into a resolution and can never change a
+# step that already worked.
+#
+# RESTRICTED TO <a>/<area> by HTML's own rule: href on those elements IS the
+# hyperlink destination. Any element may carry the attribute; on a <div> it
+# declares nothing, and admitting it there would be the class-substring guess
+# #27/#28 took out of the paths that decide things.
+ALT: tuple[str, ...] = ("tag", "role", "type", "href")
+_LINK_TAGS = ("a", "area")
+
 
 def _name_of(entry: dict) -> str:
     """The identity slot, in the collector's own order of preference.
@@ -109,6 +146,9 @@ def fields(entry: dict) -> dict:
         # a `near` that SURVIVES is one that discriminates. That is why it earns
         # a rung here while adding nothing on pages where it is noise.
         "near": (entry.get("near") or "").strip(),
+        # NOT a rung -- see ALT below. Carried in `fields` only so `matches()`
+        # can test it, which means no existing descriptor changes shape.
+        "href": (entry.get("href") or "").strip(),
     }
 
 
@@ -150,6 +190,7 @@ def build(entry: dict, entries: Iterable[dict]) -> dict:
     """
     pool = [e for e in entries if _targetable(e)]
     full_desc = at_level(entry, FULL)
+    alt = _alt_of(entry, pool)
 
     for level in range(1, len(LEVELS)):          # level 0 is never unique
         desc = at_level(entry, level)
@@ -166,7 +207,10 @@ def build(entry: dict, entries: Iterable[dict]) -> dict:
             # first, so a heading rename does not break a step whose name was
             # already unique; full second, so new ambiguity is narrowed
             # instead of escalated.
-            return {"level": level, "desc": desc, "full": full_desc}
+            out = {"level": level, "desc": desc, "full": full_desc}
+            if alt:
+                out["alt"] = alt
+            return out
 
     desc = full_desc
     hits = [e for e in pool if matches(desc, e)]
@@ -179,7 +223,25 @@ def build(entry: dict, entries: Iterable[dict]) -> dict:
         # fail to resolve LOUDLY at replay, which is better than a recording
         # that silently omits a step.
         return {"level": FULL, "desc": desc, "untargetable": True}
-    return {"level": FULL, "desc": desc, "nth": nth, "of": len(hits)}
+    out = {"level": FULL, "desc": desc, "nth": nth, "of": len(hits)}
+    if alt:
+        out["alt"] = alt
+    return out
+
+
+def _alt_of(entry: dict, pool: list[dict]) -> Optional[dict]:
+    """The link's declared destination, when that alone names one element.
+
+    Unique AT RECORD TIME is the whole test. An href shared by two links says
+    nothing more than the name did, and storing it would only produce a second
+    ambiguous refusal after the first one.
+    """
+    f = fields(entry)
+    if f["tag"] not in _LINK_TAGS or not f["href"]:
+        return None
+    desc = {k: f[k] for k in ALT}
+    hits = [e for e in pool if matches(desc, e)]
+    return desc if len(hits) == 1 else None
 
 
 class Unresolved(Exception):
@@ -197,7 +259,8 @@ class Unresolved(Exception):
         self.candidates = candidates or []
 
 
-def resolve(target: dict, entries: list[dict]) -> str:
+def resolve(target: dict, entries: list[dict],
+            notes: Optional[list] = None) -> str:
     """Descriptor -> the ONE mmid it names, or raise Unresolved.
 
     The rule, and every branch of it is load-bearing:
@@ -213,7 +276,32 @@ def resolve(target: dict, entries: list[dict]) -> str:
 
     Document order is the ordinal's basis and the collector emits in composed
     walk order (#37 fixed the overflow list for exactly this reason).
+
+    A step whose target declares a hyperlink destination gets ONE more chance
+    after all of that fails -- see ALT. `notes`, when given, is appended to
+    whenever that fallback is what resolved the step, because a run that
+    matched on a different key than it recorded is not quite a clean pass and
+    the caller has to be able to say so.
     """
+    try:
+        return _resolve_recorded(target, entries)
+    except Unresolved as exc:
+        alt = target.get("alt")
+        if not alt:
+            raise
+        pool = [e for e in entries if _targetable(e)]
+        hits = [e for e in pool if matches(alt, e)]
+        if len(hits) != 1:
+            raise
+        if notes is not None:
+            notes.append({"via": "href", "alt": dict(alt),
+                          "was": dict(target.get("desc") or {}),
+                          "mmid": str(hits[0].get("mmid")),
+                          "reason": exc.reason})
+        return str(hits[0].get("mmid"))
+
+
+def _resolve_recorded(target: dict, entries: list[dict]) -> str:
     desc = target.get("desc") or {}
     full = target.get("full") or desc
     pool = [e for e in entries if _targetable(e)]

@@ -113,6 +113,16 @@ jobs:
       - name: Replay recorded flows end to end
         run: python tools/run_flows.py --playground --local-only
 
+      # THE SAME FLOWS WITH THE NAV BADGE MOVED. `badge` chaos rewrites one
+      # link's accessible name and leaves its href alone, which is #59's live
+      # failure offline: the identity rung is DATA and a rebind could only ever
+      # propose another count-bearing name. The href fallback (#61) must carry
+      # it, and the run must still report that the labels moved. Measured by
+      # ablation -- with the fallback removed this step fails at
+      # "no element on the page matches ... name='Projects 4'".
+      - name: Replay with the nav badge moved (the href fallback)
+        run: python tools/run_flows.py --playground --local-only --chaos badge
+
   # ---------------------------------------------------------------------------
   # pyproject.toml claims requires-python = ">=3.10" and advertises 3.10-3.13.
   # Nothing checked that. The unit group imports mcp_server.py and every

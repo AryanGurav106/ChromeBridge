@@ -30,7 +30,7 @@ except Exception:
     pass
 
 from core.flows.descriptor import (  # noqa: E402
-    FULL, LEVELS, Unresolved, build, fields, resolve,
+    ALT, FULL, LEVELS, Unresolved, build, fields, resolve,
 )
 from core.flows import model as FM  # noqa: E402
 from core.flows import secrets as FS  # noqa: E402
@@ -58,13 +58,14 @@ def check(name, ok, detail=""):
 
 def E(mmid, tag="button", role="", name="", type_="", placeholder="",
       section="", under="", value="", disabled=False, clickable=True,
-      editable=False, text=""):
+      editable=False, text="", href=""):
     """One collector entry, in the shape _collectInteractivePage(structured) emits."""
     return {
         "mmid": mmid, "tag": tag, "role": role, "name": name, "label": "",
         "type": type_, "placeholder": placeholder, "section": section,
         "underHeading": under, "value": value, "text": text,
         "disabled": disabled, "clickable": clickable, "editable": editable,
+        "href": href,
     }
 
 
@@ -205,6 +206,77 @@ def main():
           fields({"tag": "BUTTON", "label": "Submit"})["name"] == "Submit"
           and fields({"tag": "BUTTON"})["tag"] == "button")
 
+    # ------------------------------------------------------------------ FA
+    # The href ALT key (#61). Measured first, and the measurement REFUTED the
+    # obvious design: href is a WORSE primary key than the accessible name
+    # (62.1% unique against 79.2% across 28 frozen sites, lower on 22 of 28),
+    # so it is a fallback and never a rung. These pin that it rescues #59's
+    # case, plus the five controls that keep it from being a licence to guess.
+    nav = [
+        E(10, "a", name="Investors 38", href="/pipeline/investors",
+          section="nav", under="Fundraising Pipeline"),
+        E(11, "a", name="Contacts 9", href="/pipeline/contacts",
+          section="nav", under="Fundraising Pipeline"),
+        E(12, "button", name="Add investor"),
+    ]
+    t = build(nav[0], nav)
+    check("FA1 a link records its declared destination as an ALTERNATE key, "
+          "beside the name descriptor rather than instead of it",
+          t["desc"]["name"] == "Investors 38"
+          and t.get("alt") == {"tag": "a", "role": "", "type": "",
+                               "href": "/pipeline/investors"})
+
+    # #59's live failure, exactly: AccName 2F concatenates a badge that is a
+    # descendant, so adding a record rewrites the identity.
+    later = [dict(nav[0], name="Investors 43"), nav[1], nav[2]]
+    notes = []
+    check("FA2 a name carrying live data can change and the step still resolves "
+          "— #59's 'Investors 38' -> 'Investors 43', which a rebind could only "
+          "ever re-break at 44",
+          resolve(t, later, notes) == "10")
+    check("FA2b ...and the run is TOLD it matched on the destination, because a "
+          "step that resolved on a different key than it recorded is not a "
+          "clean pass",
+          len(notes) == 1 and notes[0]["via"] == "href"
+          and notes[0]["was"]["name"] == "Investors 38")
+
+    clean = []
+    check("FA3 CONTROL: a step whose recorded descriptor still matches reports "
+          "NOTHING — a note that fired on every run would be the noise #15 "
+          "priced",
+          resolve(t, nav, clean) == "10" and clean == [])
+
+    gone = [nav[1], nav[2]]
+    check("FA4 CONTROL: the link is GONE, so the destination names nothing and "
+          "the step still refuses — the fallback is a second key, not a licence "
+          "to pick something",
+          _raises(lambda: resolve(t, gone, []), "no element on the page matches"))
+
+    twinned = [dict(nav[0], name="Investors 43"),
+               E(13, "a", name="Investors", href="/pipeline/investors"),
+               nav[1], nav[2]]
+    check("FA5 CONTROL: two links to the same destination is ambiguous, so it "
+          "refuses rather than taking the first",
+          _raises(lambda: resolve(t, twinned, []), "no element on the page matches"))
+
+    shared = [E(20, "a", name="Open", href="/x"), E(21, "a", name="Open", href="/x")]
+    check("FA6 CONTROL: an href shared by two links is recorded as no alternate "
+          "at all — storing it would only produce a second ambiguous refusal "
+          "after the first",
+          build(shared[0], shared).get("alt") is None)
+
+    div = [E(30, "div", name="Pretend link", href="/elsewhere"),
+           E(31, "button", name="Other")]
+    check("FA7 CONTROL: href is read as a DESTINATION only on <a>/<area>, where "
+          "HTML says that is what it means — on a div the attribute declares "
+          "nothing (#27/#28's rule against class-substring guesses)",
+          build(div[0], div).get("alt") is None)
+
+    nohref = [E(40, "a", name="Plain"), E(41, "button", name="Other")]
+    check("FA8 CONTROL: a link with no href carries no alternate, so nothing "
+          "matches on the empty string",
+          build(nohref[0], nohref).get("alt") is None)
+
     # ---- FD15: the field-name contract -------------------------------------
     # Every check above runs on dicts THIS FILE wrote. If the collector spells
     # a field differently from fields(), all of them stay green and nothing
@@ -215,7 +287,7 @@ def main():
     src = extract("_collectInteractivePage",
                   (ROOT / "extension" / "background.js").read_text(encoding="utf-8"),
                   verify=True)
-    needed = sorted({k for lv in LEVELS for k in lv} |
+    needed = sorted({k for lv in LEVELS for k in lv} | set(ALT) |
                     {"label", "placeholder", "underHeading", "near", "text",
                      "mmid", "clickable", "editable"})
     # Read the keys off the ENTRY LITERALS themselves -- the out.push({...})

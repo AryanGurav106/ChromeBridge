@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 976 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 985 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 976 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 985 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5222,6 +5222,140 @@ granted in the side panel is refused with the same message the agent gets.
     Suites: 976 checks. New — FS6/FS6b (the time is measured and survives the
     file format), FS6c (the control that an instant app earns no margin).
 
+61. **THE HREF RUNG #59 ASKED FOR DOES NOT EXIST — the measurement said make it
+    a FALLBACK instead, and three other things fell out of building it.** #59
+    recorded the failure: on a real app a nav tab's accessible name is
+    "Investors 38", because AccName 2F concatenates descendant text and the
+    badge is a descendant, so the identity rung is DATA. Adding a record made
+    it "Investors 43" and a flow that had passed minutes earlier stopped
+    resolving; a rebind can only ever propose another count-bearing name that
+    re-breaks at 44. A link's `href` is declared and does not move, so #59
+    recorded "the principled fix is an href rung" and left it unshipped because
+    #41/#44 require a ladder change to be measured first.
+
+    **MEASURED, AND THE OBVIOUS DESIGN IS REFUTED.** `tools/audit_href_rung.py`,
+    28 frozen sites, 4,069 linked controls of 10,151 targetable:
+
+    | | |
+    |---|---|
+    | coverage (targetable controls declaring an href) | 40.1% |
+    | unique by tag+role+type+**href** | **62.1% median** (worst 27.9%) |
+    | unique by tag+role+type+**name** | **79.2% median** (worst 34.9%) |
+    | href stable across two loads of one source | 100.0% median (worst 99.6%) |
+    | name stable across two loads of one source | 100.0% median |
+    | href resolves where name CANNOT | 4.15% |
+    | name resolves where href CANNOT | 12.83% |
+    | the two keys land on DIFFERENT elements | **0.00%** |
+
+    href is a WORSE primary key -- lower on **22 of 28 sites** -- so promoting
+    it ahead of the identity rung would trade a 79% hit rate for a 62% one in
+    order to fix a minority case. What the numbers DO license is the other
+    shape: the two keys never disagree, so where href is unique it names the
+    same element the name would have, and it is exactly as stable. It is stored
+    as an ALTERNATE beside the name descriptor -- only where it is unique AT
+    RECORD TIME, and tried only after the recorded descriptor has already
+    failed -- so it can convert a REFUSAL into a resolution and can never
+    change a step that already worked. Same cheap-first/strong-second shape
+    `build()` already uses for `desc` + `full` (#49), rather than a second
+    spelling of it (#21).
+    **Restricted to `<a>`/`<area>`** by HTML's own rule that href on those
+    elements IS the destination. Any element may carry the attribute; on a
+    `<div>` it declares nothing, and admitting it there is the class-substring
+    guess #27/#28 removed from the paths that decide things.
+
+    **THE COST IS ZERO TOKENS, and that is why this was a smaller decision than
+    #41's.** `href` is only computed at `detail="brief"`/`"full"`, so
+    `_flow_entries` moved to `brief`. #10 priced detail at x1.39 median tokens
+    and that price is on the STRING listing; this is the STRUCTURED array,
+    parsed in Python and never printed, so the cost is one URL resolve per link
+    and nothing at all to the agent. `brief` rather than `full` because it is
+    the more stable key as well as the smaller one -- a same-origin link
+    becomes a bare path, so a staging-to-production host change does not break
+    a recorded step.
+
+    **THE BENEFIT HALF, measured in the SAME pass as its ablation** so run-order
+    drift cannot align with the arm (#19). `audit_flow_resolve.py` now builds
+    each descriptor once and scores it twice, with and without the alternate:
+
+    | mutation | with | without |
+    |---|---|---|
+    | base (no mutation) | 100.0% CORRECT | 100.0% CORRECT |
+    | rename-target | **30.9% CORRECT** / 69.1% REFUSED | 0% / 100% REFUSED |
+    | counter-in-name (#59's shape) | **15.8% CORRECT** / 84.2% REFUSED | 0% / 100% REFUSED |
+    | delete-target | 100% REFUSED | 100% REFUSED |
+    | insert-twin | 100% REFUSED | 100% REFUSED |
+    | twin-elsewhere | 100% CORRECT | 100% CORRECT |
+    | rename-neighbour | 99.5% CORRECT | 99.5% CORRECT |
+
+    **WRONG is 0.00% on every row of both arms**, which is the only number that
+    could have stopped this. 30.9% of descriptors carry the alternate and 30.9%
+    of renamed targets are rescued -- the same figure, so every alt-bearing
+    target is recovered and no other. `counter-in-name` is new and models #59
+    exactly (a digit run inside the name moves, the element does not); 15.8% is
+    the honest ceiling for that population, because the rest are BUTTONS with
+    badges and a button declares no destination. **That gap is not closed and
+    nothing here pretends it is.**
+
+    **A pass that matched on a different key is still news**, so it is reported
+    separately from a rebind -- no decision was asked for and nothing was
+    guessed, but the page's labels moved and the run says which. It also feeds
+    the existing patch proposal, which still never edits the file (#49's FR9).
+
+    **AND THE END-TO-END TEST IS THE PART THAT WOULD HAVE CAUGHT THIS SHIPPING
+    INERT.** #19/#30 are explicit that the op router and the string contracts
+    are where a feature dies behind green fixtures, and `_flow_entries` moving
+    to `brief` is exactly such a link. `saas_playground.py` grew a COUNT BADGE
+    on one nav item -- the real shape, AccName 2F concatenating a `<span>` --
+    with a `badge` chaos flag that moves the number and leaves the href alone,
+    and `run_flows.py --chaos` to set it. Verified in three directions:
+    clean PASSES; `--chaos badge` PASSES in 0.43s and reports
+    `step 3 computer: name 'Projects 4' is gone — matched href='/projects'`;
+    and **with the fallback ablated the same run FAILS at
+    `no element on the page matches this step's target: tag='a'
+    name='Projects 4'`** -- #59's live failure reproduced offline, byte for
+    byte. The clean arm still passes under the ablation, so the ablation is not
+    breaking something else. Both arms are CI steps. `Members` carries no badge
+    and is the control sitting in the same nav.
+
+    **THREE DEFECTS FOUND BY DRIVING IT, none by reading.**
+    - **`/members` had been dead for its whole life.** `members_page` references
+      `page_note`, which is a LOCAL of `projects_page` -- a NameError, so the
+      connection dropped and curl reported `000`. Four routes exist in the
+      fixture and nothing had ever opened that one.
+    - **ONE FIXTURE RESET PER RUN POISONED EVERY FLOW AFTER THE FIRST.**
+      `acme-create-project` adds a project, so `acme-nav-badge`'s recorded
+      `4 rows` met 5 and failed at step 1. That is #54's "a mutating flow is not
+      re-runnable in place" one level up -- between flows rather than between
+      runs -- and it was invisible while the suite had exactly one local flow.
+      The reset is per flow now, which is what a per-test fixture means.
+    - **The fixture credential was named one flow at a time.** A hardcoded
+      `CB_SECRET_ACME_CREATE_PROJECT_PASSWORD` goes stale the moment a second
+      fixture flow is recorded, which is what #42 deleted `_OBSERVES` for. It is
+      derived from the flows being run, and only for flows pointed at the
+      fixture.
+
+    **#57's WITNESS CHECK FIRED ON MY OWN RECORDING, which is the third time
+    this feature has caught its author.** The first `acme-nav-badge` asserted
+    4 table rows after clicking Projects -- already true, because the value
+    before the Members detour was also 4 and #57 scans back ACROSS actions for
+    the latest prior value. Exactly the residual false positive #57 documents
+    (a value one action changed and another changed back), and the right
+    response was not to suppress it: an observation on the members page (3
+    rows) makes the 4 witness the click. Re-recorded, warning gone.
+
+    **AND THE LIVE SERVER WAS STALE, caught by the rule #59 wrote down.** The
+    first Boxsy re-record came back with no `alt` key at all, because the
+    session's MCP server had loaded `descriptor.py` at connect time. Nothing
+    warns you; the old server answers normally and writes a slightly older
+    format. CHECK A SAVED ARTEFACT BEFORE TRUSTING A LIVE RESULT.
+
+    Suites: 985 checks. New -- FA1-FA8 (the alternate key, with the
+    still-matches, link-gone, two-links-same-destination, shared-href,
+    not-a-link and no-href controls -- six of the eight are controls, because
+    the failure this can have is binding to something plausible). Probes:
+    `tools/audit_href_rung.py`; `audit_flow_resolve.py` grew the
+    `counter-in-name` mutation and a same-pass ablation arm.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -5302,7 +5436,9 @@ granted in the side panel is refused with the same message the agent gets.
 | `record_flow(stop)` warns that an assertion was ALREADY TRUE | By design since #57 — the check had that same value the last time the agent observed it, so the step did not move what it measures and the flow would pass even if the step did nothing. Usually the step silently failed (a required field left unfilled is the one that caused this twice). A warning, not a refusal: an idempotent step legitimately leaves state alone |
 | A flow step after `tabs_create_mcp` runs in the NEW tab | By design since #58 — the runner used to force the flow's starting tabId on every step, so a recorded `tabs_create_mcp` made a tab that was then ignored and the flow carried on in the old one. Same rule `browser_batch` threads (#46) and only from `tabs_create_mcp`, which returns exactly one id it just made. A create whose id cannot be read FAILS rather than silently continuing in the previous tab |
 | A flow fails at step 1 on an SPA with "no element matches" | Fixed in #59 — target resolution had no settle window, so a control that had not RENDERED yet was reported exactly like one that does not exist. It now retries on the same bound as a postcondition, re-fetching entries each attempt. If it still fails after the window, the control really is absent — or its NAME is data-dependent, which is the other half of #59 |
-| A flow's descriptor stops matching after data changes | Its identity is data-dependent. Measured live on a real app: a nav tab's accessible name is `"Investors 38"` — the live count is INSIDE the name (AccName 2F concatenates descendant text), so adding a record makes it `"Investors 39"`. Rebind with `run_flow(resume_id=…, bind="ref_N")`, which proposes a patch; the durable fix is an `href` rung, which is unmeasured and therefore unshipped |
+| A flow's descriptor stops matching after data changes | Its identity is data-dependent: a nav tab's accessible name is `"Investors 38"` because AccName 2F concatenates the badge, so adding a record makes it `"Investors 39"`. Since #61 a LINK recovers by itself — the step resolves on its declared destination and the run says `name 'X' is gone — matched href='/y'`. A BUTTON with a badge does not: nothing else is declared, so it still pauses and you rebind with `run_flow(resume_id=…, bind="ref_N")`, which proposes a patch and never applies it |
+| A flow step reports `matched href=…` | By design since #61 — the recorded name no longer matches and the step resolved on the link's declared destination instead. Deterministic, nothing guessed and nothing asked, but NOT a clean pass: the page's labels moved, and the proposed patch says to what. Recorded only where the href was unique at record time, and only for `<a>`/`<area>` |
+| A recorded flow has no `alt` key on a link target | The MCP server was loaded before #61. It reads `descriptor.py` and `core/flows/*` at CONNECT time, and the old one answers normally while writing a slightly older format — `/mcp` reconnect, then CHECK THE SAVED FILE rather than the live result |
 | A flow says a step FAILED but the action plainly worked | Fixed in #60 — the postcondition window was a flat 6s and a real app's create -> table-refresh took longer, so the flow reported FAILED for a record that HAD been created. Each step now carries `settle_ms`, measured at record time from the timestamps the recorder already kept, and the replay allows the default PLUS that. A flow recorded before #60 carries 0 and is unchanged |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 

@@ -51,6 +51,14 @@ record-and-replay tool, and several defeat ours if we got them wrong:
                  fields -- harsher than React, and the shape that exposed
                  fill_form verifying each field at write time rather than
                  after the whole batch
+      badge      the Projects nav item's COUNT BADGE reads a different number.
+                 AccName 2F concatenates descendant text, so the accessible
+                 name of that link is "Projects 4" -- the identity is live
+                 DATA. Measured on a real app in #59 and it broke a flow that
+                 had passed minutes earlier; this reproduces it offline so the
+                 href fallback (#61) has an end-to-end regression test rather
+                 than only fixtures. Members carries no badge and is the
+                 control sitting beside it in the same nav.
 
 Credentials are seeded HERE, in the fixture, and are not anyone's secret:
     ada@acme.test / demo-pass-1234
@@ -171,11 +179,20 @@ th{color:#9a9aa2;font-weight:500;font-size:12px}
 def shell(title, body, user=None, current="", overlay=""):
     nav = ""
     if user:
-        items = [("/projects", T("Projects")), ("/members", T("Members")),
-                 ("/report", "Report"), ("/settings", T("Settings"))]
+        # A COUNT BADGE ON ONE NAV ITEM, because an accessible name is allowed
+        # to contain live data and the descriptor design rests on that name.
+        # AccName 2F concatenates element children, so this link is named
+        # "Projects 4" and renames itself every time a project is added -- the
+        # exact shape #59 met on a real app. `badge` chaos moves the number
+        # without touching the href, which is what the fallback is for.
+        count = len(STATE["projects"]) + (7 if chaos("badge") else 0)
+        items = [("/projects", T("Projects"), f'<span class="pill">{count}</span>'),
+                 ("/members", T("Members"), ""),
+                 ("/report", "Report", ""), ("/settings", T("Settings"), "")]
         nav = "".join(
-            f'<a href="{h}" class="{rid()}"{" aria-current=page" if h == current else ""}>{t}</a>'
-            for h, t in items)
+            f'<a href="{h}" class="{rid()}"{" aria-current=page" if h == current else ""}>'
+            f'{t}{b}</a>'
+            for h, t, b in items)
     right = (f'<span class="muted">{user["email"]}</span>'
              f'<form method="post" action="/logout" style="margin:0">'
              f'<button class="{rid()}">{T("Sign out")}</button></form>') if user else ""
@@ -445,7 +462,7 @@ def members_page(user):
 <h1>Members</h1><p class="sub">{len(people)} people</p>
 <div class="card">
   <input type="text" name="invite" placeholder="" style="max-width:260px;margin-bottom:10px" class="{rid()}">
-  <table{page_note}><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr>
+  <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr>
 </thead><tbody>{trs}</tbody></table></div>""", user, "/members")
 
 

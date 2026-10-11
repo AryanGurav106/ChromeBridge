@@ -1,0 +1,183 @@
+{
+  "schema": 1,
+  "name": "acme-nav-badge",
+  "origin": "http://127.0.0.1:8787",
+  "recorded_at": "2026-10-11T16:23:55",
+  "viewport": {
+    "width": 1280,
+    "height": 900
+  },
+  "vars": {
+    "work_email": "ada@acme.test"
+  },
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "http://127.0.0.1:8787/logout"
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "fill_form",
+      "input": {
+        "fields": [
+          {
+            "value": "{{work_email}}"
+          },
+          {
+            "value": "${CHROMEBRIDGE_SECRET:CB_SECRET_ACME_NAV_BADGE_PASSWORD}"
+          }
+        ],
+        "submit": true
+      },
+      "targets": {
+        "submit_ref": {
+          "level": 1,
+          "desc": {
+            "tag": "button",
+            "role": "",
+            "type": "submit",
+            "name": "Sign in"
+          },
+          "full": {
+            "tag": "button",
+            "role": "",
+            "type": "submit",
+            "name": "Sign in",
+            "section": "form",
+            "under": "Sign in",
+            "near": ""
+          }
+        },
+        "fields.0": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "email",
+            "name": "Work email"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "email",
+            "name": "Work email",
+            "section": "form",
+            "under": "Sign in",
+            "near": ""
+          }
+        },
+        "fields.1": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "password",
+            "name": "Password"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "password",
+            "name": "Password",
+            "section": "form",
+            "under": "Sign in",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "url": "http://127.0.0.1:8787/projects",
+        "query": {
+          "selector": "table tbody tr",
+          "count": 4
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 3
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "Members"
+          },
+          "full": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "Members",
+            "section": "nav",
+            "under": "",
+            "near": ""
+          },
+          "alt": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "href": "/members"
+          }
+        }
+      },
+      "expect": {
+        "url": "http://127.0.0.1:8787/members",
+        "query": {
+          "selector": "table tbody tr",
+          "count": 3
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 8
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "Projects 4"
+          },
+          "full": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "Projects 4",
+            "section": "nav",
+            "under": "",
+            "near": ""
+          },
+          "alt": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "href": "/projects"
+          }
+        }
+      },
+      "expect": {
+        "url": "http://127.0.0.1:8787/projects",
+        "query": {
+          "selector": "table tbody tr",
+          "count": 4
+        }
+      },
+      "on_fail": "ask",
+      "settle_ms": 9
+    }
+  ]
+}

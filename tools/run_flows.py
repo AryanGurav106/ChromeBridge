@@ -110,6 +110,36 @@ def _origins(flows: list) -> list:
     return sorted(out)
 
 
+def _fixture_secret_names(flows) -> list:
+    """Every ${CHROMEBRIDGE_SECRET:NAME} a LOCAL-FIXTURE flow references."""
+    out, pre = [], "${CHROMEBRIDGE_SECRET:"
+    for f in flows:
+        blob = json.dumps([s_.to_json() for s_ in f.steps], default=str)
+        if "127.0.0.1:8787" not in (f.origin or "") and "127.0.0.1:8787" not in blob:
+            continue
+        for frag in blob.split(pre)[1:]:
+            out.append(frag.split("}")[0])
+    return sorted(set(out))
+
+
+def _pg_reset(chaos: str = "") -> None:
+    """Seed state, then flags. ORDER IS THE POINT: /api/reset clears chaos."""
+    import urllib.request as _u
+    try:
+        _u.urlopen(_u.Request("http://127.0.0.1:8787/api/reset", method="POST"), timeout=2)
+    except Exception:
+        return
+    flags = [f.strip() for f in (chaos or "").split(",") if f.strip()]
+    if not flags:
+        return
+    try:
+        _u.urlopen(_u.Request("http://127.0.0.1:8787/api/chaos", method="POST",
+                              data=json.dumps({"flags": flags}).encode(),
+                              headers={"Content-Type": "application/json"}), timeout=2)
+    except Exception as exc:
+        print(f"  could not set chaos flags: {exc}")
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("flow", nargs="*", help="flow names; default every flows/*.flow.json")
@@ -121,6 +151,11 @@ async def main() -> int:
                     help="skip flows that touch a non-loopback origin; what CI wants, "
                          "because a suite that needs the public internet fails for "
                          "reasons that are not the code's")
+    ap.add_argument("--chaos", default="",
+                    help="comma-separated saas_playground chaos flags to set AFTER "
+                         "the reset (needs --playground). Use it to script a "
+                         "falsifier, or to prove a fix end to end: --chaos badge "
+                         "renames a nav link without touching its href.")
     ap.add_argument("--token", default="")
     args = ap.parse_args()
 
@@ -174,13 +209,17 @@ async def main() -> int:
                 await asyncio.sleep(0.1)
         # A known starting state, or the flow's own precondition is measuring
         # whatever the last run left behind.
-        try:
-            urllib.request.urlopen(urllib.request.Request(
-                "http://127.0.0.1:8787/api/reset", method="POST"), timeout=2)
-        except Exception:
-            pass
-        os.environ.setdefault("CB_SECRET_ACME_CREATE_PROJECT_PASSWORD",
-                              "demo-pass-1234")   # the fixture's own seeded credential
+        _pg_reset(args.chaos)
+        if args.chaos:
+            print(f"  chaos: {args.chaos}")
+        # THE FIXTURE'S OWN SEEDED CREDENTIAL, for every flow that asks for one.
+        # Derived from the flows being run rather than named one at a time: the
+        # secret's env name is built from the flow name, so a hardcoded list
+        # goes stale the moment a second fixture flow is recorded -- which is
+        # what #42 deleted `_OBSERVES` for. Only flows pointed AT the fixture
+        # are seeded, since nothing else here could be this password.
+        for _name in _fixture_secret_names(flows):
+            os.environ.setdefault(_name, "demo-pass-1234")
 
     ms = _load_server()
     bridge = ExtensionBridge(host="127.0.0.1", port=PORT, token=token)
@@ -218,6 +257,16 @@ async def main() -> int:
                 else int(re.search(r'"tabId":\s*(\d+)', tab).group(1))
 
             for flow, path in zip(flows, paths):
+                # A FIXTURE RESET PER FLOW, not per run. Resetting once meant
+                # the first mutating flow poisoned every flow after it:
+                # acme-create-project adds a project, so acme-nav-badge's
+                # recorded `4 rows` met 5 and failed at step 1 -- which is #54's
+                # "a mutating flow is not re-runnable in place" one level up,
+                # between flows rather than between runs. Each flow gets the
+                # state it was recorded against, which is what a per-test
+                # fixture means.
+                if args.playground:
+                    _pg_reset(args.chaos)
                 t0 = time.time()
                 try:
                     res = await flow_start(flow, tab_id, ms._flow_call,
@@ -232,6 +281,12 @@ async def main() -> int:
                 mark = "PASS" if res["status"] == PASSED else "FAIL"
                 print(f"  {mark}  {flow.name:<28} {res['at']}/{res['of']} step(s) "
                       f"in {res['seconds']}s")
+                for d in (res.get("drifted") or []):
+                    # A pass that matched on a different key than it recorded is
+                    # still a pass, and still news: the page's labels moved.
+                    print(f"        step {d['step']} {d['name']}: name "
+                          f"{(d.get('was') or {}).get('name')!r} is gone — matched "
+                          f"href={(d.get('alt') or {}).get('href')!r}")
                 if res["status"] != PASSED:
                     print(f"        {res['reason']}")
         finally:
