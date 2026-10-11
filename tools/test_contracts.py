@@ -531,6 +531,23 @@ def main() -> int:
           f"README says {_claimed.group(1) if _claimed else '?'}, "
           f"server registers {len(_decorated)}")
 
+    # ---- C28: tools/README.md DOCUMENTS EVERY SUITE. That file says of its own
+    # tables, in its own words, that `--list` "cannot drift the way the tables
+    # below can" — and they had: five suites (batch, contracts, flows, patterns,
+    # submit) existed with no row, and the sample run still printed 14 suites /
+    # 344 checks against 19 / 1038. Knowing a table drifts and leaving it
+    # unchecked is the same posture as a detector that cannot fire (#30/#39).
+    # Suite discovery here mirrors run_tests.py's: the filesystem, not a list.
+    _suites = {f.stem[len("test_"):] for f in (_Path(ROOT) / "tools").glob("test_*.py")}
+    _suites |= {f.stem[len("test_"):] for f in (_Path(ROOT) / "tools").glob("test_*.js")}
+    _tr = read("tools/README.md")
+    _documented = set(re.findall(r"^\| `([a-z_0-9]+)` \|", _tr, re.M))
+    _undoc = sorted(_suites - _documented)
+    check("C28 tools/README.md has a row for every suite on disk",
+          not _undoc,
+          f"UNDOCUMENTED: {', '.join(_undoc)}" if _undoc
+          else f"{len(_suites)} suites, all documented")
+
     check("C11 every function injected via runInTab is self-contained "
           "(executeScript stringifies only that function)",
           not _bad,

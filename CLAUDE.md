@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 1038 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 1039 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1038 checks, ~90s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1039 checks, ~90s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -6065,12 +6065,30 @@ granted in the side panel is refused with the same message the agent gets.
     fire on their own planted violation and only their own, the phantom one
     catching `get_dom_fields` — the real ghost from #35.
 
-    Suites: 1038 checks. New — SV1 (a wired svg is named by its own title;
+    **AND THE SAME TABLE DRIFT, ONE FILE OVER, IN THE FILE THAT ADMITS IT.**
+    `tools/README.md` says of its own tables that `--list` *"cannot drift the
+    way the tables below can"* — and they had: **five suites had no row at all**
+    (batch, contracts, flows, patterns, submit) and the sample run still printed
+    `14 suites … 344 checks` against 19 / 1,039. Knowing a table drifts and
+    leaving it unchecked is the posture of a detector that cannot fire (#30,
+    #39). C28 enumerates the suites the way `run_tests.py` does — from the
+    filesystem, not a list — and fails on any without a row; shown to fire.
+    **The check-count drift note was itself scanning one file of three.** #30
+    added it for CLAUDE.md; README.md and `tools/README.md` then acquired the
+    number and were both wrong while the notice reported clean. Extended to all
+    three, advisory as before — and **my first pattern matched only one
+    spelling**: `\d+ suites?[,)]` missed `of 19 suite(s); 1038 checks`, so the
+    file that motivated it was skipped in silence. It anchors on the word
+    "suite" appearing shortly before the count instead, which is the failure
+    mode of the check immediately below it, reproduced by its own author.
+
+    Suites: 1039 checks. New — SV1 (a wired svg is named by its own title;
     FAILS against the pre-change collector), SV1b (a child's title is not the
     drawing's name), SV1c (the icon-button path still resolves it, which passes
     both ways and is therefore the regression control), C26/C26b (a browserless
     validation flag actually validates), C27–C27c (the README's tool table, in
-    both directions, with three planted-violation controls).
+    both directions, with three planted-violation controls), C28 (every suite
+    on disk has a row in `tools/README.md`).
 
 ## Debugging starting points
 

@@ -21,7 +21,7 @@ Two kinds of thing live here, and the difference matters:
   --------------------------------------------------
   delta       unit     PASS        3.3s  10/10
   ...
-  14 passed, 0 failed, 0 skipped of 14 suite(s); 344 checks; 60.0s
+  19 passed, 0 failed, 0 skipped of 19 suite(s); 1039 checks; 90.4s
   ALL GREEN
 ```
 
@@ -51,9 +51,13 @@ Discovery is by source inspection, not a hardcoded list — add a
 
 | Suite | Runner | Pins |
 |-------|--------|------|
+| `batch` | python | `browser_batch`: the pre-flight, the two page-change guards, tab threading |
+| `contracts` | python | the boundaries nothing else crosses — injected functions are self-contained, the server and extension agree on a string, agent-facing prose names real tools, the README states what is served |
 | `delta` | python | delta reads: what changed since the last listing, and when to refuse |
 | `find` | python | `find`'s scorer and formatter (coverage gate, non-ASCII, href/src vocabulary) |
+| `flows` | python | recorded flows: the descriptor ladder, variables, preconditions, the repair loop that proposes and never writes |
 | `ops` | node | `handleOp` — the service worker's op router, in a `node:vm` with a mocked `chrome` |
+| `patterns` | python | no `\b` beside a non-ASCII alternative, no ASCII class gating page text, and the auditor still fires |
 | `permissions` | node | the extension's permission/consent gate |
 | `truncate` | python | `_truncate` and `get_page_text`: truncation must never remove the payload |
 
@@ -70,7 +74,8 @@ and runs them against a fixture, so what is tested is the shipped code.
 | `ledger` | the drop ledger: every removed element carries a rule id |
 | `pixels` | device-pixel to CSS-pixel screenshot normalisation at 1.0 / 1.25 / 2.0 |
 | `readiness` | the page-readiness probe (in-flight requests, `aria-busy`, progressbars) |
-| `shadow` | open shadow roots: collect, click and type through `window.__mmidReg` |
+| `shadow` | open **and closed** shadow roots: collect, click and type through `window.__mmidReg` |
+| `submit` | the submit picker — the only function here that presses a button, answering only from what the document declares |
 | `widgets` | `widget_zoo.html` — combobox/popover/`aria-controls` shapes that broke live |
 
 Everything the browser group needs is served locally (`file://`, `page.route`

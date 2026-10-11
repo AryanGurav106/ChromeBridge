@@ -583,6 +583,29 @@ def main(argv: list[str] | None = None) -> int:
     # nothing happen, not by reading the condition.
     if args.group in (None, "all") and not getattr(args, "only", None) \
             and not getattr(args, "skip", None) and not args.skip_browser:
+        # THE COUNT NOW LIVES IN THREE FILES, so scanning one is the drift this
+        # check was written to end, one file over. README.md is the front door
+        # and tools/README.md says of its own tables that `--list` "cannot drift
+        # the way the tables below can" — both had the number, and both were
+        # wrong (344 against 1038) while this notice reported CLAUDE.md as clean.
+        # Same pattern, same advisory handling, no second spelling (#21).
+        for _doc in ("README.md", "tools/README.md"):
+            try:
+                _t = (ROOT / _doc).read_text(encoding="utf-8")
+                # Anchored on "suite" appearing shortly before, not on one
+                # spelling of the separator: the two files write it as
+                # "19 suites, 1038 checks" and "of 19 suite(s); 1038 checks",
+                # and a pattern fitting one silently skipped the other — which
+                # is the failure mode of the check directly below this.
+                _st = {int(m.group(1).replace(",", ""))
+                       for m in re.finditer(r"([\d,]+) checks", _t)
+                       if "suite" in _t[max(0, m.start() - 40):m.start()]}
+                if _st and checks and _st != {checks}:
+                    print(f"  note: {_doc} says "
+                          f"{'/'.join(str(x) for x in sorted(_st))} checks, this run"
+                          f" counted {checks}")
+            except Exception:
+                pass
         try:
             _md = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
             # THE SUITE COUNT IS NOT PART OF THE PATTERN. This read `17 suites,
