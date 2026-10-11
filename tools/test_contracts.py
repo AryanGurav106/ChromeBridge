@@ -408,6 +408,37 @@ def main() -> int:
           if "START IN ONE TURN" in _bbdoc else
           "MISSING from the only channel a subagent reads")
 
+    # C22: A STALE SERVER IS INVISIBLE FROM INSIDE, so it has to be reported.
+    # The MCP server is a long-lived stdio process that imports mcp_server.py
+    # and core/* ONCE, at connect time; editing them changes nothing until the
+    # client reconnects, and the running process answers NORMALLY the whole
+    # time. #59 learned that by inspecting a saved artefact (a flow file
+    # silently missing a field the newer recorder writes) at a cost of three
+    # reconnects, and #61 paid three more. Driven, not grepped -- the helper is
+    # at module level precisely so this can call it (#30 found `_content_rows`
+    # untestable for its whole life because it was nested inside its tool).
+    import importlib.util as _ilu, os as _os, time as _time
+    _spec = _ilu.spec_from_file_location("_ms_stale", _Path(__file__).resolve().parents[1] / "mcp_server.py")
+    _ms = _ilu.module_from_spec(_spec)
+    try:
+        _spec.loader.exec_module(_ms)
+        _fresh = _ms._changed_since_start()
+        check("C22 CONTROL: a server importing the code on disk reports NOTHING "
+              "stale — a notice that fired every run would be the noise #15 priced",
+              _fresh == [], f"reported {_fresh[:4]}")
+        _victim = _Path(__file__).resolve().parents[1] / "core" / "flows" / "runner.py"
+        _was = _victim.stat().st_mtime
+        try:
+            _os.utime(_victim, (_time.time(), _time.time()))
+            _after = _ms._changed_since_start()
+            check("C22b ...and an edit AFTER the import is named, so the one "
+                  "failure mode nothing else can see becomes a read",
+                  "core/flows/runner.py" in _after, f"reported {_after[:4]}")
+        finally:
+            _os.utime(_victim, (_was, _was))
+    except Exception as _e:
+        check("C22 the staleness probe runs", False, f"{type(_e).__name__}: {_e}")
+
     check("C11 every function injected via runInTab is self-contained "
           "(executeScript stringifies only that function)",
           not _bad,

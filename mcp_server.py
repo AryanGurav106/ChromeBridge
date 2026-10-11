@@ -34,6 +34,9 @@ from typing import Annotated, Any, Optional, Union
 
 # Make repo-root imports work no matter what cwd Claude Code launches us with.
 _ROOT = os.path.dirname(os.path.abspath(__file__))
+# When this process imported its modules. `sw_info` compares it against the
+# mtimes on disk, because a stale server is invisible from inside (#59, #61).
+_STARTED_AT = time.time()
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
@@ -1266,6 +1269,33 @@ async def debug_targets(
 
 
 @mcp.tool()
+def _changed_since_start() -> list:
+    """Server-side files whose mtime is later than this process's import.
+
+    THE MCP SERVER IS A LONG-LIVED STDIO PROCESS that imports mcp_server.py and
+    core/* ONCE, at connect time, so an edit to any of them changes nothing
+    until the client reconnects -- and the stale process keeps answering
+    normally the whole time. #59 had to learn that by inspecting a SAVED
+    ARTEFACT (a flow file silently missing a field a newer recorder writes) and
+    it cost three reconnects; #61 cost three more. This turns it into a read.
+
+    A FACT, not a guess: these files have a newer mtime than the moment we
+    started. Empty in every normal run, which is what keeps it from being the
+    always-on warning #15 priced.
+
+    AT MODULE LEVEL deliberately -- #30 found `_content_rows` untestable for
+    its whole life because it was nested inside the tool that used it.
+    """
+    out = []
+    for f in sorted(Path(_ROOT).glob("*.py")) + sorted(Path(_ROOT).glob("core/**/*.py")):
+        try:
+            if f.stat().st_mtime > _STARTED_AT:
+                out.append(str(f.relative_to(_ROOT)))
+        except OSError:
+            continue
+    return out
+
+
 async def sw_info(
     tabId: Annotated[int, Field(description="Any tab id (unused; the answer is per-extension).")] = 0,
 ) -> str:
@@ -1323,6 +1353,29 @@ async def sw_info(
                  "ago_s": round(_now - t["ts"], 1)}
                 for t in getattr(b, "timeouts", [])
             ]
+        except Exception:
+            pass
+        # WHETHER THIS SERVER IS STILL RUNNING THE CODE ON DISK. The MCP server
+        # is a long-lived stdio process that imports mcp_server.py and
+        # core/flows/* ONCE, at connect time, so an edit to any of them changes
+        # nothing until the client reconnects -- and the stale process answers
+        # normally the whole time, which is why #59 had to learn this by
+        # inspecting a SAVED ARTEFACT. It cost three reconnects there and three
+        # more in the session that added the descriptor fallback: a flow
+        # recorded by a pre-change server came back silently missing a field.
+        # This is a FACT, not a guess: these files have an mtime later than the
+        # moment this process started importing them. Nothing is reported when
+        # nothing changed, so it is silent in every normal run (#15).
+        try:
+            changed = _changed_since_start()
+            if changed:
+                out["server_code_changed_since_start"] = changed[:12]
+                out["server_stale_note"] = (
+                    "This server imported its modules at connect time and those "
+                    "files have changed since. Nothing you do will exercise the "
+                    "new code until the client reconnects (/mcp in Claude Code). "
+                    "The running process answers normally meanwhile, which is "
+                    "what makes this worth saying.")
         except Exception:
             pass
         return json.dumps(out, default=str)

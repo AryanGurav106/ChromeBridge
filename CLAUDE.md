@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 992 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 994 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 992 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 994 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5380,11 +5380,37 @@ granted in the side panel is refused with the same message the agent gets.
     response was not to suppress it: an observation on the members page (3
     rows) makes the 4 witness the click. Re-recorded, warning gone.
 
-    **AND THE LIVE SERVER WAS STALE, caught by the rule #59 wrote down.** The
-    first Boxsy re-record came back with no `alt` key at all, because the
-    session's MCP server had loaded `descriptor.py` at connect time. Nothing
-    warns you; the old server answers normally and writes a slightly older
-    format. CHECK A SAVED ARTEFACT BEFORE TRUSTING A LIVE RESULT.
+    **AND THE LIVE SERVER WAS STALE THREE TIMES, so it stopped being a rule and
+    became a read.** The first Boxsy re-record came back with no `alt` key at
+    all, because the session's MCP server had loaded `descriptor.py` at connect
+    time; nothing warns you, the old process answers normally and writes a
+    slightly older format. #59 paid three reconnects learning this and left the
+    advice CHECK A SAVED ARTEFACT BEFORE TRUSTING A LIVE RESULT, which is a
+    thing a human has to remember -- the same shape as the suite-count drift
+    #30 had to automate for the same reason. `sw_info` now reports which
+    server-side files have an mtime later than the moment this process imported
+    them. A FACT, not a guess, and empty in every normal run, so it is not the
+    always-on warning #15 priced. The helper sits at MODULE level rather than
+    inside the tool, which is what makes C22 able to drive it at all (#30 found
+    `_content_rows` untestable for its whole life for exactly that reason).
+
+    **LIVE ON THE REAL APP, end to end, which is where every claim here was
+    either confirmed or corrected:**
+    - the flow recorded at `Investors 38` against a page reading 43 **PAUSED**
+      with `no element on the page matches this step's target: tag='a'
+      name='Investors 38'` -- the failure, reproduced before the fix;
+    - re-recorded at 43 and replayed clean: **PASSED 2/2, no drift note**, which
+      is the discrimination half;
+    - a record created through `boxsy-add-investor` moved the count to 44, and
+      the same flow then **PASSED on the destination**, reported
+      `name 'Investors 43' is gone`, and proposed
+      `'Investors 43' -> 'Investors 44'` -- a patch built from a SETTLED page,
+      where before the ordering fix it proposed the mid-render `'Investors'`;
+    - the file on disk still says `Investors 43`. The proposal is never applied
+      (#49's FR9), verified live rather than asserted;
+    - a four-step flow across three tabs (`Investors 43` / `Contacts 152` /
+      `Rounds 1,808` -- three data-dependent names in one flow) recorded with
+      all three destinations and **PASSED 4/4 in 6.14s**.
 
     **AND A SECOND DEFECT CAME OUT OF THE SAME RECORDING SESSION, by refuting
     the theory rather than confirming it.** A `get_url` right after a click
@@ -5420,7 +5446,8 @@ granted in the side panel is refused with the same message the agent gets.
     that a name which never comes back IS a drift and must still be carried,
     or "never use the alternate" would pass FR14 while deleting the feature). Probes:
     `tools/audit_href_rung.py`; `audit_flow_resolve.py` grew the
-    `counter-in-name` mutation and a same-pass ablation arm. AN7/AN7b/AN7c in
+    `counter-in-name` mutation and a same-pass ablation arm. C22/C22b (the
+    staleness read, with the nothing-changed control). AN7/AN7b/AN7c in
     `test_ops.js` for `get_url` (the settled-tab and does-not-wait controls);
     AN7 fails against the pre-fix op with the previous page's url in hand.
 
@@ -5509,6 +5536,7 @@ granted in the side panel is refused with the same message the agent gets.
 | A flow step reports `matched href=…` | By design since #61 — the recorded name no longer matches and the step resolved on the link's declared destination instead. Deterministic, nothing guessed and nothing asked, but NOT a clean pass: the page's labels moved, and the proposed patch says to what. Recorded only where the href was unique at record time, and only for `<a>`/`<area>` |
 | A flow step that reports `matched href=…` is also SLOW | By design since #61 — the recorded descriptor gets its whole settle window first, because a name that has not RENDERED yet is not a name that CHANGED (#59), and routing around it early proposes a mid-render patch. Measured at 6.58s against 0.4s clean. Only a genuinely drifted step pays it; applying the proposed patch removes it |
 | A recorded flow has no `alt` key on a link target | The MCP server was loaded before #61. It reads `descriptor.py` and `core/flows/*` at CONNECT time, and the old one answers normally while writing a slightly older format — `/mcp` reconnect, then CHECK THE SAVED FILE rather than the live result |
+| Server-side edits seem to have no effect | `sw_info` answers this since #61: `server_code_changed_since_start` names every file whose mtime is later than this process's import. Empty means the running server IS the code on disk. The client must reconnect (`/mcp`); nothing else picks it up, and the stale process keeps answering normally, which is what made this cost six reconnects across #59 and #61 |
 | A flow says a step FAILED but the action plainly worked | Fixed in #60 — the postcondition window was a flat 6s and a real app's create -> table-refresh took longer, so the flow reported FAILED for a record that HAD been created. Each step now carries `settle_ms`, measured at record time from the timestamps the recorder already kept, and the replay allows the default PLUS that. A flow recorded before #60 carries 0 and is unchanged |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
