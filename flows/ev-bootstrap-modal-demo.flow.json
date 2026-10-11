@@ -2,10 +2,10 @@
   "schema": 1,
   "name": "ev-bootstrap-modal-demo",
   "origin": "https://getbootstrap.com",
-  "recorded_at": "2026-10-11T21:27:36",
+  "recorded_at": "2026-10-11T23:53:57",
   "viewport": {
     "width": 1512,
-    "height": 812
+    "height": 868
   },
   "steps": [
     {
@@ -14,14 +14,28 @@
         "url": "https://getbootstrap.com/docs/5.3/components/modal/"
       },
       "expect": {
-        "url": "https://getbootstrap.com/docs/5.3/components/modal/"
+        "search": {
+          "pattern": "Launch demo modal",
+          "min": 1,
+          "observed": 6,
+          "css_scope": "main"
+        }
       },
       "on_fail": "ask"
     },
     {
       "name": "computer",
       "input": {
-        "action": "left_click"
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
       },
       "targets": {
         "ref": {
@@ -48,39 +62,44 @@
       "expect": {
         "search": [
           {
-            "pattern": "Woo-hoo, you're reading this text in a modal!",
-            "absent": true
+            "pattern": "Modal title",
+            "min": 1,
+            "observed": 1,
+            "css_scope": "#exampleModalLive"
           },
           {
-            "pattern": "Woo-hoo, you’re reading this text in a modal!",
+            "pattern": "reading this text in a modal",
             "min": 1,
-            "observed": 1
+            "observed": 1,
+            "css_scope": "#exampleModalLive"
+          },
+          {
+            "pattern": "Close",
+            "min": 1,
+            "observed": 1,
+            "css_scope": "#exampleModalLive .modal-footer"
           }
         ],
-        "query": [
-          {
-            "selector": ".modal.show",
-            "count": 1
-          },
-          {
-            "selector": ".modal.show .modal-title",
-            "count": 1,
-            "text": "Modal title"
-          },
-          {
-            "selector": ".modal.show .modal-body",
-            "count": 1,
-            "text": "Woo-hoo, you’re reading this text in a modal!"
-          }
-        ]
+        "query": {
+          "selector": "#exampleModalLive.show",
+          "count": 1
+        }
       },
-      "on_fail": "ask",
-      "settle_ms": 22550
+      "on_fail": "ask"
     },
     {
       "name": "computer",
       "input": {
-        "action": "left_click"
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
       },
       "targets": {
         "ref": {
@@ -99,8 +118,9 @@
         }
       },
       "expect": {
+        "url": "https://getbootstrap.com/docs/5.3/components/modal/",
         "query": {
-          "selector": ".modal.show",
+          "selector": "#exampleModalLive.show",
           "count": 0
         }
       },

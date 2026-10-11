@@ -254,7 +254,16 @@ class Recorder:
               error: Optional[str] = None) -> None:
         self.raw.append({
             "name": tool,
-            "input": {k: v for k, v in (inp or {}).items()},
+            # OMITTED, NOT NULLED. An MCP client fills every optional parameter
+            # with its default before the call arrives, so one `computer` click
+            # was stored as nine explicit nulls around the one field that
+            # mattered. A flow file is meant to be READ and DIFFED by a person
+            # -- #49's whole argument for a declared descriptor over a DOM path
+            # is that a human can see what a step means -- and a null for a
+            # parameter the caller never passed carries no information. `None`
+            # and absent mean the same thing to every tool here, so this
+            # changes nothing but the noise.
+            "input": {k: v for k, v in (inp or {}).items() if v is not None},
             "targets": targets or {},
             "result": result if isinstance(result, str) else "",
             "error": error,

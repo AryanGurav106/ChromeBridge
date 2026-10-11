@@ -5910,6 +5910,35 @@ granted in the side panel is refused with the same message the agent gets.
     `selected`/`indeterminate` — the four IDL attributes HTML says do not
     reflect). None reads arbitrary page text in an arbitrary language.
 
+    **THE LAST RE-RECORD CLOSED ROUND TWO'S OWN TAIL, live.** The Bootstrap
+    modal flow carried the two things the fixes were for, and both are gone:
+    the mistyped `{"pattern": "…you're…", "absent": true}` is absent because
+    the agent read the rendered text BEFORE asserting against it, and
+    `settle_ms` is unwritten on all three steps where round two recorded
+    22,550ms. The unwitnessed-absence rule fired TWICE and named both drops,
+    and the agent's reply is the evidence the message works: it accepted one
+    and correctly observed that the rule is PER RECORDING — it had seen
+    `body.modal-open` present during a cancelled first attempt, which the
+    recorder cannot see. The `css_scope` the agent used survived into the
+    assertion (R2-D3), and the before/after pair on ONE selector —
+    `#exampleModalLive.show` at 1 then 0 — is the witnessed absence being kept
+    while the unwitnessed ones go. PASSED 3/3 in 0.89s.
+
+    **And a flow file is meant to be read.** An MCP client fills every optional
+    parameter with its default before the call arrives, so one `computer` click
+    stored as nine explicit `null`s around the one field that mattered. #49's
+    whole argument for a declared descriptor over a DOM path is that a person
+    can SEE what a step means; a null for a parameter nobody passed carries no
+    information and is now omitted.
+
+    **Still open from that run, and not guessed at:** a `browser_batch` runs
+    its steps in one round trip, so four observations after a click all read
+    the page before Bootstrap's ~300ms fade and came back empty on a click that
+    had worked. #51's settle covers NAVIGATIONS, and nothing navigated — the
+    page animated. The agent worked around it by taking each click as its own
+    call, which the next model turn's latency covers. A CSS-transition settle
+    would be a chosen duration, which is the thing this codebase removes.
+
     Suites: 1030 checks. New — FD19c/FD19d. `audit_patterns.py` scans nine
     files and refuses to pretend a missing one was checked.
 
