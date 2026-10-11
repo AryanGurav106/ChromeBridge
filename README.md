@@ -21,11 +21,10 @@ extensions already there.
 
 ---
 
-Other agents start logged out. A Playwright or Puppeteer agent opens a fresh,
-empty Chromium — so it cannot touch the apps that matter: your CRM, your
-dashboards, your internal tools, your email.
-
-ChromeBridge attaches to the browser you already use.
+**This is an open-source Claude-in-Chrome.** Same idea — an agent acting in the
+browser you are already signed into, through the same trusted Chrome DevTools
+Protocol input. The difference is where it runs, who can read the code, and
+what it can do once it is there.
 
 ```
 > find the default gzip_comp_level in the nginx docs
@@ -42,13 +41,14 @@ subscription and this server holds no LLM key of its own.
 
 <br>
 
-|  | Playwright / Puppeteer agent | **ChromeBridge** |
+|  | Claude-in-Chrome | **ChromeBridge** |
 |---|---|---|
-| Browser | fresh Chromium, logged out | the one you are signed into |
-| Acts as | nobody | **you** — the same trusted-input path as Claude-in-Chrome |
-| Model key | yours to supply | none; it is your Claude Code session |
-| Consent | all or nothing | per origin, revocable, with a pause switch |
-| Re-running a known flow | re-prompt the model | replay a recorded file, for nothing |
+| Source | closed | **Apache-2.0** — every rule that decides what Claude sees is readable |
+| Where it runs | Anthropic's extension | **your machine** — a localhost bridge, one client, token-gated |
+| Driven from | the Claude app | **Claude Code**, where you already are |
+| Turns on 19 measured tasks | 240 | **117** ([and the caveats](BENCHMARK.md)) |
+| Replaying a known run | re-prompt the model every time | **record it once**, replay with no model calls |
+| Consent | — | per origin, revocable, written only by the side panel |
 
 It works on framework-heavy SPAs — Radix, shadcn, HeadlessUI, MUI — with no
 site-specific code: full pointer-event sequences, automatic escalation to
