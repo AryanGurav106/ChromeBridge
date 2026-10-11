@@ -168,13 +168,6 @@ async def main() -> int:
     ap.add_argument("--token", default="")
     args = ap.parse_args()
 
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        print("SKIP run_flows: playwright is a TEST-only dependency and is not "
-              "installed. Install it or run with --headed under a real Chrome.")
-        return 0
-
     paths = ([FLOWS / (n if n.endswith(".flow.json") else n + ".flow.json")
               for n in args.flow] if args.flow
              else sorted(FLOWS.glob("*.flow.json")))
@@ -210,6 +203,22 @@ async def main() -> int:
             print(line)
         print(f"\n  {ok}/{len(paths)} flow file(s) valid")
         return 0 if not bad else 1
+
+    # THE PLAYWRIGHT GATE BELONGS BELOW --check-only, NOT ABOVE IT. It used to
+    # run first, so `--check-only` -- which opens no browser and exists
+    # precisely so a machine without one can still validate every file --
+    # printed a SKIP and returned 0. Measured on a fresh clone with no
+    # playwright: zero files checked, exit 0, and a line that reads exactly
+    # like a healthy skip. That is the failure this flag's own docstring
+    # describes, in the flag itself, and CI could never see it because CI
+    # installs playwright.
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        print("SKIP run_flows: playwright is a TEST-only dependency and is not "
+              "installed. Install it or run with --headed under a real Chrome. "
+              "(--check-only needs no browser and runs without it.)")
+        return 0
 
     flows = [flow_load(p) for p in paths]
     if args.local_only:

@@ -7594,6 +7594,33 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     if (!label && crossFrame) {
       try { label = new URL(el.getAttribute('src') || '', location.href).hostname || ''; } catch (e) {}
     }
+    // AN SVG'S <title> CHILD IS ITS NAME, and that is a DECLARATION rather than
+    // a guess: SVG2 says the direct `<title>` child provides the accessible
+    // name of its parent element, exactly as `<label for>` and `aria-label` do
+    // in HTML. The element was ALREADY being kept — the `wiredSvg` gate above
+    // names this very case in its own comment ("a handler-bound, focusable,
+    // <title>-named <svg> — a hand-rolled sort arrow, a close-X, a D3 chart
+    // control") — and then listed with no name at all, because `synthLabel` is
+    // reached only for a/button/strong-role/in-modal/disabled. So the EXISTENCE
+    // half shipped and the IDENTITY half did not: measured, a bare clickable
+    // svg came back `ref_7 | svg` while the same title inside a <button>
+    // resolved correctly. This names a row that already exists and changes no
+    // existence rule.
+    //
+    // DIRECT children only. A `<title>` deeper inside a complex drawing names
+    // THAT sub-element, not the whole graphic, and hoisting it would put a
+    // path's description in the slot the legend calls identity — the same
+    // defect #14 fixed when a descendant's `src` was hoisted onto any
+    // container.
+    if (!label && tagL === 'svg') {
+      try {
+        for (const _c of el.children) {
+          if ((_c.tagName || '').toLowerCase() !== 'title') continue;
+          const _t = (_c.textContent || '').replace(/\s+/g, ' ').trim();
+          if (_t) { label = _t; break; }
+        }
+      } catch (e) {}
+    }
     let iconOnly = false;
     if (!label && !formyTags.has(tagL) && !ceRoot && !codeEditor && !crossFrame && !canvasLike) {
       if (isStrongInteractive) {

@@ -2128,6 +2128,51 @@ async def main():
               f"icon_line={'- (unlabeled-icon)' in ui} plain_line={'- (unlabeled) ' in ui}")
         await uip.close()
 
+        # ---- SV1-SV1c: AN SVG'S <title> IS ITS NAME, and only half of that had
+        # shipped. The `wiredSvg` gate keeps a handler-bound <svg> precisely so a
+        # hand-rolled sort arrow or close-X exists — its own comment names the
+        # "<title>-named <svg>" case — and then the naming pass never ran for it,
+        # because synthLabel is reached only for a/button/strong-role/in-modal/
+        # disabled. So the row existed with NO identity at all and README said the
+        # shape was "invisible to every tool", which was wrong in both directions:
+        # inside a <button> the title resolved fine (SV1c), bare it did not (SV1).
+        # SVG2 says the DIRECT <title> child provides the accessible name, so this
+        # is a declaration, not a guess.
+        #
+        # NOT VACUOUS: SV1 fails against the pre-change collector, which lists the
+        # wired svg as a bare `svg` row. Priced on 29 frozen sites before shipping:
+        # median +0.00% listing chars, worst +0.69% on the one site where it names
+        # five real controls.
+        svp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await svp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await svp.goto("about:blank")
+        await svp.set_content(
+            "<main>"
+            # the control IS the svg -- a wired, title-named glyph
+            "<svg id=sort width=24 height=24 tabindex=0><title>Sort by date</title>"
+            "<path d='M0 0h8v8H0z'/></svg>"
+            # a <title> on a CHILD describes that child, never the whole drawing
+            "<svg id=deep width=24 height=24 tabindex=0>"
+            "<g><title>one bar of the chart</title><rect width=4 height=4/></g></svg>"
+            # the long-working case: the same title inside a <button>
+            "<button id=del style='width:32px;height:32px'>"
+            "<svg width=16 height=16><title>Delete item</title>"
+            "<path d='M0 0h4v4H0z'/></svg></button>"
+            "</main>")
+        await svp.wait_for_timeout(150)
+        sv = str(await svp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        check("SV1 a wired <svg> is named by its own direct <title>",
+              '"Sort by date"' in sv,
+              f"rows={[l for l in sv.splitlines() if 'svg' in l]}")
+        check("SV1b CONTROL: a <title> on a CHILD does not name the whole drawing",
+              "one bar of the chart" not in sv,
+              "a sub-element's description was hoisted into the identity slot")
+        check("SV1c CONTROL: an icon button still takes the title (regression)",
+              '"Delete item"' in sv,
+              f"rows={[l for l in sv.splitlines() if 'button' in l]}")
+        await svp.close()
+
         # ---- NB1-NB1c: `near=` FIRES WHERE IT IS NEEDED, NOT WHERE IT IS NOT.
         # The hint was computed for form fields only, so it reached rows that already
         # had a name and never the rows printed with no identity at all. And three

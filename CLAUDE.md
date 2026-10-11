@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 1030 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 1038 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1030 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1038 checks, ~90s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -799,11 +799,16 @@ granted in the side panel is refused with the same message the agent gets.
       crashing, not from being useless: the extension's sweep stops at the first server that
       answers, so session two gets a live bridge nobody talks to. It self-heals when session one
       exits (`_probeOffset` resets and the sweep re-runs).
-    - **`requirements.txt` hard-pins `pydantic==2.10.4` / `pydantic-core==2.27.2`,** which drags
-      `mcp` back to 1.12.4 on a fresh resolve (`pip install -e . --dry-run` shows it). The
-      development venv has drifted to pydantic 2.13.4 / mcp 1.27.2 and works. So the pins are
-      not what is actually being tested by hand — CI installs them, which is the only reason the
-      combination is exercised at all. Loosen or re-pin deliberately.
+    - ~~**`requirements.txt` hard-pins `pydantic==2.10.4` / `pydantic-core==2.27.2`,** which drags
+      `mcp` back to 1.12.4 on a fresh resolve.~~ **STALE — FIXED.** The policy is floors, not
+      equalities, with one load-bearing ceiling (`mcp<2.0`: with a bare floor the resolver picks
+      2.0.0, and `from mcp.server.fastmcp import FastMCP` is exactly the import a major release
+      moves). Re-verified at launch the only way that settles it — cloning the repo into a clean
+      directory and installing from nothing: `pip install -e .` resolves **mcp 1.30.0 / pydantic
+      2.14.1 / websockets 16.1.1**, i.e. what is actually developed against, then generates its
+      own `.env` token on first start, serves all 31 tools over the wire and passes 9/9 unit
+      suites. The old entry's complaint — that the pinned set was exercised by nobody — is what
+      the floors removed.
 
 16b. **THE REPRESENTATION WORK — three changes, each measured on BOTH axes before shipping:**
     - **`detail="brief"`** — a third point on the rate/retention curve. Decomposed `full`'s cost over
@@ -5962,6 +5967,111 @@ granted in the side panel is refused with the same message the agent gets.
     Suites: 1030 checks. New — FD19c/FD19d. `audit_patterns.py` scans nine
     files and refuses to pretend a missing one was checked.
 
+67. **THE FRONT DOOR WAS THE STALEST FILE IN THE REPO, AND TWO OF ITS
+    LIMITATIONS WERE FICTION.** Auditing `README.md` for launch, on the rule
+    this log keeps re-learning: a claim assembled by READING gets re-derived by
+    RUNNING before it is believed (#16, #25). Four numbers were simply old
+    (24 tools against 31; 14 suites / 344 checks against 19 / 1,033; the flow
+    feature absent from a tool table it had been in for six entries). Those are
+    drift. The other two were worse, because a Known-issues entry is advice,
+    and advice that is wrong sends a user to work around a problem they do not
+    have.
+    - **"Closed shadow roots are not supported" — false since #31.** The
+      `attachShadow` wrap in `listener_tag.js` means nothing can create a
+      closed root without handing us a reference, and `test_shadow.py`'s
+      S14/S14b have pinned it ever since. The README was telling readers we
+      lack the one capability here that beats a CDP attach (#12 refuses that
+      attach on exactly the login pages that need it).
+    - **"Inline `<svg>` with a `<title>` is invisible to every tool" — wrong in
+      BOTH directions, which is why measuring it was worth the ten minutes.**
+      Probed with the real collector: `<button><svg><title>Delete
+      item</title></svg></button>` lists correctly as `button "Delete item"`,
+      so the claim overstated. A BARE wired `<svg>` with the same title listed
+      as `ref_7 | svg` — no identity at all — so there was a real defect
+      underneath, and it was narrower and more fixable than the sentence said.
+
+    **THE EXISTENCE HALF HAD SHIPPED AND THE IDENTITY HALF HAD NOT.** The
+    `wiredSvg` gate keeps a handler-bound `<svg>` on purpose, and its own
+    comment names this case — *"a handler-bound, focusable, `<title>`-named
+    `<svg>` — a hand-rolled sort arrow, a close-X, a D3 chart control"*. It
+    then reached `synthLabel`, which runs only for a/button/strong-role/
+    in-modal/disabled, so the element existed and had no name. Same asymmetry
+    as #18 (`isInteractive` and `keepForFind` disagreeing about what a control
+    is), one field over: two passes agreeing an element matters and only one of
+    them acting on it.
+    SVG2 makes the DIRECT `<title>` child the accessible name, so this is a
+    declaration in the same class as `<label for>` — not a wordlist, not a
+    threshold, and it changes **no existence rule**: it names a row that was
+    already being printed. Direct children only, because a `<title>` deeper in
+    a drawing names THAT sub-element, and hoisting it is #14's descendant-`src`
+    defect in the identity slot (SV1b is that control).
+
+    **PRICED BEFORE SHIPPING, both variants on the SAME page load (#19).**
+    29 frozen sites: **median +0.00% listing chars, mean +0.03%, worst +0.69%**
+    — and the worst case is `bootstrap_forms`, where it names five svgs that
+    ARE controls. Same shape as #31's constraints: free where nothing is
+    declared, and it costs most exactly where it is worth most. The duplicate
+    I expected to pay for did not materialise — across 29 sites only **4**
+    title-bearing svgs sit inside an already-named control against **7** that
+    are the control themselves, because the decorative ones are demoted long
+    before naming.
+
+    **What is still true and is now SAID instead of overstated:** an `<svg>`
+    `<title>` is a tooltip and an accessible name, not rendered text, so
+    `get_page_text` and `search_page` cannot see it. That is the honest residue
+    of the old sentence, and it names the two tools that CAN reach it.
+
+    Also added to the README, because a user meets them and concludes the
+    product is broken: a flow that CREATES something is not re-runnable without
+    a fixture reset, a descriptor's identity can be live data (#59's
+    "Investors 43"), the settle budget comes from the recording rather than
+    from a constant (#60), and a coordinate is deliberately unrecordable. And
+    **macOS is no longer "untested end to end"** — this session drove a real
+    Chrome, the unpacked extension, trusted clicks and replayed flows on
+    Darwin 25.6, and the venv re-exec was verified from a Homebrew `python3`
+    with no `mcp` installed. Linux still has not driven a real Chrome and the
+    file still says so.
+
+    **AND THE FRESH-CLONE CHECK FOUND A FLAG THAT DID NOTHING — the same bug
+    class, in the tool written to prevent it.** Verifying the README's install
+    story meant actually cloning into an empty directory and installing from
+    nothing, which is the only thing that settles #17's pin question (it
+    resolves mcp 1.30.0 / pydantic 2.14.1 / websockets 16.1.1, generates its
+    own `.env` token and serves 31 tools — so that open item is now closed).
+    That clone has no playwright, and `run_flows.py --check-only` — which opens
+    NO browser and exists precisely so a machine without one can validate every
+    recorded file — printed `SKIP run_flows: playwright is … not installed` and
+    returned **0**. Zero files checked, exit 0, and a line indistinguishable
+    from a healthy skip. The flag's own help text describes that exact failure
+    (*"the only signal would be a SKIP line that looks identical to a healthy
+    skip"*) and the import gate sat two lines above the branch. CI never saw it
+    because CI installs playwright. The gate moved BELOW the branch; **C26
+    drives it as a subprocess with playwright shadowed by a module that refuses
+    to import**, rather than asserting where an import sits, and C26b is the
+    control that a real replay still skips rather than pretending it replayed.
+    C26 fails against the pre-fix file.
+
+    **AND THE TABLE THAT DRIFTED NOW HAS ITS OWN TRIPWIRE.** The README
+    advertised 24 tools against 31, with the whole flow feature absent from a
+    table it should have been in for six entries — the identical failure C16
+    was built for (an agent-facing message naming a tool that does not exist)
+    and C20b after it (the instructions naming one), one audience over: a
+    reader deciding whether this does what they need. C27/C27b/C27c check both
+    directions and the stated count, and **my first C27b decided "tool or
+    parameter?" by whether the name contains an underscore**, which flagged
+    `ref_id` and `max_chars` — a shape heuristic standing in for a fact that is
+    in the source. The legitimate names are enumerated from the tool
+    SIGNATURES instead, so there is no list to keep. All three were shown to
+    fire on their own planted violation and only their own, the phantom one
+    catching `get_dom_fields` — the real ghost from #35.
+
+    Suites: 1038 checks. New — SV1 (a wired svg is named by its own title;
+    FAILS against the pre-change collector), SV1b (a child's title is not the
+    drawing's name), SV1c (the icon-button path still resolves it, which passes
+    both ways and is therefore the regression control), C26/C26b (a browserless
+    validation flag actually validates), C27–C27c (the README's tool table, in
+    both directions, with three planted-violation controls).
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -5995,6 +6105,7 @@ granted in the side panel is refused with the same message the agent gets.
 | A repeated record prints as `N× …, identical siblings — one line per POSITION` | That IS the record: `#1`/`#2`/`#3` are its fields, in document order, every member keeping its own ref |
 | Rows have no `box(...)` any more | By design since #26 — geometry is opt-in. Pass `read_page(geometry=true)`. Spatial STATE (`(below-fold)`, `(off to the side)`, `(occluded/blocked)`) still prints unconditionally |
 | A scoped read returns below-fold rows but the unscoped one does not | By design since #26 — `ref_id` scoping is not viewport-limited, the whole-page listing is. The off-viewport hint names the region refs to scope to |
+| An icon control shows as a bare `svg` row with no name | Fixed in #67 — an `<svg>`'s DIRECT `<title>` child is its accessible name per SVG2, and only `synthLabel` was reading it (a/button/strong-role/in-modal/disabled only), so a bare wired svg existed with no identity. If it recurs, check the `<title>` is a DIRECT child: one deeper describes that sub-element and is deliberately not hoisted (SV1b). An svg `<title>` is still absent from `get_page_text`/`search_page` — it is a name, not rendered text |
 | A row reads `(unlabeled)` where it used to say `(unlabeled-icon)` | By design since #37 — "icon" is printed only when the element really renders graphics (an svg/img/canvas/picture descendant, a CSS background-image, or an icon font's ::before glyph). `(unlabeled)` means a real control with no resolvable name and nothing to look at; both are in the legend, but only the one that appears |
 | A note says "the PAGE does not scroll sideways/vertically" | By design since #37 — the off-viewport controls are clipped inside a region that scrolls on its own, so a window scroll returns an identical listing. Reach them by ref; acting on a ref scrolls its own container into view. Derived from `scrollWidth`/`scrollHeight` vs the client box, not guessed |
 | The off-viewport count is far larger than it used to be | Fixed in #37 — it was re-asking "is this a control" with a tag list one line below a drop that used the collector's own rule (#18's asymmetry, third instance). Syncfusion reported 4 where 544 had been dropped |

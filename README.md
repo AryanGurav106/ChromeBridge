@@ -15,6 +15,10 @@ logins, cookies and extensions — through trusted Chrome DevTools Protocol inpu
 - **You grant access per site.** Nothing is read or clicked on an origin you
   have not allowed in the extension's side panel, and one click pauses
   everything.
+- **A run can become a test.** `record_flow` turns what Claude just did into a
+  replayable file that runs with **no model calls** — seconds instead of
+  minutes — and it arrives with the assertions already in it, because the
+  observations Claude made along the way *are* the postconditions.
 
 ```
 ┌──────────────┐  stdio MCP  ┌───────────────┐ ws://127.0.0.1:8765-74 ┌──────────────────┐
@@ -27,10 +31,11 @@ logins, cookies and extensions — through trusted Chrome DevTools Protocol inpu
 
 Alpha, and honest about it:
 
-- Developed and run **on Windows 11 with Python 3.12**. The Python is plain
-  stdlib + asyncio with no obvious platform lock-in and CI runs the test suites
-  on Linux, but **nobody has driven a real Chrome from macOS or Linux**. POSIX
-  commands below are given for that reason and are marked where untested.
+- Developed on **Windows 11** and since driven end to end on **macOS**
+  (Darwin 25.6, Python 3.12): a real Chrome, the unpacked extension, trusted
+  clicks, and recorded flows replayed against eight public sites and a live
+  staging app. CI runs the suites on Linux. **Linux has not driven a real
+  Chrome**, so the setup section says so where it matters.
 - One Chrome, one extension, one bridge. Multi-browser and multi-window
   orchestration are out of scope.
 - Read [Known issues and limitations](#known-issues-and-limitations) before you
@@ -55,7 +60,7 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -e .
 ```
 
-macOS / Linux (**untested end to end**):
+macOS / Linux (macOS is exercised end to end; **Linux has not driven a real Chrome**):
 
 ```bash
 python3 -m venv .venv
@@ -72,7 +77,7 @@ enough:
 
 ```powershell
 .venv\Scripts\python.exe -m pip install -r requirements.txt   # Windows
-.venv/bin/python -m pip install -r requirements.txt           # POSIX (untested)
+.venv/bin/python -m pip install -r requirements.txt           # POSIX
 ```
 
 ### 2. Load the extension
@@ -113,13 +118,15 @@ $env:CHROMEBRIDGE_ROOT   = "C:\path\to\ChromeBridge"
 ```
 
 ```bash
-export CHROMEBRIDGE_PYTHON="/path/to/ChromeBridge/.venv/bin/python"   # untested
+export CHROMEBRIDGE_PYTHON="/path/to/ChromeBridge/.venv/bin/python"
 export CHROMEBRIDGE_ROOT="/path/to/ChromeBridge"
 ```
 
 You do not usually need `CHROMEBRIDGE_PYTHON`: if the interpreter that launched
 `mcp_server.py` cannot `import mcp`, the server re-execs itself under this
-repo's `.venv` once and carries on.
+repo's `.venv` once and carries on. Verified on macOS — a Homebrew `python3`
+with no `mcp` installed hands over to `.venv/bin/python` and serves all 31
+tools.
 
 To register it globally instead of per-project:
 
@@ -164,7 +171,7 @@ immediately; only status-reporting ops keep answering while paused.
 
 ## What Claude gets
 
-24 MCP tools. The names and schemas mirror Claude-in-Chrome so a model that
+31 MCP tools. The names and schemas mirror Claude-in-Chrome so a model that
 knows one knows the other:
 
 | | |
@@ -173,9 +180,23 @@ knows one knows the other:
 | **Observe** | `read_page` (`filter`, `ref_id` subtree scoping, `detail="full"` for `href`/`src`/media, `max_chars`), `get_page_text`, `find`, `read_interactive_elements` |
 | **Act** | `navigate` (incl. `back`/`forward`), `computer` (trusted click/drag/scroll/hover/key/type, screenshot, zoom), `form_input`, `fill_form`, `file_upload`, `upload_image`, `resize_window` |
 | **Inspect** | `javascript_tool` (CSP-proof REPL eval), `read_console_messages`, `read_network_requests`, `debug_targets`, `sw_info` |
+| **Ask exactly** | `query_elements` (CSS query + counting; the total is never capped), `search_page` (grep over rendered text), `accessible_names` |
+| **Record** | `record_flow` (start / stop / **patch**), `run_flow` |
+| **Page-declared** | `page_tools`, `call_page_tool` (WebMCP), `save_as_pdf`, `dismiss_dialog` |
 | **Compose** | `browser_batch`, `gif_creator` |
 
-Two of those are ChromeBridge power-tools that Claude-in-Chrome does not have:
+Three of those are ChromeBridge power-tools that Claude-in-Chrome does not have:
+
+- **`record_flow` / `run_flow`** — turn a run into a replayable test. Drive the
+  browser normally, say stop, and you get a file that replays with **no model
+  calls**: a five-step flow takes about a second where recording it took an
+  agent minutes. Every element reference is rewritten into a description built
+  from what the page DECLARES (a raw ref is per-document and means nothing on
+  the next run), and the checks Claude made along the way become the
+  assertions — which is why the test arrives with them already in it rather
+  than asking you to write them. When the page moves, a replay resolves what it
+  can, reports what changed, and **proposes** a patch; `record_flow("patch")`
+  applies it only because you asked. A replay never writes to your test.
 
 - **`fill_form`** — fill an entire multi-field form (text + comboboxes +
   checkboxes) and optionally submit, in **one** call. It batches every text
@@ -230,13 +251,17 @@ requests, near-viewport unloaded images, `aria-busy`, a visible progressbar or
 `document.readyState` say the page is still changing; wait for it to clear
 before trusting printed coordinates.
 
-### Inline `<svg>` with a `<title>` is invisible to every tool
+### An `<svg>` `<title>` names the control, but never appears in page *text*
 
-An icon-only control drawn as an inline `<svg>` whose only label is a child
-`<title>` element is not surfaced by `read_page`, `find` or `get_page_text`.
-If a control you can plainly see is missing from the listing, this is the most
-likely reason. Work around it with `javascript_tool`, or click by coordinate
-from a screenshot.
+`<button><svg><title>Delete item</title></svg></button>` and a bare wired
+`<svg tabindex=0><title>Sort by date</title></svg>` both list with that name —
+SVG2 makes a direct `<title>` child the element's accessible name, and the
+collector reads it as a declaration like any other.
+
+What it is **not** in is `get_page_text`: an `<svg>` `<title>` is a tooltip and
+an accessible name, not rendered text, so a page whose only mention of a word
+is inside one will not match `search_page` either. Reach it through `read_page`
+or `find`, which do see it.
 
 ### `find`'s `under=` can name the wrong heading
 
@@ -267,6 +292,29 @@ all is not acceptable to you, remove the `content_scripts` block from
 `extension/manifest.json`; you lose handler-tagged elements and console
 capture, and nothing else.
 
+### A recorded flow is a test, and tests need a known starting state
+
+`run_flow` replays with no model calls, which is the point and also the
+constraint: it does exactly what was recorded.
+
+- **A flow that creates something is not re-runnable in place.** It recorded
+  "4 rows before, 5 after"; run it twice without resetting the app and the
+  second run legitimately finds 6. That is what any create-a-record test needs a
+  fixture reset for — `tools/run_flows.py --playground` does one. The failure
+  names the previous run among its causes rather than diagnosing it, because a
+  changed dataset and a real regression look the same from inside.
+- **An element's identity can be live data.** A nav tab whose accessible name
+  is "Investors 43" is named that because the count is inside it; add a record
+  and the descriptor stops matching. The replay falls back to the link's `href`,
+  reports the drift and **proposes** a patch — `record_flow(action="patch")`
+  applies it. A replay never edits your flow file on its own.
+- **How long a step may take is taken from the recording**, not chosen: each
+  step stores the settle time it actually needed. An app that is much slower on
+  the day than it was when recorded can still time out and report FAILED for an
+  action that worked.
+- **Coordinate clicks are deliberately not recordable.** A point is not an
+  element: there is nothing to describe and nothing to re-resolve.
+
 ### One Chrome, one bridge
 
 The server binds the first free port in a 10-port span (`BRIDGE_PORT`
@@ -292,8 +340,12 @@ in three places (`core/bridge/server.py`, `extension/background.js`,
 - **Chrome's own surfaces can never be driven**: `chrome://`, other extensions'
   pages, `devtools://`, `view-source:`, `about:`. No grant unlocks them. A tab
   from `tabs_create_mcp` is `about:blank` until you navigate it.
-- **Closed shadow roots are not supported.** Open shadow roots, same-origin
-  iframes and cross-origin iframes all are.
+- **Closed shadow roots are reached without a debugger.** `listener_tag.js`
+  wraps `attachShadow` at `document_start`, so nothing can create a closed root
+  without handing the extension a reference to it. Open roots, same-origin
+  iframes and cross-origin iframes all work too. Everyone else's answer to this
+  is a CDP attach, which the limitation above refuses on exactly the login pages
+  that need it.
 - **Console capture misses browser-generated messages.** CSP violations and
   network errors never route through `console.*`. Network failures do show up
   in `read_network_requests`. Both buffers are best-effort and are lost when
@@ -309,10 +361,10 @@ in three places (`core/bridge/server.py`, `extension/background.js`,
 ```
 
 ```bash
-.venv/bin/python tools/run_tests.py                    # POSIX (untested locally; CI runs it on Linux)
+.venv/bin/python tools/run_tests.py                    # POSIX (run on macOS; CI runs it on Linux)
 ```
 
-14 suites, 344 checks, about 30 seconds. Five are browser-free; the other nine
+19 suites, 1,038 checks, about 90 seconds. Nine are browser-free; the other ten
 drive headless Chromium and need two extra packages that are deliberately not
 runtime dependencies:
 
@@ -326,6 +378,23 @@ Without them the browser group is **skipped with a reason** rather than failed.
 suites, and `--strict` turns a skip into a failure (CI uses it).
 `tools/README.md` documents each suite; `.github/workflows/ci.yml` runs all of
 them plus `node --check` on the extension scripts.
+
+One more suite is worth running by hand, because it is the only one that
+crosses every boundary at once — a real Chrome, the real unpacked extension,
+the real WebSocket bridge, the real op router and the real MCP tool functions:
+
+```bash
+.venv/bin/python tools/run_flows.py --playground --local-only
+.venv/bin/python tools/run_flows.py --check-only     # no browser; validates every flow file
+```
+
+It starts its own fixture app, grants the origin inside a **throwaway Chrome
+profile it creates and destroys** (the gate is satisfied, never bypassed), and
+replays the recorded flows in `flows/`. Every other suite injects page
+functions directly, which is exactly why three features in this project's
+history shipped broken behind green fixtures. CI runs both, plus a third pass
+with a nav label deliberately rewritten, which is what proves the href fallback
+carries a flow whose target was renamed.
 
 ## Benchmarks and audits need a corpus that is not in the repo
 
@@ -394,6 +463,11 @@ only entry point is `mcp_server.py`.
 - `EXTENSION_SETUP.md` — extension install and troubleshooting in detail.
 - `CHROME_ATTACH_PLAN.md` — why an extension, and not `--remote-debugging-port`.
 - `tools/README.md` — the test suites and measurement probes.
+- `FLOW_RECORDER_PLAN.md` — the design behind `record_flow`/`run_flow`: the
+  descriptor ladder, what was measured before it shipped, and the alternatives
+  that were rejected with numbers.
+- `flows/` — the recorded flows themselves. They are small JSON files meant to
+  be read and reviewed in a diff.
 
 ## License
 

@@ -27,6 +27,7 @@ actually load, not what a Python-side constant says they should.
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path as _Path
 
@@ -484,6 +485,52 @@ def main() -> int:
           {"sw_info", "debug_targets", "get_url"} <= set(_decorated),
           f"missing: {sorted({'sw_info', 'debug_targets', 'get_url'} - set(_decorated))}")
 
+    # ---- C27/C27b: THE README'S TOOL TABLE IS THE FRONT DOOR, and it had drifted
+    # by SEVEN tools — it advertised 24 while the server served 31, with the whole
+    # flow feature absent from a table it should have been in for six entries.
+    # Same failure as C16 (an agent-facing message naming a tool that does not
+    # exist) and C20b (the instructions naming one), one audience over: a reader
+    # deciding whether this project does what they need. Both directions matter —
+    # a MISSING tool is a capability nobody discovers (#26: a capability the agent
+    # cannot find is not a capability), and a PHANTOM one is a promise the clone
+    # will not keep.
+    _rd = read("README.md")
+    try:
+        _tbl = _rd[_rd.index("| **Tabs** |"):_rd.index("Three of those are")]
+    except ValueError:
+        _tbl = ""
+    # Tool names only: the table also back-ticks PARAMETERS (`ref_id`, `detail`)
+    # and literal values (`back`, `forward`), which are not tools and must not be
+    # reported as phantoms.
+    _tbl_named = set(re.findall(r"`([a-z_0-9]+)`", _tbl)) & (set(_decorated) | {"__none__"})
+    _tbl_missing = sorted(set(_decorated) - _tbl_named)
+    check("C27 the README tool table names every registered tool",
+          bool(_tbl) and not _tbl_missing,
+          ("the table markers moved — the slice is empty" if not _tbl
+           else f"NOT IN THE README: {', '.join(_tbl_missing)}"))
+    # A backticked name in that table is legitimately one of three things: a
+    # tool, a PARAMETER of one (`ref_id`, `max_chars`, `detail`), or a literal
+    # value a parameter takes (`back`, `forward`). Only the first two can be
+    # enumerated mechanically — from the tool SIGNATURES, which is a
+    # declaration rather than a list someone maintains — so anything else is
+    # reported, and the literals are matched by being a default IN a signature.
+    # Deciding "tool or parameter?" by whether the name contains an underscore
+    # was the first version and it flagged `ref_id` and `max_chars`: a shape
+    # heuristic standing in for a fact that is right there in the source (#27).
+    _sig_words = set()
+    for _m in re.finditer(r"^async def [a-z_0-9]+\((.*?)\)\s*->", _srv, re.S | re.M):
+        _sig_words |= set(re.findall(r"([a-z_0-9]+)", _m.group(1)))
+    _tbl_phantom = sorted(set(re.findall(r"`([a-z_0-9]+)`", _tbl))
+                          - set(_decorated) - _sig_words)
+    check("C27b ...and names no tool that does not exist",
+          not _tbl_phantom,
+          f"PHANTOM: {', '.join(_tbl_phantom)}" if _tbl_phantom else "")
+    _claimed = re.search(r"^(\d+) MCP tools\.", _rd, re.M)
+    check("C27c ...and the count it states is the count it serves",
+          bool(_claimed) and int(_claimed.group(1)) == len(_decorated),
+          f"README says {_claimed.group(1) if _claimed else '?'}, "
+          f"server registers {len(_decorated)}")
+
     check("C11 every function injected via runInTab is self-contained "
           "(executeScript stringifies only that function)",
           not _bad,
@@ -587,6 +634,52 @@ def main() -> int:
           bool(_seg) and "node.isConnected ? node : (q(j.selector)" in _seg
           and "'value' in live" in _seg,
           "live read-back not found in the batched pass")
+
+    # ---- C26: --check-only VALIDATES WITHOUT A BROWSER, which is the whole
+    # reason it exists. The playwright import used to run before the flag was
+    # read, so on a machine with no playwright the flag printed a SKIP and
+    # returned 0 — zero files checked, exit 0, and a line indistinguishable
+    # from a healthy skip. That is precisely the failure the flag's own help
+    # text describes, in the flag itself, and CI could never see it because CI
+    # installs playwright. Measured on a fresh clone before the fix.
+    #
+    # Driven as a SUBPROCESS with playwright hidden, rather than asserted from
+    # the source: the invariant is what the caller gets, not where an import
+    # sits (#15 — test the function the caller actually reaches).
+    import subprocess
+    import textwrap
+    _blocker = _Path(ROOT) / "temp" / "_noplaywright"
+    try:
+        _blocker.mkdir(parents=True, exist_ok=True)
+        # A package directory that shadows the real one and refuses to import.
+        (_blocker / "playwright").mkdir(exist_ok=True)
+        (_blocker / "playwright" / "__init__.py").write_text(
+            "raise ImportError('hidden for C26')\n", encoding="utf-8")
+        _env = dict(os.environ)
+        _env["PYTHONPATH"] = str(_blocker) + os.pathsep + _env.get("PYTHONPATH", "")
+        _r = subprocess.run([sys.executable, str(_Path(ROOT) / "tools" / "run_flows.py"),
+                             "--check-only"],
+                            capture_output=True, text=True, timeout=120, env=_env,
+                            cwd=str(ROOT))
+        _out = (_r.stdout or "") + (_r.stderr or "")
+        check("C26 --check-only validates every flow with NO playwright installed",
+              _r.returncode == 0 and "flow file(s) valid" in _out
+              and "SKIP run_flows" not in _out,
+              textwrap.shorten(_out.strip().replace("\n", " | "), 200))
+        _r2 = subprocess.run([sys.executable, str(_Path(ROOT) / "tools" / "run_flows.py"),
+                              "--local-only"],
+                             capture_output=True, text=True, timeout=120, env=_env,
+                             cwd=str(ROOT))
+        _out2 = (_r2.stdout or "") + (_r2.stderr or "")
+        check("C26b CONTROL: a real REPLAY still skips with a reason, so the "
+              "fix did not make a browserless run pretend it replayed",
+              "SKIP run_flows" in _out2 and "flow file(s) valid" not in _out2,
+              textwrap.shorten(_out2.strip().replace("\n", " | "), 200))
+    except Exception as _e:
+        check("C26 --check-only validates every flow with NO playwright installed",
+              False, f"{type(_e).__name__}: {_e}")
+    finally:
+        shutil.rmtree(_blocker, ignore_errors=True)
 
     print(f"\n{passed} passed, {failed} failed, {passed + failed} total checks")
     if failures:
