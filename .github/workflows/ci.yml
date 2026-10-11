@@ -110,6 +110,14 @@ jobs:
       # fixtures. --playground starts its own fixture app and --local-only
       # skips flows needing the public internet, so this depends on nothing
       # outside the checkout.
+      # EVERY flow file, including the ones CI cannot replay. --local-only skips
+      # the public-internet ones for a good reason, and that left nothing
+      # checking they still PARSE: a format change can orphan a recorded file
+      # whose only symptom is a SKIP line identical to a healthy skip. No
+      # browser, so it costs a second.
+      - name: Every recorded flow still loads
+        run: python tools/run_flows.py --check-only
+
       - name: Replay recorded flows end to end
         run: python tools/run_flows.py --playground --local-only
 

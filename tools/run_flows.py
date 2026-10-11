@@ -156,6 +156,15 @@ async def main() -> int:
                          "the reset (needs --playground). Use it to script a "
                          "falsifier, or to prove a fix end to end: --chaos badge "
                          "renames a nav link without touching its href.")
+    ap.add_argument("--check-only", action="store_true",
+                    help="load and validate every flow WITHOUT a browser. CI can "
+                         "only REPLAY the local-fixture flows -- the rest need the "
+                         "public internet and would fail for reasons that are not "
+                         "the code's -- so nothing was checking that they still "
+                         "PARSE. A format change (the expect shape grew lists, the "
+                         "on_fail enum lost a value) can orphan a recorded file "
+                         "silently, and the only signal would be a SKIP line that "
+                         "looks identical to a healthy skip.")
     ap.add_argument("--token", default="")
     args = ap.parse_args()
 
@@ -176,6 +185,31 @@ async def main() -> int:
     if not paths:
         print("no flows to run")
         return 0
+
+    if args.check_only:
+        bad, ok = [], 0
+        for pth in paths:
+            try:
+                f = flow_load(pth)
+            except Exception as exc:
+                bad.append(f"  BAD   {pth.name}: {type(exc).__name__}: {exc}")
+                continue
+            # Beyond "it parses": a step that NAMES a ref must carry a descriptor
+            # for it, or the file is a recording of nothing. That is the shape a
+            # compile bug would leave behind, and it loads fine.
+            holes = [i for i, st in enumerate(f.steps)
+                     if st.targets and any(not (t or {}).get("desc")
+                                           for t in st.targets.values())]
+            if holes:
+                bad.append(f"  BAD   {pth.name}: step(s) {holes} name a target with no descriptor")
+                continue
+            ok += 1
+            print(f"  OK    {f.name:<32} {len(f.steps)} step(s), "
+                  f"{sum(1 for s_ in f.steps if s_.expect)} asserted")
+        for line in bad:
+            print(line)
+        print(f"\n  {ok}/{len(paths)} flow file(s) valid")
+        return 0 if not bad else 1
 
     flows = [flow_load(p) for p in paths]
     if args.local_only:
