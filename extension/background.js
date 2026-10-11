@@ -1676,7 +1676,49 @@ async function computerOp(t, params) {
     return `Dragged from (${sx},${sy}) to (${ex},${ey}).${_shiftWarn}`;
   }
 
-  const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_click: ["left", 2], triple_click: ["left", 3] };
+  // DID THE PAGE ACTUALLY RECEIVE THE CLICK?
+//
+// #10, #11 and #12 are all one family: a trusted click that lands somewhere other
+// than the element while the tool reports success. This is the same family with a
+// new cause, measured against a real app: after a fill_form whose submit
+// NAVIGATED, every later CDP Input command on that tab is accepted by Chrome and
+// delivered to nothing. Established by experiment, not inference:
+//   - a capturing document listener records ZERO events, for a ref click and for
+//     raw coordinate clicks anywhere on the page
+//   - `Runtime.evaluate` and `chrome.scripting` keep working on the same tab
+//   - PLAYWRIGHT'S OWN mouse fails identically on that tab, so it is below us
+//     rather than a fault in our parameters
+//   - headed and headless behave the same, so it is not a headless artefact
+//   - a clean browser clicking the same page works; two clicks with no
+//     navigation between them work
+//   - detach+re-attach does not recover it, forcing the focus-emulation switches
+//     to re-apply does not, and releasing a possibly-latched mouse button does not
+//   - A NEW TAB DOES recover it, which is the one recovery this note may name
+//     because it is the one that was verified.
+//
+// So the root cause is not ours to fix and five theories for it are dead. What IS
+// ours is that we reported success. This probe runs over chrome.scripting, which
+// is exactly the channel that still works when Input does not.
+function _inputProbePage(arm) {
+  try {
+    if (arm) {
+      if (!window.__abInputProbe) {
+        const st = { n: 0, base: 0 };
+        window.__abInputProbe = st;
+        for (const t of ['pointerdown', 'mousedown', 'keydown']) {
+          document.addEventListener(t, () => { st.n++; }, true);
+        }
+      }
+      window.__abInputProbe.base = window.__abInputProbe.n;
+      return true;
+    }
+    const p = window.__abInputProbe;
+    if (!p) return null;          // a navigation replaced the document: UNKNOWN
+    return p.n > p.base;
+  } catch (e) { return null; }
+}
+
+const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_click: ["left", 2], triple_click: ["left", 3] };
   if (clickKinds[action]) {
     const [button, count] = clickKinds[action];
     const pt = await _computerPoint(t.id, params);
@@ -1709,14 +1751,32 @@ async function computerOp(t, params) {
       { type: "mouseMoved", x: pt.x, y: pt.y, button: "none", modifiers: bits });
     let _hh = null;
     try { _hh = await runInTab(t.id, _hitTestPage, [pt.x, pt.y]); } catch (e) {}
+    let _armed = false;
+    try { _armed = !!(await runInTab(t.id, _inputProbePage, [true])); } catch (e) {}
     for (let c = 1; c <= count; c++) {
       await cdpSend(t.id, "Input.dispatchMouseEvent",
         { type: "mousePressed", x: pt.x, y: pt.y, button, clickCount: c, buttons: button === "left" ? 1 : 2, modifiers: bits });
       await cdpSend(t.id, "Input.dispatchMouseEvent",
         { type: "mouseReleased", x: pt.x, y: pt.y, button, clickCount: c, buttons: 0, modifiers: bits });
     }
+    // READ IT BACK. `null` means the probe is gone, which is what a click that
+    // NAVIGATED looks like -- the commonest click there is -- so that case claims
+    // nothing. Only a probe that is still present and saw nothing is a report.
+    let _delivered = null;
+    if (_armed) {
+      try { _delivered = await runInTab(t.id, _inputProbePage, [false]); } catch (e) {}
+    }
+    const _dead = _delivered === false
+      ? ` *** NOT DELIVERED: Chrome accepted the input command and the page recorded no `
+        + `event, so nothing was clicked. This tab's trusted-input channel is dead; `
+        + `measured causes are not ours (it reproduces with other CDP clients on the `
+        + `same tab) and it survives detaching and re-attaching. VERIFIED RECOVERY: `
+        + `open a new tab with tabs_create_mcp and act there. Still working on THIS `
+        + `tab: read_page, get_page_text, search_page, query_elements, fill_form, `
+        + `form_input and javascript_tool. ***`
+      : "";
     return `${action} at (${Math.round(pt.x)},${Math.round(pt.y)})${params.selector ? ` on ${params.selector}` : ""}.`
-      + `${_hitEcho(_hh, params.selector)}${_actNote}${_shiftWarn}${pt.note || ""}`;
+      + `${_dead}${_hitEcho(_hh, params.selector)}${_actNote}${_shiftWarn}${pt.note || ""}`;
   }
 
   throw new Error(`computer: unknown action ${action}`);

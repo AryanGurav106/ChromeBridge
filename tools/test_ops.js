@@ -1145,6 +1145,55 @@ const FIELDS3 = () => ([
       JSON.stringify(r.result || r.error));
   });
 
+  await test("a click the page never received is not reported as a click", async () => {
+    // #10/#11/#12 are one family: trusted input landing somewhere other than the
+    // element while the tool reports success. Measured against a real app, a new
+    // cause: after a fill_form whose submit NAVIGATED, every later CDP Input
+    // command on that tab is ACCEPTED by Chrome and delivered to nothing, while
+    // Runtime.evaluate and chrome.scripting keep working -- and Playwright's own
+    // mouse fails identically on that tab, so it is below us. What was ours is
+    // that we said "clicked". The probe rides chrome.scripting, which is exactly
+    // the channel that still works when Input does not.
+    resetState();
+    setStubs({
+      _computerPoint: () => ({ x: 500, y: 356 }),
+      _hitTestPage: () => null,
+      _inputProbePage: (arm) => (arm ? true : false),   // armed, then saw nothing
+    });
+    let r = await callOp("computer", { tabId: 1, action: "left_click", coordinate: [500, 356] });
+    check("ID1 a click the page did not receive says NOT DELIVERED, not success",
+      r.ok && /NOT DELIVERED/.test(String(r.result)), String(r.result).slice(0, 120));
+    check("ID1b ...and names the VERIFIED recovery (a new tab) plus what still works",
+      r.ok && /tabs_create_mcp/.test(String(r.result))
+        && /read_page/.test(String(r.result)), String(r.result).slice(0, 200));
+
+    // THE CONTROL. A note that fires on every click is the noise #15 priced, and
+    // would make the real one unreadable.
+    resetState();
+    setStubs({
+      _computerPoint: () => ({ x: 500, y: 356 }),
+      _hitTestPage: () => null,
+      _inputProbePage: (arm) => (arm ? true : true),    // armed, and saw the input
+    });
+    r = await callOp("computer", { tabId: 1, action: "left_click", coordinate: [500, 356] });
+    check("ID2 CONTROL: a click the page DID receive says nothing extra",
+      r.ok && !/NOT DELIVERED/.test(String(r.result)), String(r.result).slice(0, 120));
+
+    // A click that NAVIGATES destroys the probe with the document, so the answer
+    // is UNKNOWN -- and an unknown must claim nothing. That is the commonest
+    // click there is, so getting this wrong would fire the warning constantly.
+    resetState();
+    setStubs({
+      _computerPoint: () => ({ x: 500, y: 356 }),
+      _hitTestPage: () => null,
+      _inputProbePage: (arm) => (arm ? true : null),    // armed, then the page went
+    });
+    r = await callOp("computer", { tabId: 1, action: "left_click", coordinate: [500, 356] });
+    check("ID3 CONTROL: a click that navigated away reports nothing — unknown is "
+      + "not failure", r.ok && !/NOT DELIVERED/.test(String(r.result)),
+      String(r.result).slice(0, 120));
+  });
+
   await test("await_navigation waits on a FACT, and only while there is one", async () => {
     // #47/#48: an observation chained after a CLICK read the page the click was in
     // the middle of replacing (search_page, get_url, get_page_text -- three

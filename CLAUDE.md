@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 947 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 951 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 947 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 951 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -4850,8 +4850,9 @@ granted in the side panel is refused with the same message the agent gets.
     runner asked once. Its invariant is WHAT the assertion looks for, which is
     unchanged. Rewritten to that, the same way #30 rewrote TR8d.
 
-    **WHAT I MEASURED AND COULD NOT EXPLAIN, recorded as open rather than
-    guessed at.** `computer(left_click)` on saucedemo's `/inventory.html`
+    **WHAT I MEASURED AND COULD NOT EXPLAIN — now bounded and NOT OURS, see #56.
+    The framing below is kept because the measurements are, but "may be our
+    bug" was wrong: it reproduces with Playwright's own mouse on the same tab.** `computer(left_click)` on saucedemo's `/inventory.html`
     reports success and the page receives NOTHING:
     - the button is `add-to-cart-sauce-labs-backpack`, rect `(420,339,160,34)`,
       and the click dispatches at `(500,356)` — dead centre
@@ -4905,6 +4906,69 @@ granted in the side panel is refused with the same message the agent gets.
     Suites: 947 checks. `flows/saucedemo-login.flow.json` is an example, not a
     CI test — `--local-only` skips it, because a suite that needs the public
     internet fails for reasons that are not the code's.
+
+56. **A TAB CAN LOSE TRUSTED INPUT PERMANENTLY, AND IT IS NOT OUR BUG — but
+    reporting it as a click WAS.** Chasing the #55 anomaly to the end. Five
+    theories died on the way, which is the only reason the sixth is worth
+    anything.
+
+    **WHAT WAS ESTABLISHED, each by an experiment rather than by reading:**
+    - On saucedemo's `/inventory.html`, `computer(left_click)` reports success
+      and a capturing document listener records **zero** events — for a ref
+      click and for raw coordinate clicks anywhere on the page.
+    - `Runtime.evaluate` and `chrome.scripting` keep working on that same tab;
+      `el.click()` from `javascript_tool` drives the page correctly.
+    - **PLAYWRIGHT'S OWN MOUSE FAILS IDENTICALLY on that tab.** Playwright is the
+      reference implementation of CDP input, so the fault is below us. #55 had
+      recorded this as possibly ours; it is not, and that correction matters more
+      than the fix, because a stale entry would send the next reader hunting in
+      our code.
+    - Headed and headless behave the same, so it is not a headless artefact.
+    - A **clean browser** clicking that same page works (cookie login, no
+      synthetic input): `badge: "1"`. Two clicks in a row with no navigation
+      between them work: `badge: "1"` then `"2"`.
+    - The trigger is a trusted-input op whose effect NAVIGATES — the login
+      `fill_form` submit. After it, input to that tab is dead for good.
+    - **A NEW TAB RECOVERS IT**, with trusted events delivered (`pointerdown:T`)
+      and the badge incrementing. That is the one recovery this is allowed to
+      name, because it is the one that was verified.
+
+    **THE FIVE DEAD THEORIES, recorded so nobody re-runs them.** (1) #12's hidden
+    RenderWidget — refuted: #12 says `dispatchKeyEvent` survives where mouse does
+    not, and here **keys are dropped too**. (2) A stale `_inputReady` cache not
+    cleared on navigation — the code really does only clear it on attach-retry,
+    detach, session death and tab removal, and there is even a comment about this
+    class being "resurrected by one missing line" — but forcing the switches to
+    re-apply on every call changed nothing. (3) Our dispatch parameters — refuted
+    by Playwright. (4) Headless — refuted by a headed run. (5) A mouse button
+    latched down by a navigation landing between `mousePressed` and
+    `mouseReleased`, which would have explained Playwright failing too — refuted
+    by issuing `mouse.up()` and retrying.
+
+    **WHAT WAS OURS: we said "clicked".** `computer` dispatched, Chrome accepted,
+    and the tool reported `left_click at (500,356) on [mmid='82']` — the
+    #10/#11/#12 signature with a new cause. The click path now ARMS a capturing
+    counter before dispatching and reads it after, **over `chrome.scripting`,
+    which is precisely the channel that still works when Input does not**, and
+    says `*** NOT DELIVERED ***` with the verified recovery instead of a success
+    sentence. Cost is two `executeScript` round trips (~2-3ms each, #38) against
+    a ~3,600ms model turn.
+
+    **UNKNOWN IS NOT FAILURE, and that is the control that keeps this usable.** A
+    click that NAVIGATES destroys the probe along with the document, so the read
+    returns `null` — and that is the commonest click there is. It claims nothing
+    there (ID3). A note that fired on every navigating click would be the noise
+    #15 priced, and would bury the real one.
+
+    **Scope stated rather than implied:** the probe covers the `computer` CLICK
+    actions. Keyboard actions go through the same dead channel and are not yet
+    verified, and `clickTrusted`'s own effect check already covers the
+    escalation path by a different route.
+
+    Suites: 951 checks. New — ID1/ID1b (a click the page never received is not
+    reported as one, and names the verified recovery), ID2 (the control that a
+    delivered click says nothing extra), ID3 (the control that a navigating
+    click's unknown answer claims nothing).
 
 ## Debugging starting points
 
@@ -4981,6 +5045,7 @@ granted in the side panel is refused with the same message the agent gets.
 | A flow passed once and fails on the next run with a bigger count | Working as designed, and #54 made it say so. A flow that CREATES something changes the count it recorded, so replaying in place leaves the app one row further on each time. Replay against a reset fixture (`run_flows.py --playground` resets before every run), or record a flow that cleans up after itself. The message lists this as one of three causes — the data changing underneath and a genuine regression are the others, and they need different answers |
 | A flow recorded against an SPA fails every replay on one assertion | Fixed in #55 — the recorder captures what the agent observed, which is necessarily after the agent took a moment; the runner asked INSTANTLY. A postcondition now gets a bounded window (6s, polled) to BECOME true. It is not weakened — it must still become true — and a genuine failure still fails, just later. Server-rendered fixtures never show this, which is why a year of playground flows did not |
 | `computer` click reports success and the page gets nothing, with the debugger attached | Measured on saucedemo's /inventory.html (#55) and NOT yet explained: `elementFromPoint` at the clicked coordinate IS the target, dpr 1, no scroll, no zoom, `debug_targets` says attached with one frame — and three raw coordinate clicks produce ZERO events at a capturing document listener, while `Runtime.evaluate` works and `el.click()` drives the page correctly. The LOGIN page of the same origin in the same browser accepts input normally. #12's signature; its `ensureInputReady` fix does not cover this case. Instrument the PAGE before theorising |
+| `computer` click says `*** NOT DELIVERED ***` | Working as designed since #56 — Chrome ACCEPTED the input command and the page recorded no event, so nothing was clicked. The tab's trusted-input channel is dead. It is not ours (Playwright's own mouse fails identically on that tab) and it survives detach+re-attach, a forced focus-emulation re-apply, and a mouse release. VERIFIED recovery: a NEW TAB. `read_page`, `get_page_text`, `search_page`, `query_elements`, `fill_form`, `form_input` and `javascript_tool` all keep working on the dead tab |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---
