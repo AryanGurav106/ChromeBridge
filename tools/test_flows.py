@@ -420,7 +420,7 @@ async def record_and_replay():
     class _V(Run):
         def __init__(self, result):
             self.call = lambda t, i: _async(result)
-            self.tab_id, self.vars = 1, {}
+            self.tab_id, self.cur_tab, self.vars = 1, 1, {}
 
     async def _async(v):
         return v
@@ -638,6 +638,78 @@ async def record_and_replay():
           "what is typed",
           asked and set(asked) == {"beta-svc"},
           f"search_page called with {asked}")
+
+    # ---- FT: A FLOW MAY SPAN TABS ---------------------------------------
+    #
+    # `tabs_create_mcp` is already an ACTION (it is in MUTATES), so the recorder
+    # kept it -- and the runner then forced `tabId` on every step, so the tab it
+    # made was created and ignored and the flow carried on in the old one. The
+    # batch had exactly this defect until #46, with exactly this consequence.
+    # It matters beyond tidiness: #56's one VERIFIED recovery from a tab that has
+    # lost its trusted-input channel IS a new tab, and a flow could not do it.
+    class TabBridge(FakeBridge):
+        def __init__(self, entries=None):
+            super().__init__(entries)
+            self.made = 0
+
+        async def call(self, tool, inp):
+            if tool == "tabs_create_mcp":
+                self.calls.append((tool, dict(inp)))
+                self.made += 1
+                return '{"tabId": %d}' % (900 + self.made)
+            return await super().call(tool, inp)
+
+    tf = TabBridge([E(70, "button", name="Create")])
+    rt = Recorder("tabs", tf.entries_fn)
+    ci = {"tabId": 1}
+    ct = await rt.before("tabs_create_mcp", ci)
+    rt.after("tabs_create_mcp", ci, '{"tabId": 901}', ct)
+    ai = {"ref": "ref_70", "tabId": 1}
+    at = await rt.before("computer", ai)
+    rt.after("computer", ai, "clicked", at)
+    ftf, _ = rt.compile()
+    check("FT1 a recorded tabs_create_mcp survives the compile as a step",
+          [st.name for st in ftf.steps] == ["tabs_create_mcp", "computer"],
+          str([st.name for st in ftf.steps]))
+
+    tf2 = TabBridge([E(70, "button", name="Create")])
+    rr = await start(ftf, 5, tf2.call, tf2.entries_fn)
+    after = [i.get("tabId") for t, i in tf2.calls if t == "computer"]
+    check("FT2 steps after it run in the tab it MADE, not the one the flow started in",
+          rr["status"] == PASSED and after == [901],
+          f"status={rr['status']} computer ran in {after} (flow started in 5)")
+
+    # THE CONTROL. A flow that creates nothing is untouched -- otherwise this
+    # would have quietly changed where every existing flow runs.
+    tf3 = TabBridge([E(70, "button", name="Create")])
+    r2 = Recorder("plain", tf3.entries_fn)
+    ai2 = {"ref": "ref_70", "tabId": 1}
+    at2 = await r2.before("computer", ai2)
+    r2.after("computer", ai2, "clicked", at2)
+    fplain, _ = r2.compile()
+    tf4 = TabBridge([E(70, "button", name="Create")])
+    await start(fplain, 7, tf4.call, tf4.entries_fn)
+    check("FT3 CONTROL: with no create step every call stays in the flow's tab",
+          [i.get("tabId") for t, i in tf4.calls if t == "computer"] == [7],
+          str([i.get("tabId") for t, i in tf4.calls if t == "computer"]))
+
+    # A create whose id cannot be read must STOP. Carrying on would run every
+    # later step in the previous tab without saying so, which is the silent
+    # wrong-tab defect #46 fixed in the batch.
+    class MuteTabBridge(TabBridge):
+        async def call(self, tool, inp):
+            if tool == "tabs_create_mcp":
+                self.calls.append((tool, dict(inp)))
+                return "created a tab"          # no id anywhere
+            return await FakeBridge.call(self, tool, inp)
+
+    tf5 = MuteTabBridge([E(70, "button", name="Create")])
+    r3 = await start(ftf, 5, tf5.call, tf5.entries_fn)
+    check("FT4 a create with no readable tab id FAILS instead of carrying on "
+          "in the old tab",
+          r3["status"] == FAILED and "no tab id" in r3["reason"]
+          and not any(t == "computer" for t, _ in tf5.calls),
+          f"status={r3['status']} reason={str(r3['reason'])[:90]}")
 
     # ---- FVP: the viewport, populated AND compared --------------------
     #

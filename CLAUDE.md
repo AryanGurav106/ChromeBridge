@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 966 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 970 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 966 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 970 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5096,6 +5096,31 @@ granted in the side panel is refused with the same message the agent gets.
     warning could fire on every flow and still pass), FW3 (the control that
     nothing observed beforehand makes no claim, the same rule as #56's ID3).
 
+58. **A FLOW MAY SPAN TABS, AND THE REASON IT HAD TO IS #56.** The runner set
+    `inp["tabId"] = self.tab_id` on every step, so a recorded `tabs_create_mcp`
+    — which the recorder keeps, because it is already in `MUTATES` — made a tab
+    that was then ignored while the flow carried on in the old one. **The batch
+    had exactly this defect until #46, with exactly this consequence**, and the
+    fix is deliberately the same rule rather than a second spelling of it (#21):
+    only `tabs_create_mcp` sets the current tab, because it returns exactly one
+    id it just created, where `tabs_context_mcp` returns the whole group and
+    choosing among several would be a guess.
+
+    **It is not tidiness.** #56 established that a tab can lose its trusted-input
+    channel permanently, and that the one VERIFIED recovery is a new tab — a
+    recovery a flow was structurally unable to perform.
+
+    **A CREATE WHOSE ID CANNOT BE READ STOPS THE RUN.** Carrying on would put
+    every later step in the previous tab without saying so, which is the silent
+    wrong-tab defect #46 fixed in the batch and #10/#11/#12's family generally.
+    The id is read from the parsed shape first and the string second, because a
+    result-string contract is what kept `delta` dead for its whole life (#30).
+
+    Suites: 970 checks. New — FT1 (the create survives the compile), FT2 (later
+    steps run in the tab it made), FT3 (the control that a flow creating nothing
+    is untouched — without it this would have quietly changed where every
+    existing flow runs), FT4 (an unreadable id fails rather than continuing).
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -5174,6 +5199,7 @@ granted in the side panel is refused with the same message the agent gets.
 | `computer` click says `*** NOT DELIVERED ***` | Working as designed since #56 — Chrome ACCEPTED the input command and the page recorded no event, so nothing was clicked. The tab's trusted-input channel is dead. It is not ours (Playwright's own mouse fails identically on that tab) and it survives detach+re-attach, a forced focus-emulation re-apply, and a mouse release. VERIFIED recovery: a NEW TAB. `read_page`, `get_page_text`, `search_page`, `query_elements`, `fill_form`, `form_input` and `javascript_tool` all keep working on the dead tab |
 | `computer(type)` says "into whatever holds editing focus" | By design since #56 — `Input.insertText` targets the EDITING context, not `document.activeElement`. Measured: with an `<h1 tabindex=-1>` focused, the text still landed in a previously focused `<input>`. Pass a ref and the message names it, because then we focused it ourselves |
 | `record_flow(stop)` warns that an assertion was ALREADY TRUE | By design since #57 — the check had that same value the last time the agent observed it, so the step did not move what it measures and the flow would pass even if the step did nothing. Usually the step silently failed (a required field left unfilled is the one that caused this twice). A warning, not a refusal: an idempotent step legitimately leaves state alone |
+| A flow step after `tabs_create_mcp` runs in the NEW tab | By design since #58 — the runner used to force the flow's starting tabId on every step, so a recorded `tabs_create_mcp` made a tab that was then ignored and the flow carried on in the old one. Same rule `browser_batch` threads (#46) and only from `tabs_create_mcp`, which returns exactly one id it just made. A create whose id cannot be read FAILS rather than silently continuing in the previous tab |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---

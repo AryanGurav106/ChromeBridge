@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import re
 import asyncio
+import json
 import time
 import uuid
 from typing import Any, Callable, Optional
@@ -47,12 +48,43 @@ PASSED, FAILED, NEEDS = "passed", "failed", "needs_decision"
 RUNS: dict = {}
 
 
+def _created_tab(result) -> Optional[int]:
+    """The tab id `tabs_create_mcp` just made, or None if it cannot be read.
+
+    The tool answers with JSON, but a result-string contract is exactly what
+    kept `delta` dead for its whole life (#30), so this accepts the parsed
+    shape as well and refuses to guess when neither is there -- the caller
+    stops rather than silently carrying on in the old tab.
+    """
+    if isinstance(result, dict):
+        v = result.get("tabId")
+        return int(v) if v is not None else None
+    try:
+        return int((json.loads(result) or {}).get("tabId"))
+    except Exception:
+        pass
+    m = re.search(r'"tabId"\s*:\s*(\d+)', str(result or ""))
+    return int(m.group(1)) if m else None
+
+
 class Run:
     def __init__(self, flow: Flow, tab_id: int, call: Callable, entries_fn: Callable,
                  overrides: Optional[dict] = None, viewport_fn: Optional[Callable] = None):
         self.id = "run_" + uuid.uuid4().hex[:8]
         self.flow = flow
         self.tab_id = tab_id
+        # THE TAB THE FLOW IS CURRENTLY ACTING IN, which is not always the one it
+        # started in. A flow may create a tab mid-run -- `tabs_create_mcp` is
+        # already an ACTION (it is in MUTATES) so the recorder keeps it -- and
+        # every later step belongs in the tab it made. Forcing `tab_id` on every
+        # step meant a recorded `tabs_create_mcp` made a tab that was then
+        # ignored, so the flow carried on in the old one: the batch had exactly
+        # this defect until #46, with exactly this consequence.
+        #
+        # It matters beyond tidiness because #56's one VERIFIED recovery from a
+        # tab that has lost its trusted-input channel IS a new tab, and a flow
+        # could not perform it.
+        self.cur_tab = tab_id
         self.call = call
         self.viewport_fn = viewport_fn
         self.entries_fn = entries_fn
@@ -123,12 +155,26 @@ class Run:
                                   f"step {self.i} ({step.name}): "
                                   + secrets.missing_message(missing))
 
-            inp["tabId"] = self.tab_id
+            inp["tabId"] = self.cur_tab
             try:
                 result = await self.call(step.name, inp)
             except Exception as exc:
                 return self._stop(FAILED,
                                   f"step {self.i} ({step.name}) raised: {exc}")
+
+            # A TAB THIS FLOW JUST MADE IS THE TAB THIS FLOW MEANT -- the same
+            # rule browser_batch threads (#46), and deliberately the same shape:
+            # only `tabs_create_mcp` sets it, because it returns exactly one id
+            # it just created, where `tabs_context_mcp` returns the whole group
+            # and choosing among several would be a guess.
+            if step.name == "tabs_create_mcp":
+                made = _created_tab(result)
+                if made is None:
+                    return self._stop(FAILED,
+                                      f"step {self.i} (tabs_create_mcp): no tab id came "
+                                      f"back, so every later step would have run in the "
+                                      f"previous tab without saying so.")
+                self.cur_tab = made
 
             bad = await self._check(step)
             if bad:
@@ -166,7 +212,7 @@ class Run:
         if not rec.get("width") or not self.viewport_fn:
             return ""
         try:
-            live = await self.viewport_fn(self.tab_id)
+            live = await self.viewport_fn(self.cur_tab)
         except Exception:
             return ""
         if not live or not live.get("width"):
@@ -212,7 +258,7 @@ class Run:
     async def _bind(self, step: Step, binding: Optional[str]) -> tuple:
         if not step.targets:
             return dict(step.input), False
-        entries = await self.entries_fn(self.tab_id)
+        entries = await self.entries_fn(self.cur_tab)
         self._last_entries = entries
         inp = dict(step.input)
         healed = False
@@ -292,7 +338,7 @@ class Run:
         """
         exp, _unknown = resolve_vars(exp or {}, self.vars)
         if "url" in exp:
-            res = await self.call("get_url", {"tabId": self.tab_id})
+            res = await self.call("get_url", {"tabId": self.cur_tab})
             m = re.search(r'"url"\s*:\s*"([^"]+)"', str(res))
             got = m.group(1) if m else str(res)
             if got != exp["url"]:
@@ -300,7 +346,7 @@ class Run:
         if "search" in exp:
             s = exp["search"]
             res = await self.call("search_page",
-                                  {"tabId": self.tab_id, "pattern": s["pattern"]})
+                                  {"tabId": self.cur_tab, "pattern": s["pattern"]})
             hits = search_hits(str(res))
             if hits is None:
                 return (f'could not read a hit count out of search_page for '
@@ -311,7 +357,7 @@ class Run:
         if "query" in exp:
             q = exp["query"]
             res = await self.call("query_elements",
-                                  {"tabId": self.tab_id, "selector": q["selector"],
+                                  {"tabId": self.cur_tab, "selector": q["selector"],
                                    "max_results": 1})
             tot = query_total(str(res))
             if tot is None:
