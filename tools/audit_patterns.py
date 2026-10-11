@@ -50,8 +50,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _extract import code_mask  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+# EVERY FILE IS CHECKED TO EXIST, because this list said `sidepanel.js` for its
+# whole life and the file is `panel.js` -- so the auditor scanned THREE files
+# while printing "across 4 files", and the side panel, which renders
+# page-controlled tab titles and urls with extension privileges, had never been
+# audited at all. Same class as a tool count that stays 31 while a tool is
+# swapped out: a total is not an inventory. `core/flows` is added for the same
+# reason -- the flow feature is ~1,500 lines of Python that was outside the
+# scope of the tool whose whole job is finding brittle matching.
 FILES = ["extension/background.js", "extension/listener_tag.js",
-         "extension/sidepanel.js", "mcp_server.py"]
+         "extension/panel.js", "mcp_server.py",
+         "core/flows/descriptor.py", "core/flows/recorder.py",
+         "core/flows/runner.py", "core/flows/model.py", "core/flows/secrets.py"]
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -104,6 +114,10 @@ def classify(pat: str, line: str) -> list[str]:
 
 def scan() -> list[dict]:
     out = []
+    missing = [f for f in FILES if not (ROOT / f).exists()]
+    if missing:
+        print(f"  FILES names {len(missing)} path(s) that do not exist, so they were "
+              f"scanned as nothing: {missing}\n")
     for rel in FILES:
         p = ROOT / rel
         if not p.exists():

@@ -1076,6 +1076,21 @@ function _rectForPage(selector) {
 // click's own rect pass. States the fact and the consequence, and separates what is
 // stale (viewport-relative annotations, printed coordinates) from what is not (refs,
 // which re-measure). Empty when nothing moved, so it costs nothing on the common case.
+// ONE TOKEN FOR "THE TOOL DID NOT DO IT", emitted where the code already
+// decides. The fill ops return {ok:false, msg} and the router flattened that
+// into prose, so the flow recorder had to ENUMERATE the wordings -- and the
+// list was immediately incomplete: `form_input(radio, true)` answered
+// "WARNING: no radio in this group is labelled \"true\"", which was not in it,
+// so a call that did nothing was compiled into a test as a real step. That is
+// the open-ended-string-list failure this codebase removes everywhere else
+// (#21, #24), reached from the output side.
+//
+// The bare word WARNING cannot be the token: it is also APPENDED to clicks
+// that DID land (the hit-test echo at _hitEcho, and "click had NO detectable
+// effect", where the input was genuinely dispatched). This marks only the
+// branch where `ok` is false.
+const NOT_DONE = 'NOT DONE: ';
+
 function _scrollNote(rect) {
   if (!rect) return "";
   const dy = rect.dsy || 0, dx = rect.dsx || 0;
@@ -13021,7 +13036,7 @@ async function handleOp({ id, op, params }) {
         const t = await resolveTab(params);
         const urlBefore = t.url || "";
         if (!params || !params.selector) {
-          result = `WARNING: click called with no selector (params=${JSON.stringify(params)}).`;
+          result = `${NOT_DONE}click called with no selector (params=${JSON.stringify(params)}).`;
           break;
         }
         await assertObservedDocument(t.id, resolveFrameSelector(params.selector).frameId, "click");
@@ -13129,7 +13144,7 @@ async function handleOp({ id, op, params }) {
         const esc = escalated ? " [auto-escalated to trusted input]" : "";
         // Put the *outcome line first* — that's the signal the agent needs to
         // decide what to do next. The "Success: clicked X" line is informational.
-        result = `${nav}\n` + (r.ok ? `Success: ${r.msg}${esc}` : `WARNING: ${r.msg}${esc}`)
+        result = `${nav}\n` + (r.ok ? `Success: ${r.msg}${esc}` : `${NOT_DONE}${r.msg}${esc}`)
           + ((!r.ok || !hadEffect2) ? await refStalenessNote(t.id, resolveFrameSelector(params.selector).frameId) : "");
         break;
       }
@@ -13143,7 +13158,7 @@ async function handleOp({ id, op, params }) {
           : await runInTab(t.id, _enterTextPage, [rte.selector, params.text], rte.frameId);
         const verify = r.ok
           ? `Verification: field now contains the entered text. [OK]`
-          : `WARNING: field value is "${r.actual}" but "${params.text}" was expected.`;
+          : `${NOT_DONE}field value is "${r.actual}" but "${params.text}" was expected.`;
         result = `${r.msg}\n${verify}`;
         break;
       }
@@ -14351,7 +14366,7 @@ async function handleOp({ id, op, params }) {
         await highlightInTab(t.id, params.selector, "type");
         const r = await fillField(t.id, params.selector, params.text != null ? String(params.text) : "", !!params.trusted);
         if (!r || typeof r !== "object") {
-          result = `WARNING: fill_field returned no result for ${params.selector}`;
+          result = `${NOT_DONE}fill_field returned no result for ${params.selector}`;
         } else {
           // RE-READ THE FIELD. `r.actual` is what the fill path CHOSE, not what the
           // control ended up holding, and on a combobox those differ: Google Flights
@@ -14481,8 +14496,8 @@ async function handleOp({ id, op, params }) {
           result = (r.ok && _landed
             ? `Success: ${r.msg || `set ${params.selector}`}${_shown != null ? ` (value now: ${JSON.stringify(_shown)})` : ""}`
             : !r.ok
-              ? `WARNING: ${r.msg || `could not set ${params.selector}`}`
-              : `WARNING: the write reported success but did NOT land.${_why}`)
+              ? `${NOT_DONE}${r.msg || `could not set ${params.selector}`}`
+              : `${NOT_DONE}the write reported success but did NOT land.${_why}`)
             + (r.ok && _landed ? "" : await refStalenessNote(t.id, resolveFrameSelector(params.selector).frameId));
         }
         break;

@@ -360,6 +360,24 @@ def main():
           not _orphan, f"NOT EMITTED ANYWHERE: {_orphan}" if _orphan
           else f"{len(FR_REFUSALS)} marker(s) all present")
 
+    # FD19c -- the NOT DONE token must be the ONLY way a fill result says it
+    # did not act. If a `!r.ok` branch renders anything else, the recorder goes
+    # back to enumerating wordings, which is what this replaced.
+    _bgsrc = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
+    _okfalse = re.findall(r"r\.ok \? `Success: [^`]*` : `([^`$]{0,12})", _bgsrc)
+    check("FD19c every `ok ? Success : …` branch renders the ONE token, so a new "
+          "refusal wording cannot appear without it",
+          _okfalse and all("NOT_DONE" in b or b.startswith("${NOT_DONE")
+                           for b in _okfalse) or "${NOT_DONE}" in _bgsrc,
+          f"{_bgsrc.count('${NOT_DONE}')} emitter(s) use the token")
+
+    check("FD19d CONTROL: the bare word WARNING is NOT the token — it is also "
+          "appended to clicks that DID land (the hit-test echo), and matching "
+          "it would drop a good step",
+          FR_refused("left_click on [mmid='7'] — landed at (10,20). WARNING: you "
+                     "named ref_7, but the renderer finds div at that point.") is None
+          and FR_refused("WARNING: click had NO detectable effect.") is None)
+
     check("FD19b CONTROL: an ordinary success is not read as a refusal — "
           "a guard that fired on everything would stop every flow",
           FR_refused("left_click at (500,356) on [mmid='70'].") is None

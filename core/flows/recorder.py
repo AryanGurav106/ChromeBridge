@@ -68,14 +68,30 @@ _QUERY_TOTAL = re.compile(r"(?m)^(\d+) element\(s\) match ")
 # Each phrase is the DISTINCTIVE part of its message rather than a fragment,
 # because `fill_form` echoes the page's own validation errors and a short
 # fragment could in principle arrive from a site.
+# ONE TOKEN, NOT A LIST OF WORDINGS. The first version enumerated the prose a
+# tool prints when it did not act, and was incomplete within a day:
+# `form_input(radio, true)` answers "no radio in this group is labelled" and
+# that was not in it, so a call that changed nothing was compiled into a test
+# as a real step. Enumerating messages is the open-ended-list failure this
+# codebase removes everywhere else -- the next wording is always one away.
+#
+# The fill ops already decide this: they return {ok: false, msg}. The router
+# now renders that branch with a single `NOT DONE: ` token, so one marker
+# covers every wording it will ever have. The bare word WARNING could not be
+# the token because it is also APPENDED to clicks that DID land (the hit-test
+# echo, and "click had NO detectable effect").
+#
+# What remains below is the set that is NOT a fill result -- a refusal from the
+# gate, a dead input channel, a navigation that never committed. Each is a
+# distinct op reporting a distinct fact, and FD19 pins every one against the
+# file that emits it.
 REFUSALS = (
+    "NOT DONE: ",                                           # the fill family, one token
     "*** NOT DELIVERED:",                                   # #56, trusted input dropped
     "NAVIGATION DID NOT COMMIT",                            # #40
     "DID NOT MOVE — the tab is still at",                   # #40, back/forward
     "Permission required: ChromeBridge is not allowed",     # the gate
     "ChromeBridge is PAUSED",                               # the kill switch
-    "the write reported success but did NOT land",          # #24 readback
-    "WARNING: no option matching",                          # #63, a pick that matched nothing
 )
 
 

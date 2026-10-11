@@ -2,20 +2,24 @@
   "schema": 1,
   "name": "ev-httpbin-pizza-form",
   "origin": "https://httpbin.org",
-  "recorded_at": "2026-10-11T21:39:20",
+  "recorded_at": "2026-10-11T23:14:23",
   "viewport": {
-    "width": 1512,
+    "width": 1094,
     "height": 812
   },
   "vars": {
     "customer_name": "Ada Lovelace",
     "e_mail_address": "ada@example.com",
+    "medium": "medium",
     "delivery_instructions": "ring twice"
   },
   "steps": [
     {
       "name": "navigate",
       "input": {
+        "url": "https://httpbin.org/forms/post"
+      },
+      "expect": {
         "url": "https://httpbin.org/forms/post"
       },
       "on_fail": "ask"
@@ -47,8 +51,11 @@
       },
       "expect": {
         "query": {
-          "selector": "input[name=custname]",
-          "count": 1
+          "selector": "input[name=\"custname\"]",
+          "count": 1,
+          "attrs": {
+            "value": "{{customer_name}}"
+          }
         }
       },
       "on_fail": "ask"
@@ -80,25 +87,46 @@
       },
       "expect": {
         "query": {
-          "selector": "input[name=custemail]",
-          "count": 1
+          "selector": "input[name=\"custemail\"]",
+          "count": 1,
+          "attrs": {
+            "value": "{{e_mail_address}}"
+          }
         }
       },
       "on_fail": "ask"
     },
     {
-      "name": "computer",
+      "name": "form_input",
       "input": {
-        "action": "left_click",
-        "coordinate": null,
-        "text": null,
-        "modifiers": null,
-        "region": null,
-        "start_coordinate": null,
-        "duration": null,
-        "scroll_direction": null,
-        "scroll_amount": null,
-        "repeat": null
+        "value": true
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "radio",
+            "name": "Medium"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "radio",
+            "name": "Medium",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "form_input",
+      "input": {
+        "value": "{{medium}}"
       },
       "targets": {
         "ref": {
@@ -122,25 +150,19 @@
       },
       "expect": {
         "query": {
-          "selector": "input[name=size]:checked",
-          "count": 1
+          "selector": "input[name=\"size\"]:checked",
+          "count": 1,
+          "attrs": {
+            "value": "{{medium}}"
+          }
         }
       },
       "on_fail": "ask"
     },
     {
-      "name": "computer",
+      "name": "form_input",
       "input": {
-        "action": "left_click",
-        "coordinate": null,
-        "text": null,
-        "modifiers": null,
-        "region": null,
-        "start_coordinate": null,
-        "duration": null,
-        "scroll_direction": null,
-        "scroll_amount": null,
-        "repeat": null
+        "value": true
       },
       "targets": {
         "ref": {
@@ -164,8 +186,11 @@
       },
       "expect": {
         "query": {
-          "selector": "input[name=topping]:checked",
-          "count": 1
+          "selector": "input[name=\"topping\"]:checked",
+          "count": 1,
+          "attrs": {
+            "value": "bacon"
+          }
         }
       },
       "on_fail": "ask"
@@ -197,8 +222,11 @@
       },
       "expect": {
         "query": {
-          "selector": "textarea[name=comments]",
-          "count": 1
+          "selector": "textarea[name=\"comments\"]",
+          "count": 1,
+          "attrs": {
+            "value": "{{delivery_instructions}}"
+          }
         }
       },
       "on_fail": "ask"
@@ -206,16 +234,7 @@
     {
       "name": "computer",
       "input": {
-        "action": "left_click",
-        "coordinate": null,
-        "text": null,
-        "modifiers": null,
-        "region": null,
-        "start_coordinate": null,
-        "duration": null,
-        "scroll_direction": null,
-        "scroll_amount": null,
-        "repeat": null
+        "action": "left_click"
       },
       "targets": {
         "ref": {
@@ -240,6 +259,11 @@
       "expect": {
         "url": "https://httpbin.org/post",
         "search": [
+          {
+            "pattern": "{{customer_name}}",
+            "min": 1,
+            "observed": 1
+          },
           {
             "pattern": "\"custname\": \"Ada Lovelace\"",
             "min": 1,

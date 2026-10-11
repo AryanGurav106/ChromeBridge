@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 1028 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 1030 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1028 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1030 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5859,6 +5859,59 @@ granted in the side panel is refused with the same message the agent gets.
 
     Suites: 1028 checks. New — FP6/FP6b/FP6c (apply, consume, and the control
     that a REPLAY never writes), FE5/FE5b.
+
+66. **AN OPEN-ENDED LIST OF WORDINGS WAS INCOMPLETE WITHIN A DAY, and the
+    audit that should have caught it was scanning a file that does not
+    exist.** Asked to make sure nothing in the codebase pattern-matches its way
+    into breaking on an arbitrary site. The existing machinery says it does
+    not — `audit_patterns.py` self-tests against three historical bugs and
+    passes, and `test_patterns.py` holds (P4: no ASCII-only character class
+    gates page text; P6: 238 thresholds, none deciding whether an element
+    EXISTS). What that machinery was NOT doing is the finding.
+
+    **`FILES` named `extension/sidepanel.js`, and the file is `panel.js`.** So
+    the auditor scanned THREE files while printing "253 sites across 4 files",
+    and the side panel — which renders page-controlled tab titles and urls with
+    extension privileges — had never been audited at all. `core/flows/*.py`,
+    about 1,500 lines, was never in scope either. Corrected to nine real files
+    (276 sites), with a check that every named path exists. **Third instance
+    today of a count standing in for an inventory**, after the tool swap that
+    kept the total at 31 and the suite that reported PASS with no count.
+    Neither the panel nor the flow code added a flagged pattern.
+
+    **AND THE SAME DAY'S OWN WORK PROVED THE RULE.** #63's refusal guard taught
+    the runner six STRINGS a tool prints when it did not act. A live recording
+    then hit a seventh — `form_input(radio, true)` answers "no radio in this
+    group is labelled \"true\"" — which was not in the list, so a call that
+    changed nothing was compiled into a test as a real step. An enumeration of
+    wordings is always one wording behind.
+
+    **The signal was already structural and had been flattened into prose.**
+    The fill ops return `{ok: false, msg}` and the router rendered
+    `r.ok ? "Success: …" : "WARNING: …"`, so "did this act" was a boolean one
+    line above the string the recorder was parsing. That branch now emits a
+    single `NOT DONE: ` token and the list of wordings is gone.
+    **The bare word WARNING could not be the token**, and that is the part
+    worth keeping: it is also APPENDED to clicks that DID land — the hit-test
+    echo, and "click had NO detectable effect", where the input really was
+    dispatched. Matching it would have dropped good steps. FD19d is that
+    control; FD19c pins that every `ok ? Success : …` branch renders the token,
+    so a new refusal wording cannot appear without it.
+
+    **What the audit confirms, now that it is actually looking:** no
+    natural-language wordlist reads page text anywhere; the ten `wordlist`
+    sites are CSS values (`fixed|absolute|sticky`), HTML's own labelable-element
+    list, icon-library class prefixes, Tailwind variant tokens, option
+    sentinels (`-1|0|default|none`) and the boolean vocabulary the CALLER
+    passes. The two `class-substring` sites are the `placeholder` convention
+    token and a whitespace split. Today's own additions read our own output
+    (`NOT DONE`, the result-string parsers), the caller's input (the
+    typographic hint, the state words), or a spec list (`value`/`checked`/
+    `selected`/`indeterminate` — the four IDL attributes HTML says do not
+    reflect). None reads arbitrary page text in an arbitrary language.
+
+    Suites: 1030 checks. New — FD19c/FD19d. `audit_patterns.py` scans nine
+    files and refuses to pretend a missing one was checked.
 
 ## Debugging starting points
 

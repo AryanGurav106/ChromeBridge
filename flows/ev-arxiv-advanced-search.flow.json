@@ -2,9 +2,9 @@
   "schema": 1,
   "name": "ev-arxiv-advanced-search",
   "origin": "https://arxiv.org",
-  "recorded_at": "2026-10-11T21:31:09",
+  "recorded_at": "2026-10-11T23:12:49",
   "viewport": {
-    "width": 1512,
+    "width": 1094,
     "height": 812
   },
   "vars": {
@@ -14,6 +14,9 @@
     {
       "name": "navigate",
       "input": {
+        "url": "https://arxiv.org/search/advanced"
+      },
+      "expect": {
         "url": "https://arxiv.org/search/advanced"
       },
       "on_fail": "ask"
@@ -45,8 +48,12 @@
       },
       "expect": {
         "query": {
-          "selector": "input[name=\"terms-0-term\"]:not(:placeholder-shown)",
-          "count": 1
+          "selector": "input[name=\"terms-0-term\"]",
+          "count": 1,
+          "attrs": {
+            "value": "{{search_term}}",
+            "value@attr": ""
+          }
         }
       },
       "on_fail": "ask"
@@ -79,7 +86,10 @@
       "expect": {
         "query": {
           "selector": "input[name=\"classification-computer_science\"]:checked",
-          "count": 1
+          "count": 1,
+          "attrs": {
+            "value": "y"
+          }
         }
       },
       "on_fail": "ask"
@@ -87,7 +97,16 @@
     {
       "name": "computer",
       "input": {
-        "action": "left_click"
+        "action": "left_click",
+        "coordinate": null,
+        "text": null,
+        "modifiers": null,
+        "region": null,
+        "start_coordinate": null,
+        "duration": null,
+        "scroll_direction": null,
+        "scroll_amount": null,
+        "repeat": null
       },
       "targets": {
         "ref": {
@@ -115,13 +134,15 @@
       "expect": {
         "url": "https://arxiv.org/search/advanced?advanced=&terms-0-operator=AND&terms-0-term=quantum+computing&terms-0-field=title&classification-computer_science=y&classification-physics_archives=all&classification-include_cross_list=include&date-filter_by=all_dates&date-year=&date-from_date=&date-to_date=&date-date_type=submitted_date&abstracts=show&size=50&order=-announced_date_first",
         "search": {
-          "pattern": "Showing 1[–-]50 of [\\d,]+ results",
+          "pattern": "Showing \\d+.\\d+ of [\\d,]+ results",
           "min": 1,
-          "observed": 1
+          "observed": 1,
+          "regex": true
         },
         "query": {
-          "selector": "li.arxiv-result",
-          "count": 50
+          "selector": "h1.title",
+          "count": 1,
+          "text": "Showing 1–50 of 1,325 results"
         }
       },
       "on_fail": "ask"
