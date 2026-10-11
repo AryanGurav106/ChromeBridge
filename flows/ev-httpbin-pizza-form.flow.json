@@ -2,10 +2,10 @@
   "schema": 1,
   "name": "ev-httpbin-pizza-form",
   "origin": "https://httpbin.org",
-  "recorded_at": "2026-10-11T20:03:18",
+  "recorded_at": "2026-10-11T21:39:20",
   "viewport": {
     "width": 1512,
-    "height": 868
+    "height": 812
   },
   "vars": {
     "customer_name": "Ada Lovelace",
@@ -47,12 +47,11 @@
       },
       "expect": {
         "query": {
-          "selector": "input[name=\"custname\"]",
+          "selector": "input[name=custname]",
           "count": 1
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 2468
+      "on_fail": "ask"
     },
     {
       "name": "form_input",
@@ -77,6 +76,12 @@
             "under": "",
             "near": ""
           }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "input[name=custemail]",
+          "count": 1
         }
       },
       "on_fail": "ask"
@@ -117,12 +122,11 @@
       },
       "expect": {
         "query": {
-          "selector": "input[name=\"size\"]:checked",
+          "selector": "input[name=size]:checked",
           "count": 1
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 2245
+      "on_fail": "ask"
     },
     {
       "name": "computer",
@@ -160,12 +164,11 @@
       },
       "expect": {
         "query": {
-          "selector": "input[name=\"topping\"]:checked",
+          "selector": "input[name=topping]:checked",
           "count": 1
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 2166
+      "on_fail": "ask"
     },
     {
       "name": "form_input",
@@ -190,6 +193,12 @@
             "under": "",
             "near": ""
           }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "textarea[name=comments]",
+          "count": 1
         }
       },
       "on_fail": "ask"
@@ -230,14 +239,25 @@
       },
       "expect": {
         "url": "https://httpbin.org/post",
-        "search": {
-          "pattern": "\"custname\": \"Ada Lovelace\"",
-          "min": 1,
-          "observed": 1
-        }
+        "search": [
+          {
+            "pattern": "\"custname\": \"Ada Lovelace\"",
+            "min": 1,
+            "observed": 1
+          },
+          {
+            "pattern": "\"size\": \"medium\"",
+            "min": 1,
+            "observed": 1
+          },
+          {
+            "pattern": "\"topping\": \"bacon\"",
+            "min": 1,
+            "observed": 1
+          }
+        ]
       },
-      "on_fail": "ask",
-      "settle_ms": 9488
+      "on_fail": "ask"
     }
   ]
 }

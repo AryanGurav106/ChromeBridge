@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "ev-jawiki-tokyo-tower",
   "origin": "https://ja.wikipedia.org",
-  "recorded_at": "2026-10-11T20:17:40",
+  "recorded_at": "2026-10-11T21:46:23",
   "viewport": {
     "width": 1512,
     "height": 812
@@ -16,22 +16,12 @@
       "expect": {
         "url": "https://ja.wikipedia.org/wiki/%E3%83%A1%E3%82%A4%E3%83%B3%E3%83%9A%E3%83%BC%E3%82%B8"
       },
-      "on_fail": "ask",
-      "settle_ms": 17
+      "on_fail": "ask"
     },
     {
       "name": "computer",
       "input": {
-        "action": "left_click",
-        "coordinate": null,
-        "text": null,
-        "modifiers": null,
-        "region": null,
-        "start_coordinate": null,
-        "duration": null,
-        "scroll_direction": null,
-        "scroll_amount": null,
-        "repeat": null
+        "action": "left_click"
       },
       "targets": {
         "ref": {
@@ -59,25 +49,35 @@
       "name": "computer",
       "input": {
         "action": "type",
-        "coordinate": null,
-        "text": "東京タワー",
-        "modifiers": null,
-        "ref": null,
-        "region": null,
-        "start_coordinate": null,
-        "duration": null,
-        "scroll_direction": null,
-        "scroll_amount": null,
-        "repeat": null
+        "text": "東京タワー"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "combobox",
+            "type": "search",
+            "name": "Wikipedia内を検索"
+          },
+          "full": {
+            "tag": "input",
+            "role": "combobox",
+            "type": "search",
+            "name": "Wikipedia内を検索",
+            "section": "form",
+            "under": "",
+            "near": ""
+          }
+        }
       },
       "expect": {
         "query": {
-          "selector": "input[name=\"search\"]",
+          "selector": "input[type=search]",
           "count": 2
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 2587
+      "on_fail": "ask"
     },
     {
       "name": "computer",
@@ -93,12 +93,12 @@
           "observed": 318
         },
         "query": {
-          "selector": "#ca-history a",
-          "count": 1
+          "selector": "#firstHeading",
+          "count": 1,
+          "text": "東京タワー"
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 16484
+      "on_fail": "ask"
     },
     {
       "name": "computer",
@@ -127,18 +127,25 @@
       },
       "expect": {
         "url": "https://ja.wikipedia.org/w/index.php?title=%E6%9D%B1%E4%BA%AC%E3%82%BF%E3%83%AF%E3%83%BC&action=history",
-        "query": {
-          "selector": "#pagehistory li",
-          "count": 50
-        },
         "search": {
           "pattern": "変更履歴",
           "min": 1,
           "observed": 1
-        }
+        },
+        "query": [
+          {
+            "selector": "#firstHeading",
+            "count": 1,
+            "text": "「東京タワー」の変更履歴"
+          },
+          {
+            "selector": "#pagehistory",
+            "count": 1,
+            "text": "2026年10月1日 (木) 最新前 2026年10月1日 (木) 23:17 エヴァンズの秘書 会話 投稿記録 m 188,781バイト +14 →観光施設としての東京タワー: 「エレベーター」「エレベータ」の混在を「エレベーター」に統一・修正（リンクは「エレベーター」にされており、また「エレベーターホール」という記述もあり、「エレベータ」では整合性が取れない）。他。 取り消し 最新前 2026年10月1日 (木) 18:58 Hirdragon 会話 投稿記録 188,767バイト −103 →展望台 取り消し 2026年9月19日 (土) 最新前 2026年9月19日 (土) 23:49…(+7992)"
+          }
+        ]
       },
-      "on_fail": "ask",
-      "settle_ms": 5535
+      "on_fail": "ask"
     }
   ]
 }

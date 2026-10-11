@@ -39,7 +39,8 @@ from typing import Any, Callable, Optional
 from . import secrets
 from .descriptor import Unresolved, build, resolve
 from .model import Flow, Step, resolve_vars, set_ref
-from .recorder import query_first_text, query_total, refused, search_hits
+from .recorder import (query_first_attrs, query_first_text, query_total,
+                       refused, search_hits)
 
 PASSED, FAILED, NEEDS = "passed", "failed", "needs_decision"
 
@@ -440,8 +441,11 @@ class Run:
             if got != exp["url"]:
                 return f'url is {got!r}, recorded {exp["url"]!r}'
         for s in _as_list(exp.get("search")):
-            res = await self.call("search_page",
-                                  {"tabId": self.cur_tab, "pattern": s["pattern"]})
+            _call = {"tabId": self.cur_tab, "pattern": s["pattern"]}
+            for _k in ("regex", "css_scope", "case_sensitive"):
+                if s.get(_k):
+                    _call[_k] = s[_k]
+            res = await self.call("search_page", _call)
             hits = search_hits(str(res))
             if hits is None:
                 return (f'could not read a hit count out of search_page for '
@@ -459,9 +463,10 @@ class Run:
                 return (f'search_page({s["pattern"]!r}) found {hits}, '
                         f'recorded at least {s["min"]}')
         for q in _as_list(exp.get("query")):
-            res = await self.call("query_elements",
-                                  {"tabId": self.cur_tab, "selector": q["selector"],
-                                   "max_results": 1})
+            _qc = {"tabId": self.cur_tab, "selector": q["selector"], "max_results": 1}
+            if q.get("attrs"):
+                _qc["attributes"] = sorted(q["attrs"])
+            res = await self.call("query_elements", _qc)
             tot = query_total(str(res))
             if tot is None:
                 return (f'could not read a total out of query_elements for '
@@ -477,6 +482,16 @@ class Run:
                     return (f'query_elements({q["selector"]!r}) reads '
                             f'{(got if got is not None else "(no text)")!r}, '
                             f'recorded {q["text"]!r}')
+            # AND THE ATTRIBUTES THAT WERE READ. Where `text` covers an element
+            # that shows its state, this covers the one that holds it -- a
+            # field's `value` is an attribute, not a text node, so without this
+            # every typing step asserts only that the field exists.
+            if q.get("attrs") and tot:
+                got = query_first_attrs(str(res))
+                for _k, _v in q["attrs"].items():
+                    if got.get(_k) != _v:
+                        return (f'query_elements({q["selector"]!r}) reads '
+                                f'{_k}={got.get(_k)!r}, recorded {_v!r}')
             # `count` is the recorded observation and must match exactly;
             # `min` is the hand-relaxed form for a list that legitimately grows.
             if "count" in q and tot != q["count"]:

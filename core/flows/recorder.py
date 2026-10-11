@@ -127,6 +127,47 @@ def query_first_text(result: str) -> Optional[str]:
     return txt if isinstance(txt, str) and txt.strip() else None
 
 
+# The attribute row anchor is DELIBERATELY not `_ROW`: that one requires a
+# quoted text immediately after the tag, and an <input> prints `(no text)` --
+# which is exactly the element whose attributes matter most here.
+_ROW_ANY = re.compile(r'(?m)^\s*<[^>\n]*>')
+_ATTR = re.compile(r'\s([A-Za-z_][\w:.@-]*)=(?=")')
+
+
+def query_first_attrs(result: str) -> dict:
+    """The ATTRIBUTES query_elements printed for its first element.
+
+    D1 made a typed value readable -- `attributes=["value"]` on a field holding
+    typed text returns `value="Ada Lovelace"` -- and D17 made a single-match
+    query keep what it read. The two were built separately and did not meet:
+    D17 keeps `text`, and an <input> HAS no text, so its value arrived in the
+    ATTRIBUTES and the recording stored existence. Measured in round two of the
+    #63 eval: all three typing steps on the httpbin form recorded
+    `{"selector": "input[name=custname]", "count": 1}`, which is true whether or
+    not anything was typed, while the agent had the value in hand twice over.
+    """
+    m = _ROW_ANY.search(result or "")
+    if not m:
+        return {}
+    line = (result[m.end():].split("\n") or [""])[0]
+    # skip the element's own text, which the row prints first
+    dec = json.JSONDecoder()
+    try:
+        _txt, off = dec.raw_decode(line)
+        line = line[off:]
+    except ValueError:
+        pass
+    out: dict = {}
+    for am in _ATTR.finditer(line):
+        try:
+            val, _ = dec.raw_decode(line[am.end():])
+        except ValueError:
+            continue
+        if isinstance(val, str):
+            out[am.group(1)] = val
+    return out
+
+
 def query_total(result: str) -> Optional[int]:
     """Matches, or None when the answer could not be read at all.
 
@@ -354,13 +395,47 @@ class Recorder:
         # Said as a warning, never as a refusal -- "already true" is not always
         # wrong (an idempotent step legitimately leaves state alone), and the
         # recorder does not get to overrule the person who drove it.
+        # AN ABSENCE IS ONLY EVIDENCE IF THE THING WAS SEEN. D13 made a zero a
+        # real answer so a disappearance could be asserted -- and the same
+        # change promoted every MISTYPED search during recording to a
+        # permanent contract. Measured in round two: an agent searched the
+        # straight-apostrophe form of a sentence the page renders with a curly
+        # one, got nothing, corrected itself, and the flow recorded
+        # `{"pattern": "…you're…", "absent": true}` beside the working check.
+        # A typo became a requirement that the typo must never appear.
+        #
+        # #57's rule separates them and needs no new signal: `.modal.show` was
+        # observed at 1 BEFORE the Close, so its 0 afterwards witnesses a real
+        # disappearance; the mistyped pattern was never seen non-zero anywhere,
+        # so its absence witnesses nothing. Dropped and NAMED, never silently:
+        # an agent that really meant it can re-record deliberately.
+        unwitnessed: list = []
+        for _n, (idx, st) in enumerate(zip(action_ix, kept)):
+            if st.expect:
+                ever = self._checks([r for r in live[:idx] if not r["mutates"]])
+                # ASKED EXPLICITLY, because `1 in (True, 0)` is True in Python
+                # -- a terser emptiness test read a count of ONE as a miss and
+                # dropped the very disappearance it was written to keep.
+                seen = {k for k, v in self._check_items(ever).items()
+                        if not self._is_empty(k, v)}
+                drop = [key for key, val in self._check_items(st.expect).items()
+                        if self._is_empty(key, val) and key not in seen]
+                for key in drop:
+                    unwitnessed.append((_n, key[0], key[1]))
+                    self._drop_check(st.expect, key)
         for _n, (idx, st) in enumerate(zip(action_ix, kept)):
             if not st.expect:
                 continue
             prior = self._checks_before(live, idx)
-            same = [k for k, v in st.expect.items() if k in prior and prior[k] == v]
+            # PER CHECK, not per KIND. Since a step may now carry several
+            # checks of one kind, comparing `expect["query"]` wholesale missed
+            # a step where only one of them was hollow -- and reporting a
+            # partial hollow as "this flow would pass even if the step did
+            # nothing" asserts more than is known (#63 round two, R2-D4).
+            now, before = self._check_items(st.expect), self._check_items(prior)
+            same = sorted(k for k, v in now.items() if k in before and before[k] == v)
             if same:
-                hollow.append((_n, ", ".join(sorted(same))))
+                hollow.append((_n, ", ".join(x[0] for x in same), len(same) == len(now)))
 
         for st in kept:
             if st.expect:
@@ -402,6 +477,7 @@ class Recorder:
             "vars": sorted(variables),
             "require": sorted(flow.require),
             "hollow": hollow,
+            "unwitnessed_absence": unwitnessed,
             "notes": self.notes,
         }
         return flow, report
@@ -469,18 +545,31 @@ class Recorder:
                     _put(exp, "url", m.group(1))
             elif name == "search_page":
                 hits = search_hits(res)
-                pat = r["input"].get("pattern")
+                inp = r["input"] or {}
+                pat = inp.get("pattern")
+                # THE FLAGS ARE PART OF THE ASSERTION, not of the call. A regex
+                # recorded and replayed as a literal can never match: measured
+                # in round two of #63, an agent asserted
+                # `Showing 1[–-]50 of [\d,]+ results` with regex=True, got one
+                # match, and the replay searched that string literally and
+                # failed the flow. The agent reached for a regex deliberately,
+                # because the header carries a COUNT that drifts -- so dropping
+                # the flag silently downgrades the robust assertion to the
+                # brittle one. `css_scope` was dropped the same way and made a
+                # scoped check pass for the wrong reason, over the whole page.
+                _flags = {k: inp[k] for k in ("regex", "css_scope", "case_sensitive")
+                          if inp.get(k)}
                 if hits == 0 and pat:
                     # ABSENCE, asserted as absence. The agent looked and it was
                     # not there, which is half of what a UI test checks.
-                    _put(_s, pat, {"pattern": pat, "absent": True})
+                    _put(_s, pat, {"pattern": pat, "absent": True, **_flags})
                 elif hits and pat:
                     # PRESENCE, not the exact tally. A page-wide text search is
                     # genuinely volatile -- a toast saying "Created X"
                     # legitimately turns 1 hit into 2 -- and the question this
                     # check is really asking is "is it there". The observed
                     # count is kept for the reader, not asserted on.
-                    _put(_s, pat, {"pattern": pat, "min": 1, "observed": hits})
+                    _put(_s, pat, {"pattern": pat, "min": 1, "observed": hits, **_flags})
             elif name == "query_elements":
                 tot = query_total(res)
                 sel = r["input"].get("selector")
@@ -501,6 +590,13 @@ class Recorder:
                         txt = query_first_text(res)
                         if txt:
                             chk["text"] = txt
+                        # AND THE ATTRIBUTES, which is where a typed value
+                        # lives. An <input> has no text, so `text` alone left
+                        # every typing step asserting existence -- the one
+                        # action a UI test performs most often (#63 round two).
+                        att = query_first_attrs(res)
+                        if att:
+                            chk["attrs"] = att
                     _put(_q, sel, chk)
         if _s:
             exp["search"] = list(_s.values()) if len(_s) > 1 else next(iter(_s.values()))
@@ -564,6 +660,32 @@ class Recorder:
                 else:
                     first[key] = val
         return int(max(0.0, best - base) * 1000) if best else 0
+
+    @staticmethod
+    def _is_empty(key, val) -> bool:
+        """Does this check say the thing was NOT there?"""
+        if key[0] == "search":
+            return val[0] is True                       # absent=True
+        if key[0] == "query":
+            return isinstance(val[0], int) and val[0] == 0 and val[0] is not True
+        return False
+
+    @staticmethod
+    def _drop_check(exp: dict, key) -> None:
+        kind, which = key[0], key[1]
+        if kind == "url":
+            exp.pop("url", None)
+            return
+        cur = exp.get(kind)
+        if cur is None:
+            return
+        field = "pattern" if kind == "search" else "selector"
+        items = [c for c in (cur if isinstance(cur, list) else [cur])
+                 if c.get(field) != which]
+        if not items:
+            exp.pop(kind, None)
+        else:
+            exp[kind] = items if len(items) > 1 else items[0]
 
     @staticmethod
     def _check_items(exp: dict) -> dict:

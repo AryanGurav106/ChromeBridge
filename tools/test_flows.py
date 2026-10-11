@@ -72,6 +72,10 @@ def E(mmid, tag="button", role="", name="", type_="", placeholder="",
     }
 
 
+def _as_l(v):
+    return [] if v is None else (list(v) if isinstance(v, list) else [v])
+
+
 def main():
     # ---------------------------------------------------------------- build
     page = [
@@ -989,14 +993,26 @@ async def record_and_replay():
     ents = [E(70, "button", name="Close")]
     rec = Recorder("gone", FakeBridge(ents).entries_fn)
     ci = {"ref": "ref_70", "tabId": 1}
-    ct = await rec.before("computer", ci)
+    # SEEN FIRST, which is what makes the later zero evidence rather than a
+    # typo. The real recording did exactly this -- `.modal.show` was observed
+    # at 1 on the step that OPENED the dialog -- and the first version of this
+    # fixture did not, so it stopped passing the moment the unwitnessed-absence
+    # rule landed. That is the fixture being unrealistic, not the rule.
+    oi = {"ref": "ref_70", "tabId": 1}
+    ot = await rec.before("computer", oi)          # the OPEN click
+    rec.after("computer", oi, "clicked", ot)
+    rec.after("query_elements", {"selector": ".modal.show", "tabId": 1},
+              "1 element(s) match '.modal.show'", {})
+    rec.after("search_page", {"pattern": "reading this text", "tabId": 1},
+              '1 match(es) for "reading this text"\n  <p ref_9> ...', {})
+    ct = await rec.before("computer", ci)          # the CLOSE click
     rec.after("computer", ci, "clicked", ct)
     rec.after("query_elements", {"selector": ".modal.show", "tabId": 1},
               "No element matches '.modal.show' in the rendered document.", {})
     rec.after("search_page", {"pattern": "reading this text", "tabId": 1},
               'No match for "reading this text". 11 text block(s) were searched.', {})
     fgone, _ = rec.compile()
-    gexp = fgone.steps[0].expect or {}
+    gexp = fgone.steps[1].expect or {}
     check("FE1 an observation that something is GONE becomes an assertion — "
           "zero was falsy, so a confirmed disappearance was thrown away and "
           "the step saved with nothing that could fail",
@@ -1004,19 +1020,65 @@ async def record_and_replay():
           and (gexp.get("search") or {}).get("absent") is True,
           json.dumps(gexp))
 
-    fb_still = FakeBridge(ents)
-    fb_still.query_total, fb_still.search_hits = 3, 2
+    # The flow now has TWO steps -- open, then close -- so a fake with one
+    # fixed answer cannot model it: step 0 must see the modal and step 1 must
+    # not. This answers from a per-selector sequence, which is what "it was
+    # there, then it was gone" actually looks like.
+    class SeqBridge(FakeBridge):
+        def __init__(self, entries, counts, hits):
+            super().__init__(entries)
+            self.counts, self.hits = list(counts), list(hits)
+
+        async def call(self, tool, inp):
+            self.calls.append((tool, dict(inp)))
+            if tool == "query_elements":
+                n = self.counts[0] if len(self.counts) == 1 else self.counts.pop(0)
+                return "%d element(s) match %r" % (n, inp.get("selector")) if n \
+                    else "No element matches %r in the rendered document." % inp.get("selector")
+            if tool == "search_page":
+                n = self.hits[0] if len(self.hits) == 1 else self.hits.pop(0)
+                return ('%d match(es) for "%s"\n  <p ref_9> ...' % (n, inp.get("pattern"))
+                        if n else 'No match for "%s". 9 text block(s) were searched.'
+                        % inp.get("pattern"))
+            return await super().call(tool, inp)
+
+    fb_still = SeqBridge(ents, counts=[1, 3], hits=[1, 2])
     rstill = await start(fgone, 1, fb_still.call, fb_still.entries_fn)
     check("FE1b ...and it FAILS when the thing is still there, which is the "
           "whole point of recording a disappearance",
-          rstill["status"] == FAILED and "found NONE" in rstill["reason"],
+          rstill["status"] == FAILED
+          and ("found NONE" in rstill["reason"] or "counted 3" in rstill["reason"]),
           f"{rstill['status']}: {rstill['reason'][:80]}")
 
-    fb_gone = FakeBridge(ents)
-    fb_gone.query_total, fb_gone.search_hits = 0, 0
+    fb_gone = SeqBridge(ents, counts=[1, 0], hits=[1, 0])
     rg = await start(fgone, 1, fb_gone.call, fb_gone.entries_fn)
     check("FE1c CONTROL: and PASSES when it really is gone",
           rg["status"] == PASSED, f"{rg['status']}: {rg['reason'][:70]}")
+
+    # FE1d -- AND THE CONTROL that an absence nobody ever saw is NOT recorded.
+    # D13's fix promoted every mistyped search during recording to a permanent
+    # contract: measured in round two, an agent searched the straight-apostrophe
+    # form of a sentence the page renders curly, got nothing, corrected itself,
+    # and the flow kept `{"pattern": "…you're…", "absent": true}` for ever.
+    rec_t = Recorder("typo", FakeBridge(ents).entries_fn)
+    ti2 = {"ref": "ref_70", "tabId": 1}
+    tt2 = await rec_t.before("computer", ti2)
+    rec_t.after("computer", ti2, "clicked", tt2)
+    rec_t.after("search_page", {"pattern": "you're reading", "tabId": 1},
+                'No match for "you\'re reading". 11 text block(s) were searched.', {})
+    rec_t.after("search_page", {"pattern": "you\u2019re reading", "tabId": 1},
+                '1 match(es) for "you\u2019re reading"\n  <p ref_9> ...', {})
+    ftypo, rep_t = rec_t.compile()
+    _pats = [c["pattern"] for c in _as_l((ftypo.steps[0].expect or {}).get("search"))]
+    check("FE1d CONTROL: an absence of something never SEEN is not an assertion — "
+          "a mistyped search during recording must not become a contract",
+          "you're reading" not in _pats and "you\u2019re reading" in _pats,
+          f"recorded patterns={_pats}")
+    check("FE1e ...and the drop is NAMED, so an agent that really meant it can "
+          "re-record deliberately",
+          any(u[1] == "search" and u[2] == "you're reading"
+              for u in (rep_t.get("unwitnessed_absence") or [])),
+          f"unwitnessed={rep_t.get('unwitnessed_absence')}")
 
     # FE2 -- the text that was read is kept, so a CONTENT check does not
     # degrade into an existence check.
@@ -1034,15 +1096,20 @@ async def record_and_replay():
           json.dumps(pexp))
 
     wrong = EvalBridge(ents, [("query_elements", "#combo1",
-                               '1 element(s) match \'#combo1\':\n  <div ref_9> "Choose a Fruit"')])
+                               '1 element(s) match \'#combo1\':\n'
+                               '  <div ref_9> "Choose a Fruit" aria-expanded="false"')])
     rw = await start(fpick, 1, wrong.call, wrong.entries_fn)
     check("FE2b ...and the step FAILS when the element still reads what it "
           "read before the action — the exact shape that passed in the eval",
           rw["status"] == FAILED and "Durian" in rw["reason"],
           f"{rw['status']}: {rw['reason'][:90]}")
 
+    # The canned reply must carry the SAME attributes the recording read, or
+    # this control fails for a fixture reason rather than a product one -- the
+    # replay now asks for them explicitly, and a real tool returns them.
     right = EvalBridge(ents, [("query_elements", "#combo1",
-                               '1 element(s) match \'#combo1\':\n  <div ref_9> "Durian"')])
+                               '1 element(s) match \'#combo1\':\n'
+                               '  <div ref_9> "Durian" aria-expanded="false"')])
     rr = await start(fpick, 1, right.call, right.entries_fn)
     check("FE2c CONTROL: and passes when it reads what was recorded",
           rr["status"] == PASSED, f"{rr['status']}: {rr['reason'][:70]}")
@@ -1296,9 +1363,42 @@ async def record_and_replay():
         return rr.compile()
 
     _f, _rep = await _hollow("4 element(s) match 'tr'")
+    # THE INVARIANT IS WHAT IS REPORTED, not the tuple's arity. The first
+    # version asserted `== [(0, "query")]` and broke when the report grew the
+    # all-or-some flag #63/R2-D4 needed -- while the thing it exists to pin was
+    # still correct. Same rewrite as #30's TR8d and #55's FV6c.
+    _h = _rep.get("hollow") or []
     check("FW1 an assertion that was already true before the step is reported as "
           "witnessing nothing",
-          _rep.get("hollow") == [(0, "query")], f"hollow={_rep.get('hollow')}")
+          len(_h) == 1 and _h[0][0] == 0 and "query" in _h[0][1],
+          f"hollow={_h}")
+    check("FW1b ...and it says EVERY check on that step was hollow, which is what "
+          "licenses the sentence 'this flow would pass even if the step did nothing'",
+          len(_h) == 1 and _h[0][2] is True, f"hollow={_h}")
+
+    # FW4 -- THE PARTIAL CASE, which is the one #63 found. Since a step may
+    # carry several checks, one hollow check no longer means the step is
+    # unwitnessed: a Boxsy drill-down folded in a url that a side panel cannot
+    # change, while its `[role=dialog]` check failed outright if the panel
+    # never opened. Reporting that as "the flow would pass even if the step did
+    # nothing" asserts more than is known -- #33's class, inside the warning
+    # built to catch #33's class.
+    fbp = FakeBridge([E(70, "button", name="Open")])
+    rp = Recorder("partial", fbp.entries_fn)
+    pbi = {"ref": "ref_70", "tabId": 1}
+    # BEFORE: the url is already what the step will "produce", the dialog is not
+    rp.after("get_url", {"tabId": 1}, '{"url": "https://app.test/x", "title": "t"}', {})
+    pbt = await rp.before("computer", pbi)
+    rp.after("computer", pbi, "clicked", pbt)
+    rp.after("get_url", {"tabId": 1}, '{"url": "https://app.test/x", "title": "t"}', {})
+    rp.after("query_elements", {"selector": "[role=dialog]", "tabId": 1},
+             "1 element(s) match '[role=dialog]'", {})
+    _fp2, _rp2 = rp.compile()
+    _hp = _rp2.get("hollow") or []
+    check("FW4 a step whose url check is hollow but whose OTHER check witnesses it "
+          "is reported as partial, not as a flow that cannot fail",
+          len(_hp) == 1 and "url" in _hp[0][1] and _hp[0][2] is False,
+          f"hollow={_hp}")
 
     # THE CONTROL THAT MAKES IT WORTH HAVING. A check that CHANGED because of the
     # action is exactly what a postcondition should be, and warning there would be

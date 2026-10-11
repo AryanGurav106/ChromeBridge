@@ -3585,7 +3585,17 @@ async def browser_batch(
         _after = await _fp(_tab, _all_mmids)
         _before = _seen_tabs.get(_tab)
         if _after and _before:
-            if _after.get("url") != _before.get("url"):
+            # FRAGMENT-INSENSITIVE. HTML defines a fragment change as a
+            # SAME-DOCUMENT navigation: the document is not replaced, so no ref
+            # can have been invalidated by it. Comparing raw strings made two
+            # queued clicks on a docs table-of-contents get SKIPPED as stale
+            # when nothing had moved -- same page, same anchors, same mmids,
+            # and re-issuing the identical refs a batch later worked (#63 round
+            # two). Safe for hash-routed SPAs too: the question a staleness
+            # guard asks is whether the refs still resolve, and #51's
+            # ref-resolution check answers that on its own.
+            _nofrag = lambda u: str(u or "").split("#", 1)[0]
+            if _nofrag(_after.get("url")) != _nofrag(_before.get("url")):
                 _stale_why = f"the page navigated to {_after.get('url')}"
             else:
                 # ASK WHETHER THE NEXT STEP'S REFS STILL RESOLVE, rather than
@@ -3870,11 +3880,38 @@ async def record_flow(
         # without opening the file. The answer costs one line, and in that eval
         # it would have shown the unasserted steps were the TYPING ones every
         # time -- the pattern no summary number made visible.
-        _bare = [f'{i} {st.name}' for i, st in enumerate(flow.steps) if not st.expect]
+        # NAMED BY WHAT IT ACTS ON, not only by index and tool. A flow with
+        # three `form_input` steps and three `computer` steps told an agent
+        # "step 4 form_input, step 5 computer" and the agent disputed it --
+        # correctly believing it HAD observed after the two it had in mind,
+        # which were different steps (#63 round two). An index is not a handle
+        # into your own transcript; the target already is, and it is right
+        # there in the descriptor.
+        def _names(st):
+            out = []
+            for t in (st.targets or {}).values():
+                d = t.get("desc") or {}
+                lbl = d.get("name") or (t.get("alt") or {}).get("href") or d.get("tag")
+                if lbl:
+                    out.append(str(lbl))
+            if not out and st.name == "navigate":
+                out.append(str((st.input or {}).get("url", ""))[:48])
+            return " + ".join(out[:2])
+
+        _bare = [f'{i} {st.name}' + (f' on "{_n}"' if (_n := _names(st)) else "")
+                 for i, st in enumerate(flow.steps) if not st.expect]
         lines = [f'Saved {path} — {report["steps"]} step(s), '
                  f'{report["asserted"]} with assertions.',
                  f'  dropped: {report["dropped_errors"]} failed call(s), '
                  f'{report["dropped_observations"]} observation(s) folded in or discarded.']
+        for _n2, _kind, _which in (report.get("unwitnessed_absence") or []):
+            lines.append(
+                f'  NOT recorded: step {_n2}\'s {_kind} for {_which!r} found NOTHING, '
+                f'and nothing earlier in this recording ever found it. An absence is '
+                f'only evidence if the thing was there first, so this one was dropped '
+                f'rather than compiled into a requirement that it stay missing — '
+                f'which is what a mistyped pattern would become. Observe it present '
+                f'BEFORE the step and re-record if you meant it.')
         if _bare:
             lines.append(
                 f'  NOT asserted, so a regression in these steps cannot be caught: '
@@ -3891,12 +3928,16 @@ async def record_flow(
         # driving, and one more observation after the action settles it. A
         # warning, not a refusal: an idempotent step legitimately leaves state
         # alone, and the recorder does not get to overrule the person who drove it.
-        for _st, _ks in report.get("hollow") or []:
+        for _n, _what, _all in report.get("hollow") or []:
             lines.append(
-                f"  WARNING: step {_st}'s {_ks} assertion was ALREADY TRUE before "
-                f"that step ran, so it does not witness it — this flow would pass "
-                f"even if the step did nothing. Check the step actually worked, "
-                f"then re-record with an observation that changes because of it.")
+                f'  WARNING: step {_n}\'s {_what} assertion was ALREADY TRUE before '
+                f'that step ran, so it does not witness it. '
+                + (f'EVERY check on that step was — this flow would pass even if the '
+                   f'step did nothing. Check the step actually worked, then re-record '
+                   f'with an observation that changes because of it.'
+                   if _all else
+                   f'Its OTHER checks do still witness the step, so the flow is not '
+                   f'hollow — that one check simply adds nothing and can go.'))
         if report["asserted"] == 0:
             lines.append("  NOTE: no step carries an assertion, so this flow can only "
                          "detect a control going missing, not a wrong RESULT. Re-record "

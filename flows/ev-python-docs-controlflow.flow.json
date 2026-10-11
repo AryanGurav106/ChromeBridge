@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "ev-python-docs-controlflow",
   "origin": "https://docs.python.org",
-  "recorded_at": "2026-10-11T20:27:32",
+  "recorded_at": "2026-10-11T21:49:08",
   "viewport": {
     "width": 1512,
     "height": 812
@@ -16,21 +16,15 @@
       "input": {
         "url": "https://docs.python.org/3/tutorial/controlflow.html"
       },
+      "expect": {
+        "url": "https://docs.python.org/3/tutorial/controlflow.html"
+      },
       "on_fail": "ask"
     },
     {
       "name": "computer",
       "input": {
-        "action": "left_click",
-        "coordinate": null,
-        "text": null,
-        "modifiers": null,
-        "region": null,
-        "start_coordinate": null,
-        "duration": null,
-        "scroll_direction": null,
-        "scroll_amount": null,
-        "repeat": null
+        "action": "left_click"
       },
       "targets": {
         "ref": {
@@ -55,22 +49,12 @@
       "expect": {
         "url": "https://docs.python.org/3/tutorial/controlflow.html#the-range-function"
       },
-      "on_fail": "ask",
-      "settle_ms": 1637
+      "on_fail": "ask"
     },
     {
       "name": "computer",
       "input": {
-        "action": "left_click",
-        "coordinate": null,
-        "text": null,
-        "modifiers": null,
-        "region": null,
-        "start_coordinate": null,
-        "duration": null,
-        "scroll_direction": null,
-        "scroll_amount": null,
-        "repeat": null
+        "action": "left_click"
       },
       "targets": {
         "ref": {
@@ -93,24 +77,19 @@
         }
       },
       "expect": {
-        "url": "https://docs.python.org/3/tutorial/controlflow.html#match-statements"
+        "url": "https://docs.python.org/3/tutorial/controlflow.html#match-statements",
+        "search": {
+          "pattern": "match statement takes an expression",
+          "min": 1,
+          "observed": 1
+        }
       },
-      "on_fail": "ask",
-      "settle_ms": 1698
+      "on_fail": "ask"
     },
     {
       "name": "computer",
       "input": {
-        "action": "left_click",
-        "coordinate": null,
-        "text": null,
-        "modifiers": null,
-        "region": null,
-        "start_coordinate": null,
-        "duration": null,
-        "scroll_direction": null,
-        "scroll_amount": null,
-        "repeat": null
+        "action": "left_click"
       },
       "targets": {
         "ref": {
@@ -135,8 +114,7 @@
       "expect": {
         "url": "https://docs.python.org/3/tutorial/controlflow.html#defining-functions"
       },
-      "on_fail": "ask",
-      "settle_ms": 1629
+      "on_fail": "ask"
     },
     {
       "name": "fill_form",
@@ -192,18 +170,17 @@
       },
       "expect": {
         "url": "https://docs.python.org/3/search.html?q=enumerate",
-        "query": {
-          "selector": "#search-results ul.search li",
-          "count": 58
-        },
         "search": {
-          "pattern": "Built-in functions",
+          "pattern": "Search Results",
           "min": 1,
-          "observed": 4
+          "observed": 1
+        },
+        "query": {
+          "selector": "#search-results li",
+          "count": 58
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 19520
+      "on_fail": "ask"
     }
   ]
 }

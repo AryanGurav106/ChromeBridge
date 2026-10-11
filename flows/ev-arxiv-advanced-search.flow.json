@@ -2,14 +2,13 @@
   "schema": 1,
   "name": "ev-arxiv-advanced-search",
   "origin": "https://arxiv.org",
-  "recorded_at": "2026-10-11T20:06:55",
+  "recorded_at": "2026-10-11T21:31:09",
   "viewport": {
     "width": 1512,
     "height": 812
   },
   "vars": {
-    "search_term": "quantum computing",
-    "field_to_search": "Title"
+    "search_term": "quantum computing"
   },
   "steps": [
     {
@@ -46,46 +45,11 @@
       },
       "expect": {
         "query": {
-          "selector": "input#terms-0-term",
+          "selector": "input[name=\"terms-0-term\"]:not(:placeholder-shown)",
           "count": 1
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 22516
-    },
-    {
-      "name": "form_input",
-      "input": {
-        "value": "{{field_to_search}}"
-      },
-      "targets": {
-        "ref": {
-          "level": 1,
-          "desc": {
-            "tag": "select",
-            "role": "",
-            "type": "",
-            "name": "Field to search"
-          },
-          "full": {
-            "tag": "select",
-            "role": "",
-            "type": "",
-            "name": "Field to search",
-            "section": "form",
-            "under": "",
-            "near": ""
-          }
-        }
-      },
-      "expect": {
-        "query": {
-          "selector": "select#terms-0-field option:checked",
-          "count": 1
-        }
-      },
-      "on_fail": "ask",
-      "settle_ms": 10
+      "on_fail": "ask"
     },
     {
       "name": "form_input",
@@ -114,12 +78,11 @@
       },
       "expect": {
         "query": {
-          "selector": "input#classification-computer_science:checked",
+          "selector": "input[name=\"classification-computer_science\"]:checked",
           "count": 1
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 7
+      "on_fail": "ask"
     },
     {
       "name": "computer",
@@ -150,9 +113,9 @@
         }
       },
       "expect": {
-        "url": "https://arxiv.org/search/advanced",
+        "url": "https://arxiv.org/search/advanced?advanced=&terms-0-operator=AND&terms-0-term=quantum+computing&terms-0-field=title&classification-computer_science=y&classification-physics_archives=all&classification-include_cross_list=include&date-filter_by=all_dates&date-year=&date-from_date=&date-to_date=&date-date_type=submitted_date&abstracts=show&size=50&order=-announced_date_first",
         "search": {
-          "pattern": "Showing",
+          "pattern": "Showing 1[–-]50 of [\\d,]+ results",
           "min": 1,
           "observed": 1
         },
@@ -161,8 +124,7 @@
           "count": 50
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 20319
+      "on_fail": "ask"
     }
   ]
 }

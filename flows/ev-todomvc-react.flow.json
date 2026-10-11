@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "ev-todomvc-react",
   "origin": "https://todomvc.com",
-  "recorded_at": "2026-10-11T20:14:44",
+  "recorded_at": "2026-10-11T21:45:01",
   "viewport": {
     "width": 1512,
     "height": 812
@@ -16,6 +16,33 @@
       "name": "navigate",
       "input": {
         "url": "https://todomvc.com/examples/react/dist/"
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "New Todo Input"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "New Todo Input",
+            "section": "header",
+            "under": "todos",
+            "near": ""
+          }
+        }
       },
       "on_fail": "ask"
     },
@@ -50,25 +77,43 @@
       "name": "computer",
       "input": {
         "action": "key",
-        "coordinate": null,
-        "text": "Enter",
-        "modifiers": null,
-        "ref": null,
-        "region": null,
-        "start_coordinate": null,
-        "duration": null,
-        "scroll_direction": null,
-        "scroll_amount": null,
-        "repeat": null
+        "text": "Enter"
       },
       "expect": {
         "query": {
           "selector": ".todo-list li",
-          "count": 1
+          "count": 1,
+          "text": "{{new_todo_input}}"
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 2284
+      "on_fail": "ask"
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "New Todo Input"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "text",
+            "name": "New Todo Input",
+            "section": "header",
+            "under": "todos",
+            "near": ""
+          }
+        }
+      },
+      "on_fail": "ask"
     },
     {
       "name": "form_input",
@@ -101,39 +146,25 @@
       "name": "computer",
       "input": {
         "action": "key",
-        "coordinate": null,
-        "text": "Enter",
-        "modifiers": null,
-        "ref": null,
-        "region": null,
-        "start_coordinate": null,
-        "duration": null,
-        "scroll_direction": null,
-        "scroll_amount": null,
-        "repeat": null
+        "text": "Enter"
       },
       "expect": {
+        "search": {
+          "pattern": "{{new_todo_input_2}}",
+          "min": 1,
+          "observed": 1
+        },
         "query": {
           "selector": ".todo-list li",
           "count": 2
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 1906
+      "on_fail": "ask"
     },
     {
       "name": "computer",
       "input": {
-        "action": "left_click",
-        "coordinate": null,
-        "text": null,
-        "modifiers": null,
-        "region": null,
-        "start_coordinate": null,
-        "duration": null,
-        "scroll_direction": null,
-        "scroll_amount": null,
-        "repeat": null
+        "action": "left_click"
       },
       "targets": {
         "ref": {
@@ -152,27 +183,23 @@
         }
       },
       "expect": {
+        "search": {
+          "pattern": "1 item left",
+          "min": 1,
+          "observed": 1
+        },
         "query": {
           "selector": ".todo-list li.completed",
-          "count": 1
+          "count": 1,
+          "text": "{{new_todo_input}}"
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 2639
+      "on_fail": "ask"
     },
     {
       "name": "computer",
       "input": {
-        "action": "left_click",
-        "coordinate": null,
-        "text": null,
-        "modifiers": null,
-        "region": null,
-        "start_coordinate": null,
-        "duration": null,
-        "scroll_direction": null,
-        "scroll_amount": null,
-        "repeat": null
+        "action": "left_click"
       },
       "targets": {
         "ref": {
@@ -202,18 +229,25 @@
       },
       "expect": {
         "url": "https://todomvc.com/examples/react/dist/#/completed",
+        "search": [
+          {
+            "pattern": "{{new_todo_input}}",
+            "min": 1,
+            "observed": 1
+          },
+          {
+            "pattern": "1 item left",
+            "min": 1,
+            "observed": 1
+          }
+        ],
         "query": {
           "selector": ".todo-list li",
-          "count": 1
-        },
-        "search": {
-          "pattern": "1 item left",
-          "min": 1,
-          "observed": 1
+          "count": 1,
+          "text": "{{new_todo_input}}"
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 6205
+      "on_fail": "ask"
     }
   ]
 }

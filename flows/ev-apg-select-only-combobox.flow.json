@@ -2,10 +2,10 @@
   "schema": 1,
   "name": "ev-apg-select-only-combobox",
   "origin": "https://www.w3.org",
-  "recorded_at": "2026-10-11T20:24:44",
+  "recorded_at": "2026-10-11T21:24:28",
   "viewport": {
     "width": 1512,
-    "height": 812
+    "height": 868
   },
   "steps": [
     {
@@ -15,12 +15,11 @@
       },
       "expect": {
         "query": {
-          "selector": "[role=combobox], [role=listbox], [role=option]",
+          "selector": "[role=combobox], [role=listbox], [role=listbox] [role=option]",
           "count": 15
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 5821
+      "on_fail": "ask"
     },
     {
       "name": "computer",
@@ -59,11 +58,11 @@
       "expect": {
         "query": {
           "selector": "#combo1[aria-expanded=\"true\"]",
-          "count": 1
+          "count": 1,
+          "text": "Choose a Fruit"
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 2895
+      "on_fail": "ask"
     },
     {
       "name": "computer",
@@ -100,13 +99,18 @@
         }
       },
       "expect": {
+        "search": {
+          "pattern": "Durian",
+          "min": 1,
+          "observed": 1
+        },
         "query": {
-          "selector": "#combo1",
-          "count": 1
+          "selector": "#combo1-7[aria-selected=\"true\"]",
+          "count": 1,
+          "text": "Durian"
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 9346
+      "on_fail": "ask"
     },
     {
       "name": "computer",
@@ -145,11 +149,11 @@
       "expect": {
         "query": {
           "selector": "#combo1[aria-expanded=\"true\"]",
-          "count": 1
+          "count": 1,
+          "text": "Durian"
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 2643
+      "on_fail": "ask"
     },
     {
       "name": "computer",
@@ -186,13 +190,18 @@
         }
       },
       "expect": {
+        "search": {
+          "pattern": "Grape",
+          "min": 1,
+          "observed": 1
+        },
         "query": {
-          "selector": "#combo1",
-          "count": 1
+          "selector": "#combo1-10[aria-selected=\"true\"]",
+          "count": 1,
+          "text": "Grape"
         }
       },
-      "on_fail": "ask",
-      "settle_ms": 4520
+      "on_fail": "ask"
     }
   ]
 }

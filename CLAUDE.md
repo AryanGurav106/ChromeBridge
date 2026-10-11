@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 1016 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 1022 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1016 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1022 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5661,6 +5661,119 @@ granted in the side panel is refused with the same message the agent gets.
     escaping tripwire, which found seven sites on its first run). Live-verified
     through a real Chrome and the real op router: D1, D6, D9, D10, D11, D13.
     Harness, findings and results in `tools/bench_flows/`.
+
+64. **ROUND TWO: THE SAME EIGHT APPS PLUS THREE ON A LIVE STAGING APP, WITH
+    THE FIXES IN.** #63 found 20 defects and fixed 13; AMENDMENT 2 then
+    pre-registered the test of whether they reach a REAL recording, with the
+    prediction that **M1 should get WORSE** -- round one's greens included
+    assertions that could not fail, and making them real should make a flow
+    that silently did nothing start failing. 11 flows recorded, 10 green.
+
+    **THE BEFORE/AFTER IS THE RESULT, not the pass rate.** Round-one artefacts
+    were snapshotted first so the comparison is exact, and the cleanest is the
+    combobox's step 3, where BOTH rounds used the identical selector:
+
+    | | step 3 |
+    |---|---|
+    | round 1 | `{"selector": "#combo1[aria-expanded=\"true\"]", "count": 1}` |
+    | round 2 | same selector, same count, **+ `"text": "Durian"`** |
+
+    Round one's holds whenever the combobox is OPEN, picked or not. Verified
+    against an untouched page, which is what "cannot fail" means:
+    `#combo1` -> `1 element(s) match: <div> "Choose a Fruit"`. The modal's Close
+    step went from `expect: null` to `{".modal.show", count: 0}`. The arXiv
+    flow, round one's only failure, recorded the RESULTS url where it had
+    recorded the page it was navigating away from -- **the agent hit the
+    identical race and quoted #61's IN FLIGHT note back** -- and `settle_ms`
+    collapsed from `[None, 22516, 10, 7, 20319]` to zero.
+
+    **AND THE ROUND FOUND EIGHT MORE, three of them caused by the fixes.**
+    - **A MISTYPED SEARCH BECAME A PERMANENT CONTRACT.** Once a zero is an
+      answer (#63/D13), an agent that searched the straight-apostrophe form of
+      a sentence the page renders curly, got nothing and corrected itself left
+      `{"pattern": "…you're…", "absent": true}` in the flow for ever. #57's
+      rule separates them with no new signal: `.modal.show` was SEEN at 1
+      before the Close, so its 0 after witnesses a disappearance; a pattern
+      never seen non-zero witnesses nothing. Dropped and NAMED.
+    - **MY TWO FIXES WERE DESIGNED SEPARATELY AND DID NOT MEET.** D1 made a
+      typed value readable; D17 kept what a single-match query READ -- and
+      kept `text`. **An `<input>` has no text.** So all three typing steps on
+      the httpbin form recorded `{"selector": "input[name=custname]", "count":
+      1}`, true whether or not anything was typed, while the agent had
+      `value="Ada Lovelace"` in hand twice over. `6 of 7 steps had their
+      postconditions checked` was the best line that flow ever printed and
+      three of the six could not fail.
+    - **A `search_page` ASSERTION KEPT ONLY ITS PATTERN.** An agent asserted
+      `Showing 1[–-]50 of [\d,]+ results` with `regex=True`, and the replay
+      searched that string LITERALLY and failed the flow. The agent reached for
+      a regex deliberately, because the header carries a count that drifts --
+      so the feature silently downgraded the robust assertion to the brittle
+      one. `css_scope` went the same way and made a scoped check pass over the
+      whole page, for the wrong reason.
+    An assertion now keeps WHAT WAS READ: text AND attributes, pattern AND
+    flags. R2-D3 and R2-D6 were one defect wearing two hats.
+
+    **THREE MORE, each a message or a rule asserting past what it knows.**
+    - **The witness warning over-claimed.** A Boxsy drill-down folded in a url
+      a side panel cannot change, and the warning said "this flow would pass
+      even if the step did nothing" while the SAME step asserted
+      `[role=dialog] == 1`, which fails outright if the panel never opens.
+      #57 was written when a step held one check per kind; since D5 it holds
+      several, so "some checks were already true" stopped meaning "this step is
+      unwitnessed". It says ALL or SOME now -- #33's class, inside the warning
+      built to catch #33's class.
+    - **An in-page HASH CHANGE was treated as a navigation.** `#the-range-function`
+      made the batch guard SKIP two queued clicks as stale on a document that
+      was never replaced; re-issuing the identical refs a batch later worked.
+      The comparison was a raw string including the fragment. HTML defines a
+      fragment change as a SAME-DOCUMENT navigation, so no ref can have been
+      invalidated -- and hash-routed SPAs stay safe because #51's
+      ref-resolution check answers the staleness question independently.
+    - **A step was named by index and tool, which an agent cannot map back.**
+      Told "step 4 form_input, step 5 computer", an agent disputed it, having
+      observed after the two steps it had in mind -- a flow with three
+      `form_input`s and three `computer`s. The message was right and
+      unusable. It names the target now.
+
+    **AND THE ROUND CAUGHT TWO THINGS IN THE TOOLING ITSELF, both the same
+    class: a count that is not an inventory.**
+    - Inserting a helper between `@mcp.tool()` and `async def sw_info(` bound
+      the decorator to the HELPER: `_changed_since_start` became a public tool,
+      **`sw_info` vanished from the surface, and the total stayed at 31** -- so
+      the over-the-wire count smoke test CLAUDE.md calls "the only way to catch
+      a tool that fails to register" passed. Found only because the MCP client
+      announced the change. C24/C24b pin it.
+    - `run_tests.py` reported the permissions suite as PASS with NO COUNT for a
+      whole session, because its armed-off summary (`14 passed, 8
+      not-applicable (gate off), 22 total checks`) matched none of its
+      patterns. The project total silently ran 22 low. A suite that passes and
+      reports no count now reads `?` rather than nothing.
+
+    **WHAT ROUND TWO CONFIRMED, on the language it was found in:**
+    `computer(type, "東京タワー")` ->
+    `query_elements("input[type=search]", attributes=["value"])` ->
+    `value="東京タワー"`, byte-exact, with no `\uXXXX` anywhere. That line needed
+    BOTH D1 and D11 and round one could do neither. The Vector-2022 header
+    also destroyed the search input WITH ITS OWN CLICK, and three safety
+    properties fired at once: the op refused rather than typing elsewhere, the
+    message named the recovery, and the errored call was dropped at compile.
+
+    **STILL OPEN, with evidence.** `settle_ms` remains an upper bound that
+    includes at least one model turn whenever a retry crossed one (22,550ms for
+    a CSS fade-in): the recorder can only measure between observations, and
+    observations are separated by turns. D14 removed the case where NOTHING
+    changed; this one is inherent. And **five agents now report that the
+    readiness banner cannot separate "not ready" from "ready but chatty" on an
+    SPA** -- it fired after an explicit 3s wait on content that was complete,
+    and once reported MORE requests in flight on the usable read than on the
+    blank one. #15's banner answers "is the DOCUMENT settling"; an app that has
+    committed its document and is still painting rows is outside what it
+    measures. Neither is fixed and neither should be guessed at.
+
+    Suites: 1022 checks. New -- FE1d/FE1e (an unwitnessed absence is dropped
+    and named), FW1b/FW4 (all-vs-some), plus the attrs/flags round trip through
+    FE2. C24/C24b. `tools/bench_flows/ROUND2.md` carries the per-flow
+    before/after.
 
 ## Debugging starting points
 

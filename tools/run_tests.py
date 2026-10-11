@@ -184,6 +184,13 @@ _SUMMARY_PATTERNS = [
     # "89 passed, 0 failed, 89 total checks"
     (re.compile(r"\b(\d+) passed,\s*(\d+) failed\b"),
      lambda m: (int(m.group(1)), int(m.group(1)) + int(m.group(2)))),
+    # "14 passed, 8 not-applicable (gate off), 22 total checks" — the permissions
+    # suite's armed-off form, which matched NOTHING and so contributed zero while
+    # still reporting PASS. The project total silently dropped by 22 and only the
+    # CLAUDE.md drift note caught it, one digit at a time. Same class as a tool
+    # count that stays 31 while a tool is swapped out (#63).
+    (re.compile(r"\b(\d+) passed,[^\n]*?\b(\d+) total checks\b"),
+     lambda m: (int(m.group(1)), int(m.group(2)))),
     # "0 MISSED, 0 PARTIAL, 48 CAPTURED"
     (re.compile(r"\b(\d+) MISSED,\s*(\d+) PARTIAL,\s*(\d+) CAPTURED\b"),
      lambda m: (int(m.group(3)),
@@ -198,7 +205,10 @@ def parse_summary(output: str) -> str:
             if m:
                 good, total = extract(m)
                 return f"{good}/{total}"
-    return ""
+    # A SUITE THAT PASSES AND REPORTS NO COUNT IS NOT A SUITE THAT RAN. The
+    # permissions suite did exactly that for a whole session when its armed-off
+    # summary matched no pattern: PASS, zero checks, total quietly 22 lower.
+    return "?"
 
 
 # ---------------------------------------------------------------------------
