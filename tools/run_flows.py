@@ -232,15 +232,53 @@ async def main() -> int:
     pg = None
     if args.playground:
         import subprocess
+        # STDERR IS KEPT, because a fixture that dies on startup -- port 8787
+        # already in use is the common one -- took its reason to /dev/null with
+        # it and the run then failed three layers away.
         pg = subprocess.Popen([sys.executable, str(ROOT / "tools" / "saas_playground.py")],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         import urllib.request
-        for _ in range(50):
+        # AND THE WAIT IS NOT BEST-EFFORT. This loop tried for ~5s and then fell
+        # through whether or not anything was listening, so when the fixture was
+        # slow on a cold CI runner the flows ran against NOTHING and the failure
+        # read as `ChromeBridge cannot act on about:blank` and `NAVIGATION DID
+        # NOT COMMIT` -- both true, neither the cause. Measured: that is exactly
+        # how a CI run failed, and the log said nothing about the server.
+        up, waited = False, 0.0
+        while waited < 30.0:
+            if pg.poll() is not None:
+                break
             try:
                 urllib.request.urlopen("http://127.0.0.1:8787/api/state", timeout=0.5)
+                up = True
                 break
             except Exception:
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.2)
+                waited += 0.2
+        if not up:
+            err = ""
+            if pg.poll() is not None:
+                try:
+                    # THE LAST LINE, not the last 400 characters: a traceback's
+                    # tail sliced by length lands mid-frame, and the one line
+                    # that names the fault (`OSError: [Errno 48] Address
+                    # already in use`) is the last one.
+                    _raw = (pg.stderr.read() or b"").decode("utf-8", "replace")
+                    _lines = [l.strip() for l in _raw.splitlines() if l.strip()]
+                    err = _lines[-1][:300] if _lines else ""
+                except Exception:
+                    pass
+            print(f"FAIL: the fixture app never answered on 127.0.0.1:8787 after "
+                  f"{waited:.0f}s"
+                  + (f" — it exited with code {pg.returncode}" if pg.poll() is not None
+                     else " — it is still running but not serving")
+                  + ". Nothing was replayed. The usual cause is port 8787 already "
+                    "being in use by an earlier run."
+                  + (f"\n  its stderr: {err}" if err else ""))
+            pg.terminate()
+            return 1
+        if waited > 2:
+            print(f"  fixture app came up after {waited:.1f}s")
         # A known starting state, or the flow's own precondition is measuring
         # whatever the last run left behind.
         _pg_reset(args.chaos)

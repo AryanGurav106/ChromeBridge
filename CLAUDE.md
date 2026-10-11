@@ -5939,6 +5939,26 @@ granted in the side panel is refused with the same message the agent gets.
     call, which the next model turn's latency covers. A CSS-transition settle
     would be a chosen duration, which is the thing this codebase removes.
 
+    **AND CI FAILED ON THE NEXT PUSH, which is the entry's own lesson landing
+    on its harness.** `run_flows.py` started the fixture app and waited for it
+    with `for _ in range(50)` — about five seconds — then **fell through
+    whether or not anything was listening**. On a cold runner it was not, so
+    the flows replayed against nothing and the log said
+    `ChromeBridge cannot act on about:blank` and `NAVIGATION DID NOT COMMIT`.
+    Both true, neither the cause, and the word "fixture" appeared nowhere. A
+    best-effort wait that cannot report its own failure is the same shape as a
+    count standing in for an inventory: the symptom surfaces three layers from
+    the fault.
+    It now waits up to 30s, stops early if the process EXITS, and refuses to
+    replay anything when the server is not serving — naming the usual cause
+    (port 8787 held by an earlier run) and quoting the child's stderr, which
+    was going to `/dev/null`. The stderr excerpt is the LAST LINE rather than
+    the last 400 characters, because a traceback sliced by length lands
+    mid-frame while the line that names the fault is the final one. Verified
+    both ways: with the port occupied it prints
+    `OSError: [Errno 48] Address already in use` and replays nothing; released,
+    2/2 green.
+
     Suites: 1030 checks. New — FD19c/FD19d. `audit_patterns.py` scans nine
     files and refuses to pretend a missing one was checked.
 
