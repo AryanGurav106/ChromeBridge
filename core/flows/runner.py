@@ -129,15 +129,39 @@ class Run:
 
         while self.i < len(self.flow.steps):
             step = self.flow.steps[self.i]
-            try:
-                inp, healed = await self._bind(step, binding)
-            except Unresolved as exc:
-                why = exc.reason + self._surface_note() \
+            # A TARGET GETS THE SAME WINDOW A POSTCONDITION DOES.
+            #
+            # #55 gave postconditions a bounded window to BECOME true and left
+            # resolution asking once, which is the wrong half for a real app:
+            # measured on a live SPA, step 1 failed on `name='Investors 38'`
+            # because mid-render the tab's accessible name is still "Investors"
+            # -- the count had not arrived yet. The control was not missing, it
+            # was not there YET, and one attempt reports those identically.
+            #
+            # Same bound, same poll and the same reasoning as `_check`: nothing
+            # is weakened, since the target must still resolve and within the
+            # bound, and a genuinely absent control still fails, just later.
+            # `_bind` re-fetches the entries on each attempt, so this is a retry
+            # rather than a sleep over one stale snapshot.
+            deadline = time.time() + self.SETTLE_MS / 1000.0
+            unresolved = None
+            while True:
+                try:
+                    inp, healed = await self._bind(step, binding)
+                    unresolved = None
+                    break
+                except Unresolved as exc:
+                    unresolved = exc
+                    if time.time() >= deadline:
+                        break
+                    await asyncio.sleep(self.POLL_MS / 1000.0)
+            if unresolved is not None:
+                why = unresolved.reason + self._surface_note() \
                     + await self._viewport_note()
                 if step.on_fail == "fail":
                     return self._stop(FAILED, f"step {self.i} ({step.name}): {why}",
-                                      candidates=exc.candidates)
-                return self._stop(NEEDS, why, candidates=exc.candidates)
+                                      candidates=unresolved.candidates)
+                return self._stop(NEEDS, why, candidates=unresolved.candidates)
             binding = None
 
             # VARIABLES FIRST, then secrets -- a variable is an ordinary
@@ -217,12 +241,19 @@ class Run:
             return ""
         if not live or not live.get("width"):
             return ""
-        if (int(live["width"]), int(live["height"])) == (int(rec["width"]), int(rec["height"])):
+        # WIDTH ONLY, and that is the whole correction. Comparing both fired on a
+        # 56px HEIGHT difference between two tabs of the same window (1512x812
+        # against 1512x868) -- browser chrome, not a responsive break -- which is
+        # the noise #15 priced, produced by my own no-threshold choice in exactly
+        # the commonest case. Width is still threshold-free: CSS media queries
+        # are overwhelmingly width-based, so width is the dimension that decides
+        # whether a control EXISTS, and it does not drift between tabs.
+        if int(live["width"]) == int(rec["width"]):
             return ""
-        return (f" The window is also a different size than when this was recorded: "
-                f"{int(live['width'])}x{int(live['height'])} now against "
-                f"{int(rec['width'])}x{int(rec['height'])} then. A responsive layout "
-                f"can genuinely not have this control at one of those sizes.")
+        return (f" The window is also a different WIDTH than when this was recorded: "
+                f"{int(live['width'])}px now against {int(rec['width'])}px then. A "
+                f"responsive layout can genuinely not have this control at one of "
+                f"those widths.")
 
     def _surface_note(self) -> str:
         """Name the cause when it is sitting in our own output.

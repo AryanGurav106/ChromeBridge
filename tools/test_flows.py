@@ -37,6 +37,14 @@ from core.flows import secrets as FS  # noqa: E402
 from core.flows.recorder import Recorder, query_total, search_hits  # noqa: E402
 from core.flows.runner import FAILED, NEEDS, PASSED, Run, resume, start  # noqa: E402
 
+# TEST-ONLY TIMING. `SETTLE_MS` is the window a target or a postcondition gets
+# to BECOME true (#55, #59); the fixtures deliberately present controls that
+# will never appear, so at the shipped 6s each of those waits out the full
+# bound. Lowered here, not in the product: the behaviour under test is the
+# retry, not the duration.
+Run.SETTLE_MS = 300
+Run.POLL_MS = 50
+
 sys.path.insert(0, str(ROOT / "tools"))
 from _extract import extract  # noqa: E402
 
@@ -639,6 +647,46 @@ async def record_and_replay():
           asked and set(asked) == {"beta-svc"},
           f"search_page called with {asked}")
 
+    # ---- FR13: A TARGET THAT IS NOT THERE *YET* --------------------------
+    #
+    # #55 gave postconditions a window to BECOME true and left resolution asking
+    # once -- the wrong half for a real app. Measured on a live SPA: step 1
+    # failed on `name='Investors 38'` because mid-render that tab's accessible
+    # name is still "Investors", the count having not arrived. The control was
+    # not missing, it was not there yet, and one attempt reports those the same.
+    class LateBridge(FakeBridge):
+        """Renders the target only from the Nth entries fetch, like an SPA."""
+
+        def __init__(self, entries, appear_on=3):
+            super().__init__(entries)
+            self.fetches, self.appear_on = 0, appear_on
+
+        async def entries_fn(self, tabId=None):
+            self.fetches += 1
+            return list(self.entries) if self.fetches >= self.appear_on else []
+
+    lb = LateBridge([E(70, "button", name="Create")])
+    rl = Recorder("late", FakeBridge([E(70, "button", name="Create")]).entries_fn)
+    li = {"ref": "ref_70", "tabId": 1}
+    lt = await rl.before("computer", li)
+    rl.after("computer", li, "clicked", lt)
+    flate, _ = rl.compile()
+
+    rres = await start(flate, 1, lb.call, lb.entries_fn)
+    check("FR13 a target that renders a moment late still resolves, instead of "
+          "being reported as missing",
+          rres["status"] == PASSED and lb.fetches >= 3,
+          f"status={rres['status']} after {lb.fetches} fetch(es); "
+          f"reason={str(rres.get('reason'))[:70]}")
+
+    # THE CONTROL. A control that never appears must still FAIL -- otherwise the
+    # window would have turned every missing element into a slow success.
+    never = LateBridge([E(70, "button", name="Create")], appear_on=10_000)
+    rnev = await start(flate, 1, never.call, never.entries_fn)
+    check("FR13b CONTROL: a target that never appears still fails, just later",
+          rnev["status"] in (NEEDS, FAILED) and "no element" in str(rnev["reason"]),
+          f"status={rnev['status']} reason={str(rnev['reason'])[:80]}")
+
     # ---- FT: A FLOW MAY SPAN TABS ---------------------------------------
     #
     # `tabs_create_mcp` is already an ACTION (it is in MUTATES), so the recorder
@@ -737,8 +785,8 @@ async def record_and_replay():
         return {"width": 400, "height": 800}
     r_vp = await start(fvp, 1, gone.call, gone.entries_fn, viewport_fn=_vp_small)
     check("FVP2 a failed resolve names the size difference as a cause",
-          r_vp["status"] == NEEDS and "400x800" in r_vp["reason"]
-          and "1280x900" in r_vp["reason"], str(r_vp["reason"])[:200])
+          r_vp["status"] == NEEDS and "400px" in r_vp["reason"]
+          and "1280px" in r_vp["reason"], str(r_vp["reason"])[:200])
 
     # THE CONTROL. Same failure, same size as the recording: saying nothing is
     # what keeps the note readable when it does fire (#15).
@@ -746,6 +794,23 @@ async def record_and_replay():
         return {"width": 1280, "height": 900}
     gone2 = FakeBridge([E(9, "button", name="Something else")])
     r_vp2 = await start(fvp, 1, gone2.call, gone2.entries_fn, viewport_fn=_vp_same)
+    # THE CORRECTION #59 MADE, pinned: a height-only difference is browser chrome
+    # between two tabs of one window, not a responsive break. Measured live at
+    # 1512x812 against 1512x868, where the note fired and meant nothing.
+    async def _vp_short(tab_id):
+        return {"width": 1280, "height": 500}
+    gone_h = FakeBridge([E(9, "button", name="Something else")])
+    r_vph = await start(fvp, 1, gone_h.call, gone_h.entries_fn, viewport_fn=_vp_short)
+    # Keyed on the phrase BOTH versions share, not on the word the new one
+    # happens to use: asserting "WIDTH" not in reason passed against the old
+    # code for free, because the old sentence said "different size". A control
+    # that cannot fail is the vacuous-fixture shape #29 names.
+    check("FVP2b CONTROL: a HEIGHT-only difference says nothing — responsive "
+          "layout is a function of width",
+          r_vph["status"] == NEEDS
+          and "than when this was recorded" not in r_vph["reason"],
+          str(r_vph["reason"])[:160])
+
     check("FVP3 CONTROL: the same size as the recording is not mentioned",
           r_vp2["status"] == NEEDS and "different size" not in r_vp2["reason"],
           str(r_vp2["reason"])[:160])

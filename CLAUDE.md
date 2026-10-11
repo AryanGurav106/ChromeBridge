@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 970 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 973 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 970 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 973 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5121,6 +5121,73 @@ granted in the side panel is refused with the same message the agent gets.
     is untouched — without it this would have quietly changed where every
     existing flow runs), FT4 (an unreadable id fails rather than continuing).
 
+59. **DRIVEN AGAINST SOMEONE ELSE'S REAL APP FOR THE FIRST TIME, and it found
+    two defects in one run.** Every flow before this targeted a fixture I wrote
+    or a public demo. This one drove a live staging app — a React SPA behind a
+    login, with the gate granted by its owner in the side panel — and recorded
+    two flows: a read-only tab-open and a create-a-record.
+
+    **TARGET RESOLUTION HAD NO SETTLE WINDOW, which is the wrong half to have
+    left out.** #55 gave POSTCONDITIONS a bounded window to become true and
+    left resolution asking exactly once. On the live SPA step 1 failed with
+    `no element on the page matches … name='Investors 38'` — because mid-render
+    that tab's accessible name is still `"Investors"`, the count having not
+    arrived. **The control was not missing, it was not there YET, and one
+    attempt reports those identically.** Same bound, same poll and the same
+    argument as `_check`: nothing is weakened, and a genuinely absent control
+    still fails, just later. After the fix the same flow PASSED 2/2 in 4.77s.
+    FR13 fails against the old code after exactly ONE entries fetch; FR13b is
+    the control that a target which never appears still fails.
+
+    **MY OWN VIEWPORT NOTE FROM #57 WAS FIRING ON BROWSER CHROME.** It compared
+    width AND height, and two tabs of one window differ by the tab strip:
+    `1512x812` against `1512x868`. A 56px height difference is not a responsive
+    break, so the note meant nothing — the noise #15 priced, produced by my own
+    no-threshold choice in the commonest case there is. It compares WIDTH only
+    now, which is still threshold-free and is the dimension that decides whether
+    a control EXISTS: CSS media queries are overwhelmingly width-based, and
+    width does not drift between tabs. **My first control for this was vacuous**
+    — it asserted the word "WIDTH" was absent, which passed against the old code
+    for free because the old sentence said "size". It keys on the phrase both
+    versions share now (#29's lesson, again).
+
+    **AND A FINDING ABOUT REAL APPS THAT NO FIXTURE WOULD HAVE PRODUCED: an
+    accessible name can contain live data.** That tab's name is `"Investors 38"`
+    because AccName 2F concatenates descendant text and the badge is a
+    descendant. So the descriptor's identity rung is DATA-DEPENDENT. Predicted
+    before it happened, then demonstrated: the create flow added two records,
+    and the read-only flow — which had passed minutes earlier — failed with
+    `name='Investors 38'` against a page now reading 40. The durable answer is
+    an `href` rung (a nav link's href is declared and stable), but entries carry
+    `href` only at `brief` detail, so that is a ladder change and #41/#44 are
+    explicit that those are measured before they ship. Recorded as the next
+    piece of work rather than bolted on.
+
+    **WHAT THE REAL APP CONFIRMED WORKING**, which is the other half of the
+    point: descriptors resolving on a React SPA; the "Add investor" BUTTON and
+    the "Add investor" MENUITEM separated at level 1 by tag+role alone; a
+    disabled submit enabling after the fill and the click landing; the typed
+    value becoming the variable `investor_name` with the final assertion
+    recorded as `{{investor_name}}`, so `run_flow(vars={"investor_name": …})`
+    typed a new name AND checked for the new name — **PASSED 5/5 in 9.15s**;
+    #33's aria-hidden note naming the open `role=menu` from its own output;
+    #34's truncation guard refusing to return an empty listing and naming the
+    3,749-character first row that blocked it; and #35's search-miss message
+    naming pagination among its causes while the table was still refreshing.
+
+    **TWO RECONNECTS WERE NEEDED AND THAT IS WORTH WRITING DOWN.** The session's
+    MCP server loads `mcp_server.py` and `core/flows/*` AT CONNECT TIME. The
+    first recording was made by a pre-#51 server — detectable only because the
+    saved file had `origin: ""` and `viewport: null`, and because the tool list
+    offered 29 tools where the file registers 31. Then a second reconnect was
+    needed because `runner.py` was edited after the first. **Nothing warns you:**
+    the old server answers normally and writes a slightly older format. Check a
+    saved artefact, or count the tools, before trusting a live result.
+
+    Suites: 973 checks. New — FR13/FR13b (a target that renders late resolves;
+    one that never renders still fails), FVP2b (a HEIGHT-only difference says
+    nothing).
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -5200,6 +5267,8 @@ granted in the side panel is refused with the same message the agent gets.
 | `computer(type)` says "into whatever holds editing focus" | By design since #56 — `Input.insertText` targets the EDITING context, not `document.activeElement`. Measured: with an `<h1 tabindex=-1>` focused, the text still landed in a previously focused `<input>`. Pass a ref and the message names it, because then we focused it ourselves |
 | `record_flow(stop)` warns that an assertion was ALREADY TRUE | By design since #57 — the check had that same value the last time the agent observed it, so the step did not move what it measures and the flow would pass even if the step did nothing. Usually the step silently failed (a required field left unfilled is the one that caused this twice). A warning, not a refusal: an idempotent step legitimately leaves state alone |
 | A flow step after `tabs_create_mcp` runs in the NEW tab | By design since #58 — the runner used to force the flow's starting tabId on every step, so a recorded `tabs_create_mcp` made a tab that was then ignored and the flow carried on in the old one. Same rule `browser_batch` threads (#46) and only from `tabs_create_mcp`, which returns exactly one id it just made. A create whose id cannot be read FAILS rather than silently continuing in the previous tab |
+| A flow fails at step 1 on an SPA with "no element matches" | Fixed in #59 — target resolution had no settle window, so a control that had not RENDERED yet was reported exactly like one that does not exist. It now retries on the same bound as a postcondition, re-fetching entries each attempt. If it still fails after the window, the control really is absent — or its NAME is data-dependent, which is the other half of #59 |
+| A flow's descriptor stops matching after data changes | Its identity is data-dependent. Measured live on a real app: a nav tab's accessible name is `"Investors 38"` — the live count is INSIDE the name (AccName 2F concatenates descendant text), so adding a record makes it `"Investors 39"`. Rebind with `run_flow(resume_id=…, bind="ref_N")`, which proposes a patch; the durable fix is an `href` rung, which is unmeasured and therefore unshipped |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---
