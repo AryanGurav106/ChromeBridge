@@ -1584,10 +1584,22 @@ async function computerOp(t, params) {
     const seq = String(params.text || "").trim().split(/\s+/).filter(Boolean);
     if (!seq.length) throw new Error('key requires text, e.g. "Enter" or "ctrl+a"');
     const repeat = Math.min(Math.max(+params.repeat || 1, 1), 100);
+    let _armedK = false;
+    try { _armedK = !!(await runInTab(t.id, _inputProbePage, [true])); } catch (e) {}
     for (let i = 0; i < repeat; i++) {
       for (const chord of seq) await _cdpPressChord(t.id, chord, bits);
     }
-    return `Pressed ${seq.join(" ")}${repeat > 1 ? ` x${repeat}` : ""}.`;
+    // SAME CHECK AS THE CLICK PATH. Keys go through the same CDP Input channel and
+    // die with it -- measured: on a tab that had lost input, BOTH mouse and key
+    // were dropped, which is also what ruled out #12's hidden-widget explanation
+    // (there, keys survive). A key that navigated takes the probe with the
+    // document and reports null, which claims nothing.
+    let _delK = null;
+    if (_armedK) {
+      try { _delK = await runInTab(t.id, _inputProbePage, [false, 'key']); } catch (e) {}
+    }
+    return `Pressed ${seq.join(" ")}${repeat > 1 ? ` x${repeat}` : ""}.`
+      + (_delK === false ? _notDeliveredNote('key') : "");
   }
 
   if (action === "type") {
@@ -1616,14 +1628,38 @@ async function computerOp(t, params) {
         );
       }
     }
+    let _armedT = false;
+    try { _armedT = !!(await runInTab(t.id, _inputProbePage, [true])); } catch (e) {}
     await cdpSend(t.id, "Input.insertText", { text: String(params.text || "") });
+    // insertText fires beforeinput/input and NO key events, so this is the only
+    // trace it leaves. Its absence has TWO causes -- a dead channel, or a focused
+    // element that is not editable -- and the note lists both rather than picking
+    // one. The second is a real defect this catches for free: `computer(type)`
+    // into a non-editable element reported success, which is the hole #30 closed
+    // for form_input (W21) and never for this path.
+    let _delT = null;
+    if (_armedT) {
+      try { _delT = await runInTab(t.id, _inputProbePage, [false, 'text']); } catch (e) {}
+    }
     // This echo is the only feedback `type` gives, so an unmarked cut cannot be
     // told apart from the FIELD having truncated the input. Two live agents hit
     // exactly that: 119 chars sent, 80 echoed, cut mid-word, no signal.
     const _t = String(params.text || "");
     const _echo = _t.length <= 80 ? _t
       : _t.slice(0, 80) + "…(+" + (_t.length - 80) + ")";
-    return `Typed ${JSON.stringify(_echo)} into the focused element.`;
+    // "into the focused element" ASSERTED A DESTINATION WE HAD NOT CHECKED.
+    // Measured: with an <h1 tabindex=-1> focused -- document.activeElement really
+    // was the H1 -- `computer(type)` still inserted into the page's previously
+    // focused <input>, because Input.insertText targets the EDITING context, not
+    // activeElement. The old sentence named the wrong element with full
+    // confidence. When a ref was given we focused it ourselves and the claim
+    // holds; without one it does not, so it is not made (#33).
+    return `Typed ${JSON.stringify(_echo)}`
+      + (params.selector ? ` into ${params.selector}.`
+                         : ` into whatever holds editing focus — pass a ref to say `
+                           + `which field, or use form_input, which verifies its own `
+                           + `readback.`)
+      + (_delT === false ? _notDeliveredNote('text') : "");
   }
 
   if (action === "scroll") {
@@ -1699,23 +1735,56 @@ async function computerOp(t, params) {
 // So the root cause is not ours to fix and five theories for it are dead. What IS
 // ours is that we reported success. This probe runs over chrome.scripting, which
 // is exactly the channel that still works when Input does not.
-function _inputProbePage(arm) {
+// COUNTED PER KIND, because the three actions leave DIFFERENT traces and one
+// counter would let an unrelated event vouch for a dropped one. `key` goes out as
+// Input.dispatchKeyEvent and arrives as `keydown`; `type` goes out as
+// Input.insertText, which fires NO key events at all -- only beforeinput/input.
+// A single tally would have reported a dropped insertText as delivered the moment
+// anything else on the page moved.
+function _inputProbePage(arm, kind) {
   try {
     if (arm) {
       if (!window.__abInputProbe) {
-        const st = { n: 0, base: 0 };
+        const st = { mouse: 0, key: 0, text: 0, base: {} };
         window.__abInputProbe = st;
-        for (const t of ['pointerdown', 'mousedown', 'keydown']) {
-          document.addEventListener(t, () => { st.n++; }, true);
-        }
+        const bump = (k) => () => { st[k]++; };
+        document.addEventListener('pointerdown', bump('mouse'), true);
+        document.addEventListener('mousedown', bump('mouse'), true);
+        document.addEventListener('keydown', bump('key'), true);
+        document.addEventListener('beforeinput', bump('text'), true);
+        document.addEventListener('input', bump('text'), true);
       }
-      window.__abInputProbe.base = window.__abInputProbe.n;
+      const p = window.__abInputProbe;
+      p.base = { mouse: p.mouse, key: p.key, text: p.text };
       return true;
     }
     const p = window.__abInputProbe;
     if (!p) return null;          // a navigation replaced the document: UNKNOWN
-    return p.n > p.base;
+    const k = (kind === 'key' || kind === 'text') ? kind : 'mouse';
+    return p[k] > (p.base[k] || 0);
   } catch (e) { return null; }
+}
+
+// ONE SENTENCE FOR ALL THREE, because they are one failure. The CAUSES differ by
+// kind and are listed rather than chosen (#33): a mouse or key event reaches the
+// document whatever is focused, so its absence really does mean the channel is
+// not delivering -- while insertText legitimately produces nothing when the
+// focused element is not editable, which is a different problem with a different
+// answer and must not be reported as a dead channel.
+function _notDeliveredNote(kind) {
+  const what = kind === 'key' ? 'key event' : kind === 'text' ? 'text input' : 'event';
+  const cause = kind === 'text'
+    ? `Two causes need different answers: the focused element may not be editable `
+      + `(check what you focused, and prefer form_input, which verifies its own `
+      + `readback), or this tab's trusted-input channel is dead.`
+    : `This tab's trusted-input channel is dead; measured causes are not ours (it `
+      + `reproduces with other CDP clients on the same tab) and it survives `
+      + `detaching and re-attaching.`;
+  return ` *** NOT DELIVERED: Chrome accepted the input command and the page `
+    + `recorded no ${what}, so nothing landed. ${cause} VERIFIED RECOVERY for a `
+    + `dead channel: open a new tab with tabs_create_mcp and act there. Still `
+    + `working on THIS tab: read_page, get_page_text, search_page, `
+    + `query_elements, fill_form, form_input and javascript_tool. ***`;
 }
 
 const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_click: ["left", 2], triple_click: ["left", 3] };
@@ -1764,17 +1833,9 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
     // nothing. Only a probe that is still present and saw nothing is a report.
     let _delivered = null;
     if (_armed) {
-      try { _delivered = await runInTab(t.id, _inputProbePage, [false]); } catch (e) {}
+      try { _delivered = await runInTab(t.id, _inputProbePage, [false, 'mouse']); } catch (e) {}
     }
-    const _dead = _delivered === false
-      ? ` *** NOT DELIVERED: Chrome accepted the input command and the page recorded no `
-        + `event, so nothing was clicked. This tab's trusted-input channel is dead; `
-        + `measured causes are not ours (it reproduces with other CDP clients on the `
-        + `same tab) and it survives detaching and re-attaching. VERIFIED RECOVERY: `
-        + `open a new tab with tabs_create_mcp and act there. Still working on THIS `
-        + `tab: read_page, get_page_text, search_page, query_elements, fill_form, `
-        + `form_input and javascript_tool. ***`
-      : "";
+    const _dead = _delivered === false ? _notDeliveredNote('mouse') : "";
     return `${action} at (${Math.round(pt.x)},${Math.round(pt.y)})${params.selector ? ` on ${params.selector}` : ""}.`
       + `${_dead}${_hitEcho(_hh, params.selector)}${_actNote}${_shiftWarn}${pt.note || ""}`;
   }

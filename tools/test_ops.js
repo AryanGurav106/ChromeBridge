@@ -1192,6 +1192,62 @@ const FIELDS3 = () => ([
     check("ID3 CONTROL: a click that navigated away reports nothing — unknown is "
       + "not failure", r.ok && !/NOT DELIVERED/.test(String(r.result)),
       String(r.result).slice(0, 120));
+
+    // KEYS DIE WITH THE SAME CHANNEL. Measured on the tab that had lost input:
+    // BOTH mouse and key were dropped, which is also what ruled out #12's
+    // hidden-widget explanation, since there keys survive.
+    resetState();
+    setStubs({ _inputProbePage: (arm) => (arm ? true : false) });
+    r = await callOp("computer", { tabId: 1, action: "key", text: "Return" });
+    check("ID4 a key the page never received is not reported as a keypress",
+      r.ok && /NOT DELIVERED/.test(String(r.result))
+        && /key event/.test(String(r.result)), String(r.result).slice(0, 130));
+
+    resetState();
+    setStubs({ _inputProbePage: (arm) => true });
+    r = await callOp("computer", { tabId: 1, action: "key", text: "Return" });
+    check("ID5 CONTROL: a key the page DID receive says nothing extra",
+      r.ok && !/NOT DELIVERED/.test(String(r.result)), String(r.result).slice(0, 90));
+
+    // `type` goes out as Input.insertText, which fires NO key events -- only
+    // beforeinput/input. Its absence has TWO causes that need different answers,
+    // so the note lists both instead of picking one (#33).
+    resetState();
+    setStubs({ _inputProbePage: (arm) => (arm ? true : false) });
+    r = await callOp("computer", { tabId: 1, action: "type", text: "hello" });
+    check("ID6 text that produced no input event is not reported as typed",
+      r.ok && /NOT DELIVERED/.test(String(r.result))
+        && /text input/.test(String(r.result)), String(r.result).slice(0, 130));
+    check("ID6b ...and lists BOTH causes, because a non-editable target and a dead "
+      + "channel need different answers",
+      r.ok && /not be editable/.test(String(r.result))
+        && /channel is dead/.test(String(r.result)), String(r.result).slice(0, 260));
+
+    resetState();
+    setStubs({ _inputProbePage: (arm) => true });
+    r = await callOp("computer", { tabId: 1, action: "type", text: "hello" });
+    check("ID7 CONTROL: text the page DID receive says nothing extra",
+      r.ok && !/NOT DELIVERED/.test(String(r.result)), String(r.result).slice(0, 90));
+
+    // WHERE THE TEXT WENT WAS ASSERTED AND NOT CHECKED. Measured live: with an
+    // <h1 tabindex=-1> focused -- document.activeElement really WAS the H1 --
+    // insertText still landed in the page's previously focused <input>, because
+    // it targets the EDITING context rather than activeElement. The old sentence
+    // named the wrong element with full confidence.
+    check("ID8 typing with no ref does not claim which element received it",
+      r.ok && !/into the focused element/.test(String(r.result))
+        && /editing focus/.test(String(r.result)), String(r.result).slice(0, 160));
+
+    // ...and when a ref WAS given we focused it ourselves, so the claim holds and
+    // is still made. A note that hedges even where the answer is known is the
+    // noise #15 priced.
+    resetState();
+    setStubs({ _inputProbePage: (arm) => true, "inline:focusTarget": () => true });
+    r = await callOp("computer", { tabId: 1, action: "type", text: "hello",
+                                   selector: "[mmid='7']" });
+    check("ID8b CONTROL: with a ref it DOES name the element, because it focused it",
+      r.ok && /\[mmid='7'\]/.test(String(r.result)),
+      String(r.result || r.error).slice(0, 160));
   });
 
   await test("await_navigation waits on a FACT, and only while there is one", async () => {

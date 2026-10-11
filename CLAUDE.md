@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 951 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 958 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 951 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 958 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -4960,10 +4960,32 @@ granted in the side panel is refused with the same message the agent gets.
     there (ID3). A note that fired on every navigating click would be the noise
     #15 priced, and would bury the real one.
 
-    **Scope stated rather than implied:** the probe covers the `computer` CLICK
-    actions. Keyboard actions go through the same dead channel and are not yet
-    verified, and `clickTrusted`'s own effect check already covers the
-    escalation path by a different route.
+    **KEYS AND TEXT ARE VERIFIED TOO, and they needed SEPARATE counters.** The
+    three actions leave different traces: `key` goes out as
+    `Input.dispatchKeyEvent` and arrives as `keydown`, while `type` goes out as
+    `Input.insertText`, which fires **no key events at all** — only
+    `beforeinput`/`input`. One tally would have let an unrelated event vouch for
+    a dropped one, so the probe counts mouse, key and text separately and each
+    action reads its own. Keys dying with the same channel is measured, not
+    assumed: on the dead tab BOTH mouse and key were dropped, which is also what
+    ruled out #12's hidden-widget explanation, since there keys survive.
+    **The CAUSES differ by kind and are listed rather than chosen (#33):** a
+    mouse or key event reaches the document whatever is focused, so its absence
+    really does mean the channel is not delivering — but `insertText`
+    legitimately produces nothing when the focused element is not editable,
+    which is a different problem with a different answer.
+
+    **AND THE `type` MESSAGE WAS ASSERTING A DESTINATION IT HAD NOT CHECKED.**
+    Found while trying to build a non-editable fixture for the above, which
+    failed for an instructive reason: with an `<h1 tabindex=-1>` focused —
+    `document.activeElement` really WAS the `H1` — `computer(type)` still
+    inserted into the page's previously focused `<input>` (`value:
+    "helloZZZ"`), because `Input.insertText` targets the EDITING context rather
+    than `activeElement`. The probe correctly reported DELIVERED; what was wrong
+    was the sentence "Typed … into the focused element", which named an element
+    that received nothing. With a ref we focus the target ourselves and the
+    claim holds, so it is still made; without one it is not (ID8/ID8b). The
+    intended fixture was wrong and the real defect was next to it.
 
     **AND THE FLOW THAT #55 COULD NOT RECORD NOW EXISTS.** #55 shipped a
     real-app flow that only navigates, because a trusted click whose effect
@@ -5068,6 +5090,7 @@ granted in the side panel is refused with the same message the agent gets.
 | A flow recorded against an SPA fails every replay on one assertion | Fixed in #55 — the recorder captures what the agent observed, which is necessarily after the agent took a moment; the runner asked INSTANTLY. A postcondition now gets a bounded window (6s, polled) to BECOME true. It is not weakened — it must still become true — and a genuine failure still fails, just later. Server-rendered fixtures never show this, which is why a year of playground flows did not |
 | `computer` click reports success and the page gets nothing, with the debugger attached | Measured on saucedemo's /inventory.html (#55) and NOT yet explained: `elementFromPoint` at the clicked coordinate IS the target, dpr 1, no scroll, no zoom, `debug_targets` says attached with one frame — and three raw coordinate clicks produce ZERO events at a capturing document listener, while `Runtime.evaluate` works and `el.click()` drives the page correctly. The LOGIN page of the same origin in the same browser accepts input normally. #12's signature; its `ensureInputReady` fix does not cover this case. Instrument the PAGE before theorising |
 | `computer` click says `*** NOT DELIVERED ***` | Working as designed since #56 — Chrome ACCEPTED the input command and the page recorded no event, so nothing was clicked. The tab's trusted-input channel is dead. It is not ours (Playwright's own mouse fails identically on that tab) and it survives detach+re-attach, a forced focus-emulation re-apply, and a mouse release. VERIFIED recovery: a NEW TAB. `read_page`, `get_page_text`, `search_page`, `query_elements`, `fill_form`, `form_input` and `javascript_tool` all keep working on the dead tab |
+| `computer(type)` says "into whatever holds editing focus" | By design since #56 — `Input.insertText` targets the EDITING context, not `document.activeElement`. Measured: with an `<h1 tabindex=-1>` focused, the text still landed in a previously focused `<input>`. Pass a ref and the message names it, because then we focused it ourselves |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---
