@@ -87,6 +87,27 @@ def by_full(e: dict) -> tuple:
     return base(e) + (f["name"], f["section"], f["under"])
 
 
+# What ELSE a page might declare about a control that is not a link. The href
+# alternate reaches <a>/<area> and nothing else, which leaves a BUTTON carrying
+# a badge with no second key at all -- and `counter-in-name` measures that
+# population at 84.2% still refusing. These are the only two candidates that
+# are declared rather than derived: `id` (HTML's own unique handle) and
+# `data-testid` (an attribute whose entire purpose is to be a stable test
+# hook). Measured on the same three axes as href, and for the same reason --
+# a key that is rarer, less unique or less stable than the name is not a key.
+ATTR_PROBE = """(function () {
+  const out = {};
+  for (const el of document.querySelectorAll('[mmid]')) {
+    out[el.getAttribute('mmid')] = {
+      id: el.id || '',
+      testid: el.getAttribute('data-testid') || el.getAttribute('data-test-id')
+              || el.getAttribute('data-test') || '',
+    };
+  }
+  return out;
+})()"""
+
+
 async def collect(page, detail: str) -> list[dict]:
     return await page.evaluate(
         "(function(){ " + COLLECT + f"; return _collectInteractivePage(true, null, '{detail}'); }})()"
@@ -109,7 +130,14 @@ async def two_passes(browser, name, url):
             except Exception:
                 return None
             await page.wait_for_timeout(1200)
-            passes.append(await collect(page, "brief"))
+            ents = await collect(page, "brief")
+            # mmids are injected BY the collect above, so this must follow it.
+            attrs = await page.evaluate(ATTR_PROBE)
+            for e in ents:
+                a = attrs.get(str(e.get("mmid"))) or {}
+                e["_id"] = a.get("id", "")
+                e["_testid"] = a.get("testid", "")
+            passes.append(ents)
         finally:
             await ctx.close()
     return passes
@@ -177,6 +205,27 @@ async def run_site(browser, name, url) -> dict | None:
         if len(hh) == 1 and len(nn) == 1 and str(hh[0].get("mmid")) != str(nn[0].get("mmid")):
             dis += 1
     row["disagree"] = dis
+
+    # --- the NON-LINK population, which href cannot reach -----------------
+    plain = [e for e in targets if not (e.get("href") or "").strip()]
+    row["plain"] = len(plain)
+    if plain:
+        for key, label in (("_id", "id"), ("_testid", "testid")):
+            have = [e for e in plain if (e.get(key) or "").strip()]
+            row[f"cov_{label}"] = round(len(have) / len(plain), 4)
+            if have:
+                c = Counter(base(e) + ((e.get(key) or "").strip(),) for e in targets)
+                row[f"uniq_{label}"] = round(
+                    sum(1 for e in have if c[base(e) + ((e.get(key) or "").strip(),)] == 1)
+                    / len(have), 4)
+                pair = [(e, bm[str(e.get("mmid"))]) for e in have
+                        if str(e.get("mmid")) in bm]
+                row[f"stable_{label}"] = round(
+                    sum(1 for x, y in pair
+                        if (x.get(key) or "") == (y.get(key) or "")) / len(pair), 4
+                ) if pair else None
+            else:
+                row[f"uniq_{label}"] = row[f"stable_{label}"] = None
     return row
 
 
@@ -241,6 +290,18 @@ async def main() -> int:
     print(f"\n  linked controls href resolves and name CANNOT : {ho:>6}  {ho / nl:>7.2%}")
     print(f"  linked controls name resolves and href CANNOT : {no:>6}  {no / nl:>7.2%}")
     print(f"  the two keys land on DIFFERENT elements       : {dg:>6}  {dg / nl:>7.2%}")
+
+    npl = sum(r.get("plain", 0) for r in live)
+    print(f"\n  THE NON-LINK POPULATION the href alternate cannot reach: {npl} controls")
+    print(f"  {'candidate key':<34}{'coverage':>12}{'median uniq':>14}{'median stable':>16}")
+    for label in ("id", "testid"):
+        cov = [r[f"cov_{label}"] for r in live if r.get(f"cov_{label}") is not None]
+        unq = [r[f"uniq_{label}"] for r in live if r.get(f"uniq_{label}") is not None]
+        stb = [r[f"stable_{label}"] for r in live if r.get(f"stable_{label}") is not None]
+        print(f"  {label:<34}{(statistics.median(cov) if cov else 0):>11.1%}"
+              f"{(statistics.median(unq) if unq else 0):>13.1%}"
+              f"{(statistics.median(stb) if stb else 0):>15.1%}"
+              f"   (n={len(unq)} sites)")
 
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "href_rung.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")

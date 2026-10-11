@@ -5296,6 +5296,26 @@ granted in the side panel is refused with the same message the agent gets.
     badges and a button declares no destination. **That gap is not closed and
     nothing here pretends it is.**
 
+    **AND THE OBVIOUS NEXT KEY IS MEASURED AND REJECTED, so nobody re-opens
+    it.** 84.2% of `counter-in-name` still refuses, and all of it is NON-LINK
+    controls -- a button carrying a badge declares no destination. The two
+    candidates worth asking about are `id` (HTML's own unique handle) and
+    `data-testid` (an attribute whose entire purpose is to be a stable test
+    hook). Over the same 28 sites and the 6,082 non-link targetable controls:
+
+    | candidate | coverage | median unique | median stable |
+    |---|---|---|---|
+    | `id` | **6.8%** (median 5.4%/site; 25 of 28 sites have any) | 100.0% | 100.0% |
+    | `data-testid` | **2.5%** (median 0.0%/site; 8 of 28 sites have any) | 100.0% | 100.0% |
+
+    Both are PERFECT where they exist and almost never exist. Neither is in the
+    structured entry today, so either would be a new collector field on every
+    entry in exchange for a key on ~5% of the population it is for -- and
+    react_aria at 78.6% is the one site that would flatter it, which is #25's
+    rule about the sample again. Not built. What would reopen it is a corpus of
+    the apps this feature actually runs against (internal tools generally do
+    ship `data-testid`), not another candidate attribute.
+
     **A pass that matched on a different key is still news**, so it is reported
     separately from a rebind -- no decision was asked for and nothing was
     guessed, but the page's labels moved and the run says which. It also feeds
