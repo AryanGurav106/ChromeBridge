@@ -1083,7 +1083,13 @@ function _scrollNote(rect) {
   const parts = [];
   if (dy) parts.push(`${Math.abs(dy)}px ${dy > 0 ? "down" : "up"}`);
   if (dx) parts.push(`${Math.abs(dx)}px ${dx > 0 ? "right" : "left"}`);
-  return ` NOTE: this scrolled the page ${parts.join(" and ")}, so (below-fold)/`
+  // SAY WHAT MOVED AND WHY. "this scrolled the page 208px up" after clicking a
+  // LATER table-of-contents entry read as a claim about the destination, and an
+  // agent wrote "I do not understand which quantity 'up' refers to". It is the
+  // page moving to bring THE ELEMENT YOU CLICKED into view -- which for a
+  // sidebar link can be upward even when its target is further down.
+  return ` NOTE: the page scrolled ${parts.join(" and ")} to bring the element you`
+       + ` acted on into view (not to its destination), so (below-fold)/`
        + `(above-fold) flags and any box() coordinates from your last read no longer`
        + ` describe the screen. Refs are unaffected — they re-measure when used.`;
 }
@@ -1836,7 +1842,18 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
       try { _delivered = await runInTab(t.id, _inputProbePage, [false, 'mouse']); } catch (e) {}
     }
     const _dead = _delivered === false ? _notDeliveredNote('mouse') : "";
-    return `${action} at (${Math.round(pt.x)},${Math.round(pt.y)})${params.selector ? ` on ${params.selector}` : ""}.`
+    // THE REF IS THE IDENTITY, THE COORDINATE IS AN OUTCOME. Acting by ref
+    // scrolls the target into view first, and scrollIntoView CENTRES it -- so
+    // four clicks on four different elements all reported `at (324,406)` and
+    // the number distinguished nothing. Measured twice in #63's eval, by two
+    // agents, on two sites. Leading with what was addressed and marking the
+    // coordinate as where it ended up stops an identical number reading as a
+    // repeated action.
+    const _where = params.selector
+      ? `${action} on ${params.selector} — landed at (${Math.round(pt.x)},${Math.round(pt.y)}) after scrolling it into view.`
+      : `${action} at (${Math.round(pt.x)},${Math.round(pt.y)}).`;
+    return _where
+      + `${_dead}${_hitEcho(_hh, params.selector)}${_actNote}${_shiftWarn}${pt.note || ""}`;
       + `${_dead}${_hitEcho(_hh, params.selector)}${_actNote}${_shiftWarn}${pt.note || ""}`;
   }
 
@@ -9667,7 +9684,16 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
         ? ' — these are scrolled out inside an inner scrollable panel; clicking any auto-scrolls it into view'
         : '';
       compactBlocks.set(gk,
-        `${m0.groupRole}${nm} — ${members.length} ${kind} cells as mmid:label (${strip}act on any via its ref)${clipHint}: ${items}`);
+        // "act on any via its ref" did not say that each `N:label` pair IS a
+        // ref. Two agents in #63's eval parsed the pairs out of prose and both
+        // remarked that this line is a different shape from every other row,
+        // one adding that a reader scanning for `ref_N |` rows would conclude
+        // the entries were not listed at all. The fold itself is #7's
+        // deliberate token trade and stays; what was missing is the sentence
+        // that makes it readable as rows.
+        `${m0.groupRole}${nm} — ${members.length} ${kind} cells, one per pair below as `
+        + `REF:label — each number is a ref you can act on exactly like a ref_N row `
+        + `(${strip}no separate rows are printed for these)${clipHint}: ${items}`);
       members.forEach(m => inCompact.add(m.mmid));
     }
   }

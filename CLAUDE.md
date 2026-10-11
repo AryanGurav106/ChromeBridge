@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 1027 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 1028 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -506,7 +506,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1027 checks, ~50s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1028 checks, ~50s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -5833,7 +5833,31 @@ granted in the side panel is refused with the same message the agent gets.
     clear a field though R2-D5 ends "say so in the tool description". A
     commitment in a findings file is not a change in the code.
 
-    Suites: 1027 checks. New — FP6/FP6b/FP6c (apply, consume, and the control
+    **AND THE THREE COSMETIC ITEMS, one of which was not cosmetic at all.**
+    A ref click reported the same coordinate for every target, because acting
+    by ref scrolls it into view and `scrollIntoView` CENTRES it — four clicks
+    on four elements all read `at (324,406)`. The line now leads with what was
+    addressed and marks the number as where it landed. The scroll note said
+    "this scrolled the page 208px up" after a click on a LATER
+    table-of-contents entry, and an agent wrote "I do not understand which
+    quantity 'up' refers to" — it is the page moving to bring THE ELEMENT YOU
+    CLICKED into view, which for a sidebar link can be upward even when its
+    target is below; it says so now. And a ≥10-cell fold printed `N cells as
+    mmid:label`, which two agents parsed out of prose while remarking it is a
+    different shape from every other row; the fold stays (#7's token trade) and
+    now says each number IS a ref and that no separate rows are printed.
+
+    **REWORDING THE CLICK LINE DELETED FIVE FEATURES.** The result was
+    `return <line> + ${_dead}${_hitEcho}${_actNote}${_shiftWarn}${note}`, and
+    replacing the first half dropped the continuation — so #56's NOT DELIVERED
+    report, the hit-test echo, the action note, the shift warning and the
+    scroll note all vanished at once, from an edit whose entire purpose was to
+    change how a coordinate reads. `test_ops` caught it on the first run. **C25
+    now pins that the suffix survives a rewording**, and fails on exactly the
+    mistake, taking five other checks with it — which is the point: those five
+    were each asserted somewhere, and none of them said WHY they share a line.
+
+    Suites: 1028 checks. New — FP6/FP6b/FP6c (apply, consume, and the control
     that a REPLAY never writes), FE5/FE5b.
 
 ## Debugging starting points

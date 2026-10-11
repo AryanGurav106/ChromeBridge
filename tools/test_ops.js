@@ -969,6 +969,30 @@ const FIELDS3 = () => ([
       `attach@${iAttach} move@${iMove} hit@${iHit} press@${iPress}`);
   });
 
+  await test("a click result keeps every note it is supposed to carry", async () => {
+    // A COSMETIC REWORDING OF THIS ONE LINE DELETED FIVE FEATURES. The result
+    // was `return <line> + ${_dead}${_hitEcho}${_actNote}${_shiftWarn}${note}`,
+    // and replacing the first half dropped the continuation: the #56
+    // NOT-DELIVERED report, the hit-test echo, the action note, the shift
+    // warning and the scroll note all vanished at once, silently, from an edit
+    // whose entire purpose was to change how a coordinate reads. test_ops
+    // caught it on the first run, which is why this now has its own check
+    // rather than relying on one of them happening to be asserted elsewhere.
+    resetState();
+    setStubs({
+      _hitTestPage: () => ({ ref: "9", tag: "div", role: "", label: "",
+                             deep: 0, listed: true, oob: false }),
+      _rectForPage: () => ({ x: 10, y: 20, w: 5, h: 5, visible: true, dsy: -208, dsx: 0 }),
+    });
+    const rc = await callOp("computer",
+      { tabId: 1, action: "left_click", selector: "[mmid='7']" });
+    const txt = String(rc.result || "");
+    check("C25 the click line carries its hit-test echo AND its scroll note — a "
+      + "reworded result must not drop the suffix they live on",
+      /MISMATCH/.test(txt) && /scrolled/.test(txt),
+      txt.slice(0, 150));
+  });
+
   await test("computer hit-test echo mismatch + failure tolerance", async () => {
     resetState();
     setStubs({
