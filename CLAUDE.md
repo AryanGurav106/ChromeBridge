@@ -2456,11 +2456,16 @@ granted in the side panel is refused with the same message the agent gets.
       exactly the heuristic #27/#28 removed. Recorded as investigated-and-rejected so
       nobody re-opens it.
 
-    **Still open from the same live run, unfixed and ranked:** the app-shell container
-    row is `find`'s FIRST match on component-heavy apps — ~2,500 characters of sidebar,
-    dashboard and activity feed as one "match", pushing the real answer to second place
-    (worse than #33 recorded, which had it merely competing); and `computer` screenshots
-    still intermittently take ~46s against a 60s timeout.
+    **Still open from the same live run, unfixed and ranked:** ~~the app-shell
+    container row is `find`'s FIRST match on component-heavy apps — ~2,500 characters
+    of sidebar, dashboard and activity feed as one "match"~~ **— STALE, FIXED in #35**
+    (`subtreeName` descends while exactly one child contributes text) and confirmed
+    gone on **all 32 sites** by #36's mechanical sweep, which is stronger evidence than
+    the live sighting that opened it; and `computer` screenshots still intermittently
+    take ~46s against a 60s timeout — **not seen since**, and #35 records one such
+    timeout that did not recur, so it is an unreproducible intermittent rather than a
+    standing defect. #50's rule applies: it cannot be fixed by guessing at it, and the
+    bridge's timeout ring now gives the next sighting its evidence.
 
     Suites: 654 checks. New — T22/T23 (first-row truncation), AH1–AH3 (the aria-hidden
     note, with the no-popup control).
