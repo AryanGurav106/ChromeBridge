@@ -1,7 +1,7 @@
-"""One-off live diagnostic for Boxsy's 'Decision Time' dropdown.
+"""One-off live diagnostic for the CRM's a custom dropdown.
 
-Requires: Chrome open with the extension loaded, the Boxsy tab ACTIVE with the
-Add-Investor modal open. The user's run_extension.py must be stopped (single-
+Requires: Chrome open with the extension loaded, the a real CRM tab ACTIVE with the
+record-creation modal open. The user's the MCP server must be stopped (single-
 client bridge); the extension auto-reconnects to this script's server.
 
 Does: finds the decision-time trigger -> clicks it (synthetic, same as
@@ -39,20 +39,20 @@ async def main():
     trig = [e for e in raw if 'decision' in _txt(e)]
 
     if not trig:
-        # modal not open — open it: "Add investor" button -> "Add investor" menu option
+        # modal not open — open it: "Add record" button -> "Add record" menu option
         print("modal not open; opening it ...")
-        btn = [e for e in raw if 'add investor' in _txt(e)]
+        btn = [e for e in raw if 'add record' in _txt(e)]
         if not btn:
-            print("NO 'Add investor' button on the active tab either — wrong page?")
+            print("NO 'Add record' button on the active tab either — wrong page?")
             await bridge.stop()
             return
         print("opening menu:", json.dumps({k: btn[0].get(k) for k in ('mmid', 'tag', 'name', 'text')}, ensure_ascii=False))
         print(await drv.click(f"[mmid='{btn[0]['mmid']}']"))
         await asyncio.sleep(1.0)
         raw = await drv.list_interactive_elements_raw()
-        opt = [e for e in raw if 'add investor' in _txt(e) and (e.get('role') or '').startswith('menuitem')]
+        opt = [e for e in raw if 'add record' in _txt(e) and (e.get('role') or '').startswith('menuitem')]
         if not opt:
-            opt = [e for e in raw if 'add investor' in _txt(e) and e.get('mmid') != btn[0]['mmid']]
+            opt = [e for e in raw if 'add record' in _txt(e) and e.get('mmid') != btn[0]['mmid']]
         if opt:
             print("clicking menu option:", json.dumps({k: opt[0].get(k) for k in ('mmid', 'tag', 'role', 'name', 'text')}, ensure_ascii=False))
             print(await drv.click(f"[mmid='{opt[0]['mmid']}']"))

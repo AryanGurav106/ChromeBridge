@@ -1913,7 +1913,7 @@ async def main():
         await ahp.goto("about:blank")
         await ahp.set_content(
             "<main><button>Real one</button><button>Real two</button>"
-            "<div role='menu'><div role='menuitem'>Add investor</div>"
+            "<div role='menu'><div role='menuitem'>Add record</div>"
             "<div role='menuitem'>Add via CSV</div></div></main>" + AH_HIDDEN)
         await ahp.wait_for_timeout(150)
         with_menu = str(await ahp.evaluate(

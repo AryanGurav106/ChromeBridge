@@ -106,7 +106,7 @@ the flag. The window is the eval and nothing else.
 
 Recorded before any re-recording. Round one found 20 defects; 13 are fixed.
 This round re-records the SAME eight apps with the fixed recorder, plus
-several flows against the Boxsy staging app, to answer one question:
+several flows against a private staging CRM, to answer one question:
 
 **Do the fixed assertions actually bite on a real app?**
 

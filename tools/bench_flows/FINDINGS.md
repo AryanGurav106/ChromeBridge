@@ -406,7 +406,7 @@ last = max(last, r.get("ts"))          # the LAST contributing observation
 ```
 
 The gap is dominated by the agent's own think time (~3.6s per turn, #38), not
-by the page. **So the Boxsy figures #60 reported — navigate 9,896ms, submit
+by the page. **So the live-app figures #60 reported — navigate 9,896ms, submit
 13,077ms — are not what that entry says they are**, and every replay now allows
 up to ~18s of slack on steps that need none. It fails in the safe direction (a
 passing flow is unaffected; a genuinely broken step just takes longer to say

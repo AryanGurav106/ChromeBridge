@@ -184,9 +184,9 @@
   </section>
 
   <!-- G24: shadcn-style DISABLED submit — pointer-events:none must NOT hide it
-       (Boxsy's "Add Investor" submit vanished and the agent picked Cancel) -->
+       (the CRM's "Add record" submit vanished and the agent picked Cancel) -->
   <section id="g24">
-    <button type="submit" disabled style="pointer-events:none;opacity:.5">Add Investor</button>
+    <button type="submit" disabled style="pointer-events:none;opacity:.5">Add record</button>
   </section>
 
   <!-- G22: text-less anchor wrapping a web component whose label lives in its shadow root
@@ -195,7 +195,7 @@
     <a href="#tile" id="tile-link" style="display:block;width:240px;height:60px"><x-tile></x-tile></a>
   </section>
 
-  <!-- G25: the Boxsy multi-select failure — a CUSTOM picker (clickable rows, NO
+  <!-- G25: the a real CRM multi-select failure — a CUSTOM picker (clickable rows, NO
        role=option) open via aria-controls, while a STALE closed menu portal
        (Radix exit-transition leftover) still has [role=menuitem] nodes mounted.
        _pickOptionPage must fall back to harvesting the custom rows: the stale

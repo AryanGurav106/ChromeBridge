@@ -656,7 +656,7 @@ class Recorder:
         the agent's own model turns (~3.6s each, #38), not the page. Measured:
         18,548ms recorded for a navigate and 16,465ms for a modal that opens in
         well under a second, so every replay then allowed ~18s of slack on
-        steps needing none. The Boxsy figures #60 reported are inflated the
+        steps needing none. The live-app figures #60 reported are inflated the
         same way.
 
         The fixture that motivated #60 had the right shape all along: an agent

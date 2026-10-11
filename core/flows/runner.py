@@ -148,8 +148,8 @@ class Run:
             #
             # #55 gave postconditions a bounded window to BECOME true and left
             # resolution asking once, which is the wrong half for a real app:
-            # measured on a live SPA, step 1 failed on `name='Investors 38'`
-            # because mid-render the tab's accessible name is still "Investors"
+            # measured on a live SPA, step 1 failed on `name='Records 38'`
+            # because mid-render the tab's accessible name is still "Records"
             # -- the count had not arrived yet. The control was not missing, it
             # was not there YET, and one attempt reports those identically.
             #
@@ -166,7 +166,7 @@ class Run:
                     # the declared destination is not offered inside it. Found
                     # live on the first real-app run of the fallback: the step
                     # resolved on href in 3.87s and reported the name had moved
-                    # from 'Investors 43' to 'Investors' -- which is not a drift
+                    # from 'Records 43' to 'Records' -- which is not a drift
                     # at all, it is the badge not having rendered yet, and the
                     # proposed patch would have written the MID-RENDER name into
                     # the flow. "Not there yet" and "the label changed" are

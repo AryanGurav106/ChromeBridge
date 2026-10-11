@@ -158,7 +158,7 @@ using it.
   `read_page` after the navigate, which does not become an assertion — true,
   stated in `record_flow`'s docstring, and evidently not where an agent looks.
 
-## boxsy-contacts-drilldown — a new shape on the user's own app, read-only
+## crm-contacts-drilldown — a new shape on the user's own app, read-only
 
 3 steps, 3 with assertions, on a React SPA against a live staging app. The D5
 multi-check fix is visible: step 2's `query` is a LIST of two, and the second
@@ -200,7 +200,7 @@ while the listing was by then complete and correct, so it could not separate
 settling"; an SPA that has committed its document and is still painting rows
 is outside what it measures.
 
-## boxsy-investors-filter — a filter round trip, read-only
+## crm-records-filter — a filter round trip, read-only
 
 3 steps, 3 with assertions, replays green in 6.05s. 25 rows → filter → 6 rows →
 clear → 25 rows, with a CONTENT check at each stage (every remaining row
@@ -234,7 +234,7 @@ batch), rather than to pretend it is ours or that it does not happen.
   carry no mmid until a `read_page` stamps them) and the note says exactly
   that, but the inconsistency within one session reads as a tool being
   unreliable.
-- The table renders 25 rows while the tab label says "Investors 44". Q8's
+- The table renders 25 rows while the tab label says "Records 44". Q8's
   declared-total warning cannot fire because this table declares neither
   `aria-rowcount` nor `aria-setsize` — the undeclared case #35 recorded and
   deliberately did not guess at. The agent flagged the ambiguity unprompted,
@@ -381,7 +381,7 @@ assertions` and said nothing about which — the agent could only have found out
 by reading the file. The agent read the list and accepted it, which is D9
 doing its job.
 
-## ev-python-docs-controlflow and boxsy-rounds-tab
+## ev-python-docs-controlflow and crm-items-tab
 
 5/5 and 3/3 asserted, both green (1.65s, 5.76s). Round one's python-docs was
 4/5 with no content check; this one asserts `Search finished, found 58 pages`
@@ -419,12 +419,12 @@ whether each named mmid still resolves, not by the url string.
 
 ### Also
 
-- `query_elements("table tbody tr")` and `[role=row]` both missed on the Boxsy
+- `query_elements("table tbody tr")` and `[role=row]` both missed on the live CRM
   Rounds view, which renders Name/Amount/Started columns with no table markup
   at all. Two wasted round trips, and the agent recovered with `h3`. Nothing
   to fix — the page declares no table — but it is the clearest case yet for
   why `read_page`'s data-table hint exists and why its absence is information.
-- The readiness banner fired on both Boxsy views AFTER an explicit 3s wait,
+- The readiness banner fired on both live-app views AFTER an explicit 3s wait,
   reporting `4 progress indicator(s) visible` while the content was complete
   and verified. Fifth agent to say the banner cannot separate "not ready" from
   "ready but chatty" on an SPA.
@@ -442,7 +442,7 @@ round two's single failure is a defect the fixes EXPOSED rather than caused.
 |---|---|
 | D13 zero is an answer | modal Close: `expect: null` → `{".modal.show", count: 0}` |
 | D17 keep what was read | combobox step 3: same selector + `text: "Durian"` |
-| D5 one slot per kind | DataTables and Boxsy now carry count AND content |
+| D5 one slot per kind | DataTables and the live CRM now carry count AND content |
 | D3 stale read not compiled | arXiv records the RESULTS url, not the one it left |
 | D14 settle_ms | `[None, 22516, 10, 7, 20319]` → zero |
 | D1 + D11 | `value="東京タワー"` read back byte-exact, unescaped |

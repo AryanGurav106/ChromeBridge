@@ -220,32 +220,32 @@ def main():
     # so it is a fallback and never a rung. These pin that it rescues #59's
     # case, plus the five controls that keep it from being a licence to guess.
     nav = [
-        E(10, "a", name="Investors 38", href="/pipeline/investors",
+        E(10, "a", name="Records 38", href="/pipeline/records",
           section="nav", under="Fundraising Pipeline"),
         E(11, "a", name="Contacts 9", href="/pipeline/contacts",
           section="nav", under="Fundraising Pipeline"),
-        E(12, "button", name="Add investor"),
+        E(12, "button", name="Add record"),
     ]
     t = build(nav[0], nav)
     check("FA1 a link records its declared destination as an ALTERNATE key, "
           "beside the name descriptor rather than instead of it",
-          t["desc"]["name"] == "Investors 38"
+          t["desc"]["name"] == "Records 38"
           and t.get("alt") == {"tag": "a", "role": "", "type": "",
-                               "href": "/pipeline/investors"})
+                               "href": "/pipeline/records"})
 
     # #59's live failure, exactly: AccName 2F concatenates a badge that is a
     # descendant, so adding a record rewrites the identity.
-    later = [dict(nav[0], name="Investors 43"), nav[1], nav[2]]
+    later = [dict(nav[0], name="Records 43"), nav[1], nav[2]]
     notes = []
     check("FA2 a name carrying live data can change and the step still resolves "
-          "— #59's 'Investors 38' -> 'Investors 43', which a rebind could only "
+          "— #59's 'Records 38' -> 'Records 43', which a rebind could only "
           "ever re-break at 44",
           resolve(t, later, notes) == "10")
     check("FA2b ...and the run is TOLD it matched on the destination, because a "
           "step that resolved on a different key than it recorded is not a "
           "clean pass",
           len(notes) == 1 and notes[0]["via"] == "href"
-          and notes[0]["was"]["name"] == "Investors 38")
+          and notes[0]["was"]["name"] == "Records 38")
 
     clean = []
     check("FA3 CONTROL: a step whose recorded descriptor still matches reports "
@@ -259,8 +259,8 @@ def main():
           "to pick something",
           _raises(lambda: resolve(t, gone, []), "no element on the page matches"))
 
-    twinned = [dict(nav[0], name="Investors 43"),
-               E(13, "a", name="Investors", href="/pipeline/investors"),
+    twinned = [dict(nav[0], name="Records 43"),
+               E(13, "a", name="Records", href="/pipeline/records"),
                nav[1], nav[2]]
     check("FA5 CONTROL: two links to the same destination is ambiguous, so it "
           "refuses rather than taking the first",
@@ -830,8 +830,8 @@ async def record_and_replay():
     #
     # #55 gave postconditions a window to BECOME true and left resolution asking
     # once -- the wrong half for a real app. Measured on a live SPA: step 1
-    # failed on `name='Investors 38'` because mid-render that tab's accessible
-    # name is still "Investors", the count having not arrived. The control was
+    # failed on `name='Records 38'` because mid-render that tab's accessible
+    # name is still "Records", the count having not arrived. The control was
     # not missing, it was not there yet, and one attempt reports those the same.
     class LateBridge(FakeBridge):
         """Renders the target only from the Nth entries fetch, like an SPA."""
@@ -905,8 +905,8 @@ async def record_and_replay():
     #
     # Found on the first REAL-APP run of the href fallback, which is the only
     # place it could have been found. The step resolved on the destination in
-    # 3.87s and reported the name had moved from 'Investors 43' to
-    # 'Investors' -- and that is not a drift, it is the count badge not having
+    # 3.87s and reported the name had moved from 'Records 43' to
+    # 'Records' -- and that is not a drift, it is the count badge not having
     # rendered yet. The proposed patch would have written the MID-RENDER name
     # into the flow. "Not there yet" and "the label changed" are exactly the
     # two things FR13's window exists to separate, and offering the alternate
@@ -914,15 +914,15 @@ async def record_and_replay():
     class BadgeBridge(FakeBridge):
         """The name arrives late; the href is there from the start, like an SPA."""
 
-        def __init__(self, settles_on=3, final_name="Investors 43"):
+        def __init__(self, settles_on=3, final_name="Records 43"):
             self.settles_on, self.final_name = settles_on, final_name
             super().__init__([])
             self.fetches = 0
 
         async def entries_fn(self, tabId=None):
             self.fetches += 1
-            nm = self.final_name if self.fetches >= self.settles_on else "Investors"
-            return [E(80, "a", name=nm, href="/pipeline/investors"),
+            nm = self.final_name if self.fetches >= self.settles_on else "Records"
+            return [E(80, "a", name=nm, href="/pipeline/records"),
                     E(81, "a", name="Contacts", href="/pipeline/contacts")]
 
     rb = Recorder("badge", BadgeBridge(settles_on=1).entries_fn)
@@ -950,7 +950,7 @@ async def record_and_replay():
     check("FR14b CONTROL: a name that never comes back IS a drift, so the "
           "destination carries the step and the run reports it",
           rgone["status"] == PASSED and len(rgone.get("drifted") or []) == 1
-          and (rgone["drifted"][0].get("alt") or {}).get("href") == "/pipeline/investors",
+          and (rgone["drifted"][0].get("alt") or {}).get("href") == "/pipeline/records",
           f"status={rgone['status']} drifted={rgone.get('drifted')}")
 
     # FO5/FO6 -- THE CONTROLS, and without them FO1-FO4 would all pass over a
@@ -1242,7 +1242,7 @@ async def record_and_replay():
     _sp.loader.exec_module(_msp)
 
     _tmp = ROOT / "flows" / "zz-patch-test.flow.json"
-    _ents = [E(80, "a", name="Investors 43", href="/pipeline/investors"),
+    _ents = [E(80, "a", name="Records 43", href="/pipeline/records"),
              E(81, "a", name="Contacts", href="/pipeline/contacts")]
     _rp3 = Recorder("zz-patch-test", FakeBridge(_ents).entries_fn)
     _pi3 = {"ref": "ref_80", "tabId": 1}
@@ -1255,9 +1255,9 @@ async def record_and_replay():
         _before = json.loads(_tmp.read_text(encoding="utf-8"))
         _msp._LAST_PATCHES["zz-patch-test"] = [{
             "step": 0, "name": "computer", "path": "ref",
-            "was": {"name": "Investors 43"}, "now": {"name": "Investors 44"},
+            "was": {"name": "Records 43"}, "now": {"name": "Records 44"},
             "target": {"level": 1, "desc": {"tag": "a", "role": "", "type": "",
-                                            "name": "Investors 44"}},
+                                            "name": "Records 44"}},
         }]
         _r = await _msp.mcp._tool_manager._tools["record_flow"].fn(
             action="patch", name="zz-patch-test")
@@ -1266,8 +1266,8 @@ async def record_and_replay():
               "self-heal loop ends in an updated flow instead of a suggestion "
               "nobody can act on",
               "Updated" in _r
-              and _after["steps"][0]["targets"]["ref"]["desc"]["name"] == "Investors 44"
-              and _before["steps"][0]["targets"]["ref"]["desc"]["name"] == "Investors 43",
+              and _after["steps"][0]["targets"]["ref"]["desc"]["name"] == "Records 44"
+              and _before["steps"][0]["targets"]["ref"]["desc"]["name"] == "Records 43",
               _r.splitlines()[0][:90])
 
         check("FP6b ...and the proposal is CONSUMED, so the same patch cannot be "
@@ -1502,7 +1502,7 @@ async def record_and_replay():
 
     # FW4 -- THE PARTIAL CASE, which is the one #63 found. Since a step may
     # carry several checks, one hollow check no longer means the step is
-    # unwitnessed: a Boxsy drill-down folded in a url that a side panel cannot
+    # unwitnessed: a a real CRM drill-down folded in a url that a side panel cannot
     # change, while its `[role=dialog]` check failed outright if the panel
     # never opened. Reporting that as "the flow would pass even if the step did
     # nothing" asserts more than is known -- #33's class, inside the warning

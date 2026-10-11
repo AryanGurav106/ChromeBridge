@@ -75,10 +75,10 @@ LEVELS: tuple[tuple[str, ...], ...] = (
 FULL = len(LEVELS) - 1
 
 # THE ALTERNATE KEY, and it is NOT a rung. #59 recorded the failure it exists
-# for: on a real app a nav tab's accessible name is "Investors 38", because
+# for: on a real app a nav tab's accessible name is "Records 38", because
 # AccName 2F concatenates descendant text and the badge is a descendant. The
 # identity rung is therefore DATA-DEPENDENT -- adding a record made it
-# "Investors 43" and a flow that had passed minutes earlier stopped resolving,
+# "Records 43" and a flow that had passed minutes earlier stopped resolving,
 # and a rebind can only ever propose another count-bearing name that breaks
 # again at 44. A link's `href` is declared and does not move, so it was the
 # obvious fix.

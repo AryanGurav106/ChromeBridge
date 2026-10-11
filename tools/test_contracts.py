@@ -560,7 +560,7 @@ def main() -> int:
             _ln = _ln.strip()
             if not _ln or _ln.startswith("#"):
                 continue
-            # flows/boxsy-*.flow.json -> the origin of each excluded flow
+            # flows/crm-*.flow.json -> the origin of each excluded flow
             for _fp in sorted((_Path(ROOT)).glob(_ln)):
                 try:
                     _o = json.loads(_fp.read_text(encoding="utf-8")).get("origin") or ""

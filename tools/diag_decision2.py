@@ -1,6 +1,6 @@
 """Replicate the exact live failure: fill_form with ONLY the decision-time field.
 
-Opens the Add-Investor modal if needed, then calls fill_form([{selector, value}])
+Opens the record-creation modal if needed, then calls fill_form([{selector, value}])
 exactly like the agent does, and dumps the result + trigger state after.
 """
 
@@ -36,15 +36,15 @@ async def main():
 
     if not trig:
         print("modal not open; opening it ...")
-        btn = [e for e in raw if 'add investor' in _txt(e)]
+        btn = [e for e in raw if 'add record' in _txt(e)]
         if not btn:
-            print("NO 'Add investor' button — wrong page?")
+            print("NO 'Add record' button — wrong page?")
             await bridge.stop()
             return
         print(await drv.click(f"[mmid='{btn[0]['mmid']}']"))
         await asyncio.sleep(1.0)
         raw = await drv.list_interactive_elements_raw()
-        opt = [e for e in raw if 'add investor' in _txt(e) and (e.get('role') or '').startswith('menuitem')]
+        opt = [e for e in raw if 'add record' in _txt(e) and (e.get('role') or '').startswith('menuitem')]
         if opt:
             print(await drv.click(f"[mmid='{opt[0]['mmid']}']"))
         for _ in range(8):  # poll up to ~6s for the modal to finish rendering

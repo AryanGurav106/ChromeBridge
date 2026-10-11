@@ -411,7 +411,7 @@ function resetState() {
 const FIELDS3 = () => ([
   { selector: "[mmid='11']", text: "Alice" },
   { selector: "[mmid='12']", text: "alice@example.com" },
-  { selector: "[mmid='13']", text: "Investor" },
+  { selector: "[mmid='13']", text: "Customer" },
 ]);
 
 // ---------------------------------------------------------------------------
@@ -452,7 +452,7 @@ const FIELDS3 = () => ([
       "inline:batchTextWrite": (jobs) => Object.fromEntries(jobs.map((j) => [j.idx, { ok: true, actual: j.text, msg: `typed ${JSON.stringify(j.text)}` }])),
       _highlightPage: () => true,
       _fieldKindPage: () => ({ tag: "select", role: null, is_native_select: true, is_combobox: false, is_checkbox_button: false }),
-      _selectNativePage: () => ({ ok: true, actual: "Investor", msg: 'selected "Investor"' }),
+      _selectNativePage: () => ({ ok: true, actual: "Customer", msg: 'selected "Customer"' }),
       "inline:submitResolves": () => true,
       "inline:submitSnap": () => snaps[Math.min(snapI++, 1)],
       _clickPage: (sel) => ({ ok: true, msg: `clicked ${sel}` }),

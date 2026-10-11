@@ -308,7 +308,7 @@ The interesting code is all in `extension/background.js`. Per tool call:
 
 ## Critical fixes that make it work on real apps
 
-These are bugs we hit and fixed during a long Boxsy form-fill debugging session. All general (W3C-standard-based, no site-specific code):
+These are bugs we hit and fixed during a long form-fill debugging session on a real CRM. All general (W3C-standard-based, no site-specific code):
 
 | # | Bug | Fix | File |
 |---|-----|-----|------|
@@ -2471,7 +2471,7 @@ granted in the side panel is refused with the same message the agent gets.
     note, with the no-popup control).
 
 35. **A REPEAT OF THE SAME LIVE TASK, WITH THE OTHER TOOL AS A DRIFT CONTROL — and
-    the control is what stopped me claiming a win.** Same investor-creation task on the
+    the control is what stopped me claiming a win.** Same record-creation task on the
     same app, both agents in parallel again so conditions matched the baseline.
 
     | | baseline | rerun |
@@ -2498,7 +2498,7 @@ granted in the side panel is refused with the same message the agent gets.
     text, stopping at the child with its OWN direct text — which is precisely the
     demoqa react-select case the contributor count was written to protect (verified on
     all three shapes). **Confirmed live after reload:** the identical query now returns
-    `ref_64 | button "Investor Relations Hub"` first and the blob does not appear at
+    `ref_64 | button "Records Hub"` first and the blob does not appear at
     all, where it previously led with ~1,300 characters of sidebar, dashboard and
     calendar grid.
 
@@ -5141,8 +5141,8 @@ granted in the side panel is refused with the same message the agent gets.
     **TARGET RESOLUTION HAD NO SETTLE WINDOW, which is the wrong half to have
     left out.** #55 gave POSTCONDITIONS a bounded window to become true and
     left resolution asking exactly once. On the live SPA step 1 failed with
-    `no element on the page matches … name='Investors 38'` — because mid-render
-    that tab's accessible name is still `"Investors"`, the count having not
+    `no element on the page matches … name='Records 38'` — because mid-render
+    that tab's accessible name is still `"Records"`, the count having not
     arrived. **The control was not missing, it was not there YET, and one
     attempt reports those identically.** Same bound, same poll and the same
     argument as `_check`: nothing is weakened, and a genuinely absent control
@@ -5163,23 +5163,23 @@ granted in the side panel is refused with the same message the agent gets.
     versions share now (#29's lesson, again).
 
     **AND A FINDING ABOUT REAL APPS THAT NO FIXTURE WOULD HAVE PRODUCED: an
-    accessible name can contain live data.** That tab's name is `"Investors 38"`
+    accessible name can contain live data.** That tab's name is `"Records 38"`
     because AccName 2F concatenates descendant text and the badge is a
     descendant. So the descriptor's identity rung is DATA-DEPENDENT. Predicted
     before it happened, then demonstrated: the create flow added two records,
     and the read-only flow — which had passed minutes earlier — failed with
-    `name='Investors 38'` against a page now reading 40. The durable answer is
+    `name='Records 38'` against a page now reading 40. The durable answer is
     an `href` rung (a nav link's href is declared and stable), but entries carry
     `href` only at `brief` detail, so that is a ladder change and #41/#44 are
     explicit that those are measured before they ship. Recorded as the next
     piece of work rather than bolted on.
 
     **WHAT THE REAL APP CONFIRMED WORKING**, which is the other half of the
-    point: descriptors resolving on a React SPA; the "Add investor" BUTTON and
-    the "Add investor" MENUITEM separated at level 1 by tag+role alone; a
+    point: descriptors resolving on a React SPA; the "Add record" BUTTON and
+    the "Add record" MENUITEM separated at level 1 by tag+role alone; a
     disabled submit enabling after the fill and the click landing; the typed
-    value becoming the variable `investor_name` with the final assertion
-    recorded as `{{investor_name}}`, so `run_flow(vars={"investor_name": …})`
+    value becoming the variable `record_name` with the final assertion
+    recorded as `{{record_name}}`, so `run_flow(vars={"record_name": …})`
     typed a new name AND checked for the new name — **PASSED 5/5 in 9.15s**;
     #33's aria-hidden note naming the open `role=menu` from its own output;
     #34's truncation guard refusing to return an empty listing and naming the
@@ -5236,9 +5236,9 @@ granted in the side panel is refused with the same message the agent gets.
 61. **THE HREF RUNG #59 ASKED FOR DOES NOT EXIST — the measurement said make it
     a FALLBACK instead, and three other things fell out of building it.** #59
     recorded the failure: on a real app a nav tab's accessible name is
-    "Investors 38", because AccName 2F concatenates descendant text and the
+    "Records 38", because AccName 2F concatenates descendant text and the
     badge is a descendant, so the identity rung is DATA. Adding a record made
-    it "Investors 43" and a flow that had passed minutes earlier stopped
+    it "Records 43" and a flow that had passed minutes earlier stopped
     resolving; a rebind can only ever propose another count-bearing name that
     re-breaks at 44. A link's `href` is declared and does not move, so #59
     recorded "the principled fix is an href rung" and left it unshipped because
@@ -5328,9 +5328,9 @@ granted in the side panel is refused with the same message the agent gets.
     ship `data-testid`), not another candidate attribute.
 
     **AND THE FIRST REAL-APP RUN OF THE FALLBACK FOUND A DEFECT IN IT, which
-    is the only place it could have been found.** The Boxsy step resolved on
+    is the only place it could have been found.** The live-app step resolved on
     the destination in 3.87s and reported the name had moved from
-    `'Investors 43'` to `'Investors'` -- which is not a drift at all. It is the
+    `'Records 43'` to `'Records'` -- which is not a drift at all. It is the
     count badge not having RENDERED yet, and the proposed patch would have
     written the mid-render name into the flow. "Not there yet" and "the label
     changed" are exactly the two things #59 added the resolve window to tell
@@ -5392,7 +5392,7 @@ granted in the side panel is refused with the same message the agent gets.
     rows) makes the 4 witness the click. Re-recorded, warning gone.
 
     **AND THE LIVE SERVER WAS STALE THREE TIMES, so it stopped being a rule and
-    became a read.** The first Boxsy re-record came back with no `alt` key at
+    became a read.** The first live-app re-record came back with no `alt` key at
     all, because the session's MCP server had loaded `descriptor.py` at connect
     time; nothing warns you, the old process answers normally and writes a
     slightly older format. #59 paid three reconnects learning this and left the
@@ -5407,20 +5407,20 @@ granted in the side panel is refused with the same message the agent gets.
 
     **LIVE ON THE REAL APP, end to end, which is where every claim here was
     either confirmed or corrected:**
-    - the flow recorded at `Investors 38` against a page reading 43 **PAUSED**
+    - the flow recorded at `Records 38` against a page reading 43 **PAUSED**
       with `no element on the page matches this step's target: tag='a'
-      name='Investors 38'` -- the failure, reproduced before the fix;
+      name='Records 38'` -- the failure, reproduced before the fix;
     - re-recorded at 43 and replayed clean: **PASSED 2/2, no drift note**, which
       is the discrimination half;
-    - a record created through `boxsy-add-investor` moved the count to 44, and
+    - a record created through `crm-add-record` moved the count to 44, and
       the same flow then **PASSED on the destination**, reported
-      `name 'Investors 43' is gone`, and proposed
-      `'Investors 43' -> 'Investors 44'` -- a patch built from a SETTLED page,
-      where before the ordering fix it proposed the mid-render `'Investors'`;
-    - the file on disk still says `Investors 43`. The proposal is never applied
+      `name 'Records 43' is gone`, and proposed
+      `'Records 43' -> 'Records 44'` -- a patch built from a SETTLED page,
+      where before the ordering fix it proposed the mid-render `'Records'`;
+    - the file on disk still says `Records 43`. The proposal is never applied
       (#49's FR9), verified live rather than asserted;
-    - a four-step flow across three tabs (`Investors 43` / `Contacts 152` /
-      `Rounds 1,808` -- three data-dependent names in one flow) recorded with
+    - a four-step flow across three tabs (`Records 43` / `Contacts 152` /
+      `Items 1,808` -- three data-dependent names in one flow) recorded with
       all three destinations and **PASSED 4/4 in 6.14s**.
 
     **AND A SECOND DEFECT CAME OUT OF THE SAME RECORDING SESSION, by refuting
@@ -5600,7 +5600,7 @@ granted in the side panel is refused with the same message the agent gets.
     carried 18,548ms for a navigate and 16,465ms for a modal that opens in well
     under a second, because `base` is the action's timestamp and `last` the
     final contributing observation -- the gap is mostly model turns (~3.6s
-    each, #38). **So the Boxsy figures #60 quotes are not what that entry says
+    each, #38). **So the live-app figures #60 quotes are not what that entry says
     they are.** The fixture had the right shape all along (check, get nothing,
     wait, check again) and the implementation generalised past it to "the last
     observation that contributed", which is simply whenever the agent looked.
@@ -5725,7 +5725,7 @@ granted in the side panel is refused with the same message the agent gets.
     flags. R2-D3 and R2-D6 were one defect wearing two hats.
 
     **THREE MORE, each a message or a rule asserting past what it knows.**
-    - **The witness warning over-claimed.** A Boxsy drill-down folded in a url
+    - **The witness warning over-claimed.** A live-app drill-down folded in a url
       a side panel cannot change, and the warning said "this flow would pass
       even if the step did nothing" while the SAME step asserted
       `[role=dialog] == 1`, which fails outright if the panel never opens.
@@ -6030,7 +6030,7 @@ granted in the side panel is refused with the same message the agent gets.
     Also added to the README, because a user meets them and concludes the
     product is broken: a flow that CREATES something is not re-runnable without
     a fixture reset, a descriptor's identity can be live data (#59's
-    "Investors 43"), the settle budget comes from the recording rather than
+    "Records 43"), the settle budget comes from the recording rather than
     from a constant (#60), and a coordinate is deliberately unrecordable. And
     **macOS is no longer "untested end to end"** — this session drove a real
     Chrome, the unpacked extension, trusted clicks and replayed flows on
@@ -6296,7 +6296,7 @@ granted in the side panel is refused with the same message the agent gets.
 | `record_flow(stop)` warns that an assertion was ALREADY TRUE | By design since #57 — the check had that same value the last time the agent observed it, so the step did not move what it measures and the flow would pass even if the step did nothing. Usually the step silently failed (a required field left unfilled is the one that caused this twice). A warning, not a refusal: an idempotent step legitimately leaves state alone |
 | A flow step after `tabs_create_mcp` runs in the NEW tab | By design since #58 — the runner used to force the flow's starting tabId on every step, so a recorded `tabs_create_mcp` made a tab that was then ignored and the flow carried on in the old one. Same rule `browser_batch` threads (#46) and only from `tabs_create_mcp`, which returns exactly one id it just made. A create whose id cannot be read FAILS rather than silently continuing in the previous tab |
 | A flow fails at step 1 on an SPA with "no element matches" | Fixed in #59 — target resolution had no settle window, so a control that had not RENDERED yet was reported exactly like one that does not exist. It now retries on the same bound as a postcondition, re-fetching entries each attempt. If it still fails after the window, the control really is absent — or its NAME is data-dependent, which is the other half of #59 |
-| A flow's descriptor stops matching after data changes | Its identity is data-dependent: a nav tab's accessible name is `"Investors 38"` because AccName 2F concatenates the badge, so adding a record makes it `"Investors 39"`. Since #61 a LINK recovers by itself — the step resolves on its declared destination and the run says `name 'X' is gone — matched href='/y'`. A BUTTON with a badge does not: nothing else is declared, so it still pauses and you rebind with `run_flow(resume_id=…, bind="ref_N")`, which proposes a patch and never applies it |
+| A flow's descriptor stops matching after data changes | Its identity is data-dependent: a nav tab's accessible name is `"Records 38"` because AccName 2F concatenates the badge, so adding a record makes it `"Records 39"`. Since #61 a LINK recovers by itself — the step resolves on its declared destination and the run says `name 'X' is gone — matched href='/y'`. A BUTTON with a badge does not: nothing else is declared, so it still pauses and you rebind with `run_flow(resume_id=…, bind="ref_N")`, which proposes a patch and never applies it |
 | A flow step asserts `absent: true` or `count: 0` | By design since #63 — an observation that something is GONE is an assertion. Before that a zero was falsy and the check was silently discarded, so a step confirming a dialog had closed saved with nothing that could fail |
 | A step's `query` assertion carries a `text` | By design since #63 — a single-match query keeps the text it read, because `#combo1 == 1` is true whatever the element displays. Compared with `in`, not `==`, so a label the page adds around it later does not break a step whose point is the value |
 | A step's `expect.query` is a LIST | By design since #63 — two checks of the same kind after one action both survive. Files recorded earlier carry a bare dict and both shapes read the same way, so there was no schema bump |
@@ -6333,5 +6333,5 @@ entry point, and reviving it would need path fixes plus the missing modules. The
 only entry point is `mcp_server.py`.
 
 Conversation that produced the pre-MCP state lives in the parent project's session
-logs — search for "Boxsy form-fill" for the multi-hour debugging arc that surfaced
+logs — search for "form-fill" for the multi-hour debugging arc that surfaced
 fixes #1–#10.

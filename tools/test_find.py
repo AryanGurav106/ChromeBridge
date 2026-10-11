@@ -404,16 +404,16 @@ async def main():
     # `line` — printed the whole blob. The scorer already refused to match on it
     # (`_borrowed`), and #29 already stopped the TREE printing it, so this was the two
     # halves of one tool disagreeing: ranked WITHOUT the label, rendered WITH it.
-    # Measured live on a component-heavy app: find("Investor Relations Hub sidebar
+    # Measured live on a component-heavy app: find("Records Hub sidebar
     # link") returned the shell FIRST, ~2,500 chars of sidebar/dashboard/calendar,
     # pushing the real button to second place.
-    _blob = "Toggle Sidebar Home Control Center Calendar Investor Relations Hub RevOps Hub"
+    _blob = "Toggle Sidebar Home Control Center Calendar Records Hub Billing Hub"
     page(el(mmid="80", tag="div", label=_blob, text=_blob, subtreeName=True,
             line='ref_80 | div (container — the text here belongs to the elements inside it)', y=0),
-         el(mmid="81", tag="button", label="Investor Relations Hub",
-            text="Investor Relations Hub",
-            line='ref_81 | button "Investor Relations Hub"', y=358))
-    out = await run("Investor Relations Hub sidebar link")
+         el(mmid="81", tag="button", label="Records Hub",
+            text="Records Hub",
+            line='ref_81 | button "Records Hub"', y=358))
+    out = await run("Records Hub sidebar link")
     _first = next((l for l in out.splitlines() if "ref_8" in l), "")
     check("F32 the real control outranks the app-shell container whose name is the "
           "whole page",

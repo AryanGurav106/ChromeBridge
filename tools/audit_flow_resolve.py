@@ -169,7 +169,7 @@ def mut_counter_in_name(entries, tgt):
     """A number INSIDE the accessible name changes. The control does not.
 
     This is #59's live failure, modelled exactly rather than approximated: a
-    nav tab reading "Investors 38" becomes "Investors 43" because AccName 2F
+    nav tab reading "Records 38" becomes "Records 43" because AccName 2F
     concatenates a badge that is a descendant. The element is the same element
     and the step still means it, so REFUSING here is safe but costs a model
     turn every time the data moves -- and a rebind can only ever propose

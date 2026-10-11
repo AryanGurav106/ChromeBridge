@@ -18,7 +18,7 @@ async def main():
     for e in raw:
         sec = e.get('section') or ''
         if sec in ('dialog',) or (e.get('role') or '') in ('dialog', 'combobox', 'option', 'listbox', 'menuitem') \
-           or 'add investor' in (str(e.get('name','')) + str(e.get('text','')) + str(e.get('label',''))).lower():
+           or 'add record' in (str(e.get('name','')) + str(e.get('text','')) + str(e.get('label',''))).lower():
             print(" ", json.dumps({k: e.get(k) for k in ('mmid','tag','role','name','text','label','value','section','disabled','unselected','collapsed','x','y')}, ensure_ascii=False))
     await bridge.stop()
 

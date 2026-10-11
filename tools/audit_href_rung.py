@@ -1,9 +1,9 @@
 """Should a link's DESTINATION be a descriptor rung, and ahead of its name?
 
 #59 recorded the failure this probe exists to answer. On a real app a nav
-tab's accessible name is "Investors 38" -- AccName 2F concatenates descendant
+tab's accessible name is "Records 38" -- AccName 2F concatenates descendant
 text and the badge is a descendant -- so the identity rung is DATA-DEPENDENT.
-Adding a record made the name "Investors 43" and a flow that had passed minutes
+Adding a record made the name "Records 43" and a flow that had passed minutes
 earlier stopped resolving. The rebind can only ever propose another
 count-bearing name, which breaks again at 44.
 

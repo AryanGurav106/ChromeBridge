@@ -78,7 +78,7 @@ async def main():
 
             Probes that grepped a whole LINE broke the moment folding grouped more
             elements together: G24 asserted "(occluded" was absent from the Add
-            Investor line and failed because a DIFFERENT member of the same fold
+            Customer line and failed because a DIFFERENT member of the same fold
             carried it. Flags belong to a member, so they have to be read per member.
             """
             m = re.search(r'\d+:"' + re.escape(label) + r'"((?:\([^)]*\))*)', listing)
@@ -353,7 +353,7 @@ async def main():
         report("G23b checked radio flagged", "CAPTURED" if checked else "MISSED")
 
         # --- G24 pointer-events:none disabled submit stays listed ---
-        _g24 = member_flags("Add Investor")
+        _g24 = member_flags("Add record")
         report("G24 pointer-events:none disabled submit listed + flagged",
                "CAPTURED" if _g24 is not None and "(disabled)" in _g24 and "(occluded" not in _g24
                else "MISSED",
@@ -367,7 +367,7 @@ async def main():
                tile[0] if tile else "tile anchor unlabeled (host.innerText empty for shadow content)")
 
         # --- G25 custom-picker harvest must survive stale ARIA portals ---
-        # Replicates the live Boxsy failure: trigger's aria-controls popover has
+        # Replicates the live a real CRM failure: trigger's aria-controls popover has
         # clickable rows with NO role=option, while a closed menu portal still
         # has invisible [role=menuitem] nodes mounted. The old `!all.length`
         # gate let those 2 stale matches block the harvest fallback entirely.

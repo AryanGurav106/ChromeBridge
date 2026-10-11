@@ -151,7 +151,7 @@ Meanwhile the extension's `handleOp` **continues to completion, including the
 auto-detected submit** (`submit_trusted=True` is hardwired at `mcp_server.py:502`).
 The model retries `fill_form` → **the record is created twice.**
 
-The tuning fits the ~6-field Boxsy form it was debugged on; it does not fit bigger
+The tuning fits the ~6-field CRM form it was debugged on; it does not fit bigger
 forms.
 
 **Minimal fix:** pass a per-op timeout scaled to field count

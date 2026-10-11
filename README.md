@@ -312,7 +312,7 @@ constraint: it does exactly what was recorded.
   names the previous run among its causes rather than diagnosing it, because a
   changed dataset and a real regression look the same from inside.
 - **An element's identity can be live data.** A nav tab whose accessible name
-  is "Investors 43" is named that because the count is inside it; add a record
+  is "Records 43" is named that because the count is inside it; add a record
   and the descriptor stops matching. The replay falls back to the link's `href`,
   reports the drift and **proposes** a patch — `record_flow(action="patch")`
   applies it. A replay never edits your flow file on its own.

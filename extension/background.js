@@ -1218,7 +1218,7 @@ async function clickTrusted(tabId, selector, frameIdOverride = null) {
   // If we read getBoundingClientRect before the bar appears, coordinates are
   // stale by the time we dispatch — for short elements (32px option rows) the
   // click lands ABOVE the target and hits empty space. This was the silent
-  // failure mode behind Boxsy's combobox options never selecting.
+  // failure mode behind the CRM's combobox options never selecting.
   await attachDebugger(tabId);
   const _ready = await ensureInputReady(tabId);   // background tabs accept input; no focus stealing
   // Give the page one paint to settle after the infobar shifts the viewport.
@@ -2367,8 +2367,8 @@ try {
 // --------------------- combobox / native-select handling ---------------
 // fill_form treats `<button role="combobox">` and native `<select>` as
 // dropdowns, not text inputs. Setting .value on a button silently fails
-// (we observed this hard on Boxsy: Investor Type / Status / Focus Areas /
-// Regions / Stages / Decision Time are all Radix Select triggers — typing
+// (we observed this hard on a real CRM: a multi-select of categories /
+// Regions / Stages / a custom are all Radix Select triggers — typing
 // into them sets nothing, so the form's validation fails on submit).
 function _fieldKindPage(selector) {
   const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
@@ -2507,7 +2507,7 @@ function _pickOptionPage(text, triggerSel) {
   // (data-state="open" or role=listbox/menu that's visible), falling back to
   // any visible option otherwise.
   //
-  // FALLBACK FOR CUSTOM PICKERS: many apps (e.g. Boxsy's multi-select Focus
+  // FALLBACK FOR CUSTOM PICKERS: many apps (e.g. the CRM's multi-select Focus
   // Areas) implement their own picker — a popover containing a search input
   // and clickable <div> rows with NO role="option". To handle these without
   // hard-coding the site, we ALSO accept clickable text-bearing rows that
@@ -2792,7 +2792,7 @@ function _pickOptionPage(text, triggerSel) {
   // data-state="closed" nodes around during exit transitions, sometimes
   // longer) leaves 1-2 STALE [aria-selected]/menuitem matches in the page.
   // Those raw matches blocked the fallback entirely, making custom pickers
-  // (clickable rows with NO role=option — Boxsy focus areas/regions/stages)
+  // (clickable rows with NO role=option — a real CRM focus areas/regions/stages)
   // unpickable whenever any stale portal existed. Visibility is the real
   // signal for "did the standard-ARIA path find the open popover's options".
   // HARVEST GATE. Previously "any visible ARIA option anywhere on the page" was enough
@@ -5390,8 +5390,8 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   };
 
   // Nearest semantic section / container. Lets the model tell apart elements
-  // that share a label but live in different parts of the page: a "Investor"
-  // <button> inside a <thead> (column sort) vs a "Investor" input inside a
+  // that share a label but live in different parts of the page: a "Customer"
+  // <button> inside a <thead> (column sort) vs a "Customer" input inside a
   // <dialog> (form field) are totally different things — without this signal
   // the agent was confusing them and hallucinating form structures from table
   // column headers.
@@ -5485,7 +5485,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   // Active-state detector. Looks at *attribute*-level signals only (no class
   // sniffing — too many false positives like "activeClass" / "active-deal").
   // Surfaces which tab/nav item the current page actually is so the agent can
-  // tell "Investors Database tab" from "Investor Relations Hub sidebar item"
+  // tell "Customers Database tab" from "Records Hub sidebar item"
   // when both are present in the listing.
   const activeHint = (el) => {
     try {
@@ -5939,7 +5939,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   // click targets. Skip unless they carry an explicit interactive ARIA role.
   const decorativeTags = new Set(['svg','rect','path','circle','polyline','polygon','line','ellipse','g','use','defs','symbol']);
   // Track which mmids we've added so we can collapse parent->child same-label
-  // chains (`<a>Investor Relations Hub` containing `<span>Investor Relations Hub`).
+  // chains (`<a>Records Hub` containing `<span>Records Hub`).
   const addedMmids = new Set();
   // DELEGATION ROOTS (React/Vue bind every handler on the app container, so that
   // container gets tagged __abClickBound and looks like a control). Candidates are
@@ -6687,7 +6687,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // pointer-events:none (computed value already accounts for inheritance) means
     // clicks pass straight through — but for REAL form controls it's how
     // Tailwind/shadcn renders DISABLED state (`disabled:pointer-events-none`).
-    // Dropping those hid Boxsy's disabled "Add Investor" submit button and the
+    // Dropping those hid the CRM's disabled "Add record" submit button and the
     // agent picked Cancel as its submit target. Keep real controls, flagged
     // (disabled); drop only decorative pass-through nodes.
     let peDisabled = false;
@@ -7105,8 +7105,8 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // SEMANTICALLY DISTINCT FIELD METADATA so the model never has to guess
     // whether a string is the field's NAME, its PLACEHOLDER hint, or its
     // current VALUE. The old single-label flattening (label = aria-label ||
-    // value || placeholder || innerText) caused the model to misread Boxsy's
-    // placeholder "Enter investor or fund name" as either an instruction or
+    // value || placeholder || innerText) caused the model to misread the CRM's
+    // placeholder "Enter customer or account name" as either an instruction or
     // a pre-filled value.
     //
     // accessibleName resolution follows the standard AccName algorithm,
@@ -9388,7 +9388,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         // refuses to match on it (`_borrowed` in mcp_server.py) — but the `line`
         // attached here was still built from the raw entry, so find RANKED the element
         // without the blob and then PRINTED the blob. Measured live on a component-heavy
-        // app: `find("Investor Relations Hub sidebar link")` returned the app shell as
+        // app: `find("Records Hub sidebar link")` returned the app shell as
         // its FIRST result, ~2,500 characters of sidebar, dashboard, calendar and
         // activity feed rendered as one "match", pushing the real button to second.
         // That is #21's "one concept spelled two ways" between the two halves of one
@@ -13947,7 +13947,7 @@ async function handleOp({ id, op, params }) {
               txt: (document.body && document.body.innerText) ? document.body.innerText.length : 0,
               // The submit button's OWN state — label + disabled/busy. An async
               // submit's universal signature is the button mutating in place
-              // ("Add Investor" -> "Saving..." + disabled): zero new nodes,
+              // ("Add record" -> "Saving..." + disabled): zero new nodes,
               // modal still open, URL unchanged — invisible to the checks above.
               btnTxt: btn ? (btn.innerText || btn.value || '').trim().slice(0, 80) : null,
               btnBusy: btn ? (btn.disabled === true
@@ -14021,7 +14021,7 @@ async function handleOp({ id, op, params }) {
                 // Async submit detected mid-poll (button went busy) — extend the
                 // window so a quick server round-trip resolves to a definitive
                 // "modal closed" in THIS call. Bounded at 4s: ops that run longer
-                // (Boxsy's segmentation takes 10s+) get the in-flight report
+                // (the CRM's segmentation takes 10s+) get the in-flight report
                 // anyway, so waiting past this is pure wasted wall-clock.
                 if (!sawBusy) { sawBusy = true; deadline = 4000; }
               } else if (sawBusy) {
@@ -14117,7 +14117,7 @@ async function handleOp({ id, op, params }) {
             // Visible validation errors are authoritative — report them even if
             // the button also went busy. With NO errors and a busy button, the
             // submit was ACCEPTED and an async operation is still in flight
-            // (Boxsy's "Segmenting...", any "Saving..." pattern) — tell the
+            // (the CRM's "Segmenting...", any "Saving..." pattern) — tell the
             // model to wait + re-observe instead of implying it should re-click.
             if (!errors.length && busyEffect(after)) {
               const btnNow = after.btnTxt === null ? "(button unmounted)"
@@ -14134,7 +14134,7 @@ async function handleOp({ id, op, params }) {
             // These are concrete retry targets — the model can fill them and
             // resubmit instead of just bailing.
             // Exclude only fields that actually SUCCEEDED — a field that was
-            // attempted but failed (Boxsy's decision-time combobox) must be
+            // attempted but failed (the CRM's decision-time combobox) must be
             // re-flagged so the retry hint names it.
             const filledSelectors = (out.fields || []).filter(f => f.ok).map(f => f.selector);
             const unfilled = await ritFF((sel, already) => {
