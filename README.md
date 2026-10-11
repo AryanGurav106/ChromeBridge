@@ -1,5 +1,8 @@
 # ChromeBridge
 
+[![CI](https://github.com/AryanGurav106/ChromeBridge/actions/workflows/ci.yml/badge.svg)](https://github.com/AryanGurav106/ChromeBridge/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **Open-source Claude-in-Chrome.** A Chrome MV3 extension plus a local MCP stdio
 server that let **Claude Code drive your real Chrome window** — your existing
 logins, cookies and extensions — through trusted Chrome DevTools Protocol input.
@@ -50,6 +53,11 @@ Alpha, and honest about it:
 - Node 22+ and Playwright — **only** to run the test suites, not to use it
 
 ## Setup
+
+```bash
+git clone https://github.com/AryanGurav106/ChromeBridge.git
+cd ChromeBridge
+```
 
 ### 1. Install the Python side
 
@@ -364,7 +372,7 @@ in three places (`core/bridge/server.py`, `extension/background.js`,
 .venv/bin/python tools/run_tests.py                    # POSIX (run on macOS; CI runs it on Linux)
 ```
 
-19 suites, 1,039 checks, about 90 seconds. Nine are browser-free; the other ten
+19 suites, 1,040 checks, about 90 seconds. Nine are browser-free; the other ten
 drive headless Chromium and need two extra packages that are deliberately not
 runtime dependencies:
 

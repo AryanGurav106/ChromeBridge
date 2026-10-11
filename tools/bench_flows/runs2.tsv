@@ -2,11 +2,11 @@ app	origin	shape	flow_name	replay1	replay2	witness	notes
 ev-apg-select-only-combobox	https://www.w3.org	combobox	ev-apg-select-only-combobox	PASSED	-	no	r1 step3 selector+text now falsifiable; settle_ms 9346->0
 ev-bootstrap-modal-demo	https://getbootstrap.com	modal	ev-bootstrap-modal-demo	PASSED	-	no	Close step null->count:0 (D13 works); but a typo became absent:true, and settle_ms 22550
 ev-arxiv-advanced-search	https://arxiv.org	search-filter	ev-arxiv-advanced-search	FAILED	-	no	stale-url defect FIXED (url now correct); fails on new R2-D3 regex flag dropped
-boxsy-contacts-drilldown	https://startup-staging.boxsy.io	drill-down	boxsy-contacts-drilldown	PASSED	-	yes	witness fired on a hollow url but step IS witnessed by 3 other checks (R2-D4)
-boxsy-investors-filter	https://startup-staging.boxsy.io	filter	boxsy-investors-filter	PASSED	-	no	filter 25->6->25 with content checks; D8 pinned down as client-side
+boxsy-contacts-drilldown	(private staging SPA)	drill-down	boxsy-contacts-drilldown	PASSED	-	yes	witness fired on a hollow url but step IS witnessed by 3 other checks (R2-D4)
+boxsy-investors-filter	(private staging SPA)	filter	boxsy-investors-filter	PASSED	-	no	filter 25->6->25 with content checks; D8 pinned down as client-side
 ev-httpbin-pizza-form	https://httpbin.org	form	ev-httpbin-pizza-form	PASSED	-	no	4->6 asserted BUT the 3 typing steps are still existence-only (R2-D6)
 ev-datatables-zero-config	https://datatables.net	data-table	ev-datatables-zero-config	PASSED	-	no	content checks now recorded; D9 message correct but agent could not map step indices
 ev-todomvc-react	https://todomvc.com	spa-routing	ev-todomvc-react	PASSED	-	no	9 steps 4 asserted; batching left intermediate steps unasserted, now VISIBLE
 ev-jawiki-tokyo-tower	https://ja.wikipedia.org	non-latin	ev-jawiki-tokyo-tower	PASSED	-	no	non-Latin byte-exact end to end incl. attributes=[value]; 1 errored call correctly dropped
 ev-python-docs-controlflow	https://docs.python.org	docs-nav	ev-python-docs-controlflow	PASSED	-	no	4->5 asserted with a content check; hash-change false stale cost 2 round trips
-boxsy-rounds-tab	https://startup-staging.boxsy.io	tab-strip	boxsy-rounds-tab	PASSED	-	no	3/3 content checks on two SPA views
+boxsy-rounds-tab	(private staging SPA)	tab-strip	boxsy-rounds-tab	PASSED	-	no	3/3 content checks on two SPA views

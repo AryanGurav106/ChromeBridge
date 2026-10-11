@@ -39,6 +39,11 @@ classifiers = [
 # Single source of truth is requirements.txt -- do not restate the pins here.
 dynamic = ["dependencies"]
 
+[project.urls]
+Homepage = "https://github.com/AryanGurav106/ChromeBridge"
+Source = "https://github.com/AryanGurav106/ChromeBridge"
+Issues = "https://github.com/AryanGurav106/ChromeBridge/issues"
+
 [project.scripts]
 # Same call the `if __name__ == "__main__"` block in mcp_server.py makes:
 # `mcp` is the module-level FastMCP instance, `.run()` starts the stdio transport.

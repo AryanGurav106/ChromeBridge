@@ -28,6 +28,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path as _Path
 
@@ -543,6 +544,50 @@ def main() -> int:
     _tr = read("tools/README.md")
     _documented = set(re.findall(r"^\| `([a-z_0-9]+)` \|", _tr, re.M))
     _undoc = sorted(_suites - _documented)
+    # ---- C29: NO PRIVATE ORIGIN IN A TRACKED FILE. The flow files recorded
+    # against a private staging app are excluded from git on purpose, and the
+    # EVAL RESULTS table carried its hostname anyway — three rows of it, in a
+    # file nobody thought of as secret-bearing. (This comment named the host
+    # when it was written, and the check caught ITSELF on the first run, which
+    # is the firing demonstration it needed.) Exclusion protects the artefact
+    # you remembered; a check
+    # protects the one you did not. Reads the exclude list rather than
+    # restating it (#21), so adding a pattern there extends this automatically.
+    _excl = _Path(ROOT) / ".git" / "info" / "exclude"
+    _hosts = set()
+    if _excl.exists():
+        for _ln in _excl.read_text(encoding="utf-8").splitlines():
+            _ln = _ln.strip()
+            if not _ln or _ln.startswith("#"):
+                continue
+            # flows/boxsy-*.flow.json -> the origin of each excluded flow
+            for _fp in sorted((_Path(ROOT)).glob(_ln)):
+                try:
+                    _o = json.loads(_fp.read_text(encoding="utf-8")).get("origin") or ""
+                except Exception:
+                    continue
+                _h = re.sub(r"^https?://", "", _o).split("/")[0]
+                if _h and not _h.startswith("127.") and "localhost" not in _h:
+                    _hosts.add(_h)
+    _leaks = []
+    if _hosts:
+        _tracked = subprocess.run(["git", "ls-files"], capture_output=True,
+                                  text=True, cwd=str(ROOT)).stdout.split()
+        for _rel in _tracked:
+            _f = _Path(ROOT) / _rel
+            try:
+                _txt = _f.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            for _h in _hosts:
+                if _h in _txt:
+                    _leaks.append(f"{_rel}:{_h}")
+    check("C29 no origin of a deliberately-excluded flow appears in a tracked file",
+          not _leaks,
+          "; ".join(sorted(set(_leaks))[:6]) if _leaks
+          else (f"{len(_hosts)} excluded origin(s) checked against the tracked tree"
+                if _hosts else "no excluded flows on this checkout — check inert"))
+
     check("C28 tools/README.md has a row for every suite on disk",
           not _undoc,
           f"UNDOCUMENTED: {', '.join(_undoc)}" if _undoc
@@ -663,7 +708,6 @@ def main() -> int:
     # Driven as a SUBPROCESS with playwright hidden, rather than asserted from
     # the source: the invariant is what the caller gets, not where an import
     # sits (#15 — test the function the caller actually reaches).
-    import subprocess
     import textwrap
     _blocker = _Path(ROOT) / "temp" / "_noplaywright"
     try:

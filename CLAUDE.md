@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 1039 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 1040 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -137,8 +137,9 @@ ChromeBridge/
 ├── BENCHMARK.md / AUDIT_DOM_GENERALITY.md / AUDIT_GENERALITY.md
 ```
 
-The repo is under git (one baseline commit, **no remote**). Do not add a CI
-badge or a clone URL until one exists.
+The repo is on GitHub at `AryanGurav106/ChromeBridge` and CI runs on every
+push. This line used to say there was no remote and to add no badge or clone
+URL until one existed; both exist, and the README carries them.
 
 ---
 
@@ -506,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1039 checks, ~90s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1040 checks, ~90s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -6092,13 +6093,32 @@ granted in the side panel is refused with the same message the agent gets.
     href=…` for the same drift fact, so an agent grepping its own context for
     the phrase would find it under one spelling only (#21, in prose). Aligned.
 
-    Suites: 1039 checks. New — SV1 (a wired svg is named by its own title;
+    **AND THE LAST THING BEFORE A REPO GOES PUBLIC IS WHAT IS ALREADY IN IT.**
+    The flow files recorded against a private staging app are excluded from git
+    deliberately — and the EVAL RESULTS TABLE carried its hostname anyway,
+    three rows of it in `tools/bench_flows/runs2.tsv`, a file nobody thought of
+    as secret-bearing. **Exclusion protects the artefact you remembered; only a
+    check protects the one you did not.** Redacted in the working tree, and C29
+    now reads the exclude list (never a restated copy, #21), resolves each
+    excluded flow's own `origin`, and fails on any tracked file containing it —
+    so adding a pattern to the exclude list extends the check for free.
+    **It caught ITSELF on the first run**, because the comment explaining it
+    quoted the host, which is the firing demonstration a detector needs before
+    its "0 findings" is worth anything (#21's rule for `audit_patterns.py`).
+    Also swept for API-key shapes (`sk-`, `AKIA`, `ghp_`, `xox*`, `AIza`) and
+    for a literal `BRIDGE_TOKEN` value across **all** history: none, and `.env`
+    was never committed. **The hostname remains in commit `e03757e`'s history**
+    — a redaction now does not reach it, and nothing should force-push over
+    published history without being asked.
+
+    Suites: 1040 checks. New — SV1 (a wired svg is named by its own title;
     FAILS against the pre-change collector), SV1b (a child's title is not the
     drawing's name), SV1c (the icon-button path still resolves it, which passes
     both ways and is therefore the regression control), C26/C26b (a browserless
     validation flag actually validates), C27–C27c (the README's tool table, in
     both directions, with three planted-violation controls), C28 (every suite
-    on disk has a row in `tools/README.md`).
+    on disk has a row in `tools/README.md`), C29 (no excluded flow's origin leaks
+    into a tracked file, with a planted-leak control).
 
 ## Debugging starting points
 
