@@ -1268,7 +1268,6 @@ async def debug_targets(
     return str(await b.call("debug_targets", tabId=tabId))
 
 
-@mcp.tool()
 def _changed_since_start() -> list:
     """Server-side files whose mtime is later than this process's import.
 
@@ -1296,6 +1295,7 @@ def _changed_since_start() -> list:
     return out
 
 
+@mcp.tool()
 async def sw_info(
     tabId: Annotated[int, Field(description="Any tab id (unused; the answer is per-extension).")] = 0,
 ) -> str:

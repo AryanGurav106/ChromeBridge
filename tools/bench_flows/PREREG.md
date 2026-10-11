@@ -99,3 +99,27 @@ worker is never evicted to re-read it):
 
 and an extension RELOAD, which is the only thing that makes the worker re-read
 the flag. The window is the eval and nothing else.
+
+---
+
+## AMENDMENT 2 — round two, after the fixes
+
+Recorded before any re-recording. Round one found 20 defects; 13 are fixed.
+This round re-records the SAME eight apps with the fixed recorder, plus
+several flows against the Boxsy staging app, to answer one question:
+
+**Do the fixed assertions actually bite on a real app?**
+
+**The prediction, fixed now: M1 should get WORSE, not better.** Round one's
+7/8 included flows whose assertions could not fail — `#combo1 == 1` on the two
+steps that pick an option, a Close step with no `expect` at all, three typing
+steps with nothing that checks what was typed. Those now compile into `text`
+assertions, absence assertions and readable values. **A flow that silently did
+nothing and passed should now fail.** If M1 comes back 8/8 with no change in
+what is asserted, the fixes did not reach real recordings and this round says
+so.
+
+Same scoring: from the saved `*.flow.json` and `run_flow`'s output, never from
+an agent's prose. The gate is armed off again at the user's request, for the
+same reason and with the same restriction as AMENDMENT 1 — it touches no
+metric here, and this round says nothing about the consent model.

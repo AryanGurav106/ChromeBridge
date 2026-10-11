@@ -458,6 +458,32 @@ def main() -> int:
           not _bare, f"bare json.dumps at line(s) {_bare[:8]}" if _bare
           else f"all {_ms.count('json.dumps(')} call(s) explicit")
 
+    # C24: A COUNT IS NOT AN INVENTORY. I inserted a module-level helper
+    # between `@mcp.tool()` and `async def sw_info(`, so the decorator bound to
+    # the HELPER: `_changed_since_start` became a public tool and `sw_info`
+    # vanished from the surface -- while the total stayed at 31, so the
+    # over-the-wire count smoke test that CLAUDE.md calls "the only way to
+    # catch a tool that fails to register" passed. A swap is invisible to a
+    # count. Found only because the MCP client announced the change.
+    #
+    # The invariant is that a decorated name is never private, which catches
+    # the general case (a decorator that drifted onto the wrong function) and
+    # names the offender instead of reporting a number that looks right.
+    _bad_tool = []
+    for _m in re.finditer(r"@mcp\.tool\(\)\s*\n\s*(?:async\s+)?def\s+(\w+)", _ms):
+        if _m.group(1).startswith("_"):
+            _bad_tool.append(_m.group(1))
+    _decorated = re.findall(r"@mcp\.tool\(\)\s*\n\s*(?:async\s+)?def\s+(\w+)", _ms)
+    check("C24 no @mcp.tool() is bound to a PRIVATE function — a helper that "
+          "lands between the decorator and its tool swaps them, and the tool "
+          "count stays identical",
+          not _bad_tool, f"PUBLISHED AS TOOLS: {_bad_tool}" if _bad_tool
+          else f"{len(_decorated)} decorated, none private")
+    check("C24b ...and the tools CLAUDE.md names as diagnostics are still "
+          "registered, because a swap removes one as silently as it adds one",
+          {"sw_info", "debug_targets", "get_url"} <= set(_decorated),
+          f"missing: {sorted({'sw_info', 'debug_targets', 'get_url'} - set(_decorated))}")
+
     check("C11 every function injected via runInTab is self-contained "
           "(executeScript stringifies only that function)",
           not _bad,
