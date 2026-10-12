@@ -435,6 +435,7 @@ class Recorder:
         # so its absence witnesses nothing. Dropped and NAMED, never silently:
         # an agent that really meant it can re-record deliberately.
         unwitnessed: list = []
+        unproven: list = []   # (step, kind, which, is_first_step)
         for _n, (idx, st) in enumerate(zip(action_ix, kept)):
             if st.expect:
                 ever = self._checks([r for r in live[:idx] if not r["mutates"]])
@@ -461,6 +462,32 @@ class Recorder:
             same = sorted(k for k, v in now.items() if k in before and before[k] == v)
             if same:
                 hollow.append((_n, ", ".join(x[0] for x in same), len(same) == len(now)))
+
+            # A CHECK WITH NO PRIOR OBSERVATION IS NOT WRONG; IT IS UNEVIDENCED,
+            # AND UNTIL NOW IT PASSED THROUGH IN SILENCE.
+            #
+            # `hollow` catches an assertion that CANNOT fail (same value before
+            # and after). It cannot catch one that is simply WRONG — if the
+            # agent counts 5 where the truth was 6, that assertion is false,
+            # stable, and replays green forever. Detecting a wrong observation
+            # is an oracle problem and this recorder is not going to pretend to
+            # solve it.
+            #
+            # What IS decidable is whether anything in the recording
+            # establishes that the check can change at all. A check observed
+            # earlier with a DIFFERENT value is witnessed: the step provably
+            # moved it. A check never observed before is not — nothing here
+            # says it would have failed on the page as it was. That is a fact
+            # about the evidence, not a verdict on the value, and it is said
+            # as exactly that.
+            #
+            # It makes review TARGETED rather than uniform, which is the whole
+            # of the answer: the re-grader for a recorded assertion is a human
+            # reading a small JSON diff, and this tells them which lines
+            # actually need reading.
+            for k in sorted(now):
+                if k not in before:
+                    unproven.append((_n, k[0], k[1] if len(k) > 1 else "", _n == 0))
 
         for st in kept:
             if st.expect:
@@ -503,6 +530,7 @@ class Recorder:
             "require": sorted(flow.require),
             "hollow": hollow,
             "unwitnessed_absence": unwitnessed,
+            "unproven": unproven,
             "notes": self.notes,
         }
         return flow, report

@@ -4024,6 +4024,33 @@ async def record_flow(
                    if _all else
                    f'Its OTHER checks do still witness the step, so the flow is not '
                    f'hollow — that one check simply adds nothing and can go.'))
+        # UNEVIDENCED IS NOT WRONG, AND THE DIFFERENCE IS THE WHOLE POINT.
+        # `hollow` above catches an assertion that CANNOT fail. Nothing can
+        # catch one that is merely WRONG -- an agent that counts 5 where the
+        # truth was 6 records a false, stable check that replays green for
+        # ever, and deciding that is an oracle problem. What IS decidable is
+        # whether the recording contains any evidence that the check can
+        # change at all, so that is what gets said. Grouped into one line per
+        # step: a form with six fields would otherwise print six near-identical
+        # warnings and train the reader to skip all of them (#15).
+        _unp: dict = {}
+        for _n3, _kind3, _which3, _first3 in (report.get("unproven") or []):
+            _unp.setdefault((_n3, _first3), []).append(
+                f"{_kind3} {_which3!r}" if _which3 else f"the {_kind3}")
+        for (_n3, _first3), _whats in sorted(_unp.items()):
+            lines.append(
+                f'  UNPROVEN: step {_n3} asserts ' + ", ".join(_whats)
+                + ', and nothing earlier in this recording ever observed '
+                + ('it' if len(_whats) == 1 else 'them')
+                + ' with a different value. The check is not necessarily wrong — '
+                + ('this is the first step, so there was no earlier page to '
+                   'observe, and that is inherent rather than a defect. '
+                   if _first3 else
+                   'it simply carries no evidence that it would have failed '
+                   'before this step ran. ')
+                + 'These are the lines to read first in review; a check nobody '
+                + 'has seen change is the one that can be quietly wrong.')
+
         if report["asserted"] == 0:
             lines.append("  NOTE: no step carries an assertion, so this flow can only "
                          "detect a control going missing, not a wrong RESULT. Re-record "

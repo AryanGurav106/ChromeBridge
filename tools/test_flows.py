@@ -1500,6 +1500,50 @@ async def record_and_replay():
           "licenses the sentence 'this flow would pass even if the step did nothing'",
           len(_h) == 1 and _h[0][2] is True, f"hollow={_h}")
 
+    # ---- FW5-FW7: AN ASSERTION WITH NO PRIOR OBSERVATION IS UNEVIDENCED.
+    #
+    # `hollow` catches a check that CANNOT fail. It cannot catch one that is
+    # merely WRONG: an agent that counts 5 where the truth was 6 records a
+    # false, stable assertion that replays green for ever, and deciding that
+    # is an oracle problem. What IS decidable is whether the recording holds
+    # any evidence the check can change, and until this that question was
+    # never asked -- a check seen for the first time AFTER the action passed
+    # through in silence, which is exactly the shape a reviewer most needs
+    # pointed at.
+    fbu = FakeBridge([E(70, "button", name="Create")])
+    ru = Recorder("u", fbu.entries_fn)
+    aiu = {"ref": "ref_70", "tabId": 1}
+    atu = await ru.before("computer", aiu)
+    ru.after("computer", aiu, "clicked", atu)
+    # observed ONLY after the action -- nothing says it would have failed before
+    ru.after("query_elements", {"selector": "tr", "tabId": 1},
+             "5 element(s) match 'tr'", {})
+    _fu, _ru = ru.compile()
+    _up = _ru.get("unproven") or []
+    check("FW5 a check first observed AFTER the action is reported as unproven",
+          len(_up) == 1 and _up[0][0] == 0 and _up[0][1] == "query"
+          and _up[0][2] == "tr",
+          f"unproven={_up}")
+    check("FW5b ...and it is still RECORDED, because unevidenced is not wrong — "
+          "dropping it would delete the only assertion the flow has",
+          bool(_fu.steps) and bool(_fu.steps[0].expect),
+          f"expect={_fu.steps[0].expect if _fu.steps else None}")
+
+    # THE CONTROL, and without it "flag everything" would pass FW5 while making
+    # the signal worthless (#15: a warning that always fires is noise).
+    _fw, _rw = await _hollow("9 element(s) match 'tr'")
+    check("FW6 CONTROL: a check observed before AND after with a DIFFERENT value "
+          "is witnessed, so it is not reported",
+          not (_rw.get("unproven") or []) and not (_rw.get("hollow") or []),
+          f"unproven={_rw.get('unproven')} hollow={_rw.get('hollow')}")
+
+    # A first step has no earlier page by construction, so saying "no evidence"
+    # without saying "and there could not be" would read as a defect in the
+    # recording rather than a fact about step 0.
+    check("FW7 the first step is flagged as inherent rather than as a defect",
+          all(u[3] is True for u in _up if u[0] == 0),
+          f"unproven={_up}")
+
     # FW4 -- THE PARTIAL CASE, which is the one #63 found. Since a step may
     # carry several checks, one hollow check no longer means the step is
     # unwitnessed: a a real CRM drill-down folded in a url that a side panel cannot

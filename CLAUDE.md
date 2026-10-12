@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 1042 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 19 suites, 1046 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1042 checks, ~90s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1046 checks, ~90s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -6213,6 +6213,62 @@ granted in the side panel is refused with the same message the agent gets.
     on disk has a row in `tools/README.md`), C29 (no excluded flow's origin leaks
     into a tracked file, with a planted-leak control), FR16/FR16b (an unreadable
     page names its step; an absent target still takes the settle window).
+
+68. **"WHO RE-GRADES THE RECORDED ASSERTIONS?" — a launch-day comment, and
+    the honest answer was nobody.** Raised publicly within hours of the repo
+    going public: the assertions come free from the checks Claude made along
+    the way, *which is elegant until one of those checks was wrong, and that is
+    when the replay suite starts passing forever on a wrong answer*. The
+    referee grades the 19 benchmark tasks; nothing grades the recordings.
+
+    **THE PROBLEM SPLITS IN TWO AND ONLY ONE HALF WAS SOLVED.** #57 catches an
+    assertion that CANNOT fail — same value before the step and after — and it
+    exists because I shipped that bug twice. What it cannot catch is an
+    assertion that is simply WRONG: count 5 where the truth was 6 and the check
+    is false, stable, and green for ever. **That is an oracle problem and this
+    recorder is not going to pretend to solve it.** Saying otherwise would be
+    the C15 class — asserting a guarantee the code does not have — in the
+    feature whose own docstring warns that a weak check is worse than none.
+
+    **WHAT IS DECIDABLE IS WHETHER ANY EVIDENCE EXISTS, and that question was
+    never asked.** Three outcomes per check, and only two had names:
+    `hollow` (seen before, same value — warned), `unwitnessed_absence` (an
+    empty result never seen non-empty — dropped and named, #64's mistyped
+    search), and **a check never observed before at all**, which passed through
+    in SILENCE. That last one is exactly the comment's case: a count taken for
+    the first time after the action carries nothing that says it would have
+    failed before it. `unproven` now names it, and the line says the check is
+    *not necessarily wrong* — it carries no evidence — because the difference
+    between those two sentences is the whole of the honesty here.
+
+    **The point is TARGETED review, not a verdict.** The only defensible answer
+    to "who re-grades" is that a flow is a small JSON file read in a diff, so
+    the re-grader is code review — weaker than a referee, and worth saying
+    plainly. What this changes is that review is no longer uniform: the lines
+    that carry no evidence are named, and those are the ones that can be
+    quietly wrong. A first step is flagged as INHERENT rather than as a defect,
+    since there is no earlier page to have observed (FW7) — without that
+    distinction the warning reads as a fault in a recording that could not have
+    gone otherwise.
+
+    **FW6 IS THE CHECK THAT MAKES THE OTHERS WORTH ANYTHING.** "Flag
+    everything" would satisfy FW5 while making the signal noise (#15, priced
+    once already): it pins that a check observed before AND after with a
+    DIFFERENT value produces neither `unproven` nor `hollow`. And the warnings
+    are grouped one line per STEP, because a six-field form would otherwise
+    print six near-identical lines and train the reader to skip all of them.
+
+    **Two shapes of my own, both caught by running it.** `_check_items` keys a
+    url as the 1-tuple `("url",)` while search and query are 2-tuples; indexing
+    `[1]` threw, and the existing `unwitnessed` path indexes it safely only
+    because a url check is never "empty" and never reaches that line. And the
+    render was exercised separately from the data (#19: the render is the
+    untested link) — both branches, first-step and not, because an untested
+    branch is this log's most repeated defect.
+
+    Suites: 1046 checks. New — FW5/FW5b (an unevidenced check is named and
+    still recorded, since unevidenced is not wrong and dropping it would delete
+    the flow's only assertion), FW6 (the control), FW7 (step 0 is inherent).
 
 ## Debugging starting points
 
