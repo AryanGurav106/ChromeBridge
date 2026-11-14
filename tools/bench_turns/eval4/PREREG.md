@@ -96,5 +96,39 @@ drift floor (#35, #41). Eval 3 is the only one where it did.
 
 ## Amendments
 
-*(none yet — anything added below is dated and written before the run it
-affects)*
+**AMENDMENT 1 — 2026-11-15, written after the tasks arrived and BEFORE any
+run. Sample concentration, stated up front.**
+
+22 tasks across **16 distinct hosts**, but three hosts supply three tasks each —
+`jqueryui.com`, `practicesoftwaretesting.com`, `fdc.nal.usda.gov` — so the
+**top three hosts are 41% of the sample**. #73 had just finished measuring
+exactly this failure on Mind2Web (one widget was 17% of 173 actions, and
+leave-one-site-out moved the headline from 95.1% to 98.1%), so it would be
+indefensible not to say it here before seeing any data.
+
+Consequences, fixed now:
+- `analyse.py` must report **leave-one-host-out** alongside the headline, and
+  the summary must quote the range rather than only the point.
+- The author flagged `practicesoftwaretesting.com` as a deliberately
+  bug-bearing sandbox and it carries three tasks. If any of those three
+  produces a disagreement between the arms, **the site is suspect before
+  either arm is**.
+- H4's interaction-only subset draws on `jqueryui.com` for two of its members.
+  That is a narrower base than H4 deserves and is a stated weakness of this
+  eval, not something to discover afterwards.
+
+**AMENDMENT 2 — the author verified their own answers; the protocol requires an
+independent referee.** Ground truth is re-derived by a referee that does not see
+the author's answer key, and any task where the two disagree is **dropped, not
+adjudicated**. Eval 3 dropped two tasks at this step — an "address form" that is
+an error page with no `<form>` on it, and a question contradicted by its own
+page's footnote — and that step is why the rest is trustworthy.
+
+**Known fragilities the author recorded**, carried here so they are not
+rediscovered as surprises: T3's expected string contains a **typo the site
+itself ships** ("Please select the Paymeny Method") and changes if they fix it;
+several tasks carry a deliberate trap that only doing the work survives (T9 asks
+for Start Order, not position; T20/T21 ask for Max/Median where Average sits
+beside it; T11's answer is literally `(exact)`); shape 5 is three dictionary
+look-ups, two of them Chinese, because the Russian site died mid-exercise —
+**a genuinely weak group**.
