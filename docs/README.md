@@ -1,11 +1,12 @@
 # docs/ — the literature
 
-`CLAUDE.md` is the **chronological ledger**: 69 entries, each a measured
-finding, written as it happened. It is the primary source and nothing here
+`CLAUDE.md` is the **chronological ledger** — each entry a measured
+finding, written as it happened. (No count is
+stated here on purpose: a number in a second place is a number that drifts.) It is the primary source and nothing here
 replaces it.
 
-This directory is the **topical index into it**. It exists because a 69-entry
-log is excellent history and useless onboarding — a subagent asked to work on
+This directory is the **topical index into it**. It exists because a long
+chronological log is excellent history and useless onboarding — a subagent asked to work on
 the collector should not have to read nine months of entries to learn the four
 rules that govern it.
 

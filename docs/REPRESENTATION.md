@@ -85,7 +85,7 @@ it.
 
 | | |
 |---|---|
-| **Mind2Web target recall** (173 labelled actions, 16 untuned sites) | **96.0% at 1,242 median tokens** |
+| **Mind2Web target recall** (173 labelled actions, 16 untuned sites) | **~96% at 1,242 median tokens** — 166/173 counting an ancestor or descendant we surfaced; 85.5% as the element itself. Audited in #73: leave-one-site-out spans 95.1–98.1% across 22 trajectories, so **never quote it as a point estimate** |
 | Chrome accessibility tree, same pages, same metric | 100% at 8,886 tokens (**7.15×**) |
 | MindAct `cleaned_html`, same pages | 100% at 41,716 tokens (**33.6×**) |
 | recall per 1k tokens | **0.773** vs AX tree's 0.113 — **6.8×** |

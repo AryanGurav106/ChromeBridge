@@ -295,15 +295,40 @@ def main() -> int:
           not _wide_ctrl and not _wide_bom,
           ", ".join(_wide_ctrl + _wide_bom) or f"{_scanned} files scanned, clean")
 
-    # THE DETECTOR MUST BE SHOWN TO FIRE. A hygiene check reporting "clean" is
-    # worth nothing until it has been demonstrated on a planted byte — which is
-    # exactly the rule audit_patterns.py was built under, and the reason P1's
-    # first version (which could not fire at all) was caught.
-    _probe = b"const a = 1;\r\nconst b = '\x00';\n"
-    check("P7* ...and the detector provably fires on planted CRLF and a NUL",
-          _probe.count(b"\r\n") == 1
-          and [(i, x) for i, x in enumerate(_probe) if x < 9 or 13 < x < 32],
-          "planted probe detected")
+    # THE DETECTOR MUST BE SHOWN TO FIRE, AND IT MUST BE *THE* DETECTOR.
+    # The first version of this demonstration was wrong twice over: it asserted
+    # firing on planted CRLF, which P7e deliberately does NOT check (CRLF is a
+    # convention .gitattributes normalises, and failing on it would make the
+    # tripwire permanently red for a thing git already handles); and it
+    # re-implemented the predicate on a local byte-string instead of running the
+    # scan, so it demonstrated that a hand-written expression works rather than
+    # that the shipped check does. That is #21 — one concept, two spellings —
+    # inside the control written to honour #15.
+    #
+    # It now writes real files and runs the SAME scan over them.
+    def _scan_bytes(b):
+        """Exactly P7c/P7e's predicate, in one place, used by both."""
+        hit = [(i, x) for i, x in enumerate(b) if x < 9 or 13 < x < 32]
+        return bool(hit), b.startswith(b"\xef\xbb\xbf")
+
+    import tempfile  # noqa: PLC0415
+    with tempfile.TemporaryDirectory() as _td:
+        _nul = Path(_td) / "planted_nul.js"
+        _nul.write_bytes(b"const a = '\x00elsewhere';\n")
+        _bom = Path(_td) / "planted_bom.py"
+        _bom.write_bytes(b"\xef\xbb\xbfx = 1\n")
+        _ok = Path(_td) / "clean.js"
+        _ok.write_bytes(b"const a = 1;\nconst b = 2;\n")
+        _n_ctrl, _n_bom = _scan_bytes(_nul.read_bytes())
+        _b_ctrl, _b_bom = _scan_bytes(_bom.read_bytes())
+        _c_ctrl, _c_bom = _scan_bytes(_ok.read_bytes())
+
+    check("P7* ...and the scan provably fires on a planted NUL and a planted "
+          "BOM in real files, and NOT on a clean one",
+          _n_ctrl and not _n_bom and _b_bom and not _b_ctrl
+          and not _c_ctrl and not _c_bom,
+          f"nul=(ctrl={_n_ctrl},bom={_n_bom}) bom=(ctrl={_b_ctrl},bom={_b_bom}) "
+          f"clean=(ctrl={_c_ctrl},bom={_c_bom})")
 
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} pattern-lint checks passed.")
