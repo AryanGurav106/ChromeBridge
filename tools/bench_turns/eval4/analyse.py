@@ -45,6 +45,30 @@ def graded(tid, ans):
         return None
     a = ans.replace("−", "-").lower()
     g = GT["gt"][tid]
+
+    # `require_all` — EVERY listed string must appear, not any one of them.
+    # Written by build_gt.py for the three tasks the second (blind) referee
+    # found to be partly guessable WITHOUT doing the work, where grading on the
+    # guessable half would score a guesser as correct:
+    #   T7  "Cheese, cheddar" is the obvious #1 hit for a cheese query; the
+    #       count 19 is not guessable by any route.
+    #   T20 the republished figure for almond magnesium is ~270 and the true
+    #       Max is 271, so a knowledge-only guess lands within 1. Exact only.
+    #   T21 "~650" is guessable from general knowledge; n=41 is not, and it is
+    #       what proves the table was actually read.
+    # A field written and never read is the half-contract shape this project
+    # keeps finding (#30, #54, #57, #62, #69) — so this branch is the other half.
+    need = g.get("require_all")
+    if need:
+        if not all(x.replace("−", "-").lower() in a for x in need):
+            return False
+        # a reject still wins: the discriminating value can co-occur with a
+        # near-miss when an agent reports several numbers at once
+        for bad in g.get("reject", []):
+            if bad.replace("−", "-").lower() in a:
+                return False
+        return True
+
     for bad in g.get("reject", []):               # reject wins ties deliberately
         b = bad.replace("−", "-").lower()
         if b in a and not any(ok.replace("−", "-").lower() in a

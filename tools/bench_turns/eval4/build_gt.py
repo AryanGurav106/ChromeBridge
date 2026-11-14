@@ -39,6 +39,34 @@ SHAPE_OF = {
 OVERRIDE = {"T7": "A", "T13": "W", "T21": "T"}
 DROPPED = {"T15", "T18"}
 
+# GRADING OVERRIDES — from the SECOND, blind referee (PREREG Amendment 4).
+# It agreed with the first on all three answers, and then found the thing that
+# agreement cannot find: parts of these are obtainable WITHOUT doing the work,
+# so grading on the guessable half would score a guesser as correct.
+#
+#   T7  `Cheese, cheddar` is the archetypal cheese and the obvious #1 relevance
+#       hit for the query -- guessable from general knowledge. The count 19 is
+#       not guessable by any route, so the count is the discriminating half.
+#   T20 the commonly republished figure for almond magnesium is ~270 and the
+#       true Max is 271, so a pure knowledge guess lands within 1 without ever
+#       opening the table. EXACT match only; a tolerance band would erase the
+#       distinction entirely.
+#   T21 cheddar sodium is generally cited around 620-660, so "~650" is
+#       guessable -- but n=41 is not, and it is what proves the table was read.
+#       Require BOTH. (Note the widely-republished figure is 653, the SR Legacy
+#       value, so a knowledge-only guess lands on 653 rather than 650.)
+#
+# `require_all` means every listed string must appear, not any one of them.
+GRADING = {
+    "T7":  {"require_all": ["19"],
+            "reject": ["277", "787", "59,556", "59556", "50",
+                       "Cheese spread", "Cheese, cotija"]},
+    "T20": {"require_all": ["271"],
+            "reject": ["258", "238", "276", "273", "268", "280", "81.3", "2.32"]},
+    "T21": {"require_all": ["650", "41"],
+            "reject": ["654", "743", "575", "653", "195", "110", "42"]},
+}
+
 
 def shape_for(tid, header):
     if tid in OVERRIDE:
@@ -93,7 +121,18 @@ def main():
         nm = re.search(r"\*\*(?:Notes|Near|Reject)[^:]*:\*\*\s*([\s\S]*?)(?=^\*\*|\Z)",
                        body, re.M)
         if nm:
-            reject = [x.strip(" `*\"") for x in re.findall(r"`([^`]{1,40})`", nm.group(1))]
+            # A BACKTICKED TOKEN IS NOT AUTOMATICALLY A WRONG VALUE. The key
+            # also backticks COLUMN NAMES (`n`, `Samples`, `Amount`), and a
+            # one-character reject matches almost any answer -- T21 scored a
+            # correct "Median Sodium 650 mg, n = 41" as WRONG because `n` was
+            # on its reject list, which would have read as the agent failing
+            # every run rather than as a broken ruler. Caught by driving
+            # graded() over a guesser/reader pair before trusting it (#16).
+            #
+            # A near-miss VALUE either contains a digit or is a multi-word
+            # phrase; a bare lowercase word is a label.
+            reject = [x.strip(" `*\"") for x in re.findall(r"`([^`]{2,40})`", nm.group(1))
+                      if any(c.isdigit() for c in x) or " " in x.strip()]
         shape = shape_for(tid, headers.get(tid, ""))
         if not shape:
             problems.append(f"{tid}: cannot determine shape from {headers.get(tid)!r}")
@@ -102,8 +141,14 @@ def main():
         if not host:
             problems.append(f"{tid}: no Start URL in tasks.md")
             continue
-        gt[tid] = {"accept": accept, "reject": [r for r in reject if r not in accept],
-                   "shape": shape, "host": host}
+        entry = {"accept": accept, "reject": [r for r in reject if r not in accept],
+                 "shape": shape, "host": host}
+        g = GRADING.get(tid)
+        if g:
+            entry["require_all"] = g["require_all"]
+            entry["reject"] = sorted(set(entry["reject"]) | set(g["reject"])
+                                     - set(g["require_all"]))
+        gt[tid] = entry
 
     print(f"parsed {len(gt)} task(s); dropped {len(dropped)}; {len(problems)} problem(s)")
     for d in dropped:

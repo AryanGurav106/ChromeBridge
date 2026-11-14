@@ -172,6 +172,53 @@ T11's answer is literally `(exact)`, not the numerical value. T16 has `部外 0`
 immediately before `总笔画 12`. T2's first table row is `100-0000`, not the
 answer. T14 prints Kun readings immediately above the On line.
 
+**AMENDMENT 4 — 2026-11-15, after the blind re-referee and BEFORE any run.**
+
+**The two referees AGREE on all three contested answers**, which closes the
+disclosed-blindness debt from Amendment 3: T7 = 19 results, first `Cheese,
+cheddar`; T20 Max Magnesium = `271`; T21 Median Sodium = `650`, n = `41`. The
+second referee was blind (it extracted only the task lines, never opened the
+key) and reached them independently, by three mutually-checking routes — header
+geometry, the DOM's own `headers` attribute on each cell, and recomputation from
+the raw per-sample values.
+
+**T7's premise is confirmed dead.** Foundation Foods is already the active tab
+on arrival; only one tab carries `class="…active"`, the 19 rows already match
+its count, and clicking the tab changes nothing but the URL. It also confirmed
+the early-read trap with timing: at 0.1s the tab reads `Foundation Foods ()`
+with an empty count, every sibling at `(0)`, and **zero rows** — which reads as
+"nothing matched". Settled by ~0.9s.
+
+**THE GRADING IS TIGHTENED, because three tasks are partly guessable without
+doing the work** and grading on the guessable half would score a guesser as
+correct:
+
+| | guessable half | discriminating half |
+|---|---|---|
+| T7 | `Cheese, cheddar` is the obvious #1 hit for a cheese query | the count **19** |
+| T20 | the republished figure for almond magnesium is **~270**; the true Max is **271**, so a knowledge-only guess lands within 1 | exact `271`, no tolerance band |
+| T21 | cheddar sodium is cited around 620–660, so "~650" is guessable — and the *most* cited figure is **653**, the SR Legacy value | **n = 41**, unguessable |
+
+Implemented as `require_all` in the ground truth, honoured by `analyse.py`, and
+**driven over a guesser/reader/confusable triple for each task before being
+trusted** — which is how a real defect was caught: the reject list had harvested
+the bare column name `n` from a backtick in the key, and a one-character reject
+matched almost any answer, so a correct T21 scored WRONG. That would have read
+as the agent failing every run rather than as a broken ruler, which is #48's
+falsifier-fires-on-both-arms signature.
+
+**The positional-indexing trap is measured and is the sharpest thing here.** The
+nutrient table has 13 `<th>` and 12 `<td>`, because two headers are zero-width
+and the row has only one such cell — so `children[n]` is off by one from index 3.
+An agent asked for T20's **Max** that indexes positionally returns **258**, which
+is simultaneously the Median *and* the Average Amount, so the wrong answer looks
+doubly corroborated. It is an explicit reject.
+
+**Also recorded:** both pages carry a portion `<select>` defaulting to `100 g`;
+changing it rescales every statistic proportionally (271 → 81.3 at 30 g), so a
+portion change produces a wrong answer that is internally consistent. Those
+values are rejects too.
+
 **Known fragilities the author recorded**, carried here so they are not
 rediscovered as surprises: T3's expected string contains a **typo the site
 itself ships** ("Please select the Paymeny Method") and changes if they fix it;
