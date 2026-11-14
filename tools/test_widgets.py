@@ -51,6 +51,8 @@ CLICKP = extract("_clickPage")
 EFFECT = extract("_clickEffectPage")
 TYPESEARCH = extract("_typeIntoOpenPopoverSearchPage")
 COUNTOPTS = extract("_countVisibleOptionsPage")
+SELECTNATIVE = extract("_selectNativePage")
+RADIOMATCH = extract("_radioMatchPage")
 DETECTSUBMIT = extract("_detectSubmitPage")
 DOMTEXT = extract("_domTextPage")
 TYPETEXT = extract("_enterTextPage")
@@ -2337,6 +2339,106 @@ async def main():
         check("CT1b every overflow ref carries a label or at least its tag",
               bool(_tail) and not _bare_refs, "bare_refs=" + str(_bare_refs[:5]))
         await ctp.close()
+
+        # ---- TK: the matcher that ACTS must fold the way the one that RANKS does
+        # mcp_server.py's find() folds NFD and drops the combining marks the fold
+        # leaves behind; the option matchers normalised with NFC and then
+        # lowercased. NFC cannot undo the fold: Unicode lowercases U+0130 (İ) to
+        # "i" + U+0307 COMBINING DOT ABOVE and there is no precomposed character to
+        # recompose that into, so the result never equalled ASCII "i". One concept,
+        # two spellings — the tool that ranks was right and the tool that ACTS was
+        # not. Driven through the REAL _selectNativePage / _radioMatchPage, because
+        # the four `norm` copies are separately injected (P2 pins them identical).
+        tk = await browser.new_page(viewport={"width": 900, "height": 700})
+        await tk.goto("about:blank")
+        await tk.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<select id='tk-city'><option>Ankara</option><option>İstanbul</option>"
+            "<option>İzmir</option><option>Bursa</option></select>"
+            # Dakuten: NFD decomposes バ to ハ + U+3099 and パ to ハ + U+309A. These
+            # marks are Mn like any accent and are PHONEMIC, so a fold that drops
+            # them folds three different words together.
+            "<select id='tk-jp'><option>ハス</option><option>バス</option>"
+            "<option>パス</option><option>ビール</option><option>ピール</option>"
+            "<option>ヒール</option></select>"
+            # Mc SPACING combining marks. A Devanagari matra is Mc with combining
+            # class 0, so `\\p{M}` would delete it and का would become क — the kana
+            # bug reinvented in Hindi. `\\p{Mn}` is what keeps these two apart.
+            "<select id='tk-in'><option>क</option><option>का</option>"
+            "<option>किताब</option></select>"
+            "<select id='tk-eu'><option>Ελλάδα</option><option>Tiếng Việt</option>"
+            "<option>Café</option><option>Mexico</option></select>"
+            "<label for='tk-r1'>İzmir</label><input id='tk-r1' type='radio' name='tkg'>"
+            "<label for='tk-r2'>Ankara</label><input id='tk-r2' type='radio' name='tkg'>"
+            "</body>", wait_until="domcontentloaded")
+        await tk.wait_for_timeout(80)
+
+        async def _sel(sel, text):
+            await tk.evaluate(f"() => {{ document.querySelector('{sel}').selectedIndex = 0; }}")
+            return await tk.evaluate(
+                "([s, t]) => { " + SELECTNATIVE + "; return _selectNativePage(s, t); }",
+                [sel, text])
+
+        _r = await _sel("#tk-city", "Istanbul")
+        check("TK1 an ASCII-spelled request selects the Turkish İ option",
+              bool(_r.get("ok")) and _r.get("actual") == "İstanbul",
+              f"ok={_r.get('ok')} actual={_r.get('actual')!r} — NFC cannot recompose "
+              "i+U+0307, so this was REFUSED")
+        _r = await _sel("#tk-city", "istanbul")
+        check("TK1b ...and so does the all-lowercase spelling",
+              bool(_r.get("ok")) and _r.get("actual") == "İstanbul",
+              f"ok={_r.get('ok')} actual={_r.get('actual')!r}")
+        _r = await _sel("#tk-city", "izmir")
+        check("TK1c ...and a second Turkish İ word, so TK1 is not one lucky string",
+              bool(_r.get("ok")) and _r.get("actual") == "İzmir",
+              f"ok={_r.get('ok')} actual={_r.get('actual')!r}")
+        _r = await _sel("#tk-city", "Ankara")
+        check("TK2 CONTROL: a plain ASCII option still resolves exactly",
+              bool(_r.get("ok")) and _r.get("actual") == "Ankara",
+              f"ok={_r.get('ok')} actual={_r.get('actual')!r}")
+        # Without this, "match everything" would pass TK1-TK1c.
+        _r = await _sel("#tk-city", "Trabzon")
+        check("TK2b CONTROL: a text that is NOT an option is still refused",
+              not _r.get("ok"), f"ok={_r.get('ok')} msg={_r.get('msg')!r}")
+        _r = await _sel("#tk-eu", "Cafe")
+        check("TK1d an unaccented request reaches the accented option, like find() does",
+              bool(_r.get("ok")) and _r.get("actual") == "Café",
+              f"ok={_r.get('ok')} actual={_r.get('actual')!r}")
+        # TK3: THE KANA COLLISION SET. Note what this does and does NOT pin — the
+        # pre-fix code was RIGHT about kana (NFC kept the three apart), so this
+        # cannot fail against it. Its failing arm is a fold that drops U+3099/U+309A
+        # with the rest of the Mn marks: ハス / バス / パス all become ハス and a
+        # request for one lands on another, under ok:true. That is the bug the
+        # Turkish fix would have imported, and these six are the only thing between.
+        for _want in ("ハス", "バス", "パス", "ビール", "ピール", "ヒール"):
+            _r = await _sel("#tk-jp", _want)
+            check(f"TK3 CONTROL: {_want} selects {_want} — voicing is phonemic, not an accent",
+                  bool(_r.get("ok")) and _r.get("actual") == _want,
+                  f"ok={_r.get('ok')} actual={_r.get('actual')!r}")
+        # The Mc half of the same rule: `\p{M}` instead of `\p{Mn}` merges these.
+        for _want in ("क", "का", "किताब"):
+            _r = await _sel("#tk-in", _want)
+            check(f"TK5 CONTROL: {_want} selects {_want} — a matra is Mc, not an accent",
+                  bool(_r.get("ok")) and _r.get("actual") == _want,
+                  f"ok={_r.get('ok')} actual={_r.get('actual')!r}")
+        # Exact-spelling round trips in scripts the fold touches. These pass in
+        # BOTH arms, which is what makes them controls: the fold must not have
+        # broken the case that already worked.
+        for _want in ("Ελλάδα", "Tiếng Việt"):
+            _r = await _sel("#tk-eu", _want)
+            check(f"TK6 CONTROL: the exact spelling {_want} still round-trips",
+                  bool(_r.get("ok")) and _r.get("actual") == _want,
+                  f"ok={_r.get('ok')} actual={_r.get('actual')!r}")
+        # A SECOND injected copy of the same `norm`. These functions lose their
+        # closure, so the duplication is forced and each copy is its own untested
+        # link (#19/rule 13) — fixing one and not the others is how they drifted.
+        _rm = await tk.evaluate(
+            "([s, t]) => { " + RADIOMATCH + "; return _radioMatchPage(s, t); }",
+            ["#tk-r1", "izmir"])
+        check("TK4 _radioMatchPage folds the same way (a separate injected copy)",
+              bool(_rm) and _rm.get("label") == "izmir" and not _rm.get("err"),
+              f"{_rm!r}")
+        await tk.close()
 
         await browser.close()
 

@@ -226,6 +226,276 @@ async def main():
               r["prog"] == 0, f"prog={r['prog']}")
         await fp.close()
 
+        # ------------------------------------------------------------------
+        # R11-R16  DOM MUTATION RECENCY
+        #
+        # The four signals above all measure whether something is ARRIVING. The
+        # question an agent actually asks is "if I wait, will what I am reading
+        # change?", and those come apart in BOTH directions on an SPA:
+        #
+        #   still building, network silent -> every signal above reads 0
+        #   painted and done, network chatty -> every signal above fires, for ever
+        #
+        # Both were reproduced in scratchpad/probe_false_negative.py before any
+        # of this was built. See docs/READINESS.md for the table.
+        #
+        # NOTE THE HARNESS SHAPE. add_init_script only affects documents created
+        # AFTER it, and set_content reuses the existing about:blank — so the
+        # add_init_script + set_content pairing runs the tagger on NOTHING and
+        # tests an untagged page while staying green. That is the defect C14 in
+        # test_contracts.py exists to catch (it found 25 such pages across 5
+        # suites). Every check below therefore goto()s a routed URL.
+        TAG = (ROOT / "extension" / "listener_tag.js").read_text(encoding="utf-8")
+
+        async def tagged_page(body, **kw):
+            pg = await browser.new_page(viewport={"width": 900, "height": 700})
+            await pg.add_init_script(TAG)
+            await pg.route("**/mut-fixture", lambda r: r.fulfill(
+                status=200, content_type="text/html", body=body))
+            await pg.goto("http://mut.test/mut-fixture", wait_until="domcontentloaded")
+            return pg
+
+        async def mut(pg, win=1000):
+            return await pg.evaluate(
+                "(w) => window.__abMut ? window.__abMut.query(null, w) : null", win)
+
+        # R11 a page mid-paint: network silent, readyState complete, and yet it
+        # is plainly still being built. This is the case where EVERY signal above
+        # reads zero, so it is the one that most needed a signal.
+        pg = await tagged_page(
+            "<!doctype html><meta charset=utf-8><body><div id=h></div><script>"
+            "let i=0;(function s(){for(let k=0;k<4&&i<400;k++,i++){"
+            "const d=document.createElement('div');d.textContent='row '+i;"
+            "document.getElementById('h').appendChild(d);}"
+            "if(i<400)setTimeout(s,18);})();</script></body>")
+        await pg.wait_for_timeout(400)
+        m = await mut(pg)
+        r = await probe(pg)
+        check("R11 a page still painting is reported as CHANGING, where every "
+              "other signal reads zero",
+              m is not None and m["structural"] > 0 and 0 <= m["since"] < 200
+              and r["imgs"] == 0 and r["busy"] == 0 and r["prog"] == 0,
+              f"mut={m} others={{imgs:{r['imgs']},busy:{r['busy']},prog:{r['prog']}}}")
+        check("R12 ...and the probe carries it, so the note can use it "
+              "(the injection boundary is where this probe died once already)",
+              r.get("mut") is not None and r["mut"]["structural"] > 0,
+              f"r.mut={r.get('mut')}")
+
+        # R13 THE CONTROL. Without it "always report changing" would pass R11
+        # and the signal would mean nothing. Same page, after it has finished.
+        # The fixture paints 400 rows at 4 per frame / 18ms, so it finishes
+        # around 1.8s; sampling at 2.9s left the tail inside the 1s window and
+        # flaked. Wait clear of it rather than polling for quiet, which would be
+        # asserting exactly what we waited for.
+        await pg.wait_for_timeout(3600)
+        m = await mut(pg)
+        check("R13 CONTROL: the same page, once finished, reports quiet",
+              m is not None and m["structural"] == 0 and m["text"] == 0
+              and m["since"] > 500,
+              f"mut={m}")
+        await pg.close()
+
+        # R14 OUR OWN WRITES ARE NOT THE PAGE CHANGING. The collector stamps a
+        # real `mmid` ATTRIBUTE on every interactive element, so without this
+        # exclusion an observation reports ITSELF as churn — worst on the first
+        # read of a page, one record per control.
+        pg = await tagged_page("<!doctype html><meta charset=utf-8><body>"
+                               + "<button>b</button>" * 50 + "</body>")
+        await pg.wait_for_timeout(300)
+        # BEFORE/AFTER, not an absolute zero. The fixture's own 50 buttons are
+        # parse-time childList records and are legitimately counted — asserting
+        # structural == 0 measured the harness, not the exclusion. The claim is
+        # that stamping 50 mmids adds NOTHING, which only a delta can say.
+        before = await mut(pg)
+        await pg.evaluate("document.querySelectorAll('button')"
+                          ".forEach((b,i)=>b.setAttribute('mmid',String(i)))")
+        m = await mut(pg)
+        check("R14 the collector's own mmid stamping is not counted as page churn",
+              m is not None and before is not None
+              and not m["attrs"].get("mmid")
+              and m["total"] == before["total"],
+              f"total {before and before['total']} -> {m and m['total']}, "
+              f"attrs={m and m['attrs']}")
+        # R15 CONTROL: a real attribute change IS counted, or R14 would also pass
+        # over a recorder that had stopped recording attributes entirely.
+        await pg.evaluate("document.querySelector('button').setAttribute('disabled','')")
+        m = await mut(pg)
+        check("R15 CONTROL: a genuine attribute change still counts",
+              m is not None and m["attrs"].get("disabled") == 1, f"mut={m}")
+        await pg.close()
+
+        # R16 SHADOW ROOTS. A MutationObserver on `document` is blind to shadow
+        # content. CLAUDE.md #25 records this exact bug class in this exact probe
+        # ("shadow-blind — fourth home for a bug class fixed twice"), which is why
+        # the attachShadow wrap registers every root it creates.
+        pg = await tagged_page(
+            "<!doctype html><meta charset=utf-8><body><div id=host></div><script>"
+            "window.__r=document.getElementById('host').attachShadow({mode:'open'});"
+            "window.__r.innerHTML='<p>seed</p>';</script></body>")
+        await pg.wait_for_timeout(300)
+        before = await mut(pg)
+        await pg.evaluate("window.__r.appendChild(document.createElement('span'))")
+        after = await mut(pg)
+        check("R16 a mutation INSIDE a shadow root is seen (document-scoped "
+              "observers are blind to it — #25's bug class, fourth home)",
+              before is not None and after is not None
+              and after["structural"] > before["structural"],
+              f"before={before and before['structural']} "
+              f"after={after and after['structural']}")
+        await pg.close()
+
+        # R17 DEGRADATION. listener_tag.js may not have run — a page opened
+        # before the extension loaded, or an origin it cannot reach. The probe
+        # must report UNKNOWN, and every consumer must treat unknown as unknown
+        # and never as quiet, because a false quiet is the worst direction this
+        # probe can fail in.
+        pg = await browser.new_page()
+        await pg.route("**/bare", lambda r: r.fulfill(
+            status=200, content_type="text/html",
+            body="<!doctype html><meta charset=utf-8><body><p>no tagger</p>"))
+        await pg.goto("http://mut.test/bare", wait_until="domcontentloaded")
+        r = await probe(pg)
+        check("R17 DEGRADATION: with no recorder present the probe reports "
+              "unknown (null), not quiet",
+              r.get("mut") is None, f"r.mut={r.get('mut')!r}")
+        await pg.close()
+
+        # R22/R22b NET-ZERO WITHIN ONE BATCH. A MutationObserver callback is a
+        # microtask, so one synchronous script's mutations arrive as one batch.
+        # An attribute that starts the batch at X and ends it at X changed
+        # nothing — which catches a framework toggling and restoring in one tick,
+        # and is the per-record "value did not change" rule at the right
+        # granularity. Needs attributeOldValue:true in the observe options;
+        # without it every oldValue is null and the whole rule is inert, which is
+        # how it was first written.
+        # THE ATTRIBUTE MUST START WITH A REAL VALUE, not absent. My first
+        # version used an attribute that was added and then REMOVED, and it
+        # passed with attributeOldValue ABLATED — because the pair ends absent
+        # and a missing oldValue also reads as null, so null === null matched by
+        # accident. That is a fixture passing against the broken code, i.e. not
+        # a test (PRINCIPLES #11). `data-k` now round-trips 1 -> 2 -> 1, where a
+        # null oldValue gives null !== "1" and the record survives.
+        pg = await tagged_page("<!doctype html><meta charset=utf-8><body>"
+                               "<div id=a data-k='1'>x</div><div id=b>y</div>")
+        await pg.wait_for_timeout(1400)
+        before = await mut(pg)
+        await pg.evaluate("""() => { const e = document.getElementById('a');
+          e.setAttribute('data-k','2'); e.setAttribute('data-k','1');
+          e.setAttribute('aria-expanded','true');
+          e.setAttribute('aria-expanded','false');
+          e.setAttribute('aria-expanded','true'); }""")
+        await pg.wait_for_timeout(80)
+        after = await mut(pg)
+        check("R22 an attribute that ends a batch at the value it started with "
+              "records nothing (net zero is not a change)",
+              before is not None and after is not None
+              and not after["attrs"].get("data-k"),
+              f"attrs={after and after['attrs']}")
+        check("R22b CONTROL: an attribute whose value genuinely ENDS different "
+              "is still recorded, even after intermediate flips",
+              after is not None and after["attrs"].get("aria-expanded", 0) > 0,
+              f"attrs={after and after['attrs']}")
+        await pg.close()
+
+        # R20/R20b THE AD-PAGE CASE. A banner keyed on "anything moved" fires on
+        # every ad-supported page for ever — theguardian.com runs ~7 ad-driven
+        # mutations per 2s — which is the always-on warning #15 priced and #43
+        # deleted readyState for being. The tier is decided by the three
+        # MutationRecord TYPES, which the spec declares, so it needs no list of
+        # "important" attributes.
+        pg = await tagged_page(
+            "<!doctype html><meta charset=utf-8><body><div id=ad>ad</div>"
+            "<button id=b>Buy</button><script>"
+            "setInterval(()=>{document.getElementById('ad')"
+            ".style.opacity = Math.random();}, 40);</script>")
+        # PAST THE PARSE. The fixture's own body/div/button are childList records
+        # at t=0; sampling at 500ms left them inside the 1000ms window and the
+        # check measured its own construction rather than the steady state (the
+        # R14 mistake, repeated). The interval keeps producing attribute records
+        # throughout, so waiting does not starve the thing under test.
+        await pg.wait_for_timeout(1500)
+        m = await mut(pg)
+        check("R20 presentation-only churn is attribute-only (no structural, "
+              "no text) — the fact the tier is decided on",
+              m is not None and m["structural"] == 0 and m["text"] == 0
+              and sum(m["attrs"].values()) > 0,
+              f"mut={m}")
+        await pg.close()
+
+        # R20b THE CONTROL that the tier is not simply "never warn": the same
+        # page shape, but appending elements, must still report structural churn.
+        pg = await tagged_page(
+            "<!doctype html><meta charset=utf-8><body><div id=h></div><script>"
+            "setInterval(()=>{const d=document.createElement('div');"
+            "d.textContent='x';document.getElementById('h').appendChild(d);}, 40);"
+            "</script>")
+        await pg.wait_for_timeout(500)
+        m = await mut(pg)
+        check("R20b CONTROL: a page actually adding elements still reports "
+              "structural churn (without this, 'never warn' would pass R20)",
+              m is not None and m["structural"] > 0, f"mut={m}")
+        await pg.close()
+
+        # R19 A SAME-ORIGIN FRAME'S CHURN IS NOT QUIET. listener_tag.js runs in
+        # ALL frames so each keeps its own ring, but the probe runs in the TOP
+        # frame only — so a page whose content lives in an iframe would report
+        # quiet while that frame paints. A FALSE quiet is the worst direction
+        # this probe can fail in, which is the same reason R17 exists.
+        pg = await tagged_page(
+            "<!doctype html><meta charset=utf-8><body><p>shell</p>"
+            "<iframe id=f style='width:400px;height:300px' src='/mut-child'></iframe>")
+        await pg.route("**/mut-child", lambda r: r.fulfill(
+            status=200, content_type="text/html",
+            body="<!doctype html><meta charset=utf-8><body><div id=h></div><script>"
+                 "let i=0;(function s(){for(let k=0;k<4&&i<400;k++,i++){"
+                 "const d=document.createElement('div');d.textContent='r'+i;"
+                 "document.getElementById('h').appendChild(d);}"
+                 "if(i<400)setTimeout(s,18);})();</script>"))
+        await pg.reload(wait_until="domcontentloaded")
+        await pg.wait_for_timeout(400)
+        top_only = await pg.evaluate(
+            "() => window.__abMut ? window.__abMut.query(null, 1000) : null")
+        r = await probe(pg)
+        # NOT "the top frame reads zero" — inserting the iframe mutates the top
+        # frame, so it legitimately carries a few records. The invariant is that
+        # the top frame alone looks SETTLED (its last change is old) while the
+        # merged view shows the child actively painting. Against the unmerged
+        # code the two are identical, which is what makes this fail pre-fix.
+        _m, _t = r.get("mut"), top_only
+        check("R19 a same-origin FRAME still painting is reported as changing, "
+              "where the top frame alone looks settled",
+              _m is not None and _t is not None
+              and _m["structural"] > _t["structural"]
+              and _m["since"] < _t["since"]
+              and _m.get("frames", 0) >= 1,
+              f"merged={_m}  top_frame_alone={_t}")
+        await pg.close()
+
+        # R18 THE PAGE MUST NOT BE ABLE TO BLIND THIS. listener_tag.js runs in
+        # the MAIN world, so everything it defines is reachable by page script.
+        # A plain `window.__abMut = {...}` puts it in Object.keys(window), which
+        # fingerprints the extension AND lets any script replace the object with
+        # a query() that always answers "quiet" — and a false quiet is the worst
+        # direction this probe can fail in. The two expandos and __abConsole in
+        # the same file all use non-enumerable defineProperty; this is that
+        # invariant, stated as a test rather than as a convention.
+        pg = await tagged_page("<!doctype html><meta charset=utf-8><body>hi")
+        hardened = await pg.evaluate("""() => {
+          const d = Object.getOwnPropertyDescriptor(window, '__abMut');
+          const before = window.__abMut;
+          try { window.__abMut = { query: () => ({since: 99999}) }; } catch (e) {}
+          return { enumerable: d && d.enumerable, writable: d && d.writable,
+                   inKeys: Object.keys(window).includes('__abMut'),
+                   replaced: window.__abMut !== before };
+        }""")
+        check("R18 the recorder is non-enumerable and cannot be replaced by "
+              "page script (a substituted query() that always says 'quiet' "
+              "would silently disable the signal)",
+              hardened["enumerable"] is False and hardened["writable"] is False
+              and hardened["inKeys"] is False and hardened["replaced"] is False,
+              str(hardened))
+        await pg.close()
+
         await browser.close()
 
     passed = sum(1 for x in results if x)

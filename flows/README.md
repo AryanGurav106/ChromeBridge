@@ -146,11 +146,46 @@ the proposal, and only because you asked: `run_flow` owns the RUN and
 which is the thing this runner refuses to do.
 
 Two other things come out of the recording rather than from a constant: each
-step stores the settle time it actually needed (`settle_ms`), so a slow app is
-not held to a number someone picked; and a flow that does NOT begin with its own
-`navigate` records the state it expects to start from, checked before step 0, so
-pointing it at the wrong page says so in one sentence instead of failing deep
-inside with a message about one element.
+step stores the settle time it actually needed (`settle_ms`), which widens the
+window for BOTH its assertions and its target resolution, so a slow app is not
+held to a number someone picked; and a flow records the state it expects to
+find once it has got itself to the app (`require`), so pointing it at the wrong
+page says so in one sentence instead of failing deep inside with a message
+about one element:
+
+```
+  the app is not in the state this flow starts from:
+  search_page('Work email') found 0, recorded at least 1.
+  Stopped before step 1 (fill_form). Only the 1 navigation step(s) in front of it ran.
+```
+
+`require` is checked after the flow's own leading `navigate`/`tabs_create_mcp`
+— that is where the recording observed it, and asking before them would ask
+about `about:blank`. A flow that observed nothing before its first real action
+records none, so it is derived rather than mandatory.
+
+### A position is only as good as what confirms it
+
+When several controls are identical in every declared field — a column of
+`Delete` buttons — the step falls back to an ordinal, `the nth of of`. An
+ordinal survives a row being added or removed, because the crowd's size
+changes and the step refuses. It does **not** survive a RE-SORT on its own:
+same elements, same count, a different one at position N.
+
+So a step that records an ordinal also records what tells its member from the
+rest of the crowd — the controls its own row carries, or a field the descriptor
+ignores. On a replay the element is found by that, at whatever position it now
+sits:
+
+```
+  1 step(s) found their element at a DIFFERENT position than the recording did…
+```
+
+When nothing distinguishes the members — identical controls in identical
+surroundings, which is about 59% of tied crowds on the frozen corpus — no
+witness can be recorded and the step rests on position alone.
+`record_flow(action="stop")` says so for that step, and the file carries a
+`review` line, because that is a flow a re-sort will quietly redirect.
 
 ## What makes a flow able to FAIL
 
@@ -171,3 +206,29 @@ the step it follows: the step did not move what the check measures, so the flow
 would pass even if the step did nothing. That is usually a step that silently
 failed — a required field left unfilled is the one that caused it twice. A
 warning, not a refusal: an idempotent step legitimately leaves state alone.
+
+Those warnings are written into the file as a `review` list on the step, not
+only printed once at stop — the person who re-grades a recorded assertion is a
+human reading a small JSON diff, and that is where they need to be.
+`python tools/run_flows.py --check-only` prints them with no browser, so CI
+does too:
+
+```
+  OK    acme-create-project    4 step(s), 2 asserted, 1 to review
+          step 2: unproven: query 'table tbody tr' was first observed AFTER this step…
+```
+
+A `review` line is never a failure. An unevidenced assertion is not a wrong
+one; detecting a wrong observation is an oracle problem this recorder does not
+pretend to solve. What it can say is which lines carry no evidence, so review
+is targeted rather than uniform.
+
+A step may also carry a `note` — a sentence from whoever wrote the flow saying
+why the step is there. The runner repeats it when that step fails or pauses,
+which is exactly when the question is being asked.
+
+The format is validated at LOAD. An `expect` naming a kind this build does not
+implement, or a misspelt field inside a known one, is REFUSED with the valid
+set named — the same rule `on_fail` has. An unrecognised key asserts nothing
+and used to do it in silence, which is the one failure a test runner must never
+have.

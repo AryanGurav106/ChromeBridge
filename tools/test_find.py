@@ -505,6 +505,63 @@ async def main():
     check("F37f an empty page still answers in words, not an empty string",
           out.strip() != "" and "No elements matched" in out, out[:110])
 
+    # ---- F38: THE KANA VOICING MARKS ARE PHONEMIC, NOT DIACRITICS. _fold drops
+    # every combining mark after NFD, which is right for Greek tonos, Vietnamese and
+    # a Devanagari nukta and is what makes İstanbul reachable from "istanbul" — but
+    # U+3099/U+309A are the canonical decompositions of the dakuten/handakuten kana,
+    # where は/ば/ぱ are three different syllables. ベッド (bed) and ペット (pet) both
+    # folded to ヘット, so a Japanese booking filter answered a query for bed type
+    # with PET TYPE under a confident `Found N element(s) matching` — worse than a
+    # miss, and these two co-occur on Rakuten/Jalan as a matter of course.
+    page(el(mmid="1", tag="a", label="ペットタイプ", name="ペットタイプ", y=10),
+         el(mmid="2", tag="a", label="ベッドタイプ", name="ベッドタイプ", y=30))
+    out = await run("ベッドタイプ")
+    check("F38 a dakuten query does not match its handakuten homograph",
+          "ref_2" in out and "ref_1" not in out, out.replace("\n", " ")[:110])
+    check("F38b ...and the right one is still found, so this is a narrowing",
+          "Found 1" in out, out.splitlines()[0][:80])
+    # CONTROLS. The fix must be an EXEMPTION of two code points, not a revert: every
+    # accent-insensitive case the fold was written for has to keep working, or the
+    # trade is worse than the bug. İstanbul is the live miss that motivated _fold.
+    page(el(mmid="3", tag="a", label="İstanbul hava durumu", name="İstanbul hava durumu"),
+         el(mmid="4", tag="a", label="Ελλάδα", name="Ελλάδα", y=20),
+         el(mmid="5", tag="a", label="México", name="México", y=40))
+    check("F38c CONTROL: Turkish dotted I still folds to ASCII i",
+          "ref_3" in await run("istanbul hava"), "")
+    check("F38d CONTROL: Greek tonos and a Spanish acute still fold away",
+          "ref_4" in await run("ελλαδα") and "ref_5" in await run("mexico"), "")
+
+    # ---- F39: A NON-ENGLISH ROLE WORD COULD NEVER EARN CONFIDENCE. The role-word
+    # hint table carries ~20 languages, but the set subtracted from CONTENT tokens
+    # was 19 ENGLISH words and the overlap between them was EMPTY. So 按钮/ボタン/
+    # 버튼/кнопка counted as CONTENT: `_text_possible` went true and the gate then
+    # demanded content coverage that a role-word hit never credits (the hint path
+    # writes `_cov`, never `_covText`). `find("button")` could be confident and
+    # `find("ボタン")` could not, for the same page and the same element — find was a
+    # materially worse tool in every language but English, on Baidu, Yahoo! JAPAN,
+    # Naver and Yandex. Seven hints could not fire at all, four of them because the
+    # fold mangled kana and Hangul (F38's bug), so these two travel together.
+    page(el(mmid="7", tag="textarea", placeholder="今日のニュース", w=300, h=30, y=10),
+         el(mmid="8", tag="input", type="submit", label="検索する", name="検索する",
+            w=100, h=40, y=10))
+    for q in ("ボタン", "버튼", "botón", "кнопка", "schaltfläche"):
+        out = await run(q)
+        check(f"F39 a non-English role word reaches the control CONFIDENTLY ({q})",
+              "ref_8" in out and out.startswith("Found"), out.splitlines()[0][:70])
+    # The spaceless case: "検索ボタン" is ONE token that is in no role-word set, so it
+    # was classified as content and required to match page text it cannot match.
+    out = await run("検索ボタン")
+    check("F39b a spaceless noun+role query made only of role words is answered "
+          "by type, like its English equivalent",
+          "ref_8" in out and out.startswith("Found"), out.splitlines()[0][:70])
+    # CONTROL: a token that merely CONTAINS a role word still identifies something,
+    # so it must stay CONTENT. Without this, `_role_only` stripping role words would
+    # make every CJK query role-only and hand back every control on the page.
+    out = await run("百度搜索")
+    check("F39c CONTROL: a token containing a role word plus a name is still "
+          "content, so it does not match an unrelated control by type alone",
+          not out.startswith("Found"), out.splitlines()[0][:80])
+
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} find checks passed.")
     return 0 if passed == len(results) else 1

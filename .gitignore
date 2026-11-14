@@ -11,3 +11,13 @@ browser_storage/
 *.egg-info/
 build/
 dist/
+
+# Flows recorded against PRIVATE applications. These were in .git/info/exclude,
+# which is per-clone and never travels -- so the protection existed only on the
+# machine that set it up, and a collaborator recording against the same app got
+# none of it. C29 in tools/test_contracts.py reads the exclude list and fails on
+# any tracked file containing an excluded flow's own origin; that check travels,
+# the exclusion did not. Both are kept: the exclude list still covers a clone
+# that predates this line.
+flows/crm-*.flow.json
+flows/boxsy-*.flow.json

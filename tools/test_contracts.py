@@ -261,36 +261,71 @@ def main() -> int:
     # The rule the codebase already states: an explanatory note gives the FACT and
     # enumerates causes; it never selects one. This flags the hedged-assertion
     # vocabulary inside emitted strings, which is how all three were phrased.
-    _notes_src = read("extension/background.js")
-    _mask_bg = code_mask(_notes_src)
+    # SCOPE IS LOAD-BEARING, AND IT WAS TOO NARROW. This scanned only
+    # background.js, while mcp_server.py and core/flows/*.py now emit a great
+    # deal of agent-facing prose — the resolver's refusals, the precondition
+    # message, the count-grew note, find's miss path. A tripwire that covers
+    # part of a surface also asserts the rest is fine, which is #66's finding:
+    # audit_patterns.py printed "253 sites across 4 files" while scanning three,
+    # and had never looked at panel.js or core/flows at all.
+    _NOTE_FILES = ["extension/background.js", "mcp_server.py",
+                   "core/flows/runner.py", "core/flows/recorder.py",
+                   "core/flows/descriptor.py"]
+    def _scan_hedges(_label, _src, _mask, _out):
+        for _m in re.finditer(
+                r"[`\"'][^`\"'\n]{0,400}?(most likely|probably|this is because|usually means)"
+                r"[^`\"'\n]{0,400}?[`\"']", _src, re.I):
+            # Only STRING literals matter — prose in a comment is the reasoning,
+            # not output.
+            if _mask[_m.start()]:
+                continue
+            # THE WINDOW MUST SPAN THE WHOLE MESSAGE, not one literal. These notes
+            # are built by concatenating several string chunks, so the hedge and
+            # the words that justify it routinely sit in different literals — the
+            # first version matched only the chunk containing "probably" and
+            # flagged a note whose very next line says "heuristic".
+            _seg = _src[max(0, _m.start() - 200):_m.end() + 400]
+            # An enumeration is the sanctioned form: naming several causes is not
+            # picking one.
+            if re.search(r"\(a\)|\(b\)|either|or a |one of|each do it|which applies",
+                         _seg, re.I):
+                continue
+            # ...and so is a note that DECLARES itself a judgement. "PROBABLY
+            # DECORATION — a size/shape/label heuristic (never a spec rule) judged
+            # them non-content" is the honest form this rule exists to encourage,
+            # not a violation of it: the hedge is the category name and the note
+            # says what made the guess. Flagging it would push the codebase toward
+            # removing the word rather than the guess.
+            if re.search(r"heuristic|never a spec rule", _seg, re.I):
+                continue
+            _out.append(f"{_label}:{_src[:_m.start()].count(chr(10)) + 1}")
+
     _note_bad = []
-    for _m in re.finditer(r"[`\"'][^`\"'\n]{0,400}?(most likely|probably|this is because|usually means)"
-                          r"[^`\"'\n]{0,400}?[`\"']", _notes_src, re.I):
-        # Only STRING literals matter — prose in a comment is the reasoning, not output.
-        if _mask_bg[_m.start()]:
-            continue
-        # THE WINDOW MUST SPAN THE WHOLE MESSAGE, not one literal. These notes are
-        # built by concatenating several string chunks, so the hedge and the words
-        # that justify it routinely sit in different literals — the first version
-        # matched only the chunk containing "probably" and flagged a note whose very
-        # next line says "heuristic".
-        _seg = _notes_src[max(0, _m.start() - 200):_m.end() + 400]
-        # An enumeration is the sanctioned form: naming several causes is not picking one.
-        if re.search(r"\(a\)|\(b\)|either|or a |one of|each do it|which applies", _seg, re.I):
-            continue
-        # ...and so is a note that DECLARES itself a judgement. "PROBABLY DECORATION —
-        # a size/shape/label heuristic (never a spec rule) judged them non-content" is
-        # the honest form this rule exists to encourage, not a violation of it: the
-        # hedge is the category name and the note says what made the guess. Flagging
-        # it would push the codebase toward removing the word rather than the guess.
-        if re.search(r"heuristic|never a spec rule", _seg, re.I):
-            continue
-        _note_bad.append(f"background.js:{_notes_src[:_m.start()].count(chr(10)) + 1}")
+    for _nf in _NOTE_FILES:
+        _nsrc = read(_nf)
+        _scan_hedges(_nf.split("/")[-1], _nsrc, code_mask(_nsrc), _note_bad)
+
     check("C15 no emitted note asserts a single cause it cannot know "
           "(state the fact, enumerate the causes)",
           not _note_bad,
           f"{len(_note_bad)} hedged assertion(s)"
-          + (f": {'; '.join(_note_bad[:6])}" if _note_bad else " — all notes enumerate or state facts"))
+          + (f": {'; '.join(_note_bad[:6])}" if _note_bad
+             else f" — {len(_NOTE_FILES)} files scanned, all notes enumerate or state facts"))
+
+    # AND THE DETECTOR MUST BE SHOWN TO FIRE on the NEW files, not only on the
+    # one it was written against — a scan that silently matches nothing in
+    # core/flows would look identical to one that found them clean.
+    _planted = 'raise Unresolved("the element is gone, this is because the page navigated")'
+    _pb = []
+    _scan_hedges("planted", _planted, code_mask(_planted), _pb)
+    check("C15b ...and the scanner provably fires on a planted hedge in the "
+          "python emitted-string shape (not just background.js's template literals)",
+          len(_pb) == 1, f"{len(_pb)} hit(s) on the planted violation")
+
+    # C16 scans the EXTENSION specifically — op names are its vocabulary. (C15
+    # above now scans five files and no longer leaves a module-level
+    # `_notes_src` behind, so this names its own source.)
+    _notes_src = read("extension/background.js")
 
     # C16: AN AGENT-FACING MESSAGE MAY ONLY NAME TOOLS THE AGENT HAS. The extension
     # speaks in OP names (`get_dom_fields`, `get_interactive_elements`); the agent has
@@ -559,12 +594,27 @@ def main() -> int:
     # you remembered; a check
     # protects the one you did not. Reads the exclude list rather than
     # restating it (#21), so adding a pattern there extends this automatically.
-    _excl = _Path(ROOT) / ".git" / "info" / "exclude"
+    # READS BOTH SOURCES, and that is load-bearing. The patterns used to live
+    # ONLY in .git/info/exclude, which is per-clone and never travels — so the
+    # protection existed on exactly one machine, and a collaborator recording
+    # against the same app got none of it. They are now in .gitignore as well,
+    # which IS version controlled. If this check kept reading only the exclude
+    # file it would find no patterns on a fresh clone, derive no hosts, and pass
+    # having checked nothing — a detector that cannot fire, which also asserts
+    # that nothing is wrong (PRINCIPLES #15, and the exact shape of the drift
+    # check in #30 and the --check-only flag in #67).
     _hosts = set()
-    if _excl.exists():
-        for _ln in _excl.read_text(encoding="utf-8").splitlines():
+    _pat_lines = []
+    for _src in (_Path(ROOT) / ".git" / "info" / "exclude",
+                 _Path(ROOT) / ".gitignore"):
+        if _src.exists():
+            _pat_lines += _src.read_text(encoding="utf-8").splitlines()
+    if True:
+        for _ln in _pat_lines:
             _ln = _ln.strip()
             if not _ln or _ln.startswith("#"):
+                continue
+            if not _ln.startswith("flows/"):   # .gitignore holds unrelated patterns
                 continue
             # flows/crm-*.flow.json -> the origin of each excluded flow
             for _fp in sorted((_Path(ROOT)).glob(_ln)):
@@ -636,6 +686,62 @@ def main() -> int:
           len(_rows) == 2 and _rows[0] != _rows[1]
           and '"SIGQUIT"@0' in _out and '"SIGUSR1"@12' in _out,
           f"{len(_rows)} row(s); identical={_rows[0] == _rows[1] if len(_rows) == 2 else 'n/a'}")
+
+    # C30/C30b: THE SERVER'S ROW PATTERNS MUST MATCH THE ROW THE EXTENSION EMITS IN
+    # THE DEFAULT FORMAT. C12 guards the boundary line that introduces the rows; this
+    # guards the rows themselves, and the defect was the same shape one line down.
+    # `format` defaults to "tree" (C13, right above) and the tree formatter writes
+    # `pad + row`, where pad is the node's depth — but `_ROW_LINE`, `_line_ident` and
+    # find's prefix strip were all anchored at `^ref_` with no tolerance for that
+    # indent. Consequences, all measured on the DEFAULT format:
+    #   * truncation lost elements in silence — a 40-row listing at max_chars=1200
+    #     printed 8 rows and no residual clause at all (rule 5), while the flat
+    #     listing of the same rows said "32 more element(s) not shown";
+    #   * the #13 legend-eviction fallback keys off the same pattern, so a listing
+    #     whose legend fills the budget returned ZERO rows where flat returned 6;
+    #   * `_line_ident` kept the mmid as part of the identity, so an ordinary
+    #     re-render that renumbers refs reported every row as both ADDED and GONE —
+    #     precisely the trap that function's docstring exists to prevent.
+    # Built from what background.js really does rather than from a row typed here:
+    # the indent is confirmed by the `pad + ` push, and the prefix by the formatter's
+    # own `ref_${e.mmid} | ` template.
+    _emits_pad = bool(re.search(r"out\.push\(\s*pad\s*\+", _bg))
+    _emits_ref = bool(re.search(r"return\s*`ref_\$\{e\.mmid\}\s*\|\s*", _bg))
+    _indented = '  ref_42 | a "Headline" href="/x"'
+    check("C30 the server's row pattern matches an INDENTED row, which is what the "
+          "default tree format emits",
+          _emits_pad and _emits_ref
+          and bool(_ms._ROW_LINE.match(_indented))
+          and _ms._line_ident(_indented) == 'a "Headline" href="/x"',
+          f"extension indents={_emits_pad} emits ref_={_emits_ref}; "
+          f"_ROW_LINE={bool(_ms._ROW_LINE.match(_indented))}; "
+          f"_line_ident={_ms._line_ident(_indented)!r}")
+
+    # C30b: find reuses the collector's own rendered row (`line`) so the two tools
+    # cannot drift — then stripped a `mmid=N | ` prefix the collector has not written
+    # since the listing moved to ref_N, printing the ref and the tag TWICE:
+    #     ref_12  [a]  ref_12 | a "Login" href="/login"
+    # NO fixture ever set `line`, so that whole path was unreachable from the suite
+    # and shipped inert behind 51 green find checks. This one sets it.
+    class _FBL:
+        connected = True
+
+        async def call(self, op, **kw):
+            if op == "get_interactive_elements" and not kw.get("structured"):
+                return ""
+            return [dict(mmid="12", tag="a", role=None, label="Login", name="Login",
+                         value="", placeholder="", text="", near="", w=100, h=20, y=0,
+                         line='ref_12 | a "Login" href="/login"')]
+
+    _ms.STATE["bridge"] = _FBL()
+    _f = _ms.find.fn if hasattr(_ms.find, "fn") else _ms.find
+    _row = [ln for ln in _aio.run(_f(query="login", tabId=1)).splitlines()
+            if "ref_12" in ln]
+    check("C30b find strips the ref prefix the collector actually writes, so a "
+          "reused row does not print the ref and the tag twice",
+          len(_row) == 1 and _row[0].count("ref_12") == 1
+          and _row[0].count("[a]") == 1 and ' | a "Login"' not in _row[0],
+          _row[0].strip() if _row else "no row")
 
     # C18/C19: query_elements' two silences. An element with NO text rendered
     # IDENTICALLY to a text-extraction failure (live on nginx, whose <h1> really is
@@ -747,6 +853,188 @@ def main() -> int:
               False, f"{type(_e).__name__}: {_e}")
     finally:
         shutil.rmtree(_blocker, ignore_errors=True)
+
+    # ---- OC5/OC6: `onclick` and case folding have ONE spelling each ----------
+    # `onclick` is two attributes with one name: the CONTENT attribute, which
+    # hasAttribute sees, and the IDL attribute, which `el.onclick = fn` sets
+    # without touching the markup. listener_tag.js cannot see the second either —
+    # it wraps addEventListener, and a property assignment never calls it. So an
+    # element declaring only a property handler existed for no tool, and ten
+    # separate sites asked the question the narrow way. Rule 17: a concept spelled
+    # two ways drifts, and here the drift is a whole class of control going
+    # missing. Neither term subsumes the other — under a strict CSP an inline
+    # handler attribute is never compiled, so hasAttribute is true while the
+    # property is null.
+    _oc_src = read("extension/background.js")
+    _oc_lines = _oc_src.split("\n")
+    _oc_bad = []
+    for _i, _l in enumerate(_oc_lines):
+        if "hasAttribute('onclick')" not in _l:
+            continue
+        # The two spellings routinely straddle a line break in these long boolean
+        # chains, so the window is the line plus its neighbours rather than the
+        # line alone — a per-line rule would flag correct code and teach the
+        # reader to ignore it.
+        _win = "\n".join(_oc_lines[max(0, _i - 1):_i + 3])
+        if "_hasHandlerProp(" not in _win:
+            _oc_bad.append(_i + 1)
+    check("OC5 every site reading the onclick ATTRIBUTE reads the handler "
+          "PROPERTY beside it",
+          not _oc_bad,
+          f"{len(_oc_bad)} site(s) at line(s) {_oc_bad[:6]}" if _oc_bad
+          else f"{sum(1 for l in _oc_lines if 'hasAttribute(' + chr(39) + 'onclick' + chr(39) + ')' in l)} site(s), all paired")
+    # The detector must be shown to fire, or "0 findings" is worth nothing.
+    check("OC5* ...and the rule provably fires on a site that reads only the "
+          "attribute",
+          "_hasHandlerProp(" not in "if (el.hasAttribute('onclick')) return true;")
+
+    # OC7/OC8: the property check is DERIVED from listener_tag.js, not restated.
+    # Two passes answering "did the page wire this up?" with two different lists
+    # is #21's one-concept-two-spellings, and #18 measured exactly that asymmetry
+    # (isInteractive accepting a handler-bound div while keepForFind did not) at
+    # 60% of a whole accuracy gap. Asking only about `onclick` here would have
+    # said: bound with addEventListener('pointerdown') = a control, assigned to
+    # onpointerdown = not a control — and the pointer half is the half that
+    # matters, because Radix/HeadlessUI/MUI gate on pointerdown rather than click,
+    # which is the entire reason fix #1 exists.
+    _hp = {l.strip() for l in _oc_lines if "const _hasHandlerProp" in l}
+    _hp_n = sum(1 for l in _oc_lines if "const _hasHandlerProp" in l)
+    check("OC7 every injected copy of _hasHandlerProp is byte-identical (the "
+          "closure is lost on injection, so the duplication is forced — the "
+          "drift is not)",
+          len(_hp) == 1 and _hp_n >= 4, f"{_hp_n} copies, {len(_hp)} distinct")
+    _tag_src = read("extension/listener_tag.js")
+    _act = re.search(r"const ACTIVATION = new Set\(\[([^\]]*)\]\)", _tag_src)
+    _want_props = ({"on" + s for s in re.findall(r"'([a-z]+)'", _act.group(1))}
+                   if _act else set())
+    _have_props = set(re.findall(r"'(on[a-z]+)'", next(iter(_hp)))) if _hp else set()
+    check("OC8 the properties it checks are exactly `on` + listener_tag.js's "
+          "ACTIVATION set, so the two files cannot disagree about what an "
+          "activation handler is",
+          bool(_want_props) and _have_props == _want_props,
+          f"only in background.js: {sorted(_have_props - _want_props)}; "
+          f"only in listener_tag.js: {sorted(_want_props - _have_props)}"
+          if _have_props != _want_props else f"{len(_want_props)} events, agreed")
+    # OC6: `toLocaleLowerCase()` is SPECIFIED to use the host default locale, so
+    # the same page and the same request can give different answers on different
+    # machines. MEASURED AND THE SCARY VERSION DID NOT REPRODUCE: the audit
+    # reported that a Turkish-locale Chrome could select no option containing a
+    # capital I; `'INDIA'.toLocaleLowerCase('tr-TR')` really is 'ındıa', but the
+    # NO-ARGUMENT form returns 'india' with the ICU default locale set to tr-TR —
+    # checked in headless Chromium via Emulation.setLocaleOverride, with
+    # --lang=tr-TR, with LANG/LC_ALL, and in bare Node (V8 13.6). So this is a
+    # latent API hazard rather than an observed defect, and a source rule is the
+    # ONLY thing that can pin it: no behavioural fixture can make V8 exhibit it.
+    _oc_mask = code_mask(_oc_src)
+    _loc = [_oc_src[:m.start()].count("\n") + 1
+            for m in re.finditer(r"toLocale(?:Lower|Upper)Case", _oc_src)
+            if _oc_mask[m.start()]]
+    check("OC6 no locale-dependent case conversion in the extension, so a match "
+          "cannot depend on the user's OS", not _loc,
+          f"{len(_loc)} site(s) at line(s) {_loc[:6]}" if _loc else "clean")
+    check("OC6* ...and the rule provably fires on the call that shipped",
+          bool(re.search(r"toLocale(?:Lower|Upper)Case",
+                         "x.normalize('NFC').toLocaleLowerCase()")))
+
+    # ---- FX1: the fold that ACTS and the fold that RANKS are one rule ---------
+    # mcp_server.py's `_fold` and the extension's `norm` answer the same question
+    # in two LANGUAGES, so P2's byte-identity cannot reach across and the only
+    # checkable property is behaviour: two strings that are the same option on one
+    # side must be the same option on the other. Neither file is imported — `_fold`
+    # is sliced out and exec'd, `norm` is sliced out and run in node — because
+    # importing mcp_server runs its module body.
+    _FXC = ["İstanbul", "istanbul", "Istanbul", "ISTANBUL", "İzmir", "izmir",
+            "Ankara", "México", "Mexico", "Café", "Cafe", "Ελλάδα", "ελλαδα",
+            "Tiếng Việt", "Tieng Viet", "Åland", "aland", "ПРИМЕР", "пример",
+            "ハス", "バス", "パス", "ビール", "ピール", "ヒール",
+            "क", "का", "किताब", "कताब", "한국어", "검색", "٣٨٢", "382",
+            # The three KNOWN divergences, included rather than excluded: an
+            # exclusion list quietly grows, while asserting the exact set makes a
+            # FOURTH divergence a failure. casefold() applies FULL case folding
+            # and toLowerCase does not (ß, the ﬁ ligature), so JS merges FEWER —
+            # a miss on an exotic spelling, never a wrong option. And Python
+            # filters on canonical combining class while JS has no such API and
+            # filters on category Mn, so JS drops the handful of ccc-0 Mn marks
+            # (Thai U+0E31) that Python keeps, and merges MORE for those scripts.
+            "Straße", "strasse", "ﬁle", "file", "กัน", "กน"]
+    _FX_KNOWN = {frozenset({"Straße", "strasse"}), frozenset({"ﬁle", "file"}),
+                 frozenset({"กัน", "กน"})}
+    try:
+        import unicodedata as _ud
+        _srv_src = read("mcp_server.py")
+        _m = re.search(r"^_KANA_VOICING = .*?^def _fold\(x: str\) -> str:.*?^(?=\S)",
+                       _srv_src, re.S | re.M)
+        _ns = {"unicodedata": _ud}
+        exec(compile(_m.group(0), "<_fold>", "exec"), _ns)  # noqa: S102
+        _norms = {l.strip() for l in _oc_lines if "const norm = (s)" in l}
+        assert len(_norms) == 1, f"{len(_norms)} distinct norm copies"
+        _js = ("const c = " + json.dumps(_FXC, ensure_ascii=False) + ";"
+               + _norms.pop() + "console.log(JSON.stringify(c.map(norm)));")
+        _jsr = json.loads(subprocess.run(["node", "-e", _js], capture_output=True,
+                                         text=True, check=True, timeout=60).stdout)
+        _pyr = [re.sub(r"\s+", " ", _ns["_fold"](s)).strip() for s in _FXC]
+
+        def _merge(vals):
+            g: dict = {}
+            for s, v in zip(_FXC, vals):
+                g.setdefault(v, []).append(s)
+            return {frozenset(v) for v in g.values() if len(v) > 1}
+
+        _mj, _mp = _merge(_jsr), _merge(_pyr)
+        _fx_diff = _mj ^ _mp
+        check("FX1 the extension's fold and mcp_server's _fold merge the same "
+              "strings, bar the three documented divergences",
+              _fx_diff == _FX_KNOWN,
+              f"js={len(_mj)} py={len(_mp)}; unexpected="
+              + ("; ".join(sorted(str(sorted(s)) for s in (_fx_diff - _FX_KNOWN)))
+                 or "none")
+              + ("; no longer diverging: "
+                 + "; ".join(sorted(str(sorted(s)) for s in (_FX_KNOWN - _fx_diff)))
+                 if _FX_KNOWN - _fx_diff else ""))
+        # Kana voicing and a Devanagari matra are the two shapes where dropping a
+        # mark changes the WORD rather than its strictness. If this ever merges,
+        # a request for one option lands on another under ok:true.
+        _pairs = [("ハス", "バス"), ("ハス", "パス"), ("バス", "パス"),
+                  ("ビール", "ピール"), ("ヒール", "ビール"),
+                  ("क", "का"), ("किताब", "कताब")]
+        _bad = [(a, b) for a, b in _pairs if _jsr[_FXC.index(a)] == _jsr[_FXC.index(b)]]
+        check("FX1b ...and neither side merges a voiced kana with its plain form, "
+              "or a matra with its bare consonant", not _bad, f"merged={_bad}")
+    except Exception as _e:  # noqa: BLE001
+        check("FX1 the extension's fold and mcp_server's _fold merge the same "
+              "strings", False, f"{type(_e).__name__}: {_e}")
+
+    # ---- MC1/MC2: a `dup:` tag must tell the truth ---------------------------
+    # `i18n:` tags are enforced by P2; `dup:` tags were enforced by nothing, and
+    # one of them was a lie. `markCutLite` sat under `dup:markcut` claiming to be
+    # a copy of markCut while doing a raw `t.slice(0, n)` with no surrogate guard —
+    # and it had NO CALL SITES in any file, so no live run could ever have caught
+    # it. It is deleted; these two keep the remaining copies honest.
+    _dup: dict = {}
+    for _i, _l in enumerate(_oc_lines):
+        _m2 = re.search(r"dup:([a-z]+)", _l)
+        if _m2:
+            _dup.setdefault(_m2.group(1), []).append(_i)
+    _mc_bad, _mc_live = [], 0
+    for _i in _dup.get("markcut", []):
+        _win = "\n".join(_oc_lines[_i:_i + 14])
+        if "…(+" not in _win:
+            continue      # a tombstone: a deleted copy cannot drift (P2's rule)
+        _mc_live += 1
+        if not re.search(r"0xD800|clip\(|markCut\(", _win):
+            _mc_bad.append(_i + 1)
+    check("MC1 every live dup:markcut copy is surrogate-safe, so an emoji at the "
+          "cut cannot become a lone surrogate",
+          not _mc_bad and _mc_live >= 2,
+          f"{_mc_live} live cop(ies), unguarded at {_mc_bad}" if _mc_bad
+          else f"{_mc_live} live copies, all guarded")
+    check("MC1* ...and the rule provably fires on markCutLite's body as it shipped",
+          not re.search(r"0xD800|clip\(|markCut\(",
+                        "let cut = t.slice(0, n);\nreturn cut + '…(+' + n + ')';"))
+    _mc2 = [k for k, v in _dup.items() if len(v) < 2]
+    check("MC2 no dup: tag claims a duplication that no longer exists",
+          not _mc2, f"singletons={_mc2}" if _mc2
+          else ", ".join(f"{k}x{len(v)}" for k, v in sorted(_dup.items())))
 
     print(f"\n{passed} passed, {failed} failed, {passed + failed} total checks")
     if failures:

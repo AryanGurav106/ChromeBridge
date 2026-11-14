@@ -217,8 +217,20 @@ async def main() -> int:
                 bad.append(f"  BAD   {pth.name}: step(s) {holes} name a target with no descriptor")
                 continue
             ok += 1
+            # WHAT THE RECORDING COULD NOT VOUCH FOR. The compile works this
+            # out (#68) and used to print it once, at stop, into a transcript
+            # -- while the person it is for is reading the file. Persisted into
+            # the step since then, so it can be printed HERE, with no browser,
+            # on every CI run. NOT a failure: an unevidenced assertion is not
+            # a wrong one, and refusing the file would be a verdict this cannot
+            # support. It says which lines need a human's eye.
+            notes = [(i, r) for i, st in enumerate(f.steps)
+                     for r in (st.review or [])]
             print(f"  OK    {f.name:<32} {len(f.steps)} step(s), "
-                  f"{sum(1 for s_ in f.steps if s_.expect)} asserted")
+                  f"{sum(1 for s_ in f.steps if s_.expect)} asserted"
+                  + (f", {len(notes)} to review" if notes else ""))
+            for i, r in notes:
+                print(f"          step {i}: {r}")
         for line in bad:
             print(line)
         print(f"\n  {ok}/{len(paths)} flow file(s) valid")

@@ -774,6 +774,120 @@ async def main():
               f"tree={mt[:140]!r}")
         await fp.close(); await fp2.close()
 
+        # ---- SG: the fold label stripper may not cut a character in half --------
+        # The common prefix/suffix across a compacted group is backed off one UTF-16
+        # CODE UNIT at a time, so either loop could stop INSIDE a surrogate pair.
+        # Every emoji is such a pair, and an emoji-led list is the ordinary case on
+        # the web: flag-emoji country pickers, and the emoji-prefixed sidebars
+        # Notion/Linear/Slack-style apps ship. Measured on the shipped logic, 12
+        # folder emoji from one U+1F4Cx block share the high surrogate \uD83D, so
+        # the banner read `label prefix "\ud83d" stripped` with a RAW lone surrogate
+        # in it and every item came back as `"\udcc1 Folder 0"` — the label the
+        # agent is told to act on, replaced by an escape sequence.
+        # FLAT, EXPLICITLY: this mapping block is a flat-listing feature; the tree's
+        # identical-sibling fold catches these rows first and never reaches it.
+        sg = await browser.new_page(viewport={"width": 900, "height": 1400})
+        await sg.goto("about:blank")
+        _pre_opts = "".join(
+            f"<div role='option' style='width:220px;height:22px'>{e} Folder {i}</div>"
+            for i, e in enumerate("\U0001F4C1\U0001F4C2\U0001F4C3\U0001F4C4\U0001F4C5"
+                                  "\U0001F4C6\U0001F4C7\U0001F4C8\U0001F4C9\U0001F4CA"
+                                  "\U0001F4CB\U0001F4CC"))
+        # The SUFFIX mirror. U+1F1F5 and U+1F5F5 are different characters that share
+        # the LOW surrogate \uDDF5, so the suffix loop walks past the pair boundary
+        # and sticks there — the one shape that makes the second loop fail.
+        _suf_opts = "".join(
+            "<div role='option' style='width:220px;height:22px'>item {} {}X</div>".format(
+                i, "\U0001F1F5" if i % 2 else "\U0001F5F5")
+            for i in range(12))
+        await sg.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            f"<div role='listbox' aria-label='Folders'>{_pre_opts}</div>"
+            f"<div role='listbox' aria-label='Tails'>{_suf_opts}</div>"
+            "</body>", wait_until="domcontentloaded")
+        await sg.wait_for_timeout(140)
+        # THE LONE-SURROGATE COUNT MUST BE TAKEN IN THE PAGE. Playwright's transport
+        # is JSON over CDP and it replaces an unpaired surrogate with U+FFFD on the
+        # way out, so a Python-side scan of the returned string can never fire —
+        # a detector that cannot fire also asserts that nothing is wrong. Counted
+        # in-page on the raw string; only the ESCAPED form survives the trip.
+        _sg = await sg.evaluate(
+            "(function(){ " + COLLECT + ";\n"
+            "  const s = String(_collectInteractivePage(false, null, 'compact',"
+            " false, false, 'flat'));\n"
+            "  const lone = (s.match(/[\\uD800-\\uDBFF](?![\\uDC00-\\uDFFF])"
+            "|(?<![\\uD800-\\uDBFF])[\\uDC00-\\uDFFF]/g) || []).length;\n"
+            "  return { text: s, lone };\n"
+            "})()")
+        _sgout, _sglone = _sg["text"], _sg["lone"]
+        # PROVE PRESENCE FIRST — a check that looks up a missing block passes
+        # vacuously, and the mapping block is the only thing that runs the stripper.
+        _sgblocks = _sgout.count("cells, one per pair below")
+        check("SG1 the compacted mapping block is emitted for both listboxes "
+              "(without it the stripper never runs and SG2/SG3 are vacuous)",
+              _sgblocks == 2, f"{_sgblocks} block(s)")
+        check("SG2 no lone surrogate anywhere in the listing",
+              _sglone == 0, f"{_sglone} lone surrogate(s) in the raw string")
+        # The items are JSON.stringify'd, which turns a lone surrogate into the
+        # literal text \udcc1 rather than a raw one — equally unreadable, and
+        # invisible to SG2. This is the half the agent actually sees.
+        _esc = re.findall(r"\\u[dD][89abAB][0-9a-fA-F]{2}", _sgout)
+        check("SG2b ...and no item label was serialised as a \\udXXX escape",
+              not _esc, f"{len(_esc)} escaped half-pair(s): {_esc[:4]}")
+        _sgkept = ("\U0001F4C1 Folder 0" in _sgout) + ("\U0001F4CC Folder 11" in _sgout)
+        check("SG3 the emoji labels survive intact, so the fix is not "
+              "'strip nothing and hope'",
+              _sgkept == 2, f"{_sgkept}/2 of the first and last labels present")
+        await sg.close()
+
+        # ---- KD: the fold's heterogeneity guard, in any script ------------------
+        # `_kind` exists to stop a RANKED NUMBER COLUMN folding together with prose
+        # titles — #30's position-mispairing defect, which the project already paid
+        # to fix. It asked `/^\d[\d.,:%+-]*$/` with no `u` flag, and JS `\d` without
+        # `u` is exactly [0-9], so on every page that does not write its numbers in
+        # Latin digits the guard could not see the one distinction it exists to make.
+        kd = await browser.new_page(viewport={"width": 1200, "height": 1200})
+        await kd.goto("about:blank")
+
+        def _kd_rows(vals, cls, pfx):
+            return "".join(
+                f"<div style='height:20px'><span class={cls}>"
+                f"<a href=/{pfx}{i} style='display:inline-block;width:160px'>{v}</a>"
+                f"</span></div>" for i, v in enumerate(vals))
+
+        _ar_n = ["٣٨٢", "٤٩١", "٥٠٧"]
+        _ar_t = ["عنوان الخبر الأول",
+                 "عنوان الخبر الثاني",
+                 "عنوان الخبر الثالث"]
+        await kd.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            + _kd_rows([_ar_n[0], _ar_t[0], _ar_n[1], _ar_t[1], _ar_n[2], _ar_t[2]],
+                       "mixar", "ma")
+            + _kd_rows(["382", "First story title", "491", "Second story title",
+                        "507", "Third story title"], "mixla", "ml")
+            + _kd_rows(_ar_n + ["٦١٠", "٧٢٣",
+                                "٨٣٤"], "homar", "ha")
+            + "</body>", wait_until="domcontentloaded")
+        await kd.wait_for_timeout(140)
+        _kdout = await kd.evaluate(
+            "(function(){ " + COLLECT + "; return String(_collectInteractivePage("
+            "false, null, 'compact', false, false, 'flat')); })()")
+        _kdfolds = [l for l in _kdout.splitlines() if re.match(r"^\d+×\s", l)]
+        _kdmixed = [l for l in _kdfolds if _ar_n[0] in l and _ar_t[0] in l]
+        check("KD1 an Arabic-Indic number column does not fold in with prose titles",
+              not _kdmixed,
+              f"{len(_kdmixed)} mixed fold(s): {(_kdmixed or [''])[0][:110]}")
+        # Without this the guard could be "never fold" and KD1 would pass.
+        check("KD2 CONTROL: a homogeneous Arabic-Indic number group still folds",
+              any(_ar_n[0] in l and _ar_t[0] not in l for l in _kdfolds),
+              f"{len(_kdfolds)} fold(s) emitted")
+        # The same markup in Latin digits refused in BOTH arms — which is what says
+        # the fix extended an existing rule rather than inventing one.
+        check("KD3 CONTROL: the identical shape in Latin digits also refuses",
+              not [l for l in _kdfolds if "382" in l and "First story title" in l],
+              "latin mixed group unfolded, as it always was")
+        await kd.close()
+
         await browser.close()
 
     passed = sum(1 for r in results if r)

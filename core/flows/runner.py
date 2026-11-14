@@ -38,15 +38,25 @@ from typing import Any, Callable, Optional
 
 from . import secrets
 from .descriptor import Unresolved, build, resolve
-from .model import Flow, Step, resolve_vars, set_ref
-from .recorder import (query_first_attrs, query_first_text, query_total,
-                       refused, search_hits)
+from .model import NAVIGATIONAL, Flow, Step, resolve_vars, set_ref
+from .recorder import (no_effect, query_first_attrs, query_first_text,
+                       query_total, refused, search_hits)
 
 PASSED, FAILED, NEEDS = "passed", "failed", "needs_decision"
 
 # Live runs, so a resume continues from the stopped step instead of replaying
 # the side effects of every step before it.
 RUNS: dict = {}
+
+
+def _flat(s) -> str:
+    """One spelling of a rendered string: whitespace runs collapsed.
+
+    HTML collapses them when it paints, so two strings differing only in
+    indentation or a line break are the same string on the screen. Used for
+    the recorded-text comparison so reflow is tolerated and content is not.
+    """
+    return " ".join(str(s if s is not None else "").split())
 
 
 def _as_list(v) -> list:
@@ -105,6 +115,22 @@ class Run:
         self.vars = dict(flow.vars or {})
         self.vars.update(overrides or {})
         self.checked_require = False
+        # WHICH TARGET THE RUN ASKED ABOUT, and the answers it has been given.
+        # A step may carry several targets (fill_form names one per field) and
+        # only one of them stopped the run; `pending_path` is that one, so a
+        # resume answers the question that was asked instead of the first in
+        # dict order. `bound` persists each answer, so a step with TWO
+        # ambiguous fields can be resumed twice -- without it the second
+        # escalation silently discarded the first binding.
+        self.pending_path: Optional[str] = None
+        self.bound: dict = {}
+        # WHERE THE PRECONDITION IS ASKED: after the flow's own leading
+        # navigation, because that is where the recorder observed it. Derived
+        # from the steps rather than stored, so there is no field to keep in
+        # sync with the recorder.
+        self._require_at = next(
+            (n for n, st in enumerate(flow.steps) if st.name not in NAVIGATIONAL),
+            len(flow.steps))
         self.log: list = []
         self.patches: list = []
         # Steps that resolved on their DECLARED DESTINATION after the recorded
@@ -112,6 +138,12 @@ class Run:
         # asked for and nothing was guessed -- but not a clean pass either, so
         # it is reported separately from both.
         self.drifted: list = []
+        # Steps that bound to the right element at the WRONG index, because the
+        # list they sit in was re-sorted (#P1). Reported through `reason`,
+        # which every status already renders, rather than through `drifted` --
+        # that one's renderer is specific to the href fallback and would print
+        # "matched href=None".
+        self.moved: list = []
         self._last_entries: list = []
         self.started = time.time()
         # Accumulated EXECUTION time, not wall time. A paused run waits for a
@@ -126,24 +158,48 @@ class Run:
         """Run from the current step. `binding` answers the question that stopped us."""
         self._t0 = time.time()
 
-        # THE PRECONDITION, BEFORE ANYTHING RUNS. Without it a flow pointed at
-        # the wrong starting state fails deep inside with a message about one
-        # element -- measured live, a flow that begins at a login page was run
-        # while already signed in, and step 1 reported "no element matches
-        # tag='button' name='Sign in'", which describes the symptom of being on
-        # a page the flow never expected. Checking first turns that into one
-        # sentence about the app's state.
-        if not self.checked_require and self.flow.require:
-            self.checked_require = True
-            bad = await self._verify(self.flow.require)
-            if bad:
-                return self._stop(FAILED,
-                                  f"the app is not in the state this flow starts "
-                                  f"from: {bad}. Nothing was run.")
-        self.checked_require = True
-
         while self.i < len(self.flow.steps):
             step = self.flow.steps[self.i]
+
+            # THE PRECONDITION, BEFORE THE FLOW CHANGES ANYTHING. Without it a
+            # flow pointed at the wrong starting state fails deep inside with a
+            # message about one element -- measured live, a flow that begins at
+            # a login page was run while already signed in, and step 1 reported
+            # "no element matches tag='button' name='Sign in'", which describes
+            # the symptom of being on a page the flow never expected.
+            #
+            # CHECKED AFTER THE NAVIGATIONAL PREFIX, not before step 0. The
+            # state a flow expects is the state it finds once it has got itself
+            # to the app, and `tabs_create_mcp`/`navigate` are how it gets
+            # there; asking before them would ask about `about:blank`. The
+            # position is derived from the flow's own leading steps rather than
+            # stored, so no new field has to be kept in sync (rule 14 is about
+            # fields that need both halves -- this one needs neither).
+            #
+            # Through `_await_checks`, so it gets the same bounded window a
+            # postcondition and a target get. Asking once was #55's defect in
+            # its third site: on an SPA that paints 400ms in, the flow failed
+            # before step 0 while the app was merely still rendering.
+            if not self.checked_require and self.i >= self._require_at:
+                self.checked_require = True
+                # AND THE MARGIN FOLLOWS THE CHECKS. `settle_ms` on the last
+                # navigational step is the time the recording measured for
+                # exactly these checks to hold -- they used to be that step's
+                # postcondition. Leaving it behind would hold a slow app to the
+                # plain default for the one assertion that runs before it has
+                # finished painting (#60).
+                bad = await self._await_checks(
+                    self.flow.require,
+                    self.flow.steps[self._require_at - 1].settle_ms
+                    if self._require_at > 0 else 0)
+                if bad:
+                    ran = ("Nothing was run." if self._require_at == 0 else
+                           f"Only the {self._require_at} navigation step(s) in "
+                           f"front of it ran.")
+                    return self._stop(FAILED,
+                                      f"the app is not in the state this flow starts "
+                                      f"from: {bad}. Stopped before step {self.i} "
+                                      f"({step.name}). {ran}")
             # A TARGET GETS THE SAME WINDOW A POSTCONDITION DOES.
             #
             # #55 gave postconditions a bounded window to BECOME true and left
@@ -158,7 +214,14 @@ class Run:
             # bound, and a genuinely absent control still fails, just later.
             # `_bind` re-fetches the entries on each attempt, so this is a retry
             # rather than a sleep over one stale snapshot.
-            deadline = time.time() + self.SETTLE_MS / 1000.0
+            #
+            # AND IT GETS `settle_ms` TOO. That margin is the time this app
+            # demonstrated it needed at record time (#60), and it was being
+            # added to the POSTCONDITION window only -- so a step that recorded
+            # 13s got 19s for its assertions and 6s for the control it has to
+            # click first. #59's live failure WAS target resolution on a slow
+            # SPA, which makes this the half likelier to bite.
+            deadline = time.time() + (self.SETTLE_MS + (step.settle_ms or 0)) / 1000.0
             unresolved = None
             while True:
                 try:
@@ -204,8 +267,15 @@ class Run:
                 except Unresolved:
                     pass
             if unresolved is not None:
+                # WHICH target the agent is being asked about. Without this the
+                # answer went to whichever target happened to come first.
+                self.pending_path = unresolved.path
                 why = unresolved.reason + self._surface_note() \
                     + await self._viewport_note()
+                if len(step.targets) > 1 and unresolved.path:
+                    why += (f" (this step names {len(step.targets)} targets; the "
+                            f"one that could not be resolved is {unresolved.path!r}, "
+                            f"and a binding answers THAT one)")
                 # The enum is validated at LOAD (model.ON_FAIL), so there is
                 # no third value to fall through here. There used to be:
                 # "heal" was declared, never written, never branched on, and a
@@ -214,7 +284,7 @@ class Run:
                     return self._stop(FAILED, f"step {self.i} ({step.name}): {why}",
                                       candidates=unresolved.candidates)
                 return self._stop(NEEDS, why, candidates=unresolved.candidates)
-            binding = None
+            binding, self.pending_path = None, None
 
             # VARIABLES FIRST, then secrets -- a variable is an ordinary
             # parameter and may be printed; a secret may not, so it is resolved
@@ -253,6 +323,29 @@ class Run:
                                   f"against a page nothing was done to.\n  the tool "
                                   f"said: {str(result).strip()[:400]}")
 
+            # ...AND A STEP THAT ASSERTS NOTHING CANNOT CATCH A DEAD CLICK ON
+            # ITS OWN. The extension compares URL, DOM and text around the
+            # dispatch and says so when none of them moved; with no
+            # postcondition there was nothing else to notice, so the step
+            # passed. 23% of the steps in this repo's own flows are in that
+            # population.
+            #
+            # Gated on `not step.expect` deliberately: "no DETECTABLE effect"
+            # is not "no effect" -- a native select opening, a focus change, a
+            # canvas repaint all produce it -- so where a real assertion
+            # exists it is the better judge and gets to decide.
+            if not step.expect and no_effect(result):
+                return self._stop(FAILED,
+                                  f"step {self.i} ({step.name}) reported NO DETECTABLE "
+                                  f"EFFECT and this step asserts nothing, so there is "
+                                  f"nothing else that could have caught it. The element "
+                                  f"may be disabled, covered, or wired to handlers that "
+                                  f"synthetic events do not reach; the click may also "
+                                  f"have done something this comparison cannot see, in "
+                                  f"which case re-record the step with an assertion "
+                                  f"after it.\n  the tool said: "
+                                  f"{str(result).strip()[:400]}")
+
             # A TAB THIS FLOW JUST MADE IS THE TAB THIS FLOW MEANT -- the same
             # rule browser_batch threads (#46), and deliberately the same shape:
             # only `tabs_create_mcp` sets it, because it returns exactly one id
@@ -278,7 +371,19 @@ class Run:
                              "asserted": sorted(step.expect) or None})
             self.i += 1
 
-        return self._stop(PASSED, "")
+        return self._stop(PASSED, self._moved_note())
+
+    def _moved_note(self) -> str:
+        if not self.moved:
+            return ""
+        bits = ", ".join(f'step {m["step"]} {m["name"]} {m["path"]} '
+                         f'({m["was"]} -> {m["now"]})' for m in self.moved)
+        return (f'{len(self.moved)} step(s) found their element at a DIFFERENT '
+                f'position than the recording did, and bound to it because what '
+                f'identifies it still names exactly one element: {bits}. The list '
+                f'these sit in has been re-sorted or had rows added and removed. '
+                f'Nothing was guessed, and the ordinal in the file is now stale — '
+                f'the proposed patch below updates it.')
 
     async def _viewport_note(self) -> str:
         """Name a size difference, but only while explaining a failure.
@@ -362,29 +467,71 @@ class Run:
         inp = dict(step.input)
         healed = False
         for path, target in step.targets.items():
-            if binding is not None:
+            key = (self.i, path)
+            if binding is not None and path == self.pending_path:
+                # THE BINDING ANSWERS THE QUESTION THAT WAS ASKED, and only
+                # that one. Consuming it on the first path meant an agent's
+                # "I mean ref_2" was applied to a target that had resolved
+                # perfectly well, while the one that stopped the run was
+                # re-resolved and failed again -- an escalation that could
+                # never be escalated out of.
                 ref = re.sub(r"^ref_", "", str(binding)).strip()
+                self.bound[key] = ref
                 healed = True
                 self._propose_patch(step, path, ref, entries)
                 binding = None
+            elif key in self.bound:
+                # Already answered on an earlier pause of this same step.
+                ref, healed = self.bound[key], True
             else:
+                # `notes` is passed on EVERY attempt, including the ones that
+                # withhold the href fallback. The gate belongs to the fallback
+                # (resolve() applies it itself), not to the reporting: the
+                # position-moved note is produced by the RECORDED descriptor
+                # resolving, which is exactly what these attempts do, so
+                # withholding the list here lost the report on the common path
+                # while keeping the behaviour.
                 notes: list = []
-                ref = resolve(target, entries, notes if allow_alt else None,
-                              allow_alt=allow_alt)
+                try:
+                    ref = resolve(target, entries, notes, allow_alt=allow_alt)
+                except Unresolved as exc:
+                    # WHICH target could not be pinned. Stamped here because
+                    # resolve() is handed one descriptor and has no idea where
+                    # in the step's input it sits.
+                    exc.path = path
+                    raise
                 for n in notes:
-                    self.drifted.append({"step": self.i, "name": step.name,
-                                         "path": path, "via": n["via"],
-                                         "was": n["was"], "alt": n["alt"]})
+                    if n["via"] == "position":
+                        # The crowd was re-sorted and the recorded witness
+                        # still names exactly one member, so the step bound
+                        # correctly at a DIFFERENT index. Deterministic, and
+                        # not a clean pass -- the list has moved under the
+                        # flow, and the ordinal in the file is now wrong.
+                        self.moved.append({"step": self.i, "name": step.name,
+                                           "path": path, "was": n["nth"],
+                                           "now": n["now"]})
+                    else:
+                        self.drifted.append({"step": self.i, "name": step.name,
+                                             "path": path, "via": n["via"],
+                                             "was": n["was"], "alt": n["alt"]})
                     self._propose_patch(step, path, ref, entries)
             set_ref(inp, path, f"ref_{ref}")
         return inp, healed
 
     def _propose_patch(self, step: Step, path: str, ref: str, entries: list) -> None:
-        """Write down what the descriptor WOULD become. Never apply it."""
+        """Write down what the descriptor WOULD become. Never apply it.
+
+        ONE PROPOSAL PER (step, path). `_bind` runs again on every attempt of
+        the settle window, so appending blindly offered the same rewrite
+        several times -- and `record_flow(action="patch")` applies them in
+        order, so a duplicate is only harmless by accident.
+        """
         e = next((x for x in entries if str(x.get("mmid")) == str(ref)), None)
         if e is None:
             return
         built = build(e, entries)
+        self.patches = [p for p in self.patches
+                        if not (p["step"] == self.i and p["path"] == path)]
         self.patches.append({
             "step": self.i, "name": step.name, "path": path,
             "was": step.targets.get(path, {}).get("desc"),
@@ -403,6 +550,27 @@ class Run:
     # evaluation and no wait at all.
     SETTLE_MS = 6000
     POLL_MS = 400
+
+    async def _await_checks(self, exp: dict, extra_ms: int = 0) -> str:
+        """Ask a set of checks until they hold, or the window is spent.
+
+        ONE SPELLING, used by the postcondition AND by the precondition. The
+        precondition called `_verify` directly, so it was asked exactly once
+        -- and on an SPA that paints 400ms in, a flow failed before step 0
+        with "the app is not in the state this flow starts from" while the app
+        was merely still rendering. That is #55's defect in its THIRD site,
+        after postconditions (#55) and target resolution (#59); two copies of
+        a retry rule would drift and each would be exercised by half the tests
+        (#21).
+        """
+        if not exp:
+            return ""
+        deadline = time.time() + (self.SETTLE_MS + (extra_ms or 0)) / 1000.0
+        while True:
+            bad = await self._verify(exp)
+            if not bad or time.time() >= deadline:
+                return bad
+            await asyncio.sleep(self.POLL_MS / 1000.0)
 
     async def _check(self, step: Step) -> str:
         """A postcondition gets a bounded window to BECOME true.
@@ -424,20 +592,12 @@ class Run:
         The falsifier is unaffected -- a login that genuinely failed never
         reaches the recorded url, so it still fails, just later.
         """
-        exp = step.expect or {}
-        if not exp:
-            return ""
         # THE DEFAULT PLUS WHAT THIS APP ACTUALLY NEEDED. `settle_ms` is the
         # time the recording measured between this action and its checks
         # holding, so an app that answered instantly keeps the plain default
         # and a slow one gets the margin it demonstrated. A flow recorded
         # before this existed carries 0 and is unchanged.
-        deadline = time.time() + (self.SETTLE_MS + (step.settle_ms or 0)) / 1000.0
-        while True:
-            bad = await self._verify(exp)
-            if not bad or time.time() >= deadline:
-                return bad
-            await asyncio.sleep(self.POLL_MS / 1000.0)
+        return await self._await_checks(step.expect or {}, step.settle_ms or 0)
 
     async def _verify(self, exp: dict) -> str:
         """Every assertion, live. Returns '' when they all hold.
@@ -494,12 +654,27 @@ class Run:
                         f'{q["selector"]!r} — the result-string contract moved')
             # THE TEXT THAT WAS READ, when one was recorded. Without this a
             # content check degrades to an existence check and the step cannot
-            # fail (#63/D17). Compared with `in` rather than `==`: the recorded
-            # string came from this same renderer, and a surrounding label the
-            # page adds later should not break a step whose point is the value.
+            # fail (#63/D17).
+            #
+            # COMPARED FOR EQUALITY, not containment, and the comment that used
+            # to sit here argued the opposite: `in` was justified as tolerance
+            # for "a surrounding label the page adds later". It is unanchored
+            # at BOTH ends, so it accepts the inversion of the thing it checks.
+            # Measured through this function: recorded 'active' passes against
+            # a live 'inactive'; 'Approved' passes against 'Not Approved'; 'In
+            # stock' against 'Not In stock'; '3 items' against '13 items';
+            # '10.00' against '110.00'. A status assertion that cannot see a
+            # negation is not a status assertion.
+            #
+            # Whitespace is normalised rather than stripped, which keeps the
+            # real case the tolerance was for: HTML collapses runs of
+            # whitespace when it renders, so two strings differing only in
+            # indentation or a line break are the same string on the screen.
+            # That is a declared fact about rendering, not a guess about how
+            # much difference is acceptable.
             if q.get("text") is not None and tot:
                 got = query_first_text(str(res))
-                if got is None or q["text"] not in got:
+                if got is None or _flat(got) != _flat(q["text"]):
                     return (f'query_elements({q["selector"]!r}) reads '
                             f'{(got if got is not None else "(no text)")!r}, '
                             f'recorded {q["text"]!r}')
@@ -547,6 +722,15 @@ class Run:
     # ------------------------------------------------------------------
     def _stop(self, status: str, reason: str, candidates: Optional[list] = None) -> dict:
         self.elapsed += time.time() - getattr(self, "_t0", time.time())
+        # WHY THE STEP IS THERE, in the words of whoever wrote the flow. `note`
+        # was declared, serialized and deserialized from the first commit and
+        # read by nothing, so a person could annotate a step and the annotation
+        # would never be shown to anybody. The moment a step stops the run is
+        # exactly when that sentence is the one being asked for.
+        if status in (FAILED, NEEDS) and self.i < len(self.flow.steps):
+            _note = (self.flow.steps[self.i].note or "").strip()
+            if _note:
+                reason = f"{reason}\n  the flow says this step is here to: {_note}"
         if status != NEEDS:
             RUNS.pop(self.id, None)
         else:
@@ -556,6 +740,7 @@ class Run:
             "at": self.i, "of": len(self.flow.steps), "reason": reason,
             "candidates": candidates or [],
             "log": self.log, "patches": self.patches, "drifted": self.drifted,
+            "moved": self.moved,
             "seconds": round(self.elapsed, 2),
         }
 

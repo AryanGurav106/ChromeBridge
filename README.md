@@ -86,13 +86,25 @@ definition, 16 sites never used in development:
 
 | representation | target recall | median tokens | size |
 |---|---|---|---|
-| **ChromeBridge** | **96.0%** | **1,242** | **1.00×** |
+| **ChromeBridge** | **~96%** | **1,242** | **1.00×** |
 | Chrome accessibility tree | 100.0% | 8,886 | 7.15× |
 | MindAct `cleaned_html` | 100.0% | 41,716 | 33.59× |
 
 Four points behind on recall for a seventh of the tokens — and the
 accessibility tree needs a debugger attach that Chrome refuses outright on
 password-manager pages.
+
+**What that recall number means, precisely.** The element the human acted on is
+in our listing **166 of 173 times (96.0%)**, counting an ancestor or descendant
+we surfaced instead as a hit; **85.5%** as the element itself. These are
+Mind2Web's stripped HTML snapshots — no scripts, no CSS — so two of the
+collector's eight admitting signals (a registered listener, `cursor:pointer`)
+**cannot fire at all**: measured 0/173 each. It is therefore a structural lower
+bound, and all seven misses are elements that declare nothing clickable in
+static markup. The 173 actions come from only **22 trajectories**, so
+leave-one-site-out moves the figure between **95.1% and 98.1%** — quote it as
+~96%, never as a point estimate with a confidence interval. Audited in
+`CLAUDE.md` #73; `tools/audit_mind2web_labels.py` re-derives all of it.
 
 ---
 
@@ -300,7 +312,7 @@ not by convention.
 .venv/bin/python tools/run_tests.py                    # POSIX (run on macOS; CI runs it on Linux)
 ```
 
-**21 suites, 1,092 checks, about 90 seconds.** Ten are browser-free; the other
+**21 suites, 1,215 checks, about 107 seconds.** Ten are browser-free; the other
 eleven drive headless Chromium and need two packages that are deliberately not
 runtime dependencies:
 

@@ -32,9 +32,10 @@ import re
 import time
 from typing import Any, Callable, Optional
 
-from .descriptor import build
+from .descriptor import build, unwitnessed_ordinal
 from . import secrets
-from .model import Flow, Step, mutates, ref_paths, get_ref, set_value, slug
+from .model import (NAVIGATIONAL, Flow, Step, get_ref, mutates, ref_paths,
+                    set_value, slug)
 
 # Result-string contracts. These parse the OUTPUT of two tools, which is a
 # string contract with mcp_server -- exactly the thing #30 found dead for the
@@ -107,6 +108,33 @@ def refused(result) -> Optional[str]:
         if m in text:
             return m
     return None
+
+
+# A CLICK THE PAGE DID NOT VISIBLY REACT TO. A different fact from REFUSALS,
+# and it needs a different answer, which is why it is a second token rather
+# than a seventh member of that tuple: `NOT DONE` means the op REFUSED to act,
+# while this means it acted and nothing observable followed. The extension
+# already computes it -- it compares URL, DOM and text around the dispatch --
+# and then flattened it into prose beginning with the bare word WARNING, which
+# the comment above explains cannot be a marker because it is also appended to
+# clicks that DID land.
+#
+# Measured with a fake bridge: a step whose click reported exactly that, with
+# `expect={}`, PASSED. 19 of the 83 steps in this repo's own recorded flows
+# (23%) carry no assertion at all, so that is the population it leaves green.
+#
+# THE RUNNER TREATS IT AS FATAL ONLY FOR A STEP THAT ASSERTS NOTHING, which is
+# precisely the at-risk set. "No detectable effect" is not the same as "no
+# effect" -- opening a native select, focusing a field, or a change the
+# comparison cannot see all produce it -- so a step carrying a real
+# postcondition is left to decide for itself, and the postcondition is a better
+# judge than this string.
+NO_EFFECT = "NO EFFECT: "
+
+
+def no_effect(result) -> bool:
+    text = result if isinstance(result, str) else str(result or "")
+    return NO_EFFECT in text
 
 
 def search_hits(result: str) -> Optional[int]:
@@ -248,6 +276,26 @@ class Recorder:
                     f"cannot be described and will be dropped")
                 continue
             out[p] = build(e, entries)
+            # SAID WHILE THE AGENT IS STILL DRIVING, which is the only moment
+            # either of these is cheap to act on: scoping the step differently,
+            # or clicking a control that CAN be described, costs nothing now
+            # and costs a re-record afterwards.
+            if out[p].get("untargetable"):
+                # `build` has set this flag since it was written and NOTHING
+                # read it, so the "fails LOUDLY at replay" its own comment
+                # promised never happened anywhere. It happens here.
+                self.notes.append(
+                    f"{tool}: {ref} is not an element the collector considers "
+                    f"actionable, so a step naming it cannot be resolved at "
+                    f"replay — act on the control itself rather than its "
+                    f"container")
+            elif unwitnessed_ordinal(out[p]):
+                self.notes.append(
+                    f"{tool}: {ref} is one of {out[p].get('of')} controls that "
+                    f"are identical in every declared field AND in their "
+                    f"surroundings, so this step can only be pinned by POSITION. "
+                    f"If that list is ever re-sorted the step will act on a "
+                    f"different one")
         return out
 
     def after(self, tool: str, inp: dict, result: Any, targets: dict,
@@ -493,6 +541,56 @@ class Recorder:
             if st.expect:
                 st.expect = _paramize(st.expect)
         _require = _paramize(self._require_before(live))
+
+        # ONE OWNER FOR THE LANDING STATE. The observations that become the
+        # precondition are, by construction, the ones that sat between the
+        # last navigational call and the first real action -- which is exactly
+        # the window `_expect_after` gave to that navigational STEP. Leaving
+        # them in both places would make the step's postcondition fire first
+        # and the precondition never speak, which is the shape that kept
+        # `require` silent in the first place. They move.
+        _first_real = next((n for n, st in enumerate(kept)
+                            if st.name not in NAVIGATIONAL), None)
+        if _first_real is None:
+            # Every step is navigational, so there is no action for a
+            # precondition to precede.
+            _require = {}
+        elif _require and _first_real > 0:
+            kept[_first_real - 1].expect = {}
+
+        # WHAT THE RECORDING COULD NOT VOUCH FOR, written INTO THE FILE. #68
+        # worked out which assertions carry no evidence and then printed it
+        # once, at stop, into a transcript -- while the person it was written
+        # for is reading the JSON diff, where it was not. Same lines, now in
+        # the artefact, so `--check-only` and CI can print them too.
+        for _n, _which, _all in hollow:
+            kept[_n].review.append(
+                f'hollow: {"every check" if _all else _which} had this value '
+                f'BEFORE this step ran, so the step could do nothing and still '
+                f'pass')
+        for _n, _kind, _which in unwitnessed:
+            kept[_n].review.append(
+                f'dropped: the {_kind} for {_which!r} found nothing and was never '
+                f'seen present, so its absence witnesses nothing')
+        for _n, _kind, _which, _first in unproven:
+            kept[_n].review.append(
+                f'unproven: {_kind}{" " + repr(_which) if _which else ""} was first '
+                f'observed AFTER this step'
+                + (' (inherent: nothing precedes the first step)' if _first else
+                   ', so nothing here says it would have failed before'))
+        for _n, _st in enumerate(kept):
+            for _p, _t in (_st.targets or {}).items():
+                if unwitnessed_ordinal(_t):
+                    _st.review.append(
+                        f'positional: {_p} is one of {_t.get("of")} controls that are '
+                        f'identical in every declared field AND in their surroundings, '
+                        f'so this step is pinned by POSITION alone — re-sort that list '
+                        f'and the step acts on a different one')
+                if _t.get("untargetable"):
+                    _st.review.append(
+                        f'untargetable: {_p} was described from an element the '
+                        f'collector does not consider actionable, so this step will '
+                        f'fail to resolve at replay')
 
         # THE ORIGIN THE FLOW ACTS ON, which was a declared field that nothing
         # ever filled: `_FlowRecorder(name, entries_fn)` is constructed without
@@ -775,15 +873,38 @@ class Recorder:
 
     @classmethod
     def _require_before(cls, live: list) -> dict:
-        """The state the flow EXPECTS TO START FROM.
+        """The state the flow EXPECTS TO FIND once it has got itself there.
 
-        Everything the agent observed before it first changed anything. A flow
-        whose first step is its own `navigate` establishes its state and needs
-        none, which is why this is derived rather than mandatory.
+        THIS USED TO BE STRUCTURALLY UNREACHABLE. It collected everything
+        observed before the first MUTATING call -- and `tabs_create_mcp` and
+        `navigate` both mutate, while the `instructions=` field (#45) and
+        browser_batch's description (#46) both teach an agent to open with
+        `tabs_create_mcp -> navigate -> read_page`. So the scan stopped before
+        any observation could be made, and `require` is `{}` in all 19
+        recorded flows and has never once fired. #50's headline capability
+        ("nothing in the space does preconditions") had a reader and no
+        writer.
+
+        A NAVIGATIONAL call establishes WHERE the flow acts; it does not
+        change the app. So it does not end the precondition -- it RESTARTS it,
+        because an observation made before a navigation describes the page the
+        flow is leaving. What is left is the landing state: what the agent saw
+        after it had got itself to the app and before it first changed
+        anything. That is the state #50 wanted -- a flow that begins at a
+        login page, run while already signed in, is not at the login page once
+        the navigate has happened, and saying so in one sentence beats failing
+        at step 1 with "no element matches name='Sign in'".
+
+        Still DERIVED rather than mandatory: an agent that acted without
+        looking first records nothing here, and the flow runs as it always
+        did.
         """
-        run = []
+        run: list = []
         for r in live:
             if r["mutates"]:
+                if r["name"] in NAVIGATIONAL:
+                    run = []        # a navigation replaces where we are
+                    continue
                 break
             run.append(r)
         return cls._checks(run)

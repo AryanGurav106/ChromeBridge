@@ -49,6 +49,21 @@ MUTATES = {
 }
 COMPUTER_OBSERVES = {"screenshot", "wait", "zoom"}
 
+# Calls that establish WHERE the flow acts rather than changing the app. They
+# mutate the browser and not the page, which is why `MUTATES` has to keep
+# them and why the PRECONDITION has to skip them.
+#
+# `require` is the state a flow expects to start from, and it was derived from
+# everything the agent observed before its first MUTATING call -- which made
+# it structurally unreachable, because the `instructions=` field (#45) and
+# browser_batch's description (#46) both teach an agent to open with
+# `tabs_create_mcp -> navigate -> read_page`. The first call is therefore
+# always mutating, so the derivation always stopped before any observation,
+# so `require` is `{}` in all 19 recorded flows and has never once fired.
+# #50's headline capability ("nothing in the space does preconditions") had a
+# reader and no writer -- rule 14, and the fifth instance of it.
+NAVIGATIONAL = {"navigate", "tabs_create_mcp", "tabs_close_mcp"}
+
 
 def mutates(name: str, inp: dict) -> bool:
     if name == "computer":
@@ -101,6 +116,72 @@ def slug(s: str, upper: bool = False) -> str:
 # this entry happened.
 ON_FAIL = ("ask", "fail")
 
+# WHAT AN `expect` MAY SAY, validated at LOAD for the same reason `on_fail` is
+# (#62): an unrecognised key asserts NOTHING and does it in silence. `on_fail`
+# was the one field anything validated; `expect` -- the half of the file that
+# decides whether a replay can FAIL AT ALL -- was validated nowhere. Measured
+# through the real runner:
+#
+#   {"querry": {...count 99}}                 -> PASSED, zero assertion tools called
+#   {"console": {...}}                        -> PASSED, zero assertion tools called
+#   {"query": {"selector": "tr", "Count": 99}} -> PASSED (the query ran, nothing compared)
+#   {"query": {"selctor": "tr", "count": 99}} -> raised KeyError: 'selector'
+#
+# The first three are the exact silent fallthrough #62 closed, reachable by a
+# hand edit, a merge, a format change or record_flow(action="patch"). The
+# fourth is the same hole wearing an unreadable error. A flow file is meant to
+# be edited by people, so the answer is the one #62 used: refuse at load,
+# name the valid set, and let --check-only find it with no browser.
+EXPECT_KINDS = ("url", "search", "query")
+EXPECT_FIELDS = {
+    "search": ("pattern", "absent", "min", "observed",
+               "regex", "css_scope", "case_sensitive"),
+    "query": ("selector", "count", "min", "text", "attrs"),
+}
+EXPECT_REQUIRED = {"search": "pattern", "query": "selector"}
+
+
+def validate_expect(where: str, exp: Optional[dict]) -> None:
+    """Raise ValueError naming the offending key. Used for a step's `expect`
+    AND for a flow's `require`, which is the same shape asked at a different
+    moment -- two copies would drift and each would be exercised by half the
+    tests (#21)."""
+    if not exp:
+        return
+    if not isinstance(exp, dict):
+        raise ValueError(f"{where} must be a mapping of "
+                         f"{'/'.join(EXPECT_KINDS)}, not {type(exp).__name__}")
+    for kind, val in exp.items():
+        if kind not in EXPECT_KINDS:
+            raise ValueError(
+                f"{where} declares a check of kind {kind!r}, which this build "
+                f"does not implement, so it would assert NOTHING and say so to "
+                f"nobody. Valid: {', '.join(EXPECT_KINDS)}.")
+        if kind == "url":
+            if not isinstance(val, str):
+                raise ValueError(
+                    f"{where}.url must be the url string that was observed, "
+                    f"not {type(val).__name__}")
+            continue
+        for item in (val if isinstance(val, list) else [val]):
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"{where}.{kind} must be a mapping (or a list of them), "
+                    f"not {type(item).__name__}")
+            need = EXPECT_REQUIRED[kind]
+            if not item.get(need):
+                raise ValueError(
+                    f"{where}.{kind} has no {need!r}, so there is nothing for "
+                    f"it to look at. Keys present: "
+                    f"{', '.join(sorted(item)) or '(none)'}.")
+            bad = sorted(set(item) - set(EXPECT_FIELDS[kind]))
+            if bad:
+                raise ValueError(
+                    f"{where}.{kind} declares {', '.join(repr(b) for b in bad)}, "
+                    f"which this build does not read — a misspelt field is an "
+                    f"assertion that silently checks nothing. Valid: "
+                    f"{', '.join(EXPECT_FIELDS[kind])}.")
+
 
 @dataclass
 class Step:
@@ -109,7 +190,21 @@ class Step:
     targets: dict = field(default_factory=dict)  # input path -> descriptor
     expect: dict = field(default_factory=dict)   # checked LIVE, never healed
     on_fail: str = "ask"                        # see ON_FAIL
-    note: str = ""                              # why this step is here
+    # WHY THIS STEP IS HERE, in a human's words. Written by a person editing
+    # the file -- the recorder has nothing to say that belongs here -- and
+    # READ by the runner, which repeats it whenever the step fails or pauses.
+    # It had no reader at all until then, which made it the kind of declared
+    # field rule 14 is about: a person could write one and nothing would ever
+    # show it to anybody. The moment a step breaks is exactly when "why is
+    # this step here" is the question being asked.
+    note: str = ""
+    # WHAT THE RECORDING COULD NOT VOUCH FOR, one line per check. #68 made the
+    # compile say which assertions carry no evidence -- and then printed it
+    # ONCE, at stop, into a transcript. The person who re-grades a recorded
+    # assertion is a human reading a small JSON diff, and that is precisely
+    # where it was not. Persisted so it survives into the diff, into
+    # --check-only and into CI.
+    review: list = field(default_factory=list)
     # HOW LONG THIS APP ACTUALLY TOOK, measured at record time rather than
     # chosen. A fixed window cannot fit every app: 6s was too short for a real
     # one whose create -> table-refresh cycle took ~11s, and the flow reported
@@ -128,6 +223,8 @@ class Step:
             d["settle_ms"] = self.settle_ms
         if self.note:
             d["note"] = self.note
+        if self.review:
+            d["review"] = list(self.review)
         return d
 
     @staticmethod
@@ -144,9 +241,11 @@ class Step:
                 f"(\"heal\" was removed: an automatic rebind means ranking "
                 f"candidates, which this runner refuses to do — \"ask\" hands "
                 f"the choice to the agent and records it.)")
+        validate_expect(f"step {d.get('name')!r} expect", d.get("expect"))
         return Step(name=d["name"], input=d.get("input") or {},
                     targets=d.get("targets") or {}, expect=d.get("expect") or {},
                     on_fail=of, note=d.get("note") or "",
+                    review=list(d.get("review") or []),
                     settle_ms=int(d.get("settle_ms") or 0))
 
 
@@ -193,6 +292,7 @@ class Flow:
             raise ValueError(
                 f"flow file schema {got} but this build reads schema {SCHEMA} — "
                 f"re-record it, or edit the file to the current shape")
+        validate_expect(f"flow {d.get('name')!r} require", d.get("require"))
         return Flow(name=d.get("name") or "", origin=d.get("origin") or "",
                     recorded_at=d.get("recorded_at") or "",
                     viewport=d.get("viewport"),

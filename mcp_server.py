@@ -427,7 +427,15 @@ def _line_ident(line: str) -> str:
     ablation audit already hit and had to solve the same way. Everything after
     the mmid is the element's actual description.
     """
-    line = re.sub(r"^(?:ref_|mmid=)\S+\s*\|\s*", "", line).strip()
+    # TOLERATE THE TREE'S INDENT. `format` defaults to "tree" and the extension
+    # indents each row by its depth, so this anchored sub matched nothing a default
+    # read_page emits: the `.strip()` below then removed the indent and left
+    # `ref_12 | a "Home"` as the identity — THE MMID BECAME PART OF THE IDENTITY,
+    # which is the exact trap this function's docstring exists to avoid. An ordinary
+    # re-render that shifts every mmid by one reported every row as both ADDED and
+    # GONE. Depth itself is deliberately not identity, for the same reason geometry
+    # is not: a row moving one level because a wrapper appeared is not a new element.
+    line = re.sub(r"^\s*(?:ref_|mmid=)\S+\s*\|\s*", "", line).strip()
     # FOLDED GROUP LINES embed their refs inline (`18:"Hacker News"->/news`), so a
     # re-render that renumbers mmids would change the whole line and every folded
     # group would read as "changed". Normalise those refs out too — the labels and
@@ -550,8 +558,14 @@ def _delta_listing(prev: list[str], cur: list[str]) -> Optional[str]:
     # exists" — reported independently by three agents, and the recommended
     # recovery (re-read to be sure) is a wasted round-trip for a ref printed as
     # live three lines above.
+    # ...AND THE REF IS SPELLED `ref_N`, not `mmid=N`. The main listing moved to
+    # `ref_` while this matcher stayed on the older prefix, so `_mm` returned None
+    # for every row a current extension emits and the CHANGED section could never
+    # fire — every state flip rendered as a death and a birth, which is the precise
+    # report ("the tab you just selected no longer exists") this block was written
+    # to stop. Same string-contract class as _ROW_LINE above.
     def _mm(row):
-        m = re.match(r"mmid=(\S+)", row.strip())
+        m = re.match(r"(?:ref_|mmid=)(\S+)", row.strip())
         return m.group(1) if m else None
     _added_by_mm = {}
     for r in added:
@@ -714,7 +728,19 @@ def _split_banner(text: str) -> tuple[str, str]:
 # A fold row, and the members inside one. Used to trim a slice back to a member
 # boundary so a cut never leaves half an href or half a label.
 _FOLD_ROW = re.compile(r"^\d+(?:×|x)\s")
-_ROW_LINE = re.compile(r"^(?:ref_|mmid=|\s*\d+(?:×|x)\s)")   # mmid= tolerated: older extension
+# LEADING WHITESPACE ON EVERY ALTERNATIVE, NOT JUST THE FOLD. `format` defaults to
+# "tree" (#27) and the extension indents a tree row by its depth (`pad + row`), so
+# an anchored `^ref_` matched NOTHING a default read_page emits — only fold lines,
+# which happened to carry their own `\s*`. Measured on a 40-row listing at
+# max_chars=1200: the flat format returned 8 rows and "32 more element(s) not
+# shown"; the tree format returned 8 rows and said NOTHING, so 32 elements vanished
+# in silence (rule 5). Worse, the #13 legend-eviction fallback keys off this same
+# pattern, so on a tree listing whose legend alone fills the budget it never
+# engaged at all: 6 rows in flat, ZERO rows in tree.
+# This is the #30 string-contract class in the product rather than in a probe —
+# a server-side pattern that does not match what the extension really emits. C30
+# pins it against a row the extension's own formatter would produce.
+_ROW_LINE = re.compile(r"^\s*(?:ref_|mmid=|\d+(?:×|x)\s)")   # mmid= tolerated: older extension
 
 
 def _row_elements(text: str) -> int:
@@ -731,6 +757,83 @@ def _row_elements(text: str) -> int:
         m = re.match(r"\s*(\d+)(?:×|x)\s", ln)
         n += int(m.group(1)) if m else 1
     return n
+
+
+def _nfc(x) -> str:
+    """NFC-normalise BOTH sides of every comparison.
+
+    A label carrying "café" in NFD (macOS filenames, some CMS pipelines,
+    copy-paste chains) never matched the NFC "café" an agent types — a total miss
+    on a page with a perfect match. The extension-side option matcher already
+    normalises; this scorer above it did not.
+    """
+    return unicodedata.normalize("NFC", str(x or ""))
+
+
+# THE ONE COMBINING-MARK EXEMPTION, AND WHY IT IS NOT A LIST SOMEBODY THOUGHT OF.
+# U+3099 / U+309A are the canonical decompositions of the dakuten and handakuten
+# kana: Unicode encodes ば as は + U+3099 for compatibility reasons, but in Japanese
+# the mark is PHONEMIC, not a diacritic — は/ば/ぱ are three different syllables, and
+# there is no "unvoiced reading" of a voiced kana the way "cafe" is a reading of
+# "café". Dropping them collapsed routine pairs that co-occur on the same page:
+#     ベッド(bed)  -> ヘット   ペット(pet)  -> ヘット    COLLIDE
+#     バス(bus)    -> ハス     パス(pass)   -> ハス      COLLIDE
+#     ビール(beer) -> ヒール   ピール(peel) -> ヒール    COLLIDE
+#     ハンド(hand) -> ハント   バンド(band) -> ハント    COLLIDE
+# So `find("ベッドタイプ")` on a Japanese booking filter returned ペットタイプ (pet
+# type) under `Found N element(s) matching` — a CONFIDENT false positive, which is
+# worse than a miss. Rakuten/Jalan ship both on one page as a matter of course.
+# Written as escapes ON PURPOSE: these are two BARE combining marks, so as
+# literals they render as specks that attach to whatever precedes them and the
+# next person to edit this line cannot see what they are deleting.
+_KANA_VOICING = "゙゚"
+
+
+def _fold(x: str) -> str:
+    """casefold, drop combining marks left behind by the fold, recompose.
+
+    Unicode folds U+0130 (Turkish dotted capital I) to "i" + U+0307 COMBINING
+    DOT ABOVE, so `"İstanbul".casefold() != "istanbul"`. An agent types
+    lowercase ASCII; every correctly-spelled Turkish proper noun was therefore
+    unreachable, and the miss was silent — measured live on ntv.com.tr, where
+    `find("istanbul hava durumu")` missed the İstanbul weather link entirely
+    while the İ-spelled query ranked it first.
+    Decomposing to NFD and dropping Mn marks makes accent-insensitive matching
+    work for every script at once (Greek tonos, Vietnamese, Devanagari nukta),
+    which is what a person typing a query actually expects.
+
+    THE NARROWING, not a revert: the kana voicing marks are kept (see
+    _KANA_VOICING). İstanbul/istanbul, México/Mexico, Ελλάδα/ελλαδα and
+    Tiếng Việt/Tieng Viet all still fold together — that was measured before the
+    exemption was written, because a fix that gave back the Turkish miss would be
+    a worse trade than the bug it closed.
+
+    THE FINAL NFC IS LOAD-BEARING, not tidiness. Without it the only marks left
+    are the kana ones, so every voiced kana stays DECOMPOSED as two code points
+    while the page's own text arrives precomposed — and a Hangul syllable, which
+    NFD splits into conjoining jamo, never recomposes either. Recomposing makes
+    the output canonical, which is what lets `검색` and `ボタン` be compared against
+    a folded token at all (they could not be, before — see _ROLE_HINTS).
+
+    THE RULE, stated normatively so it can be mirrored: lowercase, decompose
+    (NFD), drop every character with a NON-ZERO canonical combining class EXCEPT
+    U+3099 and U+309A, recompose (NFC). The extension's option matcher needs the
+    same rule, because `toLocaleLowerCase()` is both wrong for Turkish İ and
+    dependent on the user's OS locale. In JS:
+        s.toLowerCase().normalize('NFD')
+         .replace(/(?![\\u3099\\u309A])\\p{Mn}/gu, '')
+         .normalize('NFC')
+    `\\p{Mn}`, NOT `\\p{M}`: Mc holds the spacing combining marks, and a Devanagari
+    matra is Mc with combining class 0 — Python KEEPS it (का stays का) while
+    `\\p{M}` would delete it, which is this function's own kana bug reinvented in
+    Hindi. Two known and accepted divergences, neither of which can collapse two
+    different words into one: JS `toLowerCase` leaves ß alone where casefold gives
+    "ss", and `\\p{Mn}` drops the handful of Mn marks whose combining class is 0
+    (Thai U+0E31 and friends) which Python keeps.
+    """
+    return unicodedata.normalize("NFC", "".join(
+        c for c in unicodedata.normalize("NFD", (x or "").casefold())
+        if c in _KANA_VOICING or not unicodedata.combining(c)))
 
 
 # Words that name a KIND of control rather than a particular one. They are
@@ -766,6 +869,121 @@ _ROLE_TOKENS = frozenset((
 _STATE_TOKENS = frozenset((
     "disabled", "required", "unselected", "expanded", "collapsed",
 ))
+
+
+# ROLE-WORD HINTS: words naming a KIND of control, in the ~20 languages a page
+# may be written in. These are how a query reaches an element whose own text is in
+# another language or absent entirely: "search box" against a Baidu textarea whose
+# only label is a rotating Chinese headline scored ZERO and returned "No elements
+# matched" — for a search box, on a query that is find()'s own documented example.
+#
+# AT MODULE LEVEL, AND FOLDED ONCE, because this table is TWO contracts and they
+# have to agree (rule 17). It decides which elements a role word BOOSTS, and — via
+# _ROLE_WORDS_INTL below — which query tokens are role words rather than content.
+# Those were separate hand-written lists and the overlap between them was EMPTY, so
+# every non-English role word was classified as CONTENT: it set `_text_possible`
+# and then demanded content coverage that a role-word hit never credits. The
+# comment at the coverage gate claimed "queries made entirely of role words are
+# unaffected", which was true only for space-separated English. find was therefore
+# a materially worse tool in every language but English, on Baidu, Yahoo! JAPAN,
+# Naver and Yandex — and the blast radius is demotion to the weak list, so it
+# failed quietly.
+_ROLE_HINTS = (
+        ("button", ("button", "submit")),
+        ("link", ("a", "link")),
+        ("input", ("input", "textbox", "textarea", "searchbox")),
+        ("field", ("input", "textbox", "textarea", "searchbox")),
+        ("box", ("input", "textbox", "textarea", "searchbox", "combobox")),
+        ("bar", ("input", "textbox", "textarea", "searchbox")),
+        ("search", ("search", "searchbox")),
+        ("textarea", ("textarea",)),
+        ("checkbox", ("checkbox",)),
+        ("dropdown", ("select", "combobox", "listbox")),
+        ("select", ("select", "combobox", "listbox")),
+        ("tab", ("tab",)),
+        ("radio", ("radio",)),
+        ("toggle", ("switch", "checkbox")),
+        ("switch", ("switch",)),
+        ("slider", ("slider", "range")),
+        ("option", ("option",)),
+        ("combobox", ("combobox", "select")),
+        ("menu", ("menu", "menuitem")),
+        # Media kinds — without these an image is unreachable by the words
+        # people actually use for one.
+        ("image", ("media", "img")),
+        ("img", ("media", "img")),
+        ("photo", ("media", "img")),
+        ("photograph", ("media", "img")),
+        ("picture", ("media", "img")),
+        ("graphic", ("media", "img")),
+        ("banner", ("media", "img")),
+        ("video", ("media", "video")),
+        # NON-ENGLISH role words. The hint table was the only path to a control
+        # whose own text does not contain the query, and it spoke one language —
+        # so a Chinese query for Baidu's search button ("搜索按钮", whose button
+        # actually reads 百度一下) had no signal at all and returned a confident
+        # "No elements matched". These are matched by CONTAINMENT below, because
+        # spaceless scripts do not tokenise: "搜索按钮" arrives as one token.
+        ("按钮", ("button", "submit")), ("ボタン", ("button", "submit")),
+        ("버튼", ("button", "submit")), ("кнопка", ("button", "submit")),
+        ("botón", ("button", "submit")), ("bouton", ("button", "submit")),
+        ("schaltfläche", ("button", "submit")),
+        ("搜索", ("search", "searchbox", "input", "textbox", "textarea")),
+        ("検索", ("search", "searchbox", "input", "textbox", "textarea")),
+        ("검색", ("search", "searchbox", "input", "textbox", "textarea")),
+        ("поиск", ("search", "searchbox", "input", "textbox", "textarea")),
+        ("búsqueda", ("search", "searchbox", "input", "textbox", "textarea")),
+        ("recherche", ("search", "searchbox", "input", "textbox", "textarea")),
+        ("suche", ("search", "searchbox", "input", "textbox", "textarea")),
+        ("输入框", ("input", "textbox", "textarea")), ("文本框", ("input", "textbox", "textarea")),
+        ("入力", ("input", "textbox", "textarea")),
+        ("链接", ("a", "link")), ("リンク", ("a", "link")), ("링크", ("a", "link")),
+        ("ссылка", ("a", "link")),
+        ("下拉", ("select", "combobox", "listbox")), ("选择", ("select", "combobox", "listbox")),
+        ("复选框", ("checkbox",)), ("图片", ("media", "img")), ("画像", ("media", "img")),
+)
+
+# FOLDED WITH THE SAME RULE THE QUERY IS, because the scorer compares these against
+# already-folded tokens and a raw NFC literal cannot match one. Seven of the 26
+# non-English hints could never fire at all: ボタン / 버튼 / 검색 / 링크 (kana and
+# Hangul, which the old fold mangled — those four came back the moment _fold kept
+# the kana voicing marks and recomposed), and botón / búsqueda / schaltfläche,
+# which fold to deaccented forms. De-accenting the table BY HAND would be a second
+# spelling of the fold; folding it is one.
+_ROLE_HINTS_FOLDED = tuple((_fold(h), kinds) for h, kinds in _ROLE_HINTS)
+
+# The non-English half, folded — subtracted from CONTENT tokens exactly as
+# _ROLE_TOKENS is. Keyed on the SOURCE literal being non-ASCII, not the folded form,
+# because "botón" folds to the ASCII "boton". Derived, never restated.
+_ROLE_WORDS_INTL = frozenset(_fold(h) for h, _k in _ROLE_HINTS if not h.isascii())
+# Longest first, so 搜索 cannot be eaten by a shorter hint that is a prefix of it.
+# Ordered once at import because `_role_only` runs per element per token.
+_ROLE_WORDS_INTL_LONGEST = tuple(sorted(_ROLE_WORDS_INTL, key=len, reverse=True))
+
+
+def _role_only(tok: str) -> bool:
+    """True when `tok` names only KINDS of control and so identifies none of them.
+
+    A spaceless script cannot be tokenised, so "搜索按钮" (search + button) arrives
+    as ONE token that is in no role-word set — which is the Baidu query the hint
+    table exists for, classified as content and then required to match page text
+    it cannot match. Stripping every role word it contains and asking whether
+    anything is left answers it exactly: "搜索按钮" empties, "百度搜索" keeps 百度 and
+    is rightly content.
+
+    Containment is restricted to non-ASCII for the same reason the hint loop
+    restricts it — in a spaced script the tokeniser already did this job, and
+    admitting containment there would make "searchbar" or "linkedin" role-only.
+    """
+    if tok in _ROLE_TOKENS or tok in _ROLE_WORDS_INTL:
+        return True
+    if tok.isascii():
+        return False
+    rest = tok
+    for h in _ROLE_WORDS_INTL_LONGEST:
+        if h and h in rest:
+            rest = rest.replace(h, "")
+    return not rest
 
 
 def _truncate(text: str, max_chars: int, hint: str = "") -> str:
@@ -2089,28 +2307,10 @@ async def find(
     # substring test on the whole query — or returned "No elements matched" on a page
     # full of matches. `\W` with str patterns is Unicode-aware in Python, and
     # casefold() beats lower() for non-ASCII (ß -> ss, Turkish dotted I).
-    # NFC-normalise BOTH sides. A label carrying "café" in NFD (macOS filenames,
-    # some CMS pipelines, copy-paste chains) never matched the NFC "café" an agent
-    # types — a total miss on a page with a perfect match. The extension-side
-    # option matcher already normalises; this scorer above it did not.
-    def _nfc(x):
-        return unicodedata.normalize("NFC", str(x or ""))
-
-    def _fold(x: str) -> str:
-        """casefold, then drop combining marks left behind by the fold.
-
-        Unicode folds U+0130 (Turkish dotted capital I) to "i" + U+0307 COMBINING
-        DOT ABOVE, so `"İstanbul".casefold() != "istanbul"`. An agent types
-        lowercase ASCII; every correctly-spelled Turkish proper noun was therefore
-        unreachable, and the miss was silent — measured live on ntv.com.tr, where
-        `find("istanbul hava durumu")` missed the İstanbul weather link entirely
-        while the İ-spelled query ranked it first.
-        Decomposing to NFD and dropping Mn marks makes accent-insensitive matching
-        work for every script at once (Greek tonos, Vietnamese, Devanagari nukta),
-        which is what a person typing a query actually expects.
-        """
-        return "".join(c for c in unicodedata.normalize("NFD", (x or "").casefold())
-                       if not unicodedata.combining(c))
+    # `_nfc` / `_fold` are MODULE level — see their definitions above _ROLE_HINTS,
+    # which is built by folding that table once at import. A second copy here is
+    # exactly the one-concept-two-spellings failure, and the table has to be folded
+    # with the same rule the query is.
     query = _nfc(query)
     tokens = [t for t in re.split(r"\W+", _fold(query), flags=re.UNICODE)
               if len(t) > 1 and t not in _STOP]
@@ -2217,8 +2417,13 @@ async def find(
             # AND appears in that label, so it covered the query on its own while
             # the one distinguishing token, "state", matched nothing. An agent
             # trusting that header sets City believing it set State.
+            # IN EVERY LANGUAGE — `_role_only`, not the English-only set. Otherwise
+            # F29's defect stays open wherever the page is not in English: a long
+            # query whose only hit on an element is 按钮/ボタン inside that element's
+            # own label would buy it content coverage for free, which is the same
+            # free token "select" bought above.
             if (max(_hl, _hn, _hp) >= 0.5 or _hit(t, near) >= 0.5) \
-                    and t not in _ROLE_TOKENS and t not in _STATE_TOKENS:
+                    and not _role_only(t) and t not in _STATE_TOKENS:
                 _covText.add(t)
             if t == role or t == tag:
                 s += 1.0
@@ -2259,60 +2464,7 @@ async def find(
         # returned "No elements matched" — for a search box, on a query that is
         # find()'s own documented example.
         kind_words = (tag, role, str(el.get("type") or "").casefold())
-        for hint, kinds in (
-            ("button", ("button", "submit")),
-            ("link", ("a", "link")),
-            ("input", ("input", "textbox", "textarea", "searchbox")),
-            ("field", ("input", "textbox", "textarea", "searchbox")),
-            ("box", ("input", "textbox", "textarea", "searchbox", "combobox")),
-            ("bar", ("input", "textbox", "textarea", "searchbox")),
-            ("search", ("search", "searchbox")),
-            ("textarea", ("textarea",)),
-            ("checkbox", ("checkbox",)),
-            ("dropdown", ("select", "combobox", "listbox")),
-            ("select", ("select", "combobox", "listbox")),
-            ("tab", ("tab",)),
-            ("radio", ("radio",)),
-            ("toggle", ("switch", "checkbox")),
-            ("switch", ("switch",)),
-            ("slider", ("slider", "range")),
-            ("option", ("option",)),
-            ("combobox", ("combobox", "select")),
-            ("menu", ("menu", "menuitem")),
-            # Media kinds — without these an image is unreachable by the words
-            # people actually use for one.
-            ("image", ("media", "img")),
-            ("img", ("media", "img")),
-            ("photo", ("media", "img")),
-            ("photograph", ("media", "img")),
-            ("picture", ("media", "img")),
-            ("graphic", ("media", "img")),
-            ("banner", ("media", "img")),
-            ("video", ("media", "video")),
-            # NON-ENGLISH role words. The hint table was the only path to a control
-            # whose own text does not contain the query, and it spoke one language —
-            # so a Chinese query for Baidu's search button ("搜索按钮", whose button
-            # actually reads 百度一下) had no signal at all and returned a confident
-            # "No elements matched". These are matched by CONTAINMENT below, because
-            # spaceless scripts do not tokenise: "搜索按钮" arrives as one token.
-            ("按钮", ("button", "submit")), ("ボタン", ("button", "submit")),
-            ("버튼", ("button", "submit")), ("кнопка", ("button", "submit")),
-            ("botón", ("button", "submit")), ("bouton", ("button", "submit")),
-            ("schaltfläche", ("button", "submit")),
-            ("搜索", ("search", "searchbox", "input", "textbox", "textarea")),
-            ("検索", ("search", "searchbox", "input", "textbox", "textarea")),
-            ("검색", ("search", "searchbox", "input", "textbox", "textarea")),
-            ("поиск", ("search", "searchbox", "input", "textbox", "textarea")),
-            ("búsqueda", ("search", "searchbox", "input", "textbox", "textarea")),
-            ("recherche", ("search", "searchbox", "input", "textbox", "textarea")),
-            ("suche", ("search", "searchbox", "input", "textbox", "textarea")),
-            ("输入框", ("input", "textbox", "textarea")), ("文本框", ("input", "textbox", "textarea")),
-            ("入力", ("input", "textbox", "textarea")),
-            ("链接", ("a", "link")), ("リンク", ("a", "link")), ("링크", ("a", "link")),
-            ("ссылка", ("a", "link")),
-            ("下拉", ("select", "combobox", "listbox")), ("选择", ("select", "combobox", "listbox")),
-            ("复选框", ("checkbox",)), ("图片", ("media", "img")), ("画像", ("media", "img")),
-        ):
+        for hint, kinds in _ROLE_HINTS_FOLDED:
             # Exact token match, OR containment for spaceless scripts where the
             # whole query is one token ("搜索按钮" contains "按钮").
             _hinted = hint in tokens
@@ -2395,8 +2547,16 @@ async def find(
     # State words are type-level predicates exactly as role words are: "disabled"
     # is satisfied by every disabled control and identifies none of them, so it
     # must not count toward CONTENT coverage or it re-opens F29 under a new name.
+    # AND SO IS A ROLE WORD IN ANY OTHER LANGUAGE. This read `t not in _ROLE_TOKENS`,
+    # a 19-word ENGLISH set whose overlap with the 23 non-English hints was EMPTY —
+    # so 按钮 / ボタン / 버튼 / кнопка / 検색 counted as CONTENT, `_text_possible` went
+    # true, and the gate then demanded content coverage that a role-word hit never
+    # credits (the hint path writes `_cov`, never `_covText`). `find("button")` could
+    # be confident and `find("ボタン")` could not, for the same page and the same
+    # element. `_role_only` asks the question in one place for every language,
+    # including the spaceless case where "搜索按钮" is a single token.
     _content_tokens = [t for t in tokens
-                       if t not in _ROLE_TOKENS and t not in _STATE_TOKENS]
+                       if not _role_only(t) and t not in _STATE_TOKENS]
     # COVERAGE MUST SCALE WITH THE QUERY, AND A TWO-WORD QUERY IS NOT UNGATED.
     # `2 if len(tokens) >= 3 else 1` is a step function with a cliff at three, and
     # a live audit walked straight off it. Every one of these came back under a
@@ -2582,7 +2742,14 @@ async def find(
         # not attach `line` — a version skew must degrade, not crash.
         line = (el.get("line") or "").strip()
         if line:
-            ident = " " + re.sub(r"^mmid=\S+\s*\|\s*", "", line)
+            # ...AND THE PREFIX IT STRIPS MUST BE THE ONE THE COLLECTOR WRITES.
+            # `line` is built as `ref_N | tag ...`; this sub asked for `mmid=N | `,
+            # so it never fired and find printed the ref and the tag TWICE:
+            #     ref_12  [a]  ref_12 | a "Login" href="/login"
+            # NO FIXTURE EVER SET `line`, so the whole one-formatter path — added
+            # precisely so find and read_page cannot drift — was unreachable from
+            # the suite and shipped inert behind 51 green checks. C30b sets it.
+            ident = " " + re.sub(r"^\s*(?:ref_|mmid=)\S+\s*\|\s*", "", line)
             ident = re.sub(r"\s*\|\s*box\([^)]*\)\s*$", "", ident)
             # The tag is printed separately below, so drop the leading duplicate.
             _tag = str(el.get("tag") or "")
@@ -4123,8 +4290,27 @@ async def record_flow(
                 out.append(str((st.input or {}).get("url", ""))[:48])
             return " + ".join(out[:2])
 
+        # A LEADING NAVIGATION IS NOT AN UNASSERTED STEP ONCE ITS CHECKS BECAME
+        # THE PRECONDITION. The derivation now takes `require` from the state
+        # observed before the first NON-navigational action, and those landing
+        # checks MOVE off the navigate step rather than being copied — copying
+        # would leave the step's own postcondition firing first, which is how
+        # `require` stayed silent in all 19 recorded flows. So the navigate step
+        # legitimately ends up with no `expect`, and listing it under "a
+        # regression in these steps cannot be caught" is simply false: its state
+        # is checked, earlier and harder, before anything runs.
+        # Only skipped when `require` is non-empty, i.e. when the checks really
+        # did go somewhere.
+        _skip_lead = 0
+        if flow.require:
+            for st in flow.steps:
+                if st.name in ("navigate", "tabs_create_mcp") and not st.expect:
+                    _skip_lead += 1
+                else:
+                    break
         _bare = [f'{i} {st.name}' + (f' on "{_n}"' if (_n := _names(st)) else "")
-                 for i, st in enumerate(flow.steps) if not st.expect]
+                 for i, st in enumerate(flow.steps)
+                 if not st.expect and i >= _skip_lead]
         lines = [f'Saved {path} — {report["steps"]} step(s), '
                  f'{report["asserted"]} with assertions.',
                  f'  dropped: {report["dropped_errors"]} failed call(s), '

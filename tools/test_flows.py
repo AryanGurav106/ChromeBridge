@@ -33,10 +33,11 @@ from core.flows.descriptor import (  # noqa: E402
     ALT, FULL, LEVELS, Unresolved, build, fields, resolve,
 )
 from core.flows import model as FM  # noqa: E402
+from core.flows.model import Flow, Step  # noqa: E402
 from core.flows import secrets as FS  # noqa: E402
 from core.flows.recorder import (  # noqa: E402
-    REFUSALS as FR_REFUSALS, Recorder, query_total,
-    refused as FR_refused, search_hits,
+    NO_EFFECT as FR_NO_EFFECT, REFUSALS as FR_REFUSALS, Recorder,
+    no_effect as FR_no_effect, query_total, refused as FR_refused, search_hits,
 )  # noqa: E402
 from core.flows.runner import FAILED, NEEDS, PASSED, Run, resume, start  # noqa: E402
 
@@ -155,6 +156,68 @@ def main():
     check("FD8d ...and the control: a step that recorded NO ordinal, because it "
           "was unique, still resolves against a single match",
           resolve(build(page[0], page), [page[0]]) == "1")
+
+    # ---- FD20: the mutation the crowd-check CANNOT see ---------------------
+    # Every FD8 case changes the crowd's COMPOSITION. A re-sorted table changes
+    # none of it -- same elements, same declarations, same `of` -- so the
+    # ordinal was taken and named a different row. Measured by adding a
+    # `reorder` mutation to tools/audit_flow_resolve.py, which had never had
+    # one: 94.4% WRONG, 0% REFUSED, with no signal of any kind. The live shape
+    # is a flow that clicks Delete on the first invoice row, a sort flipping to
+    # newest-first, and the replay deleting a different invoice and reporting
+    # PASSED because "one fewer row" still holds.
+    def _inv(n, num):
+        return [E(n, "a", name=f"Invoice {num}", href=f"/i/{num}",
+                  section="main", under="Invoices"),
+                E(n + 1, "button", name="Delete", section="main", under="Invoices")]
+
+    table = _inv(10, 1001) + _inv(20, 1002) + _inv(30, 1003)
+    t_del = build(table[1], table)
+    check("FD20 an ordinal records what tells its member from the rest of the "
+          "crowd — here the invoice link its own row carries",
+          t_del.get("of") == 3 and t_del.get("nth") == 0
+          and (t_del.get("witness") or {}).get("after") == ["a||Invoice 1001"],
+          f"witness={t_del.get('witness')}")
+    check("FD20b CONTROL: an unchanged page still resolves, so the witness is "
+          "not simply refusing everything",
+          resolve(t_del, table) == "11")
+
+    resorted = _inv(10, 1003) + _inv(20, 1002) + _inv(30, 1001)
+    _moved: list = []
+    check("FD20c a RE-SORTED list binds to the element the step recorded, at its "
+          "new position — not to whatever now sits at the recorded index",
+          resolve(t_del, resorted, _moved) == "31",
+          f"bound {resolve(t_del, resorted)}; before this it bound 11")
+    check("FD20d ...and the run is TOLD the position moved, because the ordinal "
+          "in the file is now stale",
+          len(_moved) == 1 and _moved[0]["via"] == "position"
+          and _moved[0]["nth"] == 0 and _moved[0]["now"] == 2, str(_moved))
+
+    gone = (_inv(10, 2001) + _inv(20, 2002) + _inv(30, 2003))
+    check("FD20e when nothing in the crowd carries what identified the target, "
+          "REFUSE and name the candidates rather than take the position",
+          _raises(lambda: resolve(t_del, gone), "no longer evidence",
+                  want_candidates=3))
+
+    # The residue, pinned so it is not mistaken for coverage: when the crowd is
+    # identical in every declared field AND in its surroundings, nothing the
+    # collector emits separates the members. No witness is recorded, which is
+    # what makes the record-time warning mean something -- a witness stored for
+    # every crowd would be false comfort on ~59% of them.
+    bare = [E(40 + i, "button", name="Delete", section="main", under="Rows")
+            for i in range(3)]
+    t_bare = build(bare[0], bare)
+    check("FD20f CONTROL: a crowd with nothing to distinguish it records NO "
+          "witness, rather than a shared one that would look like a safeguard",
+          t_bare.get("of") == 3 and "witness" not in t_bare,
+          str(sorted(t_bare)))
+    try:
+        from core.flows.descriptor import unwitnessed_ordinal as _unwit  # noqa: E402
+        _ok20g = _unwit(t_bare) and not _unwit(t_del) and not _unwit(t)
+    except ImportError as exc:
+        _ok20g, _unwit = str(exc), None
+    check("FD20g ...and that case is DETECTABLE, so the recorder can say so at "
+          "the one moment it is cheap to act on", _ok20g is True, str(_ok20g))
 
     # ---- FD9/FD10: what identity must NOT depend on ------------------------
     typed = [dict(e) for e in page]
@@ -383,6 +446,25 @@ def main():
           FR_refused("left_click at (500,356) on [mmid='70'].") is None
           and FR_refused("Navigated to https://x.test/, title: X") is None
           and FR_refused("") is None)
+
+    # FD19e -- the NO EFFECT token, pinned the same way. A click the page did
+    # not react to is a FACT the extension already computes (it compares URL,
+    # DOM and text around the dispatch) and then flattened into prose starting
+    # with the bare word WARNING, which FD19d explains cannot be a marker.
+    # Without a token, a step whose click did nothing and which asserts nothing
+    # PASSES -- 19 of this repo's 83 recorded steps (23%) are in that set.
+    check("FD19e the NO EFFECT token is emitted by the file the runner reads it "
+          "from — the same contract FD19 pins for the refusal markers",
+          FR_NO_EFFECT in _bgsrc,
+          f"{FR_NO_EFFECT!r} is NOT in extension/background.js — the extension "
+          f"half of this has not landed, and the runner guard it feeds is inert"
+          if FR_NO_EFFECT not in _bgsrc else "present")
+    check("FD19f CONTROL: the NO EFFECT token is not read as a REFUSAL — they "
+          "are different facts needing different answers, and a step carrying a "
+          "real postcondition is left to decide for itself",
+          FR_refused(FR_NO_EFFECT + "click had NO detectable effect.") is None
+          and FR_no_effect(FR_NO_EFFECT + "click had NO detectable effect.")
+          and not FR_no_effect("left_click at (500,356) on [mmid='70']."))
 
     # ---- FD15: the field-name contract -------------------------------------
     # Every check above runs on dicts THIS FILE wrote. If the collector spells
@@ -1628,9 +1710,308 @@ async def record_and_replay():
           "5 rows where the flow was recorded against 4",
           rd["status"] == FAILED and "counted 5" in rd["reason"], str(rd["reason"])[:120])
 
-    check("FP5 a flow that establishes its own state records NO precondition, "
-          "so it is derived rather than mandatory",
-          Recorder("self", fbp.entries_fn).compile()[0].require == {})
+    check("FP5 a flow that observes NOTHING before it first acts records no "
+          "precondition, so it is derived rather than mandatory",
+          _recorded_require([("navigate", {"url": "https://app.test/x"}, "ok"),
+                             ("computer", {"action": "left_click"}, "ok")],
+                            fbp) == {})
+
+    # ---- FP8..FP10: the precondition was structurally unreachable ---------
+    # `_require_before` stopped at the first MUTATING call, and both
+    # `tabs_create_mcp` and `navigate` mutate -- while instructions= (#45) and
+    # browser_batch's description (#46) both teach an agent to open with
+    # `tabs_create_mcp -> navigate -> read_page`. So the scan always stopped
+    # before any observation, `require` is {} in all 19 recorded flows, and
+    # #50's headline capability had a reader and no writer.
+    opening = [
+        ("tabs_create_mcp", {}, '{"tabId": 7}'),
+        ("navigate", {"url": "https://app.test/projects", "tabId": 7}, "ok"),
+        ("get_url", {"tabId": 7}, '{"url": "https://app.test/projects"}'),
+        ("query_elements", {"tabId": 7, "selector": "tbody tr"},
+         "4 element(s) match 'tbody tr'"),
+        ("computer", {"action": "left_click", "tabId": 7}, "clicked"),
+    ]
+    fopen, ropen = _record(opening, fbp)
+    check("FP8 an agent that opens the way the docs tell it to still records a "
+          "precondition — the state it found AFTER getting itself to the app",
+          fopen.require.get("url") == "https://app.test/projects"
+          and fopen.require.get("query") == {"selector": "tbody tr", "count": 4},
+          str(fopen.require))
+    check("FP8b ...and the navigational step does not ALSO assert it, or the "
+          "step's postcondition would fire first and the precondition would "
+          "never speak — which is how it stayed silent",
+          not fopen.steps[1].expect, str(fopen.steps[1].expect))
+
+    class _Tabbed(FakeBridge):
+        async def call(self, tool, inp):
+            if tool == "tabs_create_mcp":
+                self.calls.append((tool, dict(inp)))
+                return '{"tabId": 7}'
+            return await FakeBridge.call(self, tool, inp)
+
+    wrongb = _Tabbed([E(80, "button", name="New project")])
+    wrongb.url, wrongb.query_total = "https://app.test/login", 4
+    rwb = await start(fopen, 1, wrongb.call, wrongb.entries_fn)
+    check("FP9 the WRONG landing state stops the flow and says the app is not "
+          "where it begins, instead of failing deep inside on one element",
+          rwb["status"] == FAILED
+          and "not in the state this flow starts" in rwb["reason"]
+          and "login" in rwb["reason"], str(rwb["reason"])[:160])
+    check("FP9b ...and the ACTION never ran — only the navigation in front of it",
+          not any(t == "computer" for t, _ in wrongb.calls)
+          and any(t == "navigate" for t, _ in wrongb.calls), str(wrongb.calls))
+
+    okb = _Tabbed([E(80, "button", name="New project")])
+    okb.url, okb.query_total = "https://app.test/projects", 4
+    rokb = await start(fopen, 1, okb.call, okb.entries_fn)
+    check("FP10 CONTROL: the right landing state runs the flow through, without "
+          "which a precondition that always fires is indistinguishable from one "
+          "that works", rokb["status"] == PASSED, str(rokb["reason"])[:140])
+
+    # ---- FR17: a resume answered the question it was never asked ----------
+    # `_bind` walked the targets in order and gave the agent's binding to the
+    # FIRST one. On a fill_form whose Email resolved and whose Password was
+    # ambiguous, the bind landed on Email, Password failed identically on every
+    # attempt (so the run could never be resumed past the step), and the
+    # proposed patch rewrote EMAIL's descriptor to the password box -- which
+    # record_flow(action="patch") writes straight to disk.
+    two_pw = [E(1, "input", type_="email", name="Email", editable=True, clickable=False),
+              E(2, "input", type_="password", name="Password", editable=True, clickable=False),
+              E(3, "input", type_="password", name="Password", editable=True, clickable=False)]
+    login = Flow(name="login", steps=[Step(
+        name="fill_form",
+        input={"fields": [{"value": "a@b.c"}, {"value": "hunter2"}], "submit": True},
+        targets={"fields.0": {"level": 1, "desc": {"tag": "input", "role": "",
+                                                   "type": "email", "name": "Email"}},
+                 "fields.1": {"level": 1, "desc": {"tag": "input", "role": "",
+                                                   "type": "password", "name": "Password"}}},
+        expect={})])
+    lb = FakeBridge(two_pw)
+    r1 = await start(login, 1, lb.call, lb.entries_fn)
+    check("FR17 a multi-target step pauses on the target that could not be "
+          "resolved, and SAYS which one",
+          r1["status"] == NEEDS and "'fields.1'" in r1["reason"],
+          str(r1["reason"])[:160])
+    r2 = await resume(r1["run_id"], "ref_2")
+    sent = next((dict(i) for t, i in lb.calls if t == "fill_form"), {})
+    check("FR17b ...and the binding lands on THAT target: the password value "
+          "goes to the bound ref and the email keeps its own",
+          r2["status"] == PASSED
+          and (sent.get("fields") or [{}, {}])[1].get("ref") == "ref_2"
+          and (sent.get("fields") or [{}, {}])[0].get("ref") == "ref_1",
+          json.dumps(sent.get("fields")))
+    check("FR17c ...and the proposed patch names fields.1 — applying one built "
+          "for fields.0 would make the flow type the user's EMAIL into a "
+          "password box, from a file, for ever",
+          [p["path"] for p in r2["patches"]] == ["fields.1"],
+          str([(p["path"], p["now"]) for p in r2["patches"]]))
+
+    # ---- FR20: the re-sorted list, through the REAL runner ----------------
+    # FD20c proves `resolve`. #19's rule is that the link between a fix and the
+    # caller is where features ship inert, and this one has two: the runner
+    # withholds the href fallback on every attempt inside its settle window,
+    # and it is the runner that has to SAY the list moved.
+    _rows = [E(10, "a", name="Invoice 1001", href="/i/1001", section="main",
+               under="Invoices"),
+             E(11, "button", name="Delete", section="main", under="Invoices"),
+             E(20, "a", name="Invoice 1002", href="/i/1002", section="main",
+               under="Invoices"),
+             E(21, "button", name="Delete", section="main", under="Invoices")]
+    _t_row = build(_rows[1], _rows)
+    _flip = [_rows[2], dict(_rows[3], mmid=31), _rows[0], dict(_rows[1], mmid=41)]
+    rb = FakeBridge(_flip)
+    rres = await start(Flow(name="inv", steps=[Step(
+        name="computer", input={"action": "left_click"},
+        targets={"ref": _t_row}, expect={})]), 1, rb.call, rb.entries_fn)
+    _acted = next((dict(i) for t, i in rb.calls if t == "computer"), {})
+    check("FR20 a flow whose list was RE-SORTED acts on the row it recorded, "
+          "not on whatever now sits at the recorded index",
+          rres["status"] == PASSED and _acted.get("ref") == "ref_41",
+          f'{rres["status"]} ref={_acted.get("ref")}')
+    check("FR20b ...and the run SAYS the position moved, because the ordinal in "
+          "the file is now stale — a correct bind that is not a clean pass",
+          len(rres.get("moved") or []) == 1
+          and "DIFFERENT position" in rres["reason"],
+          str(rres.get("moved")) + " | " + str(rres["reason"])[:80])
+    ok_rows = FakeBridge(list(_rows))
+    rok = await start(Flow(name="inv2", steps=[Step(
+        name="computer", input={"action": "left_click"},
+        targets={"ref": _t_row}, expect={})]), 1, ok_rows.call, ok_rows.entries_fn)
+    check("FR20c CONTROL: an unchanged list says nothing and acts on the same "
+          "row — a note that fired on every run would be the noise #15 priced",
+          rok["status"] == PASSED and not rok.get("moved")
+          and not rok["reason"]
+          and next((dict(i) for t, i in ok_rows.calls if t == "computer"), {}
+                   ).get("ref") == "ref_11", str(rok["reason"])[:80])
+
+    # ---- FR18: a dead click on a step that asserts nothing -----------------
+    class _Dead(FakeBridge):
+        async def call(self, tool, inp):
+            self.calls.append((tool, dict(inp)))
+            if tool == "computer":
+                return ("NO EFFECT: click had NO detectable effect (URL, DOM, and "
+                        "text are all unchanged).")
+            return await FakeBridge.call(self, tool, inp)
+
+    def _click_flow(expect):
+        return Flow(name="dead", steps=[Step(
+            name="computer", input={"action": "left_click"},
+            targets={"ref": {"level": 1, "desc": {"tag": "button", "role": "",
+                                                  "type": "", "name": "Save"}}},
+            expect=expect)])
+
+    d1 = _Dead([E(1, "button", name="Save")])
+    rd1 = await start(_click_flow({}), 1, d1.call, d1.entries_fn)
+    check("FR18 a click the page did not react to FAILS the step when nothing "
+          "else could have caught it — 19 of this repo's 83 recorded steps (23%) "
+          "carry no assertion at all",
+          rd1["status"] == FAILED and "NO DETECTABLE EFFECT" in rd1["reason"],
+          str(rd1["reason"])[:120])
+    d2 = _Dead([E(1, "button", name="Save")])
+    rd2 = await start(_click_flow({"url": "https://app.test/start"}), 1,
+                      d2.call, d2.entries_fn)
+    check("FR18b CONTROL: with a real postcondition the step is left to it — "
+          "'no DETECTABLE effect' is not 'no effect', and the assertion is the "
+          "better judge", rd2["status"] == PASSED, str(rd2["reason"])[:120])
+    d3 = FakeBridge([E(1, "button", name="Save")])
+    rd3 = await start(_click_flow({}), 1, d3.call, d3.entries_fn)
+    check("FR18c CONTROL: an ordinary click with no assertion still passes, so "
+          "this is not just failing every unasserted step",
+          rd3["status"] == PASSED, str(rd3["reason"])[:120])
+
+    # ---- FR19: `text` was matched with `in`, unanchored at both ends -------
+    async def _text_run(recorded, live):
+        class _T(FakeBridge):
+            async def call(self, tool, inp):
+                self.calls.append((tool, dict(inp)))
+                if tool == "query_elements":
+                    return '1 element(s) match %r\n  <div ref_9> %s' % (
+                        inp.get("selector"), json.dumps(live))
+                return await FakeBridge.call(self, tool, inp)
+        b = _T([E(1, "button", name="Save")])
+        f = Flow(name="t", steps=[Step(
+            name="computer", input={"action": "left_click"},
+            targets={"ref": {"level": 1, "desc": {"tag": "button", "role": "",
+                                                  "type": "", "name": "Save"}}},
+            expect={"query": {"selector": "#s", "count": 1, "text": recorded}})])
+        return (await start(f, 1, b.call, b.entries_fn))["status"]
+
+    inversions = [("active", "inactive"), ("Approved", "Not Approved"),
+                  ("In stock", "Not In stock"), ("3 items", "13 items"),
+                  ("10.00", "110.00")]
+    got = [await _text_run(a, b) for a, b in inversions]
+    check("FR19 a recorded status cannot be satisfied by its own negation — "
+          "`in` is unanchored at BOTH ends, so all five of these passed",
+          all(g == FAILED for g in got), str(list(zip(inversions, got))))
+    check("FR19b CONTROL: the tolerance that justified `in` is kept — HTML "
+          "collapses whitespace when it paints, so reflow still passes",
+          await _text_run("3 items left", "3   items\n  left") == PASSED)
+    check("FR19c CONTROL: an exact match still passes",
+          await _text_run("Durian", "Durian") == PASSED)
+
+    # ---- FO7: `expect` was validated nowhere ------------------------------
+    def _load_expect(exp):
+        try:
+            FM.Step.from_json({"name": "computer", "input": {}, "expect": exp})
+            return None
+        except ValueError as exc:
+            return str(exc)
+
+    bad_expects = [("a typo'd kind", {"querry": {"selector": "tr", "count": 99}}, "querry"),
+                   ("a future kind", {"console": {"pattern": "X", "absent": True}}, "console"),
+                   ("a misspelt field", {"query": {"selctor": "tr", "count": 99}}, "selector"),
+                   ("a miscased field", {"query": {"selector": "tr", "Count": 99}}, "Count")]
+    outs = [(lbl, _load_expect(e), needle) for lbl, e, needle in bad_expects]
+    check("FO7 an unrecognised key in `expect` is REFUSED at load, naming it — "
+          "all four of these used to assert nothing, three of them in silence",
+          all(msg and needle in msg for _l, msg, needle in outs),
+          "; ".join(f"{l}:{(m or 'ACCEPTED')[:60]}" for l, m, _n in outs))
+    check("FO7b CONTROL: every shape the recorder actually emits still loads, "
+          "including a list of checks and the search flags",
+          _load_expect({"url": "https://x/y",
+                        "search": [{"pattern": "a", "min": 1, "observed": 2,
+                                    "regex": True, "css_scope": "#m",
+                                    "case_sensitive": True},
+                                   {"pattern": "b", "absent": True}],
+                        "query": [{"selector": "tr", "count": 4},
+                                  {"selector": "#c", "count": 1, "text": "x",
+                                   "attrs": {"value": "v"}}]}) is None)
+    try:
+        FM.Flow.from_json({"schema": FM.SCHEMA, "name": "r", "steps": [],
+                           "require": {"quary": {"selector": "tr"}}})
+        _req_msg = None
+    except ValueError as exc:
+        _req_msg = str(exc)
+    check("FO7c ...and a flow's `require` goes through the same validation — it "
+          "is the same shape asked at a different moment (#21)",
+          _req_msg and "quary" in _req_msg, str(_req_msg)[:90])
+
+    # ---- FS7: settle_ms widened the assertion window and not the target ----
+    _sm, _pm = Run.SETTLE_MS, Run.POLL_MS
+    Run.SETTLE_MS, Run.POLL_MS = 100, 20
+
+    async def _late_target(settle_ms):
+        class _Late:
+            def __init__(self):
+                self.n, self.calls = 0, []
+            async def entries_fn(self, tabId=None):
+                self.n += 1
+                return [E(1, "button", name="Save")] if self.n >= 10 else []
+            async def call(self, tool, inp):
+                self.calls.append((tool, dict(inp)))
+                return "ok"
+        b = _Late()
+        f = Flow(name="late", steps=[Step(
+            name="computer", input={"action": "left_click"},
+            targets={"ref": {"level": 1, "desc": {"tag": "button", "role": "",
+                                                  "type": "", "name": "Save"}}},
+            expect={}, settle_ms=settle_ms)])
+        return (await start(f, 1, b.call, b.entries_fn))["status"]
+
+    _no_margin = await _late_target(0)
+    _margin = await _late_target(600)
+    Run.SETTLE_MS, Run.POLL_MS = _sm, _pm
+    check("FS7 the margin the recording measured widens the window for the "
+          "TARGET too, not only for the assertions — #59's live failure was "
+          "target resolution on a slow SPA",
+          _margin == PASSED and _no_margin != PASSED,
+          f"with margin={_margin} without={_no_margin}")
+
+    # ---- FW8 / FN1: the two halves that were written and never read --------
+    fw8, rw8 = _record([
+        ("query_elements", {"tabId": 1, "selector": "tbody tr"},
+         "4 element(s) match 'tbody tr'"),
+        ("computer", {"action": "left_click", "tabId": 1}, "ok"),
+        ("query_elements", {"tabId": 1, "selector": "tbody tr"},
+         "4 element(s) match 'tbody tr'"),
+    ], fbp)
+    _rev = [r for st in fw8.steps for r in getattr(st, "review", [])]
+    check("FW8 what the recording could not vouch for is written INTO THE FILE, "
+          "where the person re-grading a recorded assertion is actually reading",
+          any(r.startswith("hollow:") for r in _rev), str(_rev))
+    _rt = FM.Flow.from_json(json.loads(json.dumps(fw8.to_json()))).steps[0]
+    check("FW8b ...and it survives the file format, so it reaches a diff, "
+          "--check-only and CI",
+          bool(_rev) and getattr(_rt, "review", None) == fw8.steps[0].review)
+
+    nb = FakeBridge([])
+    noted = Flow(name="n", steps=[Step(
+        name="computer", input={"action": "left_click"},
+        targets={"ref": {"level": 1, "desc": {"tag": "button", "role": "",
+                                              "type": "", "name": "Nope"}}},
+        expect={}, note="dismiss the cookie banner so the grid is reachable")])
+    rn = await start(noted, 1, nb.call, nb.entries_fn)
+    check("FN1 a step's `note` is read when that step stops the run — 'why is "
+          "this step here' is exactly the question a failure asks",
+          "dismiss the cookie banner" in rn["reason"], str(rn["reason"])[-120:])
+    nb2 = FakeBridge([])
+    rn2 = await start(Flow(name="n2", steps=[Step(
+        name="computer", input={"action": "left_click"},
+        targets={"ref": {"level": 1, "desc": {"tag": "button", "role": "",
+                                              "type": "", "name": "Nope"}}},
+        expect={})]), 1, nb2.call, nb2.entries_fn)
+    check("FN1b CONTROL: a step with no note says nothing extra",
+          "the flow says this step is here" not in rn2["reason"])
 
     # ---- contracts -------------------------------------------------------
     check("FD16 REF_KEYS matches browser_batch's own _REF_KEYS — one concept, "
@@ -1660,6 +2041,19 @@ async def record_and_replay():
     check("FD17b ...and a readiness banner in front of them does not blind the "
           "parser, which is exactly when a flow is most likely to be running",
           search_hits("PAGE IS STILL SETTLING\n2 match(es) for \"x\"") == 2)
+
+
+def _record(calls, bridge):
+    """Compile a list of (tool, input, result) into a Flow, the way an agent's
+    run reaches the recorder. -> (flow, report)."""
+    rec = Recorder("probe", bridge.entries_fn)
+    for tool, inp, res in calls:
+        rec.after(tool, inp, res, {})
+    return rec.compile()
+
+
+def _recorded_require(calls, bridge):
+    return _record(calls, bridge)[0].require
 
 
 def _signatures_survive_wrapping():

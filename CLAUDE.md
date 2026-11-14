@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1092 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1215 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1092 checks, ~90s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1215 checks, ~107s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -777,6 +777,23 @@ granted in the side panel is refused with the same message the agent gets.
     this on n=3 — change the rule, then measure Mind2Web recall AND dev tokens/answerability together
     and keep it only if Pareto-positive. That investigation needed six probes because the collector
     cannot say WHY it dropped an element; it is the concrete argument for the drop-ledger.
+
+    **THAT CHARACTERISATION IS WRONG AND WAS WRONG BY CONSTRUCTION -- corrected
+    in #73 by asking the LEDGER instead of inferring.** All seven current misses
+    are dropped by **`not-interactive`**, not by container suppression -- which
+    since #28 cannot delete anything at all, so the explanation above could not
+    have been true from the moment #28 shipped. Every one of the seven is
+    VISIBLE and declares **nothing**: no interactive tag, no role, no `onclick`,
+    no `tabindex`, no `__abClickBound`, no `cursor:pointer`, no `href`.
+    And the root cause is the CORPUS, measured rather than assumed: across all
+    173 targets `listener_tagged` is **0/173** and `cursor_pointer` is
+    **0/173**, because Mind2Web's snapshots carry no scripts and no CSS -- so
+    **two of the collector's eight admitting signals are structurally switched
+    off**. The misses are PRINCIPLES #1 behaving exactly as specified on markup
+    that declares nothing, and #18 measured this class live at 20% -> 90%
+    recovery once handlers exist. **The "do NOT patch this" warning above is
+    guarding a problem that does not exist**; what it should say is that this is
+    the benchmark's static-HTML floor.
 
 17. **What the consent model does NOT cover, and other release-readiness residue** — the gate
     (see "Permission model") is airtight for *ops*, and these are the edges it does not reach.
@@ -4283,6 +4300,16 @@ granted in the side panel is refused with the same message the agent gets.
     every mutation**, with `rename-neighbour` at 99.5% as the control that it
     is not simply refusing everything.
 
+    **CORRECTED IN #72 -- READ THAT BEFORE QUOTING THE SENTENCE ABOVE.** It is
+    true of the mutation set, and **the mutation set had no REORDER.** A
+    re-sorted list leaves the crowd's composition identical and only the order
+    different, which is the one change an ordinal cannot survive, so every
+    crowd-check passed and the ordinal named a different row: measured at
+    **94.4% WRONG with 0% refusals** once the arm was added. "0% WRONG on every
+    mutation" was a statement about the harness, not about the world. #25's rule
+    -- an ablation measures the code against the sample and cannot measure the
+    sample -- applies to a safety measurement exactly as it does to a corpus.
+
     **AND THE AUDIT'S OWN RULER ACCUSED WORKING CODE.** It reported 13.9%
     mis-binds on webdev; the dump read `recorded mmid=736 -> got mmid=736`.
     Ground truth was `(tag,x,y,w,h)` and the second pass laid out **521px
@@ -6385,6 +6412,753 @@ granted in the side panel is refused with the same message the agent gets.
     reaches the agent and only the panel never stops saying "waiting" —
     P22/P23 in `test_permissions.js`.
 
+70. **THE READINESS PROBE MEASURED THE NETWORK, AND THE QUESTION WAS ABOUT THE
+    DOM.** Five live agents across two eval rounds reported the same thing in the
+    same words: the banner cannot separate "page still building" from "page
+    ready but chatty". It could not, and the reason is that those are two
+    OPPOSITE failures with one cause — every signal we shipped (in-flight
+    requests, unloaded images, `aria-busy`, `role=progressbar`, `readyState`)
+    answers *is something arriving*, while the agent is asking **"if I wait, will
+    what I am reading change?"** On any SPA those come apart in both directions.
+
+    **BOTH FAILURES REPRODUCED BEFORE ANYTHING WAS BUILT**
+    (`scratchpad/probe_false_negative.py`), each the minimal shape of a real
+    complaint, interrogated at four moments with every signal asked at once.
+    A: one fetch that resolves immediately, then 400 rows painted over ~2s in
+    `setTimeout` chunks, exactly as a framework commits in slices. B: 400 rows
+    painted synchronously and finished, then a 120ms poll and a 200ms beacon.
+
+    | | rows painted | readyState | busy | prog | **net in flight** | **ms since DOM change** |
+    |---|---|---|---|---|---|---|
+    | A @300ms | 64 / 400 | complete | 0 | 0 | **0** | **18** |
+    | A @900ms | 192 / 400 | complete | 0 | 0 | **0** | **9** |
+    | A @1500ms | 316 / 400 | complete | 0 | 0 | **0** | **18** |
+    | A @3500ms | **400 done** | complete | 0 | 0 | 0 | **1622** |
+    | B @300ms | **400 done** | complete | 0 | 0 | **3** | **304** |
+    | B @900ms | 400 done | complete | 0 | 0 | **5** | **907** |
+    | B @3500ms | 400 done | complete | 0 | 0 | **6** | **3514** |
+
+    **Every signal we shipped is silent through the whole of A** — the agent is
+    handed a 64-row table that becomes a 400-row table with no caveat of any
+    kind — **and every signal we shipped fires through the whole of B**, on a
+    page that finished before the first observation, for ever. The second is the
+    always-on warning #15 priced and #43 deleted `readyState` for being; we had
+    reintroduced it one signal over. DOM-mutation recency separates them with
+    **no overlap**: 9–18ms while building against 907–3514ms when done. So no
+    threshold has to be chosen — any cut between 50 and 500ms works, which is the
+    point, because what ships is the NUMBER and not a verdict (#33, #60, #65).
+
+    **IT IS FREE, AND THE SIGNAL IS REAL ON REAL PAGES.** A document-wide
+    `MutationObserver` recording a timestamp and a coarse target, interleaved A/B
+    on the same page load, 9 replicates, order rotated (#19): **+0.10ms / +1.40ms
+    / +2.70ms** at 200 / 2,000 / 10,000 mutations against a **1.7% drift floor** —
+    i.e. single-digit milliseconds at a rate that is already pathological, against
+    a ~3,600ms model turn (#38). Cumulative mutations after DOMContentLoaded:
+    news.ycombinator.com did 1,302 during load and then **stopped dead** (0 in
+    every window from 250ms on); github.com 3,072 then dead; react.dev 1 in one
+    window. The contrast between building and settled is roughly **100×**, and
+    all of those pages have requests in flight the whole time — which is exactly
+    the false positive we shipped.
+
+    **AND THE PER-READ QUERY IS FREE TOO, which is the half the cost probe did
+    not cover.** The observer being cheap says nothing about the SCAN every
+    observation now runs -- 1,024 ring slots plus a same-origin frame walk. At
+    ring saturation (3,009 recorded mutations, a saturated buffer, one child
+    frame): **median below Chrome's 0.1ms timer granularity, p95 0.1ms, max
+    0.4ms** over 60 calls. Against a ~24ms bridge hop and a ~3,600ms model turn
+    (#38) there is nothing here to optimise. Worth stating because "the observer
+    is free" and "the feature is free" are different claims and only the first
+    had been measured.
+
+    **THE GUARDIAN ROW IS THE IMPORTANT ONE AND IT NEARLY REBUILT THE BUG.**
+    theguardian.com runs 7 ad-driven mutations in a 2–4s window, so document-wide
+    "ms since last change" reads ~200ms on a page that is ENTIRELY readable. The
+    answer is not a quiet-period threshold: it is that **a clock in a header and
+    a table rebuilding are the same number and opposite facts**, so the output
+    names the KIND — `40 @style` and `40 structural` read as the opposite things
+    they are. Per-subtree attribution is designed and NOT built (`docs/READINESS.md`).
+
+    **THE TWO FACTS NOW GET TWO SENTENCES**, which is the whole fix as the agents
+    experienced it. DOM changing → `*** THE DOM IS STILL CHANGING (last change
+    9ms ago; 512+ change(s) in the last 1000ms: 480 structural, 32 text) ...***`.
+    DOM quiet, network busy → `*** The DOM has been unchanged for 1511ms, so WHAT
+    IS ON THE PAGE NOW IS STABLE and safe to read. Separately, 5 network
+    request(s) in flight (3 xmlhttprequest, 2 image) ... ***`. Both quiet → **nothing
+    at all**. The only number chosen is how far BACK to look, and it is printed.
+
+    **OUR OWN INSTRUMENTATION SHOWED UP AS PAGE ACTIVITY, one attribute over
+    from the case the mmid exclusion fixed.** `get_page_text` performs a
+    hide-read-restore (set `display:none`, read `innerText`, put it back) to
+    strip editor gutters and collapsed subtrees. MEASURED: 12 `<details>`
+    elements produce **24 `style` records whose net effect on the DOM is exactly
+    nothing**, so a `read_page` within the window afterwards reported our own
+    instrumentation as the page changing.
+    A MutationObserver callback is a microtask, so one synchronous script's
+    mutations arrive as ONE batch -- which makes the fix the per-record "a write
+    whose value did not change" rule applied at the right granularity: if an
+    attribute starts a batch at X and ends it at X, nothing changed. It is a FACT
+    about two values, and it correctly also drops a page's own toggle-and-restore
+    within one tick, which likewise leaves the listing untouched.
+    **Three things about it are worth keeping.** (a) `attributeOldValue: true`
+    is REQUIRED and I had not set it -- without it every `oldValue` is null, the
+    comparison never matches, and the entire rule is inert. It WAS inert when
+    first written and only measuring it said so. (b) The per-record test it
+    replaces had to be DELETED, not kept alongside: for `A -> B -> A` the records
+    carry oldValue A and B against a current value of A, so a per-record test
+    drops the first and keeps the second, reporting half of a net-zero change.
+    (c) **It does not catch a `style` round-trip and that is a stated limit**:
+    the CSSOM re-serializes the attribute, so `margin:0` returns as `margin: 0;`
+    and an absent attribute returns as `""`. Special-casing one attribute name
+    would be the kind of list this codebase removes, so the `get_page_text`
+    artefact remains -- non-alarming, because the two-tier split below reports it
+    as attribute-only.
+    **AND MY FIRST FIXTURE FOR IT WAS VACUOUS, caught by my own ablation.** R22
+    used an attribute that was ADDED and then REMOVED, and it passed with
+    `attributeOldValue` ablated -- the pair ends absent and a missing `oldValue`
+    also reads as null, so `null === null` matched by accident. It round-trips
+    `1 -> 2 -> 1` now, where a null oldValue gives `null !== "1"` and the record
+    survives: FAILS ablated, passes fixed, with R22b passing in both arms as a
+    control must.
+
+    **AND THE FIRST SHAPE OF THE FIX REBUILT THE BUG IT WAS FIXING.** A banner
+    keyed on "anything moved in the window" fires FOREVER on any ad-supported
+    page: theguardian.com runs ~7 ad-driven mutations per 2s, so `moved > 0` is
+    permanently true and a perfectly readable page is permanently told it may be
+    incomplete. That is the always-on warning #15 priced and #43 deleted
+    `readyState` for being, reconstructed one unit over, by me, in the change
+    written to end it. Caught by measuring the ad case BEFORE shipping, which is
+    the only reason it is not in the build.
+    The tier is decided by the three MutationRecord TYPES, which the spec
+    declares, so it needs no list of "important" attributes -- the thing #24 and
+    #27 removed from every path that decides something. `childList` or
+    `characterData` in the window means elements are being added, removed or
+    re-texted, and the strong banner is correct. Attribute-only means nothing was
+    added, removed or re-texted, which is exactly what "the listing is
+    structurally current" MEANS and is a measurement rather than a judgement, so
+    it is reported as a fact with no absence warning. The attribute NAMES are
+    printed rather than filtered, because `@style` on a carousel and `@disabled`
+    on a form unlocking are both attribute-only and need opposite responses: the
+    reader can tell them apart from the name and we cannot. R20 pins the ad
+    shape at `structural 0 / text 0 / attrs {style: 25}`; **R20b is the control
+    that this did not simply become "never warn"**, at `structural 20` on a page
+    genuinely appending elements.
+
+    **THE PRIOR ART SAYS NETWORK IDLE IS THE BEST WAIT RULE, WHICH IS THE
+    OPPOSITE OF WHAT I ASSUMED, AND IT DOES NOT CHANGE THE DESIGN.**
+    arXiv:2610.39282 (29 Oct 2026) measures stale clicks at **0.4% on a loaded
+    page against 17% at DOM-ready**, and across ten agents' reimplemented wait
+    rules network idle is the ONLY one under 1% (0.46%; boxes-stable 1.8%,
+    layout-stable 2.8%, fixed 0.5s 2.5%). What makes it unusable is arrival, not
+    accuracy: quiet is reached within 3s on **15% of booking/buying home pages**,
+    median time-to-quiet 7.4s. **So the five agents' complaint is a property of
+    the commercial web, not a defect in our probe** — and the network signal is
+    therefore NOT demoted. Reporting both facts separately is right; replacing
+    one with the other would have been wrong. Its own caveats are large and are
+    recorded rather than buried: v1 preprint, unreviewed, single author, 31
+    non-commercial pages, and the author preregistered fourteen hypotheses of
+    which **eight were refuted**, including its own transfer check (ρ = −0.12).
+    Do not set a threshold from its numbers.
+
+    **ONE REFINEMENT TAKEN FROM browser-use AND ONE DELIBERATELY NOT.** Taken: an
+    attribute write **whose value did not change is not a change** — their comment
+    names Google Flights rewriting a class every frame, and without it one such
+    page pins this signal busy for ever. Not taken: their damping of `style` to
+    once per element per 200ms, because 200ms is a chosen number and the
+    kind-split already discriminates.
+
+    **A BUG THE LITERATURE PREDICTED THAT WE DO NOT HAVE, checked so nobody
+    re-derives it.** browser-use's `network_idle.py` documents a naive CDP request
+    count running to its cap on any page with a Web Worker or an out-of-process
+    iframe, because those requests complete on a DIFFERENT CDP target — which
+    would present exactly as the complaint. `_netPending` is fed by
+    `chrome.webRequest`, which is browser-level and fires for every request
+    attributed to the tab whatever process serves it, plus a 15s drop per request.
+    It does not apply. What IS real is that a long-poll `xmlhttprequest` counts for
+    up to 15s — and that case is now reported correctly by the DOM-quiet sentence
+    rather than suppressed by an age cutoff.
+
+    **FIVE DEFECTS OF MY OWN, every one caught by running rather than reading.**
+    - **The exclusion leaked at exactly the rate the burst exceeded the prefix.**
+      The collector stamps a real `mmid` ATTRIBUTE on every interactive element,
+      so without an exclusion an observation reports ITSELF as churn — worst on a
+      page's first read, one record per control. I bounded the callback to a
+      32-record prefix and `continue`d on `mmid` INSIDE that bound, then added the
+      un-inspected remainder to the total anyway: 50 stamps skipped 32 and counted
+      18. **Two costs, orders of magnitude apart, conflated into one bound.**
+      Filtering is one string compare, so every record is inspected; storing
+      allocates a WeakRef and walks a target, so only the first 32 survivors are
+      kept. R14 went `total 105 -> 155`, then `-> 123`, then `-> 105`.
+    - **`window.__abMut` was a plain assignment** where every sibling in that file
+      uses non-enumerable `defineProperty`. Measured in a real page: `enumerable:
+      true, writable: true`, visible in `Object.keys(window)`, and replaceable —
+      so any page could substitute a `query()` that always answers "quiet" and
+      silently disable the signal, which is the worst direction this probe can
+      fail in. Found by an adversarial audit of my own uncommitted code.
+    - **I shipped a `pause()`/`resume()` pair with no callers** — half a contract
+      (#30, #54, #57, #62), and page-reachable, so one call would have blinded the
+      signal for the life of the document with nothing reporting it. Deleted
+      rather than hardened: record-time name filtering had already replaced it.
+      **An exclusion that cannot be switched off cannot be switched off BY THE
+      PAGE EITHER.**
+    - **An empty ring printed a negative duration.** The branch guard was
+      `m.total >= 0`, which is TRUE of a ring that has recorded nothing -- so
+      with `since = -1` (meaning NEVER OBSERVED, not a duration) the note
+      rendered `No DOM change for -1ms`. Ablated to confirm rather than reasoned
+      about. It keys on `since >= 0` now, so no recency reading falls through to
+      the network-only path, which is R17's rule one branch over: unknown is
+      never reported as quiet. **The check for it lives in `test_ops.js`, not in
+      the browser suite, because the empty state is not constructible on a real
+      page** -- even `about:blank` records 3 childList mutations for
+      html/head/body, which is why my first fixture for it passed vacuously.
+    - **R14's first version asserted `structural == 0`** on a fixture whose own 50
+      buttons are parse-time childList records. It measured the harness, not the
+      exclusion. The claim is that stamping adds NOTHING, which only a delta can
+      say (#16, on my own probe).
+
+    **AND ONE IN A CHECK I WROTE FOR THIS ENTRY.** A second assertion in the
+    `page_readiness` router test referenced an undefined name inside an IIFE that
+    returned `true` unconditionally — a check that could not fail, written by the
+    author of the rule against exactly that. Deleted rather than repaired.
+
+    **A FALSE QUIET THROUGH AN IFRAME, found by re-reading my own design rather
+    than by a test.** `listener_tag.js` has `all_frames: true` so every frame
+    keeps its own ring, and `runInTab` passes `allFrames:false` so the probe runs
+    in the TOP frame only -- the child rings were written and never read. A page
+    whose content lives in an iframe would therefore report QUIET while that
+    frame painted. Ablated: with the merge removed the merged view is
+    byte-identical to the top frame alone (8 structural, 412ms since) on a page
+    whose child is painting 400 rows, i.e. SETTLED. With it: 100 structural,
+    12ms, `frames: 1`. Same-origin only, and cross-origin frames are NOT counted
+    as quiet -- the walk yields only what it can read, so a consent CMP churning
+    cross-origin is a stated limit rather than a silent zero. **`since` merges by
+    MINIMUM**, because it is "ms since the last change" and taking the max would
+    report the quietest frame, which is this bug again pointing the other way
+    (R19).
+
+    **SHADOW ROOTS, because this probe has been blind to them before.** A
+    `MutationObserver` on `document` does not see into one, and #25 records this
+    exact bug class in this exact probe ("shadow-blind — fourth home for a bug
+    class fixed twice"). `listener_tag.js` already wraps `attachShadow` at
+    document_start, which is the one place that sees EVERY root the page will ever
+    make, open or closed — so each is registered as it is created. R16 fails
+    against a document-only observer.
+
+    **WHAT RUNS PRE-GRANT IS NOW LARGER AND THE README MUST SAY SO.**
+    `listener_tag.js` is a manifest content script and injects into every page
+    before any grant (#17); the documented bound was the `addEventListener` wrap
+    and a 500-entry console ring. A bounded mutation ring is the same class —
+    nothing leaves the page, and reading it is gated — but a documented guarantee
+    that is quietly false is worse than a larger one that is stated.
+
+    **A FIFTH SILENT SOURCE CORRUPTION, and this one has no tripwire.**
+    `listener_tag.js` came out of my edits **entirely CRLF** (309 CRLF, 0 bare LF)
+    where HEAD was entirely LF, on macOS, with `.gitattributes` declaring LF
+    in-repo. `node --check` accepts it and the suites pass, so nothing would have
+    caught it before a commit normalised half a file. That is the fifth incident
+    in this class after a PowerShell UTF-8 rewrite, four heredoc-escape mangles
+    and a NUL byte — and the project memory's advice ("scan for control bytes
+    after a bulk edit") is a thing a human must remember. A mechanical check that
+    no extension source carries CRLF or a control byte is owed.
+
+    **THE "BEFORE" IS CAPTURED LIVE, THROUGH THE REAL EXTENSION.** Against the
+    local fixture on a granted origin, with the SHIPPED extension loaded (worker
+    age 1,245,595s, so nothing from this entry is in it):
+        javascript_tool -> {"recorderPresent":"undefined","listenerWrapActive":true}
+        ...start painting 400 rows in setTimeout chunks...
+        read_page       -> "Current URL: /" ... NO BANNER OF ANY KIND
+        javascript_tool -> {"rowsNow":40,"paintFinished":false}
+    So the content script IS running (the addEventListener wrap is active) and
+    the recorder is absent, which dates the build exactly; the page was **10%
+    built** when the listing came back, and the listing said nothing. Scenario A,
+    reproduced on the shipped code rather than in a fixture.
+    Worth noting why it was still at 40 rows: the agent's tab is hidden BY DESIGN
+    (#12), so Chrome throttles its timers and a 1.8s paint stretches out — which
+    makes a mid-render read the NORMAL case for this project rather than a narrow
+    race, and makes the silence more costly than the synthetic probe suggested.
+
+    **THE PRIMITIVES ARE VERIFIED IN THE USER'S ACTUAL BROWSER, which turns out
+    to be BRAVE 156 rather than Chrome.** Through the real bridge, in the MAIN
+    world, on a real page: `WeakRef` function, `Float64Array` function, the
+    observer options including `attributeOldValue` accepted, **`oldValue`
+    genuinely populated (`["1"]`)** -- the precise thing my implementation had
+    wrong -- and non-enumerable `defineProperty` on `window` working. So nothing
+    the recorder depends on is missing on the browser this actually runs on.
+    Worth recording separately that the browser is Brave: it is Chromium 156 so
+    the APIs match, but its shields are an extra variable no document in this
+    repo mentions, and every doc here says "Chrome".
+
+    **LIVE VERIFICATION OF THE FIX IS OWED AND IS NOT DONE.** Everything above ran under
+    Playwright against functions sliced out of `background.js`. #30 found the three
+    DECLARATIVE signals of this very probe dead in production for an entire release
+    because `runInTab` → `executeScript({func})` stringifies one function and
+    nothing else, so a sibling call is a free identifier whose ReferenceError lands
+    in a swallowing catch. `C11` now guards that shape and passes, and the probe
+    reads `window.__abMut`, which is a member expression rather than a free
+    identifier — but **the extension has not been reloaded and the signal has not
+    been seen in a real Chrome.** Until it has, this entry describes a measurement,
+    not a shipped capability.
+
+    Suites: readiness 10 → 23. New — R11/R12 (a page still painting is reported as
+    changing where every other signal reads zero, and the probe carries it across
+    the injection boundary), R13 (the CONTROL that the same page once finished
+    reports quiet — without it "always report changing" would pass R11 and the
+    signal would mean nothing), R14/R15 (our own mmid stamping is not counted,
+    with the control that a genuine attribute change still is), R16 (a mutation
+    inside a shadow root is seen), R17 (DEGRADATION: with no recorder the probe
+    reports unknown, never quiet), R18 (the recorder is non-enumerable and cannot
+    be replaced by page script), R19 (a same-origin frame's churn is not quiet), R20/R20b (the ad-page
+    tier, with the still-warns control), R22/R22b (net-zero within one batch,
+    with the ends-different control).
+    R11–R16 and R19 all fail against the committed
+    `listener_tag.js`; R17 passes in both arms, which is what makes it a
+    degradation control.
+
+71. **AN ADVERSARIAL GENERALITY AUDIT, AND THE SCARIEST FINDING IN IT DID NOT
+    REPRODUCE.** The standing defences say no natural-language wordlist reads
+    page text and no ASCII class gates it (#24, #66), and both still hold. This
+    went looking for the rest of the surface. `audit_patterns.py` sees **regex
+    literals only — 277 sites**; a wider scan that also sees `.includes` /
+    `.indexOf` / `.startsWith` / `classList.contains` / `getAttribute('data-` /
+    `normalize` / `toLowerCase` / `.slice(0,N)` / numeric comparisons found
+    **789 further sites**, i.e. the existing auditor covers ~26% of the pattern
+    surface.
+
+    **THE RETRACTION FIRST, because it is the one that would have been quoted.**
+    The audit reported that `toLocaleLowerCase()` with no locale argument uses
+    the HOST locale, so a Turkish- or Azerbaijani-locale Chrome could select **no
+    option whose label contains a capital `I`, on any site in any language** —
+    a result depending on the user's OS rather than the page. **On V8 it cannot
+    happen.** `'INDIA'.toLocaleLowerCase('tr-TR')` really is `'ındıa'`, but the
+    NO-ARGUMENT form returns `'india'` even with ICU's default locale set to
+    tr-TR. Checked four ways — Playwright `locale="tr-TR"` via
+    `Emulation.setLocaleOverride`, `--lang=tr-TR`, `LANG`/`LC_ALL`, and bare
+    Node — all reporting `Intl` default `tr-TR` and `'india'`.
+    The change still shipped, because `toLowerCase()` is specified
+    locale-independent and removes the dependency **by construction**. But it is
+    a **latent API hazard, not an observed defect**, and no behavioural fixture
+    can pin a thing that does not happen — so it is pinned by a SOURCE rule,
+    `OC6` (no `toLocale*Case` anywhere in the extension), which fires on the
+    ablation. The comment in the file says this rather than banking the scary
+    version.
+
+    **F1 — A HANDLER ON THE PROPERTY WAS INVISIBLE TO EVERY TOOL, and the first
+    fix was half of one.** `hasAttribute('onclick')` reads the ATTRIBUTE;
+    `listener_tag.js` tags only `addEventListener`. So `el.onclick = function(){}`
+    — the plain vanilla-JS idiom — passed through neither, and a `<div>` with a
+    working handler and no other signal was absent from `read_page`, `find` and
+    `query_elements` alike. Measured: **525 such property assignments across 68
+    of 106 corpus sites** (an upper bound on exposure, not on defects — most
+    carry another signal).
+    The first fix covered `onclick` only, while `listener_tag.js`'s `ACTIVATION`
+    set carries six events — so `addEventListener('pointerdown')` meant control
+    and `onpointerdown = fn` meant not-a-control. **That is #21 with #18's
+    measured consequence** (two passes disagreeing about what a control is was
+    60% of a measured accuracy gap). Caught by running my own probe against the
+    landed fix rather than by reading the report.
+    Now one helper over all six events, in **five byte-identical copies** at 12
+    sites. **Deliberately NOT one shared helper**: these are
+    `executeScript({func})` targets, where a sibling reference is a free
+    identifier in the page — the exact C11 class that left the readiness probe
+    dead for a release (#30). The duplication is FORCED; what was missing was
+    enforcement, so `OC7` pins the copies byte-identical and **`OC8` parses the
+    event list out of `listener_tag.js`'s own `ACTIVATION` set**, so the two
+    files cannot drift.
+    **Cost, 39 frozen sites, all arms on the same page load with a 0.00% drift
+    floor: entries 11,157 → 11,387 (+2.06%), listing chars median +0.00%, mean
+    +0.16%, worst +1.90%, and only 8 of 39 sites move at all** — targeted rather
+    than indiscriminate. Stated plainly: **the pointer family is worth +1 entry
+    over `onclick` alone on this corpus.** Measured-harmless, NOT
+    measured-valuable; the argument for the wider set is rule 17 and `OC8`, not
+    that number (#25 — the corpus is what it is).
+
+    **F2 — THE KANA FOLD, MIRRORED EXACTLY ACROSS TWO LANGUAGES.** The JS write
+    path used NFC + `toLocaleLowerCase` while the Python scorer used NFD with
+    every combining mark stripped; the two disagreed, and the Python one had its
+    own bug (#73's sibling: U+3099/U+309A are phonemic in kana, so ベッド and
+    ペット both folded to ヘット and `find` returned **pet type** under a
+    confident header). One rule now, both sides, byte-identical and tagged
+    `i18n:norm` so **P2 enforces it for free**:
+    `s.toLowerCase().normalize('NFD').replace(/(?![゙゚])\p{Mn}/gu,'').normalize('NFC')`.
+    `\p{Mn}` and not `\p{M}` — the first draft used `\p{M}`, which also matches
+    Mc, and a Devanagari matra is Mc with combining class 0, so `का` became `क`:
+    **the same bug reinvented in Hindi, caught before it shipped.** The final NFC
+    is load-bearing rather than tidiness: without it voiced kana stay decomposed
+    while page text arrives precomposed, and Hangul never recomposes from jamo —
+    which on the Python side is what kept four role-word hints dead.
+    **FX1 compares the two implementations on COLLISION SETS over 50 strings and
+    asserts the divergence set is EXACTLY three** — `Straße`/`ﬁle` (casefold vs
+    toLowerCase) and `กัน` (a ccc-0 Mn mark) — so a fourth divergence fails
+    rather than being quietly absorbed by a list that grows. My own note had said
+    two over 34 strings; the third was found by widening the sample.
+
+    **F3 — THE FOLD LABEL STRIPPER EMITTED INVALID UTF-16.** The common
+    prefix/suffix backed off one UTF-16 CODE UNIT at a time, so it could
+    terminate inside a surrogate pair: `🇯🇵 Japan / 🇯🇴 Jordan / 🇯🇲 Jamaica`
+    produced labels beginning with LONE SURROGATES, then `JSON.stringify`d into
+    the listing. Flag-emoji country pickers and emoji-prefixed sidebars (Notion,
+    Linear, Slack-style channel lists). Fixed by reusing the existing
+    surrogate-safe `clip` rather than writing a second helper.
+    **And the check for it could not fire from Python.** Playwright's JSON
+    transport replaces an unpaired surrogate with U+FFFD, so a Python-side scan
+    is a detector that cannot fire (rule 15) — it is counted IN-PAGE now. Worth
+    remembering for any future check of this class. `SG1` asserts PRESENCE of the
+    block first, or `SG2`/`SG3` would be vacuous.
+
+    **F4 — `_kind`'s fold guard was inert on every non-Latin-digit page.** JS
+    `\d` without `u` is `[0-9]`, so `382` classified as a number while `٣٨٢`,
+    `۱۲۳`, `३८२`, `๓๘๒`, `３８２` all classified as prose — and that guard exists
+    to stop a ranked number column folding in with prose titles, the Hacker News
+    / Wikipedia-GDP mispairing #30 already paid to fix. `\p{Nd}` with `u`.
+    **Cost: +0 entries, +0 fold groups, 0.00% chars, 0 of 39 sites** — inert on a
+    corpus that is overwhelmingly Latin-digit, which demonstrates no-regression
+    and **nothing about value**. The value evidence is `KD1`, and `KD2`/`KD3` are
+    the controls that it did not become "never fold" and that it extended an
+    existing rule rather than inventing one.
+
+    **F5 — ARIA `role` matched as an exact raw string**, where the spec defines a
+    whitespace-separated, ASCII-case-insensitive token list with the first valid
+    token winning. Against Chrome's own AX tree, `role="BUTTON"`, `"Button"`,
+    `"button link"`, `" button "` and a tab-prefixed one all resolve to `button`
+    and none was listed by us. **Across 6,632 real `role=` attributes on 66
+    corpus sites, ZERO are uppercase, padded or token lists**, and the fix costs
+    **+0 entries on 0 of 39 sites** — so this is written up in the code and here
+    as a **spec divergence with no observed instance**, not as a live defect.
+    Stated divergence kept honest: "first VALID token wins" needs the full ARIA
+    role list, which is not here, so it answers "does any token declare an
+    interactive role" and would admit `role="presentation button"` where Chrome
+    resolves `presentation`. Over-admitting one unobserved shape beats admitting
+    none. `RL3` is the control that a bare `role="presentation"` stays absent.
+
+    **F6 — A `dup:` TAG THAT LIED, AND TWO MORE COPIES IT WAS HIDING.**
+    `markCutLite` was tagged `dup:markcut` while omitting the surrogate guard its
+    siblings have, and had **no call sites at all** — deleted (#24's precedent).
+    Making the tag truthful then found **two further copies that were also not
+    surrogate-safe**: the `_mk` in `_pickOptionPage`, which hands back option
+    labels the agent is told to pass VERBATIM, and an untagged `_mk` in
+    `form_input`'s readback echo. `i18n:` tags were enforced by P2 and `dup:`
+    tags by nothing; `MC1` now requires every live `dup:markcut` copy to carry a
+    surrogate guard and `MC2` fails on any `dup:` tag claiming a duplication that
+    no longer exists. **A blanket byte-identity rule would have been wrong** —
+    the `markcut` copies differ deliberately by scope — so `OC7` is byte-identity
+    where that IS the contract and `MC1` is the property where it is not.
+
+    **THE BOM WAS MINE AND WAS DELIBERATE.** `extension/background.js` carried a
+    UTF-8 BOM at HEAD — residue of the PowerShell rewrite in the project memory —
+    and lost it this session. The agent editing that file flagged it as an
+    unintended side effect of its own edit; it was not. `P7d` (added in #70)
+    found it, and it was stripped with the body verified byte-identical by hash.
+    Recorded because a wrong attribution in the log is worse than no attribution.
+
+    **FOUR UNGUARDED MARKED CUTS, FOUND AND DELIBERATELY LEFT**, each #22's class
+    and each agent-facing: a walker's `out.label` at 60, the `computer(type)` echo
+    at 80, `query_elements`' row text at 300, and `form_input`'s readback `_shown`
+    at 80. None is tagged `dup:markcut`, so `MC1` is scoped not to fail on them.
+    Each needs its own fixture to be defensible. Tracked in `docs/OPEN.md`.
+
+    Suites: 1100 → 1215 across the whole session. From this entry — `OC1`–`OC8`
+    (handler properties, the five-copy identity rule, and the event list parsed
+    out of `listener_tag.js`), `TK1`–`TK6` and `FX1`/`FX1b` (the fold, and the
+    two implementations compared on collision sets), `SG1`–`SG3` (surrogate-safe
+    fold labels, counted in-page), `KD1`–`KD3` (non-Latin digits, with both
+    controls), `RL1`–`RL3` (role token lists, with the presentation control),
+    `MC1`/`MC1*`/`MC2` (the `dup:` tag rules, with the detector shown firing).
+
+72. **THE SAFETY MEASUREMENT HAD A HOLE THE SHAPE OF A SORT BUTTON.** #49
+    published *"26 sites, 2,726 descriptors, 100% CORRECT, 0% WRONG on every
+    mutation"* and that sentence has been quoted forward ever since. It is true
+    of the mutation set, and **the mutation set had no REORDER** — rename-target,
+    counter-in-name, delete-target, insert-twin, twin-elsewhere,
+    rename-neighbour. Every one of them changes the crowd's COMPOSITION, which
+    is exactly what `_resolve_recorded`'s crowd-check catches. A re-sorted list
+    changes none of it: same elements, same declarations, same `of`. The ordinal
+    is taken and names a different row.
+
+    Measured once the arm existed, 24 frozen sites, 2,496 descriptors, **574
+    (23.0%) carrying an ordinal**:
+
+    | mutation | CORRECT | REFUSED | WRONG |
+    |---|---|---|---|
+    | base | 100.0% | 0.0% | 0.0% |
+    | rename-target | 30.2% | 69.8% | 0.0% |
+    | counter-in-name | 14.3% | 85.7% | 0.0% |
+    | delete-target | 0.0% | 100.0% | 0.0% |
+    | insert-twin | 0.0% | 100.0% | 0.0% |
+    | **reorder** | **5.6%** | **0.0%** | **94.4%** |
+    | twin-elsewhere | 100.0% | 0.0% | 0.0% |
+    | rename-neighbour | 99.5% | 0.5% | 0.0% |
+
+    **0% refusals is the number that matters**, not the 94.4%: whatever the
+    permutation, there was no signal of any kind. The live shape is a flow that
+    clicks Delete on the first invoice row, replayed after the default sort flips
+    to newest-first — it **deletes a different invoice and reports PASSED**,
+    because the postcondition "one fewer row" still holds. #25's rule, applied to
+    a safety claim rather than to a corpus: *an ablation measures the code
+    against the sample; it cannot measure the sample.* **When a harness reports a
+    perfect score, the next question is what it does not model.**
+
+    **THE WITNESS, AND THE ONE THAT WON AND WAS REFUSED.** An ordinal needs
+    something that distinguishes a permutation from a stable crowd. Scored over
+    300 ordinal-bearing descriptors by whether each candidate is unique WITHIN
+    the tied crowd: self.href 17.3%, self.value 3.3%, self.text 4.0%,
+    self.label/placeholder 0.0%, all five together 22.7%; an ANCHOR of the
+    nearest preceding non-crowd controls 51.7% / 58.7% / 59.3% at one / two /
+    three; self + anchor **61.3%**. And **geometry (x, y) at 87.3%, which is not
+    used.** It is excluded from identity precisely because it drifts (#23: 110px,
+    #25: 1,097px), so a witness built on it would refuse on every reflow and
+    lazy image — **a safeguard that fires on innocent change is #15's noise with
+    a safety label.** What ships is self + anchor.
+
+    Two design points that each cost a wrong version first. The anchor window is
+    **RECORD-LOCAL**, reset at every crowd member: a global window means the same
+    element sees a DIFFERENT window after a sort, because it now has neighbours
+    in front of it that it did not have when it was first on the page — that
+    version refused the finding's own canonical case, the first invoice row. And
+    the witness is recorded **only when it is unique at record time**, the same
+    rule `_alt_of` uses: a presence test recorded one for ~100% of tied crowds
+    while only ~41% discriminate, so the rest would have carried false comfort
+    AND silenced the record-time warning.
+
+    **THE RESULT, AND WHY THERE ARE TWO REORDER ARMS.** The first AFTER run said
+    82.7% WRONG and was not believed (#16). `mut_reorder` permutes the crowd
+    inside a FIXED SCAFFOLD — only the tied controls move, the surroundings stay
+    — so no witness built from surroundings can ever fire. A real re-sort moves
+    whole RECORDS: the invoice number travels with its own Delete button. A
+    `resort` arm was added for the live shape and **`reorder` was KEPT as the
+    adversarial bound rather than replaced**, because swapping the ruler for one
+    the fix is good at is exactly how this project's measurements have gone wrong
+    before. Split by whether a witness exists:
+
+    | | n | CORRECT | REFUSED | WRONG |
+    |---|---|---|---|---|
+    | reorder, witnessed | 238 | 18.1% | 10.5% | 71.4% |
+    | reorder, UNWITNESSED | 348 | 5.7% | 0.0% | 94.3% |
+    | **resort, witnessed** | **212** | **94.3%** | **5.7%** | **0.0%** |
+    | resort, UNWITNESSED | 346 | 5.8% | 0.0% | 94.2% |
+
+    **`resort` on a witnessed descriptor is 0.0% WRONG — the bar, met** — and it
+    mostly RESOLVES rather than refusing, because the witness names the element
+    at its new index. Refusal cost on the six pre-existing mutations: **+0.2pp**,
+    all of it on `rename-neighbour` (99.5% → 99.3%). `base` unchanged at 100%.
+
+    **THE RESIDUE, STATED RATHER THAN BURIED: 59.4% of ordinal-bearing
+    descriptors have nothing to witness them** — crowds identical in every
+    declared field AND in their surroundings. Nothing the collector emits
+    separates those; the ordinal is taken exactly as before, no worse and no
+    better. `Recorder.before()` says so at record time, which is the one moment
+    it is cheap, and the step carries a `review` line. **Refusing them was
+    rejected deliberately:** 0% WRONG everywhere would mean refusing on an
+    UNCHANGED page too, pausing ~14% of all descriptors on every run, which is
+    not a safety cost but losing the feature. **And the 20 flows already on disk
+    carry no witness** — they are protected only once re-recorded.
+
+    **EIGHT MORE, each reproduced before it was fixed.**
+    - **Resume bound the WRONG target, looped forever, and proposed a patch that
+      corrupts the file.** `Unresolved` did not carry which path failed, so
+      `_bind` applied the binding to the FIRST target. On a `fill_form` login
+      step the binding landed on Email while Password stayed ambiguous, the run
+      could never be resumed past the step, and each attempt proposed rewriting
+      the EMAIL descriptor to the password box — which `record_flow(action=
+      "patch")` will write, after which the flow types the user's email into a
+      password field and submits it. Worse than reported: the wrong path was
+      proposed **eight times** for one resume, and patches apply in order.
+    - **An ineffective click passed on an unasserted step**, and 23% of recorded
+      steps carry no assertion. The extension now emits `NO EFFECT: ` (the
+      marker mirrors #66's `NOT DONE: `), and the runner treats it as a **second
+      token, not a seventh refusal** — `NOT DONE` means the op refused to act,
+      this means it acted and nothing observable followed. Fatal only for a step
+      with no postcondition, because "no DETECTABLE effect" is not "no effect"
+      (a native select opening, a focus change) and a real assertion is the
+      better judge.
+    - **`text` compared with `in`**, so `Approved` passed against `Not Approved`,
+      `active` against `inactive`, `3 items` against `13 items`. Now
+      whitespace-normalised equality — and **the finding's own suggested fix was
+      wrong**: `.strip()` would not have satisfied the original motivation, and
+      neither did `in`. Pre-fix, `"3 items left"` vs `"3   items\\n  left"` ALSO
+      failed, because the recorded string is not a substring of the reflowed one.
+      So this is not a pure tightening; it fixes the tolerance case too, and its
+      justification is a declared fact (HTML collapses whitespace runs when it
+      paints) rather than a chosen amount of slack.
+    - **Unknown keys in `expect` asserted nothing, silently** — `{"querry": …}`
+      and `{"Count": 99}` both passed having called no assertion tool, which is
+      the exact fallthrough #62 closed for `on_fail`. Validated at load from
+      BOTH `Step.from_json` and `Flow.from_json`, since `require` is the same
+      shape at a different moment (#21).
+    - **`settle_ms` widened the assertion window and not the target window**, on
+      exactly the slow SPAs it was measured for — and #59's live failure WAS
+      target resolution. One line.
+    - **`require` had never once fired, and it is now proven both directions
+      live.** `_require_before` collected observations before the first MUTATING
+      call, and `MUTATES` contains the `tabs_create_mcp` that `instructions=`
+      (#45) and `browser_batch`'s description (#46) both teach agents to open
+      with — so it was `{}` in all 19 flows. It is now derived from before the
+      first NON-navigational action, and **the landing checks MOVE off the
+      navigational step rather than being copied**: copying leaves that step's
+      postcondition firing first, which is how it stayed silent. Through the real
+      MCP path against the fixture: clean `PASS 2/2 in 0.26s`; with `--chaos ja`
+      (the app localised, so the login form is not the one the flow begins from)
+      `FAIL 1/2` with *"the app is not in the state this flow starts from:
+      search_page('Work email') found 0, recorded at least 1. Stopped before step
+      1 (fill_form)"* — and `fill_form` never dispatched. **The first time this
+      capability has ever spoken.**
+    - **Three more fields with one half of a contract**, the fifth, sixth and
+      seventh instances this project has found. `Step.note` was declared,
+      serialised, deserialised, written by nothing and read by nothing — wired
+      rather than deleted, because it is explicitly a HUMAN field and the file is
+      meant to be edited, so the runner repeats it when that step fails.
+      `descriptor["untargetable"]` promised in its own comment to "fail LOUDLY at
+      replay" and nothing had ever made that happen. And `hollow` / `unproven` /
+      `unwitnessed_absence` were computed, printed once at stop, and **never
+      persisted** — so #68's stated purpose, that the re-grader is a human
+      reading a small JSON diff, was defeated by the fact that the human reading
+      the diff could not see them. Persisted as `Step.review` and printed by
+      `--check-only`, so CI prints them with no browser. **Never a failure: an
+      unevidenced assertion is not a wrong one.**
+    - **FP5 was vacuous** — it compiled an EMPTY recorder, so `require == {}`
+      trivially. Rewritten to a real navigate-then-act recording. Seventh vacuous
+      fixture found in this project, and the ablation harness (a `git archive
+      HEAD` shadow checkout with the new suite copied over it) is what found it:
+      **24 of the new checks fail against pre-fix code and the 11 controls pass
+      both ways**, which is what makes them controls.
+
+    **NOT DONE, DELIBERATELY.** The adversarial `reorder` was not optimised
+    against: a renderer cannot move the buttons and leave their rows, so a
+    witnessed scaffold-fixed permutation is not physically realisable, and its
+    85% WRONG is dominated by the unwitnessed population where both models
+    coincide. The number is reported either way rather than quietly dropped.
+
+    Suites: flows 149 → 183. New — FD20/FD20c–g and FR20/FR20b (the witness,
+    with FD20b/FD20f/FR20c as controls), FR17–FR17c (resume binds the path that
+    failed), FR18–FR18c and FD19e/FD19f (the NO EFFECT token, and that it stays
+    distinct from NOT DONE), FR19–FR19c (equality with the reflow control),
+    FO7–FO7c (expect validation), FS7 (the target window), FP8–FP10 (the
+    precondition, both directions), FN1/FN1b (`note`), FW8/FW8b (`review`
+    persisted).
+
+73. **THE NUMBER THIS PROJECT QUOTES MOST OFTEN, AUDITED AT LAST — it stands,
+    and three things around it were wrong.** 96.0% Mind2Web target recall has
+    been the headline since #17 and had never been checked. Online-Mind2Web
+    (COLM 2025) reports **47% of 650 sampled Mind2Web tasks invalid or with
+    outdated ground truth**, which is an argument rather than a measurement
+    against our use, and #16's rule applies to our own headline above all.
+
+    **IT REPRODUCES THREE WAYS — the preserved artifact, a fresh run and an
+    independent probe — at 166/173, same seven misses, same credit split.**
+
+    **THE CRITICISM DOES NOT REACH US, DECISIVELY**, and that is worth having
+    established rather than assumed:
+
+    | | |
+    |---|---|
+    | does the benchmark ever navigate? | **no** — `page.set_content(s["html"])` only, no network call anywhere in the scoring path |
+    | do the snapshots pull subresources? | **0 of 186** contain a `<script>`, `<link>`, `<style>` or `style=` — nothing to fetch |
+    | where does ground truth come from? | `pos_candidates[0].backend_node_id`, injected into the SAME string that is rendered |
+    | is that label unambiguous? | the target id occurs **exactly once in 186/186** |
+
+    The page and its label come from one frozen record, and Online-Mind2Web's
+    mechanism is live-site drift — which cannot touch an element-recall
+    measurement taken entirely inside the cache. Several of the 22 tasks
+    ("showtimes for John Wick 4", "fiscal year 2021") would plainly be outdated
+    on the live web today, which is their point and is exactly why it does not
+    bite here. **Label set clean: zero duplicated `action_uid`, zero degenerate
+    targets, zero implausible operations** (all 19 TYPE on typeable inputs, all
+    13 SELECT on a `<select>` or a `<label>` fronting one).
+
+    **THE 13 EXCLUDED ACTIONS WERE EXCLUDED FOR A REASON THAT IS FALSE, AND THE
+    EXCLUSION WAS PESSIMISTIC RATHER THAN FLATTERING.** `bench_mind2web.py` drops
+    them saying *"the target element is absent from the saved snapshot
+    entirely"*. All 13 ids are **present in the snapshot string**. They are lost
+    when Chromium RE-PARSES it: Mind2Web serializes XML-style, so an empty
+    element comes back as `<a/>`, `<iframe/>`, `<textarea/>` — and **HTML has no
+    self-closing syntax for a non-void element, so the slash is ignored and the
+    tag OPENS.** `<iframe>` and `<textarea>` are RAWTEXT/RCDATA, so one of them
+    swallows the entire rest of the document as text. Measured: espn has a
+    self-closed `<iframe/>` at ~118.5k and all three espn targets sit after it;
+    discogs a `<textarea/>` at ~286k with all ten of its targets after it. espn
+    goes from **4,115 ids in the string to 744 in the DOM**. Repairing the input
+    recovers all 13 and **every one is an exact `own` hit**. So the printed
+    "all-in" alternative of 89.2% is **wrong in the pessimistic direction**; the
+    correct all-in figure is **96.2%**.
+
+    **#26'S CHARACTERISATION OF THE MISSES WAS WRONG BY CONSTRUCTION.** It said
+    they were *"a clickable CONTAINER holding clickable children"* dropped by
+    container suppression — and **#28 stopped container suppression deleting
+    anything at all**, so that could not have been true from the moment #28
+    shipped. Asking the LEDGER instead of inferring: **all seven are dropped by
+    `not-interactive`**, all seven are visible, and all seven declare NOTHING —
+    no interactive tag, no role, no `onclick`, no `tabindex`, no
+    `__abClickBound`, no `cursor:pointer`, no `href`. Four are underarmour
+    accordion headers, two kohls filter spans, one an espn date cell.
+    **The root cause is the corpus and it is measured, not assumed: across all
+    173 targets `listener_tagged` is 0/173 and `cursor_pointer` is 0/173**,
+    because the snapshots carry no scripts and no CSS — so **two of the eight
+    admitting signals are structurally switched off**. The misses are
+    PRINCIPLES #1 behaving exactly as specified on markup that declares nothing,
+    and #18 measured this class live at 20% -> 90% recovery once handlers exist.
+    #26's "do NOT patch this on n=3" was guarding a problem that does not exist.
+
+    **THE RULER HAS ONE FALSE CREDIT, AND ITS SAFETY BOUND IS ON THE WRONG
+    PATH.** Credit split of the 166: **own 148 (89.2%)**, ancestor 12, descendant
+    6 — so **10.8% is credited indirectly** and exact-only recall is
+    **148/173 = 85.5%**, which the headline sits 10.5pp above. The 6 descendant
+    credits are sound by event bubbling (5 are a `<label>` crediting its own
+    control, #18's motivating case). 11 of 12 ancestor credits are sound. One is
+    not: **ikea `ccf0ae9a`, a `<label>` credited to an `<a>` eleven listed levels
+    up holding 638 elements and 90% of the viewport** — itself an artefact of the
+    same serialization bug, a self-closed `<a … name="product-list-skip"/>` that
+    swallowed the product listing. Clicking it is a skip link, not a price
+    filter. Withdrawn: 0.6pp.
+    And the **area cap guards the direction that cannot fail**: 0 of 173 targets
+    reach the 40% threshold, so it has never changed a verdict — while the
+    ANCESTOR path, the only direction where a false credit is structurally
+    possible, has **no bound at all**. Mirroring the cap gives 165/173 = 95.4%.
+
+    **SO IT IS A BAND, NOT A POINT.** exact-only 85.5% · own+descendant 89.0% ·
+    ancestor-capped 95.4% · **as shipped 96.0%** · faithful repair 95.2% ·
+    minimal repair 96.2% · macro-by-site 96.2% · macro-by-trajectory 95.7%.
+    **Every reasonable variation lands in 95–96%.**
+    And 173 actions is **not 173 independent observations**: they come from 22
+    trajectories, **10 of 16 sites contribute a single trajectory**, exploretock
+    alone is **17% of the sample**, and 58 of 186 are near-duplicates (eight
+    identical exploretock `<svg>` clicks). **Leave-one-site-out: 95.1% to
+    98.1%.** Do not put a confidence interval on it as if n=173.
+
+    **THE HONEST SENTENCE**, now in `README.md`: *the element the human acted on
+    is in our listing 166 of 173 times (96.0%), counting an ancestor or
+    descendant we surfaced instead as a hit; 85.5% as the element itself. These
+    are stripped HTML snapshots with no scripts and no CSS, so two of the eight
+    admitting signals cannot fire — it is a structural lower bound, and all seven
+    misses declare nothing clickable in static markup.* Quote **~96%**, never
+    "96.0%" bare.
+
+    **THE LARGEST UNAUDITED CHOICE IS UPSTREAM OF ALL OF IT** and is NOT closed:
+    `fetch_mind2web.py` keeps only `pos_candidates[0]`, and the original ~590MB
+    shards were not retained — so if Mind2Web marks several nodes positive per
+    action, our ruler uses one of them and may be stricter or looser than
+    MindAct's. That cannot be answered without re-downloading.
+
+    **Three probe bugs of the auditor's own, each caught by re-deriving rather
+    than by reading**, which is the same class this log keeps recording: a first
+    hypothesis of `<template>` for the 13 drops (wrong — there are none before
+    any of them); a repair probe reporting "8 ancestor credits ≥40% of viewport"
+    where the real number is **1**, because it counted rows where a big ancestor
+    merely existed, including rows credited via `own`; and ancestor distance
+    printed as "1 hop" when the field counts mmid-bearing ancestors rather than
+    DOM distance — the ikea case is 11 LISTED ancestors up.
+
+    Probe: `tools/audit_mind2web_labels.py`, which audits the label set, the
+    credit paths, the area cap and the serialization repair with **all arms from
+    one page load** so run-order drift cannot align with the arm, and extracts
+    `_collectInteractivePage` verbatim so a disagreement with the benchmark is a
+    disagreement about the ruler. Measured against HEAD rather than the working
+    tree, because three agents were editing `background.js` concurrently and its
+    hash changed mid-run — a working-tree number would not have been
+    reproducible.
+
+    **NOT DONE, and owed:** fix the false comment in `bench_mind2web.py`; add the
+    ~6-line serialization repair so the denominator is the full 186 (which also
+    fixes the ikea credit for free); and bound the ancestor path or rely on the
+    repair to do it.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -6485,6 +7259,10 @@ granted in the side panel is refused with the same message the agent gets.
 | A recorded flow has no `alt` key on a link target | The MCP server was loaded before #61. It reads `descriptor.py` and `core/flows/*` at CONNECT time, and the old one answers normally while writing a slightly older format — `/mcp` reconnect, then CHECK THE SAVED FILE rather than the live result |
 | Server-side edits seem to have no effect | `sw_info` answers this since #61: `server_code_changed_since_start` names every file whose mtime is later than this process's import. Empty means the running server IS the code on disk. The client must reconnect (`/mcp`); nothing else picks it up, and the stale process keeps answering normally, which is what made this cost six reconnects across #59 and #61 |
 | A flow says a step FAILED but the action plainly worked | Fixed in #60 — the postcondition window was a flat 6s and a real app's create -> table-refresh took longer, so the flow reported FAILED for a record that HAD been created. Each step now carries `settle_ms`, measured at record time from the timestamps the recorder already kept, and the replay allows the default PLUS that. A flow recorded before #60 carries 0 and is unchanged |
+| The banner says `THE DOM IS STILL CHANGING` | By design since #70 — the page is actively being rewritten, measured by mutation recency rather than by the network. Every other signal reads ZERO on this case (an SPA painting rows after its one fetch has resolved), which is why it was invisible for so long. The kinds are named because `40 @style` (an ad carousel) and `40 structural` (the table you are reading) are opposite facts |
+| The banner says the DOM is unchanged but requests are in flight | By design since #70, and it is the HONEST answer rather than a hedge: what is rendered now is stable and safe to read, and more may still arrive. Measured — a page with a poll and a beacon keeps 3–6 requests pending for ever while its DOM finished in 300ms, and the old banner said "STILL SETTLING" to that page until you gave up on it. Network idle is the best wait rule published (0.46% stale) and it is reached within 3s on only 15% of booking/buying pages, so this is the commercial web rather than a defect |
+| `page_readiness` returns a sentence on a settled page where it used to return `""` | By design since #70. It exists only for `find`'s MISS path (#39), where the question is whether "no match" means ABSENT or NOT YET — and `""` answers neither, reading the same as a probe that failed. Only this op; `readinessNote` is unchanged, so no listing gained a banner |
+| Mutation recency reports `-1` / the probe says unknown | `listener_tag.js` did not run on that page — it is a manifest content script, so a page loaded before the extension was installed or reloaded has no recorder. Reload the page. Unknown is deliberately NOT reported as quiet (R17): a false quiet is the worst direction this probe can fail in |
 | A tool result starts with `*** MESSAGE FROM THE USER` | By design since #69 — the user typed that in the side panel's Steer box while you were working, and it was attached to the front of this result. It is NOT page content: no page can write to the panel, which is what the closing line says. Treat it as the user speaking |
 | A steering note shows `waiting` and never becomes `delivered` | `waiting` means the server HAS it and is holding it for the next tool call — so an idle agent is the normal cause, and it is the channel's stated limit rather than a fault. If the agent is plainly acting, the server is stale: it loaded `mcp_server.py` at connect time and the steering code arrived later. `sw_info` names the changed files; `/mcp` reconnects. `queued` is the different case — the bridge is down and nothing has left the browser yet |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |

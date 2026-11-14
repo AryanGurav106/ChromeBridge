@@ -114,6 +114,67 @@ def main():
     check("T12 text with no banner is unaffected by the banner path",
           not _truncate(PAGE, 300, "h").startswith("***"))
 
+    # T26/T27: THE DEFAULT FORMAT WAS THE ONE FORMAT NEVER TESTED HERE. Every
+    # fixture above is FLAT (`mmid=…` / `ref_…` at column 0), but `read_page`'s
+    # `format` defaults to "tree" (#27) and the extension indents each row by its
+    # depth. `_ROW_LINE` was anchored at `^ref_`, so on a default read it matched
+    # nothing but fold lines — and both of this file's reasons for existing failed
+    # silently on the shipped default while all 25 checks stayed green.
+    # These are ADDED rather than converting the fixtures above: flat is still a
+    # supported output and keeps its own coverage, and running the two formats over
+    # the SAME rows is what makes each one a control for the other.
+    _R = [f'ref_{i} | a "Headline number {i} about something or other"'
+          for i in range(1, 41)]
+    _flat = "Current URL: /\n" + "\n".join(_R)
+    _tree = "Current URL: /\n" + "\n".join(" " * (1 + i % 3) + r for i, r in enumerate(_R))
+
+    def _accounted(txt):
+        """shown rows + the residual the clause claims, as a reader would add them."""
+        shown = sum(1 for ln in txt.splitlines() if "ref_" in ln and " | " in ln)
+        m = re.search(r"(\d+) more element\(s\) not shown", txt)
+        return shown, (int(m.group(1)) if m else None)
+
+    _fs, _fr = _accounted(_truncate(_flat, 1200, ""))
+    _ts, _tr = _accounted(_truncate(_tree, 1200, ""))
+    check("T26 an indented (default tree-format) listing states what truncation "
+          "dropped, instead of losing elements in silence",
+          _tr is not None and _ts + _tr == 40,
+          f"tree: {_ts} shown + {_tr} claimed; flat control: {_fs} + {_fr}")
+    check("T26b CONTROL: the flat listing still accounts for every element too",
+          _fr is not None and _fs + _fr == 40, f"{_fs} shown + {_fr} claimed")
+
+    # T27: #13's legend-eviction fallback keys off the SAME pattern, so on a tree
+    # listing whose legend alone fills the budget it never engaged at all: the flat
+    # listing dropped the legend and printed 6 rows, the tree returned ZERO rows and
+    # said only "[output truncated at 1200 chars]". That is the exact defect this
+    # file was written for, arriving through the format rather than through the
+    # legend. The legend here is deliberately big enough that a plain slice cannot
+    # reach a WHOLE row, which is the condition the fallback tests for — and the
+    # FIRST VERSION OF THIS CHECK WAS VACUOUS because its legend was 869 chars and
+    # one whole row still fitted under the budget, so the fallback correctly
+    # declined and the check was really a second copy of T26. It FAILED against the
+    # pre-fix code, which is what made it look sound: a fixture that fails for the
+    # WRONG reason is still vacuous for the claim it makes. Hence the explicit
+    # "legend was dropped" assertion below — if the fallback is not reached this
+    # check fails, rather than quietly measuring something else.
+    _BIGLEG = ("Current URL: /\n"
+               + "\n".join(f"  - legend line {i} explaining the notation at some "
+                           f"considerable length to consume the whole budget"
+                           for i in range(20)) + "\n")
+    _LONG = [f'ref_{i} | a "{"Headline " * 18}{i}"' for i in range(1, 21)]
+    _lflat = _BIGLEG + "\n".join(_LONG)
+    _ltree = _BIGLEG + "\n".join(" " * (1 + i % 3) + r for i, r in enumerate(_LONG))
+    _lout, _cout = _truncate(_ltree, 1200, ""), _truncate(_lflat, 1200, "")
+    _ls, _lr = _accounted(_lout)
+    _cs, _cr = _accounted(_cout)
+    check("T27 the legend is dropped to make room for INDENTED rows too, so a tree "
+          "listing never returns a decoder ring with nothing to decode",
+          "legend was dropped" in _lout and _ls > 0
+          and _lr is not None and _ls + _lr == 20,
+          f"tree: fallback={'legend was dropped' in _lout} {_ls} shown + {_lr} "
+          f"claimed; flat control: fallback={'legend was dropped' in _cout} "
+          f"{_cs} + {_cr}")
+
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} truncation checks passed.")
     return 0 if passed == len(results) else 1

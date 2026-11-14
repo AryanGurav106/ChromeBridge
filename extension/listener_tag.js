@@ -70,6 +70,225 @@
 //    property enumeration sees it. It does make the page's closed root reachable to
 //    other script IN THAT PAGE — but that is the page's own same-origin data, which
 //    it created and can already reach through the closure that made it.
+// --------------------- DOM mutation recency (readiness) ---------------------
+// The readiness probe used to measure the NETWORK, and the agent's question is
+// about the DOM. Measured, both directions, in scratchpad/probe_false_negative:
+//
+//   STILL BUILDING, network silent (an SPA painting 400 rows in setTimeout
+//   chunks): readyState=complete, 0 aria-busy, 0 progressbars, 0 requests in
+//   flight. EVERY signal we shipped said "settled" while the table went from 64
+//   rows to 400. The agent reads a third of a table and concludes.
+//
+//   READY BUT CHATTY (painted and done, with a 120ms poll and a beacon):
+//   3-6 requests permanently in flight, so the banner fired for ever on a page
+//   that finished before the first read. An always-on warning is the noise #15
+//   priced and #43 deleted readyState for being.
+//
+// DOM-mutation recency separates them with no overlap -- 9-18ms while building
+// against 907-3514ms when done -- so we do not have to choose a threshold,
+// because we report the NUMBER and not a verdict (#33, #65, #60).
+//
+// WHY IT LIVES HERE. You cannot observe mutations that already happened, so the
+// observer has to be installed before any page script runs. That is the same
+// reason the two wraps above are here, and document_start MAIN world is the only
+// place it can be.
+//
+// COST, interleaved A/B on the same page load, 3 replicates, 2.4% drift floor:
+// -7.7% / -5.6% / +6.1% at 200 / 2,000 / 10,000 mutations. Free at any realistic
+// rate. The callback does nothing but record -- the 32-record prefix bound means
+// a 10,000-record burst costs 32 -- and ALL attribution is deferred to read time.
+//
+// NO ATTRIBUTE FILTER, deliberately. A filter is a list that drifts from what the
+// listing actually prints (#21's one-concept-two-spellings). Instead every record
+// keeps its attribute NAME and the reader is told what changed: "40 style, 0
+// structural" and "0 style, 40 structural" are opposite facts and a filtered
+// count cannot tell them apart.
+//
+// SHADOW ROOTS. A MutationObserver on `document` does not see into one. #25
+// records this exact bug class in this exact probe ("shadow-blind -- fourth home
+// for a bug class fixed twice"), so every root the page creates is registered
+// below from inside the attachShadow wrap -- open AND closed, since nothing can
+// create a closed root without going through it.
+(() => {
+  try {
+    if (window.__abMut) return;
+    const CAP = 1024;
+    const ts = new Float64Array(CAP);     // performance.now() per record
+    const kd = new Uint8Array(CAP);       // 1 childList, 2 characterData, 3 attributes
+    const an = new Array(CAP);            // attribute name, or null
+    const tg = new Array(CAP);            // WeakRef(target), or null
+    let n = 0;                            // monotonic total; slot = n % CAP
+    let obs = null;
+
+    const rec = (recs) => {
+      // OUR OWN WRITES ARE NOT THE PAGE CHANGING. The collector stamps a real
+      // `mmid` ATTRIBUTE on every interactive element, so without an exclusion
+      // an observation would report ITSELF as churn -- worst on the first read
+      // of a page, one record per control. That exclusion is by NAME at record
+      // time, below.
+      //
+      // THERE IS DELIBERATELY NO pause()/resume() PAIR. The first version had
+      // one and nothing ever called it, which is half a contract (#30, #54,
+      // #57, #62) -- and worse, it was reachable from the page, so one call to
+      // pause() would have blinded this signal for the life of the document
+      // with nothing reporting that it had. An exclusion that cannot be
+      // switched off cannot be switched off BY THE PAGE EITHER.
+      const t = performance.now();
+      // TWO SEPARATE BOUNDS, because the two costs are different by orders of
+      // magnitude. FILTERING is one string compare, so every record is
+      // inspected; STORING allocates a WeakRef and walks a target, so only the
+      // first 32 survivors are kept. Conflating them was a real defect: a single
+      // callback carrying 50 mmid stamps skipped 32 in the loop and then added
+      // the remaining 18 to the total anyway, so the exclusion leaked at exactly
+      // the rate the burst exceeded the prefix.
+      // NET-ZERO WITHIN ONE BATCH IS NOT A CHANGE. A MutationObserver callback
+      // is a microtask, so one synchronous script's worth of mutations arrives
+      // as a single batch -- and `get_page_text` performs a hide-read-restore
+      // (set display:none, read innerText, put it back) to strip editor gutters
+      // and collapsed subtrees. MEASURED: 12 <details> elements produce 24
+      // `style` records whose net effect on the DOM is exactly nothing, so a
+      // read_page within the window afterwards reported OUR OWN instrumentation
+      // as page activity. That is the same defect the `mmid` exclusion exists to
+      // prevent, one attribute over.
+      //
+      // This is the per-record "a write whose value did not change" rule applied
+      // at the right granularity: if an attribute starts a batch at X and ends it
+      // at X, nothing changed. It is a FACT about the two values, not a guess
+      // about intent — and it correctly also drops a page's own toggle-and-
+      // restore within one tick, which likewise leaves the listing untouched.
+      let netZero = null;
+      for (let i = 0; i < recs.length; i++) {
+        const r = recs[i];
+        if (r.type !== 'attributes' || !r.target) continue;
+        if (!netZero) netZero = new Map();
+        let per = netZero.get(r.target);
+        if (!per) { per = new Map(); netZero.set(r.target, per); }
+        const e = per.get(r.attributeName);
+        if (e) e.last = r;                       // keep the FIRST old and the LAST record
+        else per.set(r.attributeName, { first: r, last: r });
+      }
+      if (netZero) {
+        for (const [el, per] of netZero) {
+          for (const [name, e] of per) {
+            let now = null;
+            try { now = el.getAttribute(name); } catch (x) {}
+            // Unchanged across the whole batch -> drop every record for this
+            // (element, attribute) pair, not just the last one.
+            per.set(name, now === e.first.oldValue);
+          }
+        }
+      }
+
+      let kept = 0;
+      for (let i = 0; i < recs.length; i++) {
+        const r = recs[i];
+        if (r.type === 'attributes' && netZero) {
+          const per = netZero.get(r.target);
+          if (per && per.get(r.attributeName) === true) continue;
+        }
+        // `mmid` is OURS, and dropping it HERE rather than at read time is the
+        // difference between a clean ring and a useless one: a page with 500
+        // controls would otherwise evict half the buffer on its first read.
+        // Filtered by name because a stamp can land inside a page script's own
+        // microtask ordering, where a pause window would miss it.
+        if (r.attributeName === 'mmid') continue;
+        // NOTE there is deliberately no SECOND, per-record "did the value
+        // change" test here. The batch test above subsumes it and the
+        // per-record one is actively WRONG once a pair has more than one
+        // record: for class A -> B -> A the records carry oldValue A and B
+        // against a current value of A, so a per-record test drops the first
+        // and keeps the second -- reporting half of a net-zero change. The
+        // batch test compares the current value against the FIRST old value
+        // and drops both, which is the only answer that matches what the DOM
+        // actually did.
+        //
+        // The rule itself comes from browser-use's ax.py, whose comment names
+        // Google Flights rewriting a class every frame. Their other damping --
+        // `style` limited to once per element per 200ms -- is deliberately NOT
+        // taken: 200ms is a chosen number, and the kind-split reporting already
+        // discriminates, since "40 @style" and "40 structural" read as the
+        // opposite facts they are.
+        kept++;
+        if (kept > 32) continue;   // counted, not stored
+        const s = n % CAP;
+        ts[s] = t;
+        kd[s] = r.type === 'childList' ? 1 : (r.type === 'characterData' ? 2 : 3);
+        an[s] = r.attributeName || null;
+        const el = r.target && r.target.nodeType === 1 ? r.target : (r.target && r.target.parentElement);
+        try { tg[s] = el ? new WeakRef(el) : null; } catch (e) { tg[s] = null; }
+        n++;
+      }
+      // A burst beyond the prefix still COUNTS -- losing the count would make a
+      // flood look like quiet, which is the direction that misleads.
+      if (kept > 32) n += kept - 32;
+    };
+
+    // `attributeOldValue` IS REQUIRED, not optional detail: without it every
+    // MutationRecord.oldValue is null, so the net-zero test above compares the
+    // live value against null, never matches, and the whole exclusion is inert.
+    // It was inert when first written, and only measuring it said so — the
+    // hide-read-restore still produced its full 24 records.
+    const OPTS = { childList: true, subtree: true, characterData: true,
+                   attributes: true, attributeOldValue: true };
+    try { obs = new MutationObserver(rec); obs.observe(document, OPTS); } catch (e) {}
+
+    // Composed containment: `contains()` stops at a shadow boundary, and the
+    // collector walks the composed tree, so the scope test has to as well or a
+    // scoped read of a custom element would report its own contents as external.
+    const inScope = (el, scope) => {
+      let cur = el;
+      for (let hops = 0; cur && hops < 200; hops++) {
+        if (cur === scope) return true;
+        cur = cur.parentNode || (cur.host || null);
+        if (cur && cur.nodeType === 11) cur = cur.host || null;
+      }
+      return false;
+    };
+
+    const api = {
+      watch(root) { try { if (obs && root) obs.observe(root, OPTS); } catch (e) {} },
+      // scope: an Element to restrict to, or null for the whole document.
+      // winMs: the window to count within. Returns FACTS, never a verdict.
+      query(scope, winMs) {
+        const now = performance.now();
+        const cut = now - (winMs || 1000);
+        const out = { total: n, saturated: n > CAP, since: -1, sinceAny: -1,
+                      structural: 0, text: 0, attrs: {}, win: winMs || 1000 };
+        const seen = Math.min(n, CAP);
+        for (let i = 0; i < seen; i++) {
+          const t = ts[i];
+          if (!t) continue;
+          if (out.sinceAny < 0 || t > out.sinceAny) out.sinceAny = t;
+          let hit = true;
+          if (scope) {
+            const el = tg[i] && tg[i].deref ? tg[i].deref() : null;
+            hit = !!el && inScope(el, scope);
+          }
+          if (!hit) continue;
+          if (out.since < 0 || t > out.since) out.since = t;
+          if (t < cut) continue;
+          if (kd[i] === 1) out.structural++;
+          else if (kd[i] === 2) out.text++;
+          else { const k = an[i] || 'attr'; out.attrs[k] = (out.attrs[k] || 0) + 1; }
+        }
+        out.since = out.since < 0 ? -1 : Math.round(now - out.since);
+        out.sinceAny = out.sinceAny < 0 ? -1 : Math.round(now - out.sinceAny);
+        return out;
+      },
+    };
+    // NON-ENUMERABLE AND NON-WRITABLE, like __abConsole and the two expandos
+    // above. A plain assignment puts this in Object.keys(window), which both
+    // fingerprints the extension to every page and lets any script replace the
+    // object wholesale -- substituting a query() that always answers "quiet"
+    // would silently disable the signal, and a false quiet is the worst
+    // direction this probe can fail in.
+    try {
+      Object.defineProperty(window, '__abMut',
+        { value: api, enumerable: false, writable: false, configurable: true });
+    } catch (e) { window.__abMut = api; }
+  } catch (e) {}
+})();
+
 (() => {
   try {
     const orig = Element.prototype.attachShadow;
@@ -81,6 +300,10 @@
           Object.defineProperty(this, '__abClosedRoot', { value: root, configurable: true });
         }
       } catch (e) {}
+      // Register the root with the mutation recorder. A MutationObserver on
+      // `document` is blind to shadow content, and this wrap is the one place
+      // that sees EVERY root the page will ever make, open or closed.
+      try { if (window.__abMut) window.__abMut.watch(root); } catch (e) {}
       return root;
     };
     try { Object.defineProperty(wrapped, '__abWrapped', { value: true }); } catch (e) {}

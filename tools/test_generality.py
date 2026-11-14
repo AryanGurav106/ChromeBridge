@@ -1584,6 +1584,122 @@ async def main():
               "banner present" if "A MODAL/DIALOG IS CURRENTLY OPEN" in _mv1 else "NO BANNER")
         await mv.close()
 
+        # ---- OC: a handler assigned to the PROPERTY is a declaration ------------
+        # An event handler has two spellings and the collector read only one.
+        # hasAttribute('onclick') sees `<div onclick="...">`; `el.onclick = fn` —
+        # the vanilla-JS idiom — sets NO attribute and never calls addEventListener,
+        # so listener_tag.js cannot see it either. An element whose ONLY declaration
+        # was a property handler therefore existed for no tool.
+        # THE POINTER FAMILY IS THE HALF THAT MATTERS. listener_tag.js tags six
+        # activation events when they are bound with addEventListener, so checking
+        # only `onclick` here would have said: addEventListener('pointerdown') = a
+        # control, `onpointerdown = fn` = not a control. Radix, HeadlessUI and MUI
+        # all gate on pointerdown rather than click — that is the entire reason
+        # fix #1 exists — so OC1b is not a variation on OC1, it is the common case.
+        # The controls are what make any of this mean anything: the SAME markup
+        # with addEventListener and with the attribute must already be listed, or a
+        # failure here would only say "divs are not listed".
+        oc = await browser.new_page(viewport={"width": 900, "height": 700})
+        await oc.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # add_init_script only affects documents created AFTER it, and set_content
+        # reuses the existing about:blank — navigate first or the tagger runs on
+        # nothing and the addEventListener control silently tests an untagged page.
+        await oc.goto("about:blank")
+        await oc.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<div id='oc-prop' style='width:200px;height:30px'>property handler</div>"
+            "<div id='oc-pointer' style='width:200px;height:30px'>pointerdown property</div>"
+            "<div id='oc-touch' style='width:200px;height:30px'>touchstart property</div>"
+            "<div id='oc-addev' style='width:200px;height:30px'>addEventListener</div>"
+            "<div id='oc-attr' onclick='void 0' style='width:200px;height:30px'>attribute handler</div>"
+            "<div id='oc-none' style='width:200px;height:30px'>no handler at all</div>"
+            "</body>", wait_until="domcontentloaded")
+        # Assigned from the MAIN world after load, which is exactly how a page does
+        # it; the addEventListener wrap installed at document_start still applies.
+        await oc.evaluate("""() => {
+            document.getElementById('oc-prop').onclick = function () {};
+            document.getElementById('oc-pointer').onpointerdown = function () {};
+            document.getElementById('oc-touch').ontouchstart = function () {};
+            document.getElementById('oc-addev').addEventListener('pointerdown', function () {});
+        }""")
+        await oc.wait_for_timeout(80)
+        _ocr = await oc.evaluate("(function(){ " + COLLECT
+                                 + "; return _collectInteractivePage(true); })()")
+        _ocm = await oc.evaluate("""() => {
+            const o = {};
+            for (const id of ['oc-prop', 'oc-pointer', 'oc-touch', 'oc-addev',
+                              'oc-attr', 'oc-none'])
+              { const n = document.getElementById(id); o[id] = n && n.getAttribute('mmid'); }
+            return o;
+        }""")
+        _oce = {k: find(_ocr, mmid=v) for k, v in _ocm.items() if v}
+        check("OC1 a <div> whose ONLY signal is an onclick PROPERTY is listed",
+              bool(_oce.get("oc-prop")),
+              "listed" if _oce.get("oc-prop") else "ABSENT — el.onclick = fn is invisible to "
+              "both hasAttribute('onclick') and listener_tag.js")
+        check("OC1b ...and an onpointerdown PROPERTY, which is what Radix/MUI "
+              "actually gate on (fix #1) and what a click-only check misses",
+              bool(_oce.get("oc-pointer")),
+              "listed" if _oce.get("oc-pointer") else "ABSENT — the property check does "
+              "not cover listener_tag.js's ACTIVATION set")
+        check("OC1c ...and ontouchstart, the rarest member of that set — if it is "
+              "dropped the two files disagree again for whoever writes it",
+              bool(_oce.get("oc-touch")),
+              "listed" if _oce.get("oc-touch") else "ABSENT")
+        check("OC2 CONTROL: the addEventListener twin was already listed",
+              bool(_oce.get("oc-addev")),
+              "listed" if _oce.get("oc-addev") else "ABSENT")
+        check("OC3 CONTROL: the onclick ATTRIBUTE twin was already listed",
+              bool(_oce.get("oc-attr")),
+              "listed" if _oce.get("oc-attr") else "ABSENT")
+        # Without this the fix could be "list every div" and OC1-OC3 would pass.
+        check("OC4 CONTROL: an identical <div> declaring NOTHING is still absent",
+              not _oce.get("oc-none"),
+              "absent" if not _oce.get("oc-none") else "LISTED — the admitting set widened "
+              "past what the page declares")
+        await oc.close()
+
+        # ---- RL: ARIA role is a token list, matched case-insensitively ----------
+        # Per WAI-ARIA `role` holds a whitespace-separated list of tokens, compared
+        # ASCII case-insensitively, and Chrome resolves every shape below to
+        # `button`. We matched the RAW attribute with Set.has, so none of them was
+        # listed. HONEST SCOPE: zero uppercase/padded/list-valued role attributes
+        # exist across 6,632 real ones on 66 corpus sites — this is a spec
+        # divergence with no observed instance, not a live defect.
+        rl = await browser.new_page(viewport={"width": 900, "height": 700})
+        await rl.goto("about:blank")
+        await rl.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<div id='rl-upper' role='BUTTON' style='width:200px;height:30px'>Upper</div>"
+            "<div id='rl-mixed' role='Button' style='width:200px;height:30px'>Mixed</div>"
+            "<div id='rl-list' role='button link' style='width:200px;height:30px'>List</div>"
+            "<div id='rl-pad' role=' button ' style='width:200px;height:30px'>Padded</div>"
+            "<div id='rl-tab' role='&#9;button' style='width:200px;height:30px'>Tabbed</div>"
+            "<div id='rl-none' role='presentation' style='width:200px;height:30px'>Presentational</div>"
+            "</body>", wait_until="domcontentloaded")
+        await rl.wait_for_timeout(80)
+        _rlr = await rl.evaluate("(function(){ " + COLLECT
+                                 + "; return _collectInteractivePage(true); })()")
+        _rlm = await rl.evaluate("""() => {
+            const o = {};
+            for (const id of ['rl-upper', 'rl-mixed', 'rl-list', 'rl-pad', 'rl-tab', 'rl-none'])
+              { const n = document.getElementById(id); o[id] = n && n.getAttribute('mmid'); }
+            return o;
+        }""")
+        _rle = {k: bool(find(_rlr, mmid=v)) for k, v in _rlm.items() if v}
+        for _id, _why in (("rl-upper", "role=\"BUTTON\""), ("rl-mixed", "role=\"Button\""),
+                          ("rl-pad", "role=\" button \""), ("rl-tab", "a tab-prefixed role")):
+            check(f"RL1 {_why} resolves to button in Chrome, so it is listed",
+                  _rle.get(_id) is True, "listed" if _rle.get(_id) else "ABSENT")
+        check("RL2 a role TOKEN LIST (\"button link\") is listed",
+              _rle.get("rl-list") is True,
+              "listed" if _rle.get("rl-list") else "ABSENT")
+        # Without this, "treat any role as interactive" would pass RL1/RL2.
+        check("RL3 CONTROL: role=\"presentation\" with no other signal stays absent",
+              _rle.get("rl-none") is not True,
+              "absent" if not _rle.get("rl-none") else "LISTED")
+        await rl.close()
+
         await browser.close()
 
     passed = sum(1 for _, ok, _ in results if ok)

@@ -1692,8 +1692,38 @@ const FIELDS3 = () => ([
     // one-sided test would pass over an op hardwired to return "".
     currentStubs["_readinessPage"] = () => ({ ready: "complete", imgs: 0, prog: 0, busy: 0 });
     let r = await callOp("page_readiness", { tabId: 1 });
-    check("page_readiness: a SETTLED page yields no banner (negative control)",
-      r && r.ok !== false && r.result === "", JSON.stringify(r));
+    // THIS CHECK USED TO ASSERT r.result === "", which encoded the
+    // IMPLEMENTATION rather than the invariant. Its invariant is that a settled
+    // page is DISTINGUISHABLE from an unsettled one — and for this op, which
+    // exists only for find's MISS path (#39), an empty string answers neither
+    // question: it reads the same as a probe that failed. It now says so
+    // positively, which turns a miss into evidence of absence. Same rewrite
+    // shape as #30's TR8d and #55's FV6c — the invariant is unchanged and is
+    // what is asserted.
+    check("page_readiness: a SETTLED page says so POSITIVELY (a bare \"\" is "
+          + "indistinguishable from a failed probe, on the one path that asks)",
+      r && r.ok !== false && String(r.result).length > 0
+        && !String(r.result).includes("STILL SETTLING")
+        && /SETTLED|still changing/i.test(String(r.result)), JSON.stringify(r));
+    // A RING THAT HAS RECORDED NOTHING returns since = -1, which means NEVER
+    // OBSERVED and is not a duration. The guard used to key on `total >= 0`,
+    // which is TRUE of an empty ring, so the note would have rendered
+    // "No DOM change for -1ms". Unknown must fall through to the network-only
+    // path and read as unknown — R17's rule, one branch over. Driven HERE
+    // rather than in the browser suite because the empty state is not
+    // constructible on a real page (even about:blank records 3 childList
+    // mutations for html/head/body) and because #19 is explicit that the
+    // RENDER is the untested link.
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 2,
+      mut: { total: 0, saturated: false, since: -1, sinceAny: -1,
+             structural: 0, text: 0, attrs: {}, win: 1000 },
+    });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("page_readiness: an empty mutation ring never renders a negative "
+          + "duration (since = -1 means never observed, not -1ms)",
+      r && r.ok !== false && !/-\d+ *ms/.test(String(r.result))
+        && String(r.result).includes("aria-busy"), JSON.stringify(r));
 
     currentStubs["_readinessPage"] = () => ({ ready: "loading", imgs: 3, prog: 1, busy: 2 });
     r = await callOp("page_readiness", { tabId: 1 });

@@ -156,9 +156,51 @@ def main():
           f"rows={_r1}")
     _after = ms._content_rows(_before.replace('ref_2 | a "Beta"', 'ref_2 | a "Beta Updated"'))
     _d = delta(_r1, _after)
+    # T14 USED TO ASSERT THE SECTION HEADER "NEW OR CHANGED (1)", which encoded the
+    # implementation rather than the invariant: at the time, `_mm` matched only the
+    # older `mmid=N` prefix, so on a current listing the CHANGED path could never
+    # fire and every state flip HAD to arrive as an addition. Its invariant — one
+    # changed row over real listings produces a real delta naming the new state — is
+    # unchanged, and is what it asserts now. (Same rewrite as #30's TR8d.)
     check("T14 ...so a one-row change over real listings produces a real delta",
-          _d is not None and "NEW OR CHANGED (1)" in _d and "Beta Updated" in _d,
+          _d is not None and "Beta Updated" in _d
+          and sum(1 for ln in _d.splitlines() if ln.strip()[:1] in "+~") == 1,
           (_d or "NO DELTA — the feature is inert on real input").splitlines()[0][:80])
+    # T15: the other half of the same contract. `_mm` read `mmid=(\S+)` while the
+    # listing has emitted `ref_N | ` for entries, so it returned None for every row
+    # a current extension produces and the CHANGED section was dead: an element that
+    # merely changed state was reported as a removal plus an addition, which is the
+    # "the tab you just selected no longer exists" report three agents filed and
+    # that section was built to answer.
+    check("T15 a row whose state changed is reported as CHANGED, not as a death "
+          "and a birth",
+          _d is not None and "CHANGED (1) — same ref, new state:" in _d
+          and "(was: " in _d and "NO LONGER LISTED" not in _d,
+          (_d or "").splitlines()[1][:80] if _d and len(_d.splitlines()) > 1 else "")
+
+    # T16: THE DEFAULT FORMAT. Every check above builds FLAT rows, but `read_page`'s
+    # `format` defaults to "tree" (#27) and the extension indents each row by its
+    # depth — so `_line_ident`'s anchored `^(?:ref_|mmid=)` matched nothing a default
+    # read emits, the trailing `.strip()` removed the indent, and `ref_12 | a "Home"`
+    # became the identity. THE MMID WAS THE IDENTITY, which is the exact trap T3
+    # exists to prevent, reopened by the format. An ordinary re-render that shifts
+    # every ref by one then reported all 40 rows as both ADDED and GONE.
+    _tree = [" " * (1 + i % 3) + f'ref_{i + 100} | a "Item {i}" href="/x/{i}"'
+             for i in range(1, 41)]
+    _renum = [ln.replace("ref_1", "ref_7") for ln in _tree]
+    _out16 = delta(_tree, _renum)
+    check("T16 an INDENTED (default tree-format) re-render that only renumbers refs "
+          "reports NO changes",
+          _out16 is not None and "Nothing changed" in _out16,
+          (_out16 or "REFUSED").splitlines()[-1][:76])
+    # CONTROL: without it, an identity that threw away everything would also satisfy
+    # T16 while making the delta blind to real edits.
+    _edit = list(_tree)
+    _edit[5] = _edit[5].replace('"Item 6"', '"Item 6 EDITED"')
+    _out16b = delta(_tree, _edit)
+    check("T16b CONTROL: a real label change in an indented listing is still seen",
+          _out16b is not None and "Item 6 EDITED" in _out16b,
+          (_out16b or "REFUSED").splitlines()[0][:76])
 
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} delta checks passed.")

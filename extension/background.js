@@ -1,4 +1,4 @@
-﻿// ChromeBridge — service worker.
+// ChromeBridge — service worker.
 //
 // Connects to ws://127.0.0.1:<port>/ (the Python bridge), authenticates with a
 // per-session token from chrome.storage.local, then services ops from the
@@ -2136,7 +2136,58 @@ function _readinessPage() {
     return { left: x, top: y, right: x + r.width, bottom: y + r.height,
              width: r.width, height: r.height };
   };
-  const o = { ready: document.readyState, imgs: 0, busy: 0, prog: 0 };
+  const o = { ready: document.readyState, imgs: 0, busy: 0, prog: 0, mut: null };
+  // DOM MUTATION RECENCY -- the signal that answers the question actually being
+  // asked ("if I wait, will this change?") rather than the one the other four
+  // answer ("is the network idle?"). Recorded by listener_tag.js at
+  // document_start, because you cannot observe mutations that already happened.
+  // Degrades to null when the content script did not run, and every consumer
+  // treats null as "unknown", never as "quiet" -- a false quiet is the worst
+  // direction this probe can fail in (#30).
+  try {
+    if (window.__abMut) o.mut = window.__abMut.query(null, 1000);
+    // SAME-ORIGIN FRAMES TOO, or this reports QUIET for a page whose content
+    // lives in an iframe while that frame is actively painting -- a FALSE quiet,
+    // which is the worst direction this probe can fail in and the thing R17 was
+    // written to prevent at the other end. listener_tag.js has all_frames:true
+    // so every frame keeps its own ring; the probe runs in the TOP frame only
+    // (runInTab passes allFrames:false), so without this the rings are written
+    // and never read. Same shape as the _deepAll recursion the other signals in
+    // this function already do.
+    //
+    // Cross-origin frames stay unreachable by construction and are NOT counted
+    // as quiet: `frames` below only yields what we can actually read, and a
+    // consent CMP or embedded checkout churning in a cross-origin frame is a
+    // stated limit rather than a silent zero.
+    if (o.mut) {
+      const seen = new Set();
+      const visit = (w, depth) => {
+        if (!w || depth > 4 || seen.has(w)) return;
+        seen.add(w);
+        for (let i = 0; i < w.length; i++) {
+          let f = null;
+          try { f = w[i]; if (!f || !f.document) continue; } catch (e) { continue; }  // cross-origin
+          let q = null;
+          try { q = f.__abMut ? f.__abMut.query(null, 1000) : null; } catch (e) {}
+          if (q) {
+            o.mut.total += q.total;
+            o.mut.saturated = o.mut.saturated || q.saturated;
+            o.mut.structural += q.structural;
+            o.mut.text += q.text;
+            for (const k in q.attrs) o.mut.attrs[k] = (o.mut.attrs[k] || 0) + q.attrs[k];
+            // MOST RECENT WINS. `since` is "ms since the last change", so the
+            // smaller number is the more recent one -- taking the max would
+            // report the quietest frame and rebuild the false quiet.
+            if (q.since >= 0 && (o.mut.since < 0 || q.since < o.mut.since)) o.mut.since = q.since;
+            if (q.sinceAny >= 0 && (o.mut.sinceAny < 0 || q.sinceAny < o.mut.sinceAny)) o.mut.sinceAny = q.sinceAny;
+            o.mut.frames = (o.mut.frames || 0) + 1;
+          }
+          visit(f, depth + 1);
+        }
+      };
+      visit(window, 0);
+    }
+  } catch (e) {}
   try {
     // NEAR THE VIEWPORT ONLY. A lazy image below the fold has complete === false
     // indefinitely — it has not started loading and will not until it is scrolled
@@ -2262,6 +2313,88 @@ async function readinessNote(tabId) {
   // finished. An always-on warning is one the reader learns to skip, and this one
   // had started costing re-checks.
   if (bits.length && r.ready !== 'complete') bits.push(`document.readyState="${r.ready}"`);
+
+  // ---- DOM RECENCY: the two facts that were sharing one sentence ----------
+  // Five agents across two eval rounds said this banner could not separate
+  // "still building" from "ready but chatty". It could not, because both came
+  // out as the same words. They are different facts and now get different ones.
+  //
+  // The only number chosen here is how far BACK we look (1s), and it is stated
+  // in the output. The branch is on whether anything changed in that window --
+  // a count, not a time threshold -- so nothing here decides what "settled"
+  // means. The reader does, from the numbers.
+  const m = r.mut;
+  // `since >= 0`, NOT `total >= 0`. A ring that has recorded nothing at all
+  // returns since = -1, which means NEVER OBSERVED and is not a duration — the
+  // guard used to be `total >= 0`, which is true of an empty ring, so a freshly
+  // created about:blank tab printed "No DOM change for -1ms". Having no recency
+  // reading is the UNKNOWN case and falls through to the network-only path
+  // below, which is the same answer R17 pins for a page with no recorder at
+  // all: unknown is never reported as quiet.
+  if (m && m.since >= 0) {
+    const moved = m.structural + m.text +
+                  Object.values(m.attrs).reduce((a, b) => a + b, 0);
+    if (moved > 0) {
+      // ACTIVELY CHANGING. Name the KIND, because 40 style changes on an ad
+      // carousel and 40 structural changes on the table being painted are
+      // opposite facts -- and on theguardian.com the former is measured at
+      // ~7 per 2s, which document-wide recency alone would misreport as churn.
+      const kinds = [];
+      if (m.structural) kinds.push(`${m.structural} structural`);
+      if (m.text) kinds.push(`${m.text} text`);
+      for (const [k, c] of Object.entries(m.attrs).sort((a, b) => b[1] - a[1]).slice(0, 3)) {
+        kinds.push(`${c} @${k}`);
+      }
+      const sat = m.saturated ? '+' : '';
+      const where = m.frames ? ` across this page and ${m.frames} same-origin frame(s)` : '';
+      // TWO TIERS, decided by the three MutationRecord TYPES — which are declared
+      // by the spec, so this needs no list of "important" attributes (the thing
+      // #24 and #27 removed from every path that decides something).
+      //
+      // WHY IT MATTERS: theguardian.com runs ~7 ad-driven mutations per 2s, so a
+      // single-tier banner keyed on "anything moved" fires FOREVER on a page that
+      // is entirely readable — the always-on warning #15 priced and #43 deleted
+      // readyState for being, rebuilt one unit over. Caught by measuring the ad
+      // case before shipping rather than after.
+      if (m.structural || m.text) {
+        return `*** THE DOM IS STILL CHANGING (last change ${m.since}ms ago; ` +
+               `${moved}${sat} change(s) in the last ${m.win}ms: ${kinds.join(', ')}${where}` +
+               (bits.length ? `; also ${bits.join('; ')}` : '') + `). ` +
+               `Elements are being added, removed or re-texted right now, so this read is a ` +
+               `snapshot of a page still being built: do NOT conclude something is absent ` +
+               `from it, and re-observe before trusting any coordinate. Refs are re-measured ` +
+               `at click time, so acting BY REF is safe. ***\n`;
+      }
+      // ATTRIBUTE CHURN ONLY — reported as a FACT, with no "may be absent"
+      // warning, because nothing was added, removed or re-texted in the window.
+      // That is what "structurally current" means and it is a measurement, not a
+      // judgement. The attribute NAMES are printed rather than filtered: @style on
+      // a carousel and @disabled on a form unlocking are both attribute-only and
+      // need opposite responses. The reader can tell them apart. We cannot.
+      return `*** Minor DOM activity (${moved}${sat} change(s) in the last ${m.win}ms: ` +
+             `${kinds.join(', ')}${where}` +
+             (bits.length ? `; also ${bits.join('; ')}` : '') + `). ` +
+             `No element was added, removed or re-texted in that window, so the listing ` +
+             `below is structurally current. Attribute churn is usually animation or ` +
+             `presentation — but read the names above: @disabled, @aria-expanded or ` +
+             `@value moving means page STATE is changing. ***\n`;
+    }
+    if (bits.length) {
+      // QUIET DOM, BUSY NETWORK. The case that produced the complaint: a page
+      // finished before the first read, with a poll and a beacon keeping
+      // requests pending for ever. Saying "still settling" here is false and
+      // trains the reader to ignore the banner on the reads where it is true.
+      // STATES TWO FACTS AND RECOMMENDS NOTHING. An earlier draft said "stable
+      // and SAFE TO READ", which is a judgement rather than a measurement --
+      // #33's class, in the banner being rewritten to fix #33's class. Whether
+      // this read is good enough depends on what the caller is looking for, and
+      // the caller knows that and we do not.
+      return `*** DOM STABLE, NETWORK BUSY. No DOM change for ${m.since}ms; separately ` +
+             `${bits.join('; ')}. What is rendered now is not being rewritten — whether ` +
+             `MORE will arrive is what those requests decide. ***\n`;
+    }
+    return '';   // quiet DOM, quiet network: say nothing at all.
+  }
   if (!bits.length) return '';
   // Says "any coordinate" rather than "box() coordinates": box() is opt-in now
   // (`geometry=true`), so naming it would describe a field most reads do not
@@ -2579,6 +2712,10 @@ async function setCheckboxState(tabId, selector, text) {
 }
 
 function _pickOptionPage(text, triggerSel) {
+  // dup:handlerprop — see the note at _collectInteractivePage. Injected
+  // separately, so the closure is lost and the copy is forced; OC7 pins them
+  // byte-identical and OC8 pins the event list against listener_tag.js.
+  const _hasHandlerProp = (el) => { try { for (const k of ['onclick','onpointerdown','onmousedown','ontouchstart','onpointerup','onmouseup']) if (typeof el[k] === 'function') return true; } catch (e) {} return false; };
   // Find a visible option in the CURRENTLY-OPEN popover/listbox. Two filters
   // weed out stale options from popovers that just closed (Radix keeps closing
   // portal nodes around briefly during exit transitions; our stable-mmid change
@@ -2691,8 +2828,12 @@ function _pickOptionPage(text, triggerSel) {
             for (const r of c.querySelectorAll('div, li, span, button, a')) {
               let rc; try { rc = getComputedStyle(r); } catch (e) { continue; }
               const tag = r.tagName.toLowerCase();
+              // A handler has TWO spellings and the attribute is the rarer one —
+              // see the note at isInteractive. `_hasHandlerProp` catches
+              // `r.onpointerdown = fn`, the idiom listener_tag.js cannot see.
               if (!(rc.cursor === 'pointer' || tag === 'button' || tag === 'a' ||
-                    r.hasAttribute('onclick') || r.hasAttribute('data-value'))) continue;
+                    r.hasAttribute('onclick') || _hasHandlerProp(r) ||
+                    r.hasAttribute('data-value'))) continue;
               const rr = r.getBoundingClientRect();
               if (rr.width >= 8 && rr.height >= 8 && (r.innerText || '').trim()) rows++;
               if (rows >= 2) break;
@@ -2917,6 +3058,7 @@ function _pickOptionPage(text, triggerSel) {
             // `onclick` attributes — that's why the relaxed pass exists.
             const clickable = cs.cursor === 'pointer' || r.tagName.toLowerCase() === 'button'
                            || r.tagName.toLowerCase() === 'a' || r.hasAttribute('onclick')
+                           || _hasHandlerProp(r)
                            || r.hasAttribute('data-value') || r.hasAttribute('aria-selected');
             if (!clickable) return false;
           }
@@ -3002,12 +3144,81 @@ function _pickOptionPage(text, triggerSel) {
     return false;
   });
   const pool = inOpen.length ? inOpen : vis;
-  // Locale-robust matching: Unicode NFC (composed accents — "México" typed NFC
-  // must match a page rendering NFD), whitespace collapse (icon + label options
-  // put newlines in innerText), locale-aware lowercase (Turkish Ä°/Ä±).
-  // Ranked: exact > prefix > substring — plain `.includes` alone made "India"
-  // match "Indiana" when the exact option existed later in the list.
-  const norm = (s) => { try { return (s || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase(); } catch (e) { return (s || '').trim().toLowerCase(); } };
+  // THE MATCHER THAT ACTS MUST FOLD THE WAY THE MATCHER THAT RANKS DOES.
+  // This was `.normalize('NFC')….toLocaleLowerCase()`, and its comment claimed it
+  // handled "Turkish İ/ı". It did not, and it had a second defect the comment did
+  // not mention at all:
+  //
+  //  (a) NFC CANNOT UNDO THE FOLD. Unicode lowercases U+0130 (İ) to "i" + U+0307
+  //      COMBINING DOT ABOVE, and NFC has no precomposed character to recompose
+  //      that into — so the result never equals ASCII "i". Measured on the real
+  //      _selectNativePage against a <select> of Turkish cities: asking for
+  //      "İstanbul" worked, while "Istanbul", "istanbul" and "izmir" were all
+  //      REFUSED, with "Ankara" and "india" passing as controls.
+  //  (b) toLocaleLowerCase() IS SPECIFIED TO DEPEND ON THE HOST LOCALE, which is
+  //      the worst property a matcher can have: the same page, the same request,
+  //      a different answer depending on the user's OS. `.toLowerCase()` is
+  //      specified as locale-INDEPENDENT and removes that by construction.
+  //      MEASURED, AND THE SCARY VERSION OF THIS DID NOT REPRODUCE — say so
+  //      rather than bank it: the audit reported that a Turkish-locale Chrome
+  //      could select no option containing a capital I. On V8 it cannot happen
+  //      today. `'INDIA'.toLocaleLowerCase('tr-TR')` really is 'ındıa', but the
+  //      NO-ARGUMENT form this code used returns 'india' with the ICU default
+  //      locale set to tr-TR — checked in headless Chromium with
+  //      Emulation.setLocaleOverride, with --lang=tr-TR, with LANG/LC_ALL, and
+  //      in bare Node (V8 13.6), all four giving Intl default 'tr-TR' and
+  //      'india'. So this half is a latent API hazard, not an observed defect,
+  //      and the only thing pinning it is a source rule (OC6), because no
+  //      behavioural fixture can make V8 exhibit it.
+  //
+  // mcp_server.py's `_fold` already had this right (NFD, then drop the combining
+  // marks the fold leaves behind), so this was rule 17 with the two spellings
+  // disagreeing: the tool that RANKS was correct and the tool that ACTS was not.
+  // Same rule here, which also makes matching accent-insensitive for every script
+  // at once — what a person typing a query expects.
+  //
+  // U+3099/U+309A ARE EXEMPT AND THAT EXEMPTION IS LOAD-BEARING. They are Mn
+  // combining marks like any accent, but in Japanese they are PHONEMIC: NFD turns
+  // バ into ハ + U+3099 and パ into ハ + U+309A, so dropping them would fold three
+  // different syllables together and let a request for ハス select バス. Keeping
+  // them and re-normalising to NFC puts the dakuten back on the character.
+  //
+  // `\p{Mn}`, NOT `\p{M}`. Mc holds the SPACING combining marks and a Devanagari
+  // matra is Mc with combining class 0, so `\p{M}` deletes it and का becomes क —
+  // the dakuten bug reinvented in Hindi. The final `.normalize('NFC')` is
+  // load-bearing for the same reason: without it a voiced kana stays decomposed
+  // as two code points while the page's own text arrives precomposed, and a
+  // Hangul syllable never recomposes from its jamo.
+  //
+  // MEASURED AGAINST _fold RATHER THAN ASSERTED — the two are in different
+  // LANGUAGES, so byte-identity is impossible and the only checkable property is
+  // that they agree about what is THE SAME STRING. Over 50 strings (FX1): every
+  // must-merge set agrees — İstanbul/istanbul/Istanbul/ISTANBUL, México/Mexico,
+  // Ελλάδα/ελλαδα, Tiếng Việt/Tieng Viet, ПРИМЕР/пример, Åland/aland — and every
+  // kana and matra pair stays apart on both sides. THREE divergences, all stated:
+  //   * Straße -> 'straße' here, 'strasse' there, and ﬁle (U+FB01) -> 'ﬁle' here,
+  //     'file' there. Python's casefold() applies FULL case folding and JS
+  //     toLowerCase does not; JS therefore merges FEWER, which can cost a match on
+  //     an exotic spelling but can never merge two different words.
+  //   * กัน -> 'กน' here, 'กัน' there. Python filters on `unicodedata.combining(c)`
+  //     (canonical combining class != 0); JS has no such API, so this filters on
+  //     category Mn and drops the handful of Mn marks whose ccc is 0 (Thai
+  //     U+0E31 and friends). JS merges MORE for those scripts.
+  // Closing either would mean a hand-written mapping table or a hand-listed set
+  // of code points — a list someone thought of, which is the thing this codebase
+  // removes. The one case where dropping a mark changes MEANING rather than
+  // strictness is the dakuten, and that one is exempt above.
+  //
+  // The whitespace collapse stays (icon + label options put newlines in innerText)
+  // and so does the ranking above it: exact > prefix > substring, because plain
+  // `.includes` alone made "India" match "Indiana" when the exact option existed
+  // later in the list.
+  //
+  // i18n:norm — ONE SPELLING across _pickOptionPage / _radioMatchPage /
+  // _selectNativePage / fillDropdown, enforced byte-for-byte by P2 in
+  // tools/test_patterns.py. These functions are injected into the page and lose
+  // their closure, so the duplication is forced; the drift is what is not.
+  const norm = (s) => { s = String(s == null ? '' : s); try { return s.toLowerCase().normalize('NFD').replace(/(?![\u3099\u309A])\p{Mn}/gu, '').normalize('NFC').replace(/\s+/g, ' ').trim(); } catch (e) { return s.replace(/\s+/g, ' ').trim().toLowerCase(); } };
   const want = norm(text);
   const dbgO = { via, found: all.length, vis: vis.length, inOpen: inOpen.length, pool: pool.length, scope: scopeRoot ? (scopeRoot.id || scopeRoot.tagName.toLowerCase()) : null };
   let pick = null, tier = null;
@@ -3040,7 +3251,11 @@ function _pickOptionPage(text, triggerSel) {
     // makes the recovery instruction impossible to follow — an agent retries the
     // truncated string and gets the identical error. Page context, so markCut is
     // out of scope; dup:markcut keeps this copy identical to the others.
-    const _mk = (v, n) => (v.length <= n ? v : v.slice(0, n) + '…(+' + (v.length - n) + ')');
+    // SURROGATE-SAFE, like markCut and _cut. It was a bare `v.slice(0, n)`, so an
+    // option label with an emoji on the 40th unit was handed back with a LONE
+    // SURROGATE in the middle of the string the agent is told to "pass exactly".
+    // Pinned by MC1 — the `dup:` tag had been enforced by nothing.
+    const _mk = (v, n) => { v = String(v == null ? '' : v); if (v.length <= n) return v; const c = v.charCodeAt(n - 1); const h = v.slice(0, (c >= 0xD800 && c <= 0xDBFF) ? n - 1 : n); return h + '…(+' + (v.length - h.length) + ')'; };
     const avail = pool.slice(0, 8).map(o => _mk((o.innerText || '').trim(), 40)).filter(Boolean);
     return {
       ok: false, actual: '',
@@ -3135,7 +3350,9 @@ function _radioMatchPage(selector, text) {
     return document.querySelector(s); };
   const el = q(selector);
   if (!el || el.type !== 'radio') return null;
-  const norm = (x) => String(x || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
+  // i18n:norm — see the long note at _pickOptionPage. NFD + drop the combining
+  // marks the fold leaves behind (dakuten exempt), locale-INDEPENDENT lowercase.
+  const norm = (s) => { s = String(s == null ? '' : s); try { return s.toLowerCase().normalize('NFD').replace(/(?![\u3099\u309A])\p{Mn}/gu, '').normalize('NFC').replace(/\s+/g, ' ').trim(); } catch (e) { return s.replace(/\s+/g, ' ').trim().toLowerCase(); } };
   const want = norm(text);
   if (!want) return null;
   const labelOf = (n) => {
@@ -3164,7 +3381,9 @@ function _selectNativePage(selector, text) {
   const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
   const el = q(selector);
   if (!el || el.tagName.toLowerCase() !== 'select') return { ok: false, actual: '', msg: 'not a <select>' };
-  const norm = (s) => { try { return (s || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase(); } catch (e) { return (s || '').trim().toLowerCase(); } };
+  // i18n:norm — see the long note at _pickOptionPage. NFD + drop the combining
+  // marks the fold leaves behind (dakuten exempt), locale-INDEPENDENT lowercase.
+  const norm = (s) => { s = String(s == null ? '' : s); try { return s.toLowerCase().normalize('NFD').replace(/(?![\u3099\u309A])\p{Mn}/gu, '').normalize('NFC').replace(/\s+/g, ' ').trim(); } catch (e) { return s.replace(/\s+/g, ' ').trim().toLowerCase(); } };
   const want = norm(text);
   // Disabled options (and options inside a disabled optgroup) are states the user
   // could never reach; assigning one submits a value the form should reject.
@@ -3184,6 +3403,8 @@ function _selectNativePage(selector, text) {
 }
 
 function _countVisibleOptionsPage(triggerSel) {
+  // dup:handlerprop — see the note at _collectInteractivePage.
+  const _hasHandlerProp = (el) => { try { for (const k of ['onclick','onpointerdown','onmousedown','ontouchstart','onpointerup','onmouseup']) if (typeof el[k] === 'function') return true; } catch (e) {} return false; };
   // SCOPE-AWARE (its old "same scope discipline as _pickOptionPage" comment was simply
   // false — it had no scope handling at all). Without this, always-visible foreign
   // [aria-selected]/role=option noise elsewhere on the page (a plan picker, tag chips
@@ -3276,6 +3497,7 @@ function _countVisibleOptionsPage(triggerSel) {
       if (requireClickable) {
         const clickable = cs.cursor === 'pointer' || r.tagName.toLowerCase() === 'button'
                        || r.tagName.toLowerCase() === 'a' || r.hasAttribute('onclick')
+                       || _hasHandlerProp(r)
                        || r.hasAttribute('data-value') || r.hasAttribute('aria-selected');
         if (!clickable) return false;
       }
@@ -3550,15 +3772,14 @@ function _triggerLabelPage(sel) {
   return t;
 }
 
-// dup:markcut — page-context copy; these functions are injected and lose closure.
-function markCutLite(t, n) {
-  t = t || '';
-  if (t.length <= n) return t;
-  let cut = t.slice(0, n);
-  const sp = cut.lastIndexOf(' ');
-  if (sp >= n * 0.66) cut = cut.slice(0, sp);
-  return cut + '…(+' + (t.length - cut.length) + ')';
-}
+// (`markCutLite` lived here, tagged `dup:markcut` and claiming to be a copy of
+// markCut. It was neither: it did a raw `t.slice(0, n)` with no surrogate guard,
+// so it emitted lone surrogates on any emoji-bearing label — and it had NO CALL
+// SITES, in any file, ever. A near-copy that nothing calls cannot be caught by a
+// live run, so it would have sat there until someone reached for the "existing
+// helper" and got the broken one. #24's precedent: removal is the most reliable
+// move, and this one removes a false claim as well as dead code. The live
+// `dup:markcut` copies are markCut, _cut and the two _mk's, pinned by MC1.)
 
 // Structural submit-button detection inside the current dialog/modal.
 // Used (a) when the caller omits submit_mmid, and (b) to RE-RESOLVE an
@@ -3721,9 +3942,11 @@ async function fillDropdown(tabId, selector, text) {
   const T0 = Date.now();
   const trace = [];
   const tr = (m, d) => { try { trace.push((`+${Date.now() - T0}ms ${m}` + (d !== undefined ? ' ' + JSON.stringify(d) : '')).slice(0, 600)); } catch (e) {} };
-  // Normalizer used for all label comparisons: Unicode NFC (composed accents),
-  // whitespace collapse, locale-aware lowercase. Language-independent.
-  const norm = (s) => { try { return (s || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase(); } catch (e) { return (s || '').trim().toLowerCase(); } };
+  // Normalizer used for all label comparisons. LANGUAGE-independent — and now
+  // HOST-LOCALE-independent, which the old `toLocaleLowerCase()` was not.
+  // i18n:norm — see the long note at _pickOptionPage. NFD + drop the combining
+  // marks the fold leaves behind (dakuten exempt), locale-INDEPENDENT lowercase.
+  const norm = (s) => { s = String(s == null ? '' : s); try { return s.toLowerCase().normalize('NFD').replace(/(?![\u3099\u309A])\p{Mn}/gu, '').normalize('NFC').replace(/\s+/g, ' ').trim(); } catch (e) { return s.replace(/\s+/g, ' ').trim().toLowerCase(); } };
 
   // 0) capture the trigger's label BEFORE doing anything. Success verification
   // is "the label CHANGED (or now contains the requested option)" — a purely
@@ -3937,6 +4160,10 @@ async function fillDropdown(tabId, selector, text) {
   // Same logic as _pickOptionPage: try standard ARIA first, fall back to
   // clickable rows inside the topmost popover-container for custom pickers.
   const sampleOptions = await runInTab(tabId, (trigSel) => {
+    // dup:handlerprop — see the note at _collectInteractivePage. This arrow is
+    // injected on its own, so a reference to any sibling would be a free
+    // identifier in the page (the C11 bug class).
+    const _hasHandlerProp = (el) => { try { for (const k of ['onclick','onpointerdown','onmousedown','ontouchstart','onpointerup','onmouseup']) if (typeof el[k] === 'function') return true; } catch (e) {} return false; };
     const filterFresh = (o) => {
       try {
         const r = o.getBoundingClientRect();
@@ -4036,6 +4263,7 @@ async function fillDropdown(tabId, selector, text) {
           let cs; try { cs = getComputedStyle(r); } catch (e) { return false; }
           const clickable = cs.cursor === 'pointer' || r.tagName.toLowerCase() === 'button'
                          || r.tagName.toLowerCase() === 'a' || r.hasAttribute('onclick')
+                         || _hasHandlerProp(r)
                          || r.hasAttribute('data-value') || r.hasAttribute('aria-selected');
           if (!clickable) return false;
           const t = (r.innerText || '').trim();
@@ -5669,6 +5897,51 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   const INTERACTIVE_ROLES = new Set(['button','link','menuitem','menuitemcheckbox','menuitemradio',
     'tab','checkbox','radio','switch','option','combobox','searchbox','textbox',
     'slider','spinbutton','treeitem']);
+  // AN ACTIVATION HANDLER ASSIGNED TO THE PROPERTY, in the SAME SET OF EVENTS
+  // listener_tag.js tags when it is bound with addEventListener. Two passes
+  // answering "did the page wire this up?" with two different lists is #21's
+  // one-concept-two-spellings, and #18 measured exactly that asymmetry — between
+  // `isInteractive` and `keepForFind` — at 60% of a whole accuracy gap. Asking
+  // only about `onclick` here would have said: bound with
+  // addEventListener('pointerdown') = a control, assigned to onpointerdown = not
+  // a control. The POINTER half is the half that matters most, because Radix,
+  // HeadlessUI and MUI all gate on `pointerdown` rather than `click` — which is
+  // the entire reason fix #1 exists.
+  // `ontouchstart` stays in even though it is rare as a property: it costs one
+  // `typeof` and dropping it would reintroduce the divergence for the one case
+  // someone eventually writes.
+  // DERIVED, NOT RESTATED: OC8 in tools/test_contracts.py parses ACTIVATION out
+  // of listener_tag.js and fails if this list is not exactly `on` + each of
+  // those events, so the two files cannot drift. OC7 pins the copies identical.
+  // dup:handlerprop
+  const _hasHandlerProp = (el) => { try { for (const k of ['onclick','onpointerdown','onmousedown','ontouchstart','onpointerup','onmouseup']) if (typeof el[k] === 'function') return true; } catch (e) {} return false; };
+  // ARIA `role` IS A TOKEN LIST, NOT A STRING. Per WAI-ARIA the attribute holds a
+  // whitespace-separated list of role tokens, matched ASCII case-insensitively,
+  // and the first VALID token wins. Chrome implements all of it: `role="BUTTON"`,
+  // `role="Button"`, `role=" button "`, a tab-separated one and `role="button link"`
+  // every one resolves to `button` in Chrome's accessibility tree, and we matched
+  // the raw attribute with Set.has, so every one of them was NOT LISTED.
+  //
+  // HONEST SCOPE: across 6,632 real `role=` attributes on 66 corpus sites, ZERO
+  // are uppercase, padded or token lists. This is a spec divergence with no
+  // observed instance, fixed because it is cheap and strictly closer to Chrome —
+  // not because anything was measured failing in the wild.
+  //
+  // KNOWN DIVERGENCE, stated rather than hidden: "first VALID token wins" needs
+  // the full list of ARIA role names to know which token is valid, and that list
+  // is not here. This answers "does ANY token declare an interactive role", so
+  // `role="presentation button"` is admitted where Chrome would resolve
+  // `presentation`. Over-admitting one unobserved shape is the right direction
+  // against today's behaviour, which admits none of them.
+  // ONE SPELLING: every interactive-role test in this function goes through here.
+  const _roleHit = (v) => {
+    if (!v) return false;
+    try {
+      const toks = String(v).trim().split(/\s+/);
+      for (const t of toks) if (INTERACTIVE_ROLES.has(t.toLowerCase())) return true;
+    } catch (e) {}
+    return false;
+  };
   // NAME FROM CONTENT, SPACE-SEPARATED, per AccName 1.2 step 2F: each child's
   // contribution is APPENDED WITH A SEPARATOR, which is what Chrome's own accname
   // does. We concatenated instead, and on a spaceless script the seam is invisible
@@ -5886,8 +6159,23 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // mxGraph canvas) — surfaced like <canvas>, size-gated in the loop.
     if (tag === 'svg') return true;
     const role = el.getAttribute('role');
-    if (role && INTERACTIVE_ROLES.has(role)) return true;
-    if (el.hasAttribute('onclick') || el.hasAttribute('tabindex') || el.isContentEditable) return true;
+    if (_roleHit(role)) return true;
+    // An event handler HAS TWO SPELLINGS AND WE ONLY READ ONE. The content
+    // attribute (`<div onclick="...">`) is what hasAttribute sees; the IDL
+    // attribute (`el.onclick = function(){...}`) is the vanilla-JS idiom, sets NO
+    // attribute, and never calls addEventListener — so listener_tag.js cannot see
+    // it either. An element whose ONLY declaration was a property handler passed
+    // through both signals and existed for no tool. 525 such assignments across
+    // 68 of the 106 corpus sites (an upper bound on exposure, not a defect count:
+    // most of those elements carry another signal too).
+    // This is still a DECLARATION — the page said "activating me does something"
+    // — so rule 1 holds. KEEP BOTH TERMS: under a strict CSP an inline handler
+    // attribute is never compiled, so hasAttribute is true while the property is
+    // null, and neither term subsumes the other.
+    // See `_hasHandlerProp` for why the POINTER family is in there too, and
+    // OC5/OC7/OC8 in tools/test_contracts.py for what holds the copies together.
+    if (el.hasAttribute('onclick') || _hasHandlerProp(el)
+        || el.hasAttribute('tabindex') || el.isContentEditable) return true;
     // Tagged by the document_start listener-wrap (extension/listener_tag.js):
     // a JS click/pointer handler was bound via addEventListener — the one
     // signal no static DOM walk can see. (Delegation roots excluded both at
@@ -6053,12 +6341,10 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   const formyTags = new Set(['input','textarea','select']);
   // <input> types whose `value` is a LABEL rather than user-entered content.
   const BUTTONISH_INPUT = new Set(['submit', 'button', 'reset', 'image']);
-  // Roles/tags that are "strong" interactive — a real control the agent will
-  // need even when it carries no text label (icon buttons: ✕ close, ⋮ kebab,
-  // pencil edit, hamburger, logo-link; unlabeled search fields, sliders).
-  // Merely cursor:pointer / tabindex on a generic <div> does NOT qualify —
-  // those stay dropped to avoid mystery noise. Same canonical set.
-  const strongInteractiveRoles = INTERACTIVE_ROLES;
+  // (`strongInteractiveRoles` was an ALIAS of INTERACTIVE_ROLES, kept only so the
+  // "strong control" sites could read differently from the existence test while
+  // meaning the same thing. Every one of them now goes through `_roleHit`, so a
+  // second name for one set is a claim that there are two. Deleted.)
   // Last-resort handle for a label-less strong control, derived WITHOUT any
   // site-specific knowledge: an inline <svg><title>, an icon's aria-label, a
   // child <img alt>, common automation data-* attributes, or a child title.
@@ -6430,7 +6716,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     if (!crossFrame && !isInteractive(el) && !_switchedOffControl()) return _drop(el, 'not-interactive');
     if (decorativeTags.has(tagL)) {
       const rr = el.getAttribute('role');
-      if (!rr || !INTERACTIVE_ROLES.has(rr)) {
+      if (!_roleHit(rr)) {
         // Escape hatch: a viewport-dominating bare <svg> is a vector EDITING
         // surface (draw.io's diagram area), not decoration — fall through to
         // the canvas-like handling.
@@ -6448,6 +6734,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         let wiredSvg = false;
         try {
           wiredSvg = !!el.__abClickBound || el.hasAttribute('onclick')
+                     || _hasHandlerProp(el)
                      || el.hasAttribute('tabindex')
                      || !!(el.getAttribute && el.getAttribute('role'));
         } catch (e) {}
@@ -6461,7 +6748,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // Viewport-dominating bare <svg> (no interactive role): vector surface.
     if (!canvasLike && tagL === 'svg') {
       const _svgRole = el.getAttribute('role');
-      if (!_svgRole || !INTERACTIVE_ROLES.has(_svgRole)) {
+      if (!_roleHit(_svgRole)) {
         try { const sr = el.getBoundingClientRect(); canvasLike = sr.width * sr.height >= 0.25 * vw * vh; } catch (e) {}
       }
     }
@@ -6725,7 +7012,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       const _WIDGET_TYPES = ['checkbox', 'radio', 'file', 'range', 'color', 'date',
                              'datetime-local', 'month', 'week', 'time', 'submit',
                              'reset', 'image', 'button'];
-      _declaredCtl = !!(_dr && INTERACTIVE_ROLES.has(_dr))
+      _declaredCtl = _roleHit(_dr)
                      || el.hasAttribute('aria-expanded')
                      || el.hasAttribute('aria-autocomplete')
                      || el.hasAttribute('aria-controls')
@@ -6777,7 +7064,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     if (visible && cs.pointerEvents === 'none') {
       const _peRole = el.getAttribute('role');
       const _peReal = ['a', 'button', 'input', 'select', 'textarea', 'summary'].includes(tagL) ||
-                      (_peRole && INTERACTIVE_ROLES.has(_peRole)) ||
+                      _roleHit(_peRole) ||
                       // Structural, not a tag list: a wrapper the page explicitly
                       // marked disabled, or one that CONTAINS a real form control
                       // (every react-select/Headless combobox has a hidden input
@@ -6833,7 +7120,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     const keepForFind = (structured || !!scopeMmid) && visible && !inViewport && (() => {
       const rr = el.getAttribute('role');
       if (['a', 'button'].includes(tagL) || formyTags.has(tagL) ||
-          (rr && strongInteractiveRoles.has(rr))) return true;
+          _roleHit(rr)) return true;
       // AN ELEMENT THAT PASSED isInteractive IS A CONTROL. This predicate used to
       // be NARROWER than the interactivity test: a handler-bound <div>/<span>/
       // <label> qualified as interactive, then was dropped for being below the
@@ -6851,7 +7138,11 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       // pointer cursor, or focusability.
       try {
         if (el.__abClickBound) return true;
-        if (el.hasAttribute('onclick') || el.hasAttribute('tabindex')) return true;
+        // Both spellings, same as isInteractive — #18's asymmetry is exactly two
+        // predicates disagreeing about what a control is, so this one must not
+        // acquire a third opinion by reading only the attribute.
+        if (el.hasAttribute('onclick') || _hasHandlerProp(el)
+            || el.hasAttribute('tabindex')) return true;
         if (getComputedStyle(el).cursor === 'pointer') return true;
       } catch (e) {}
       return false;
@@ -6969,7 +7260,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       // constant legend block costs 24.4% and buys nothing. The filters were not
       // buying tokens; they were buying unbounded silent failure.
       // Kept as a LEDGER RECORD so `ledger:true` still explains the page.
-      if (!formyTags.has(tagL) && !(_szRole && INTERACTIVE_ROLES.has(_szRole)) && !_szNamed) _note(el, 'was:too-small-unnamed');
+      if (!formyTags.has(tagL) && !_roleHit(_szRole) && !_szNamed) _note(el, 'was:too-small-unnamed');
     }
     // INNER-SCROLL-CONTAINER CLIPPING: an element scrolled out of view inside an
     // overflow:auto/scroll panel (chat sidebar, results list, dropdown body) is
@@ -7671,7 +7962,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     })();   // ~200x200 and up
     const isStrongInteractive = (tagL === 'a' || tagL === 'button') ||
                                 _bigCanvas ||
-                                (_elRole && strongInteractiveRoles.has(_elRole));
+                                _roleHit(_elRole);
     // Opaque cross-origin frame with no title/aria-label: its src hostname is
     // the most useful handle the DOM can offer ("js.stripe.com", "youtube.com").
     if (!label && crossFrame) {
@@ -7771,7 +8062,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         // <button> or a form control or an explicit interactive role is a control by
         // its own semantics, however thin it is rendered.
         const _realThin = ['button', 'input', 'select', 'textarea'].includes(tagL)
-                          || (_sr && INTERACTIVE_ROLES.has(_sr));
+                          || _roleHit(_sr);
         if (!_realThin) _note(el, 'was:sliver-decoration');
       }
     }
@@ -7826,8 +8117,9 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // parent's accessible NAME (e.g. <a name="Cooker"><span>Cooker Cooker</span>).
     const _rCur = el.getAttribute('role');
     const cursorOnly = !(['a','button','input','select','textarea'].includes(tagL)
-      || (_rCur && INTERACTIVE_ROLES.has(_rCur))
-      || el.hasAttribute('onclick') || el.hasAttribute('tabindex') || el.isContentEditable
+      || _roleHit(_rCur)
+      || el.hasAttribute('onclick') || _hasHandlerProp(el)
+      || el.hasAttribute('tabindex') || el.isContentEditable
       || el.__abClickBound);   // a bound JS handler = a real control, not styled noise
     if (label || cursorOnly) {
       // composedParent from the start: el.parentElement is null for a shadow
@@ -7843,7 +8135,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
             const isContainer = CONTAINER_ROLES.has(parentRole) ||
                                 ['dialog','ul','ol','table','form','fieldset','section'].includes(parentTag);
             const parentStrong = ['a','button','input','select','textarea'].includes(parentTag) ||
-                                 strongInteractiveRoles.has(parentRole);
+                                 _roleHit(parentRole);
             // (A) cursor-only inner node of a real control above it -> redundant.
             // AREA GUARD: a widget-scale wrapper link (daterangepicker's
             // "Click for a Live Demo" anchor laid over its whole widget, ~23%
@@ -7885,7 +8177,8 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // the post-pass if it turns out to contain other listed controls.
     try {
       if (el.__abClickBound && !['a','button','input','select','textarea','summary'].includes(tagL) &&
-          !el.getAttribute('role') && !el.hasAttribute('onclick') && !el.hasAttribute('tabindex') &&
+          !el.getAttribute('role') && !el.hasAttribute('onclick') &&
+          !_hasHandlerProp(el) && !el.hasAttribute('tabindex') &&
           !el.isContentEditable) {
         _handlerOnlyWrappers.add(_mmid);
       }
@@ -8686,7 +8979,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   // transfer the generic twin's label if the control is unnamed, drop the twin.
   {
     const isRealControl = (e) => formyTags.has(e.tag) || e.tag === 'a' || e.tag === 'button' ||
-      e.editable || e.codeEditor || (e.role && strongInteractiveRoles.has(e.role));
+      e.editable || e.codeEditor || _roleHit(e.role);
     const isGenericTwin = (e) => !isRealControl(e) && !e.role && !e.crossFrame && !e.groupKey &&
       !e.scrollRegion && ['div','span','p','li','td','label','img','ol','ul'].includes(e.tag);
     const sameBox = (a, b) => Math.abs(a.x - b.x) <= 4 && Math.abs(a.y - b.y) <= 4 &&
@@ -9786,9 +10079,20 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       // Common prefix/suffix across ALL labels ("June 1, 2026".."June 30, 2026"
       // -> prefix "June " + suffix ", 2026" stripped -> "1".."30").
       let pre = labs[0], suf = labs[0];
+      // CODE POINTS, NOT CODE UNITS. Both loops backed off one UTF-16 CODE UNIT at
+      // a time, so either could stop INSIDE a surrogate pair. Measured on the
+      // shipped logic with a flag-emoji country picker: "🇯🇵 Japan" / "🇯🇴 Jordan" /
+      // "🇯🇲 Jamaica" share "🇯\uD83C" as a code-UNIT prefix, so every
+      // item came out beginning with a LONE SURROGATE ("\uDDF5 Japan") and was
+      // then JSON.stringify'd straight into the listing. Emoji-prefixed sidebars
+      // ("📁 Projects" / "📂 Pages") and any emoji-led menu do the same.
+      // `clip` is the surrogate-safe backoff this file already has (#22: ONE
+      // helper, not a new one) — it cuts from the END, which is what the prefix
+      // needs. The suffix grows from the FRONT, so it takes the mirror: drop the
+      // first whole code point, which codePointAt answers without a lookup table.
       for (const l of labs) {
-        while (pre && !l.startsWith(pre)) pre = pre.slice(0, -1);
-        while (suf && !l.endsWith(suf)) suf = suf.slice(1);
+        while (pre && !l.startsWith(pre)) pre = clip(pre, pre.length - 1);
+        while (suf && !l.endsWith(suf)) suf = suf.slice(suf.codePointAt(0) > 0xFFFF ? 2 : 1);
       }
       if (pre === labs[0]) pre = '';   // identical labels — don't strip to nothing
       if (suf === labs[0]) suf = '';
@@ -10022,12 +10326,28 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     // the agent's task was structurally unanswerable. The SEMANTIC fold is the best
     // block in the tool; this is the same feature as its evil twin, so the fix is a
     // kind check, not less folding.
+    // UNICODE CLASSES, NOT `\d` AND `[a-z]`. Without the `u` flag JS `\d` is
+    // exactly `[0-9]` and `\w` is ASCII, so this guard — whose whole job is to
+    // stop a RANKED NUMBER COLUMN folding in with prose titles — was inert on
+    // every page that does not write its numbers in Latin digits. Measured:
+    // `382` classified as `number` while `٣٨٢` (Arabic-Indic), `۱۲۳` (Extended
+    // Arabic-Indic), `३८२` (Devanagari), `๓๘๒` (Thai) and `３８２` (fullwidth) all
+    // came back `prose`; `example.com` was a `domain` while `пример.рф` was
+    // `prose`. So on an Arabic, Persian, Hindi, Thai or Japanese page the
+    // heterogeneity guard could not see the one distinction it exists to make,
+    // and the position-mispairing defect #30 paid to fix was reopened for every
+    // non-Latin-digit script.
+    // `\p{Nd}` is the spec's own answer to "is this a decimal digit", in any
+    // script, and `\p{L}` the same for "is this a letter" — no list of ranges
+    // and no vocabulary. The domain test keeps its shape (labels separated by
+    // dots, no whitespace); it just stops assuming the labels are ASCII, which
+    // is what an IDN is.
     const _kind = (t) => {
       const v = (t || '').trim();
       if (!v) return 'empty';
-      if (/^\d[\d.,:%+-]*$/.test(v)) return 'number';
-      if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(v) && !/\s/.test(v)) return 'domain';
-      if (/\d/.test(v) && v.length <= 24 && /^[^.]*$/.test(v) && /\s/.test(v)) return 'timeish';
+      if (/^\p{Nd}[\p{Nd}.,:%+-]*$/u.test(v)) return 'number';
+      if (/^[\p{L}\p{Nd}-]+(\.[\p{L}\p{Nd}-]+)+$/u.test(v) && !/\s/.test(v)) return 'domain';
+      if (/\p{Nd}/u.test(v) && v.length <= 24 && /^[^.]*$/.test(v) && /\s/.test(v)) return 'timeish';
       return 'prose';
     };
     // POSITION IS NOT RANK WHEN THE SEQUENCE IS CUT IN PIECES. Every flat fold
@@ -10279,7 +10599,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       if (!_GENERIC[el.tagName]) return false;
       try {
         const r = el.getAttribute && el.getAttribute('role');
-        if (r && INTERACTIVE_ROLES.has(r)) return false;
+        if (_roleHit(r)) return false;
       } catch (err) { return false; }
       return true;
     };
@@ -10294,7 +10614,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
       if (['a', 'button', 'input', 'select', 'textarea', 'summary'].indexOf(t) >= 0) return true;
       try {
         const r = el.getAttribute && el.getAttribute('role');
-        if (r && INTERACTIVE_ROLES.has(r)) return true;
+        if (_roleHit(r)) return true;
       } catch (err) {}
       return false;
     };
@@ -12790,6 +13110,10 @@ function _pageFingerprintPage(mmids) {
 // elements with their viewport rect + each filter's verdict. Lets us see *why*
 // the regular interactive listing missed something.
 function _deepInspectPage(labels) {
+  // dup:handlerprop — see the note at _collectInteractivePage. A diagnostic that
+  // cannot see what the collector admits sends the next reader hunting in the
+  // wrong place, which is the whole reason this function exists.
+  const _hasHandlerProp = (el) => { try { for (const k of ['onclick','onpointerdown','onmousedown','ontouchstart','onpointerup','onmouseup']) if (typeof el[k] === 'function') return true; } catch (e) {} return false; };
   const vw = window.innerWidth || document.documentElement.clientWidth;
   const vh = window.innerHeight || document.documentElement.clientHeight;
 
@@ -12799,10 +13123,14 @@ function _deepInspectPage(labels) {
     const r = el.getBoundingClientRect();
     const isInter =
       ['a','button','input','select','textarea'].includes(tag)
-      // KEEP IN SYNC with INTERACTIVE_ROLES in _collectInteractivePage (page-
-      // injected functions are serialized independently, so no shared const).
-      || (el.getAttribute('role') && ['button','link','menuitem','menuitemcheckbox','menuitemradio','tab','checkbox','radio','switch','option','combobox','searchbox','textbox','slider','spinbutton','treeitem'].includes(el.getAttribute('role')))
-      || el.hasAttribute('onclick') || el.hasAttribute('tabindex') || el.isContentEditable
+      // KEEP IN SYNC with INTERACTIVE_ROLES / _roleHit in _collectInteractivePage
+      // (page-injected functions are serialized independently, so no shared const).
+      // Token list + ASCII case-folding, same rule as _roleHit: `role` is a
+      // whitespace-separated list matched case-insensitively, not a raw string.
+      || String(el.getAttribute('role') || '').trim().split(/\s+/).some((t) =>
+           ['button','link','menuitem','menuitemcheckbox','menuitemradio','tab','checkbox','radio','switch','option','combobox','searchbox','textbox','slider','spinbutton','treeitem'].includes(t.toLowerCase()))
+      || el.hasAttribute('onclick') || _hasHandlerProp(el)
+      || el.hasAttribute('tabindex') || el.isContentEditable
       || (cs && cs.cursor === 'pointer');
     const visible = cs ? (r.width > 1 && r.height > 1 && cs.visibility !== 'hidden' && cs.display !== 'none' && parseFloat(cs.opacity || '1') > 0) : false;
     const inViewport = r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw;
@@ -12817,7 +13145,13 @@ function _deepInspectPage(labels) {
     return {
       tag, role: el.getAttribute('role'),
       href: el.getAttribute('href'),
+      // TWO FIELDS because they are two different facts: an inline attribute and
+      // a property assignment. Reporting only the attribute made a diagnostic
+      // that could not see the handler the collector now admits — and the second
+      // one covers the whole activation family, not just click, or it would
+      // disagree with the collector on exactly the Radix/MUI pointer case.
       onclick_attr: el.hasAttribute('onclick'),
+      handler_prop: _hasHandlerProp(el),
       tabindex: el.getAttribute('tabindex'),
       cursor: cs ? cs.cursor : null,
       visibility: cs ? cs.visibility : null,
@@ -12851,6 +13185,7 @@ function _deepInspectPage(labels) {
           ['a','button'].includes(tag)
           || (walker.getAttribute && walker.getAttribute('role'))
           || (walker.hasAttribute && walker.hasAttribute('onclick'))
+          || _hasHandlerProp(walker)
           || (walker.hasAttribute && walker.hasAttribute('tabindex'))
           || (cs && cs.cursor === 'pointer');
         if (interactive) { ancestor = walker; break; }
@@ -13107,6 +13442,28 @@ async function handleOp({ id, op, params }) {
       case "page_readiness": {
         const t = await resolveTab(params);
         result = await readinessNote(t.id);
+        // SILENCE IS THE WRONG ANSWER FOR THIS CALLER, and it is the only caller
+        // that wants the opposite of what the listing wants. The listing wants
+        // nothing when the page is settled -- an always-on banner is the noise
+        // #15 priced and #43 deleted readyState for being. But this op exists for
+        // find's MISS path (#39), where the whole question is whether "no match"
+        // means ABSENT or NOT YET, and an empty string answers neither: it reads
+        // the same as a probe that failed.
+        //
+        // So when the note is empty, say so POSITIVELY and with the number behind
+        // it, which turns a miss into evidence. Only this branch -- readinessNote
+        // itself is unchanged, so no listing gains a banner.
+        if (!result) {
+          let q = null;
+          try { q = await runInTab(t.id, () => (window.__abMut ? window.__abMut.query(null, 1000) : null)); }
+          catch (e) {}
+          result = (q && q.since >= 0)
+            ? `The page is SETTLED: no DOM change for ${q.since}ms and nothing in flight. ` +
+              `An absence found in this state is evidence of absence, not of bad timing.\n`
+            : `No signal says this page is still changing. (DOM-change history is ` +
+              `unavailable on this page, so this is the weaker of the two answers: ` +
+              `nothing is arriving, but it cannot be confirmed that nothing is being rewritten.)\n`;
+        }
         break;
       }
       case "get_interactive_elements": {
@@ -13267,7 +13624,18 @@ async function handleOp({ id, op, params }) {
           // back off, which is the failure this whole path exists to stop.
           nav = `State changed on the clicked element (${fpBefore.st || 'none'} -> ${fpAfter.st || 'none'}). URL and page structure unchanged, which is normal for a checkbox/toggle — do NOT click again to "make it work".`;
         } else if (r.ok) {
-          nav = `WARNING: click had NO detectable effect (URL, DOM, and text are all unchanged). The element may be disabled, hidden behind an overlay, or wired to handlers that don't fire on synthetic events. Already retried with trusted=${escalated ? 'true' : 'false'}.${escalateBlocked}`;
+          // `NO EFFECT: ` IS A TOKEN, NOT PROSE. The flow recorder has to tell "this
+          // step did something" from "this step did nothing", and it cannot do it by
+          // matching the word WARNING: that word is ALSO appended to clicks that
+          // genuinely landed (the hit-test echo, the shift warning), so a recorder
+          // keying on it would drop good steps. Nor by matching this sentence —
+          // #66 deleted an enumeration of refusal wordings for being one wording
+          // behind, and replaced it with the single `NOT DONE: ` token for the fill
+          // family. This is that token's sibling, and it marks ONLY the branch where
+          // input was dispatched and the page did not react. A delivered click says
+          // nothing extra (ID2), and `*** NOT DELIVERED ***` (#56) is the different
+          // fact that the channel itself is dead.
+          nav = `NO EFFECT: WARNING: click had NO detectable effect (URL, DOM, and text are all unchanged). The element may be disabled, hidden behind an overlay, or wired to handlers that don't fire on synthetic events. Already retried with trusted=${escalated ? 'true' : 'false'}.${escalateBlocked}`;
         } else {
           nav = `URL: ${urlAfter}`;
         }
@@ -14516,8 +14884,11 @@ async function handleOp({ id, op, params }) {
                 }
                 if (!el) return null;
                 const tg = (el.tagName || '').toLowerCase();
-                const _mk = (v) => (v.length <= 120 ? v
-                  : v.slice(0, 120) + '…(+' + (v.length - 120) + ')');
+                // dup:markcut — the readback echo. This was the LAST untagged
+                // marked-cut copy and it was not surrogate-safe either, so a
+                // 120-char readback of an emoji-bearing field came back with a
+                // lone surrogate in the one field whose job is verifying a write.
+                const _mk = (v, n) => { v = String(v == null ? '' : v); if (v.length <= n) return v; const c = v.charCodeAt(n - 1); const h = v.slice(0, (c >= 0xD800 && c <= 0xDBFF) ? n - 1 : n); return h + '…(+' + (v.length - h.length) + ')'; };
                 if (tg === 'select') {
                   // A <select>'s VALUE is a machine code; the caller asked for the
                   // option's TEXT. Reading el.value made the readback compare "Two"
@@ -14526,7 +14897,7 @@ async function handleOp({ id, op, params }) {
                   // That false alarm is mine, introduced with the readback check; the
                   // check is right, it was reading the wrong field.
                   const _o = el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
-                  return _mk(_o ? (_o.text || '').trim() : '');
+                  return _mk(_o ? (_o.text || '').trim() : '', 120);
                 }
                 // A CHECKBOX'S STATE IS `checked`, NOT `value`. `value` is a constant
                 // submission token the page author picked ("1", "2", "on") and says
@@ -14542,10 +14913,10 @@ async function handleOp({ id, op, params }) {
                 // Exactly #25's regression class in a new place: the check is right,
                 // it was reading the wrong field.
                 if (tg === 'input' && (el.type === 'checkbox' || el.type === 'radio')) {
-                  return _mk(el.checked ? 'checked' : 'unchecked');
+                  return _mk(el.checked ? 'checked' : 'unchecked', 120);
                 }
                 if (tg === 'input' || tg === 'textarea') {
-                  return _mk(String(el.value == null ? '' : el.value));
+                  return _mk(String(el.value == null ? '' : el.value), 120);
                 }
                 // STRIP THE GUTTER, like the listing does. read_page removes an editor's
                 // line-number column; this readback did not, so the ONE field whose job

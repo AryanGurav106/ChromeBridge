@@ -111,6 +111,59 @@ FULL = len(LEVELS) - 1
 ALT: tuple[str, ...] = ("tag", "role", "type", "href")
 _LINK_TAGS = ("a", "area")
 
+# THE WITNESS, and it exists because the crowd-check cannot see a PERMUTATION.
+#
+# `nth` of `of` is a POSITIONAL claim, and a positional claim is only worth
+# anything while the order holds. Every mutation the shipped audit knew about
+# changes the crowd's COMPOSITION -- a rename, a deletion, an inserted twin, a
+# bumped counter -- and `len(hits) != of` catches all of them. A re-sorted
+# table changes none of it: same elements, same declarations, same count, a
+# different one at position N. MEASURED by adding that mutation to
+# tools/audit_flow_resolve.py, which had never had it:
+#
+#   descriptors carrying an ordinal          574 of 2496   23.0%
+#   under a reorder, BEFORE this existed:    5.6% CORRECT / 0.0% REFUSED
+#                                            94.4% WRONG  <- silent mis-bind
+#
+# The live shape is a flow that clicks Delete on the first invoice row; the
+# table's default sort flips to newest-first; the replay deletes a different
+# invoice and reports PASSED, because "one fewer row" still holds. That is the
+# #10/#11/#12 family -- act somewhere else, report success.
+#
+# SO THE ORDINAL NEEDS A WITNESS THAT A PERMUTATION DESTROYS, and by
+# construction it cannot be any field in LEVELS: the crowd IS the set that
+# matches on all of them. What is left is a field the descriptor deliberately
+# ignores, or something OUTSIDE the crowd. Both are measured over the 300
+# ordinal-bearing descriptors of 24 frozen sites, scoring a candidate by
+# whether it is UNIQUE within the tied crowd (the condition under which
+# checking it refuses every wrong binding):
+#
+#   self.href                17.3%     self.ALL (the five together)   22.7%
+#   self.value                3.3%     anchor, 1 preceding control    51.7%
+#   self.text                 4.0%     anchor, 2 preceding controls   58.7%
+#   self.label/placeholder    0.0%     anchor, 3 preceding controls   59.3%
+#   geometry (x, y)          87.3%     self.ALL + anchor              61.3%
+#
+# GEOMETRY WINS AND IS NOT USED, which is the one line worth not skipping.
+# It is excluded from identity because it DRIFTS -- #23 measured 110px, #25
+# measured 1,097px -- so a witness built on it would refuse on every reflow,
+# every lazy image and every responsive break. A witness that fires on
+# innocent change is #15's noise with a safety label on it.
+#
+# What ships is `self` plus the ANCHOR: the identities of the nearest
+# preceding controls that are NOT in the crowd. That is how a human says which
+# Delete button they mean -- the one next to invoice 1001 -- and it is a
+# declared fact (document order plus accessible names), not a heuristic.
+#
+# THE RESIDUE IS STATED RATHER THAN HIDDEN: ~39% of tied crowds have members
+# that are identical in every declared field AND sit in identical surroundings.
+# Nothing the collector emits separates them, so no witness is recorded and the
+# ordinal is taken exactly as before. Those steps are no worse than they were
+# and no better; `Recorder.before` now says so at record time, which is the
+# only moment it is cheap to act on.
+_WITNESS_FIELDS = ("href", "value", "text", "label", "placeholder")
+WITNESS_K = 3
+
 
 def _name_of(entry: dict) -> str:
     """The identity slot, in the collector's own order of preference.
@@ -179,6 +232,67 @@ def _targetable(entry: dict) -> bool:
     return bool(entry.get("clickable") or entry.get("editable"))
 
 
+def _identity(entry: dict) -> str:
+    """What a NEIGHBOUR is called, for the anchor. Tag and role so a link and a
+    button reading the same word are not the same anchor."""
+    f = fields(entry)
+    return f'{f["tag"]}|{f["role"]}|{f["name"]}'
+
+
+def witness_map(entries: list[dict], crowd: list[dict]) -> dict:
+    """mmid -> witness, for every member of `crowd`, in ONE pass.
+
+    Built once over the document rather than per member, because a crowd can
+    be hundreds of rows and the anchor needs what sits in front of each one.
+
+    THE ANCHOR WINDOW IS RECORD-LOCAL, and that is the difference between a
+    witness that survives a re-sort and one that does not. The first version
+    took the last N named controls in front of the member, wherever they came
+    from -- so after a sort the SAME element saw a different window (it now
+    had neighbours in front of it that it did not have when it was first on
+    the page) and the witness it had been recorded with no longer matched. The
+    window resets at every crowd member, which makes it exactly the controls
+    of that member's own record, and a record travels with its contents.
+
+    THE FIRST MEMBER HAS NO PREDECESSOR TO BOUND IT, so it would otherwise
+    collect the page header. It is given the shape of the NEXT member -- the
+    records of a list are structurally alike, which is MDR/DEPTA's data-record
+    assumption and the one #27 already uses to decide repetition.
+
+    A crowd member is never an anchor for another crowd member: they are
+    identical by construction, so they say nothing about which is which.
+    """
+    ids = {str(e.get("mmid")) for e in crowd}
+    windows: dict = {}
+    order: list = []
+    recent: list = []
+    for e in entries:
+        mm = str(e.get("mmid"))
+        if mm in ids:
+            windows[mm] = recent[-WITNESS_K:]
+            order.append(mm)
+            recent = []
+        elif _targetable(e) and _name_of(e):
+            recent.append(_identity(e))
+    if len(order) >= 2:
+        n = len(windows[order[1]])
+        windows[order[0]] = windows[order[0]][-n:] if n else []
+
+    out: dict = {}
+    for e in crowd:
+        mm = str(e.get("mmid"))
+        w: dict = {}
+        own = {k: v for k in _WITNESS_FIELDS
+               if (v := str(e.get(k) or "").strip())}
+        if own:
+            w["self"] = own
+        if windows.get(mm):
+            w["after"] = list(windows[mm])
+        if w:
+            out[mm] = w
+    return out
+
+
 def build(entry: dict, entries: Iterable[dict]) -> dict:
     """Describe `entry` as cheaply as it can be described unambiguously.
 
@@ -188,6 +302,7 @@ def build(entry: dict, entries: Iterable[dict]) -> dict:
     signal that costs no extra call, which is the whole reason it is stored
     rather than derived.
     """
+    entries = list(entries)
     pool = [e for e in entries if _targetable(e)]
     full_desc = at_level(entry, FULL)
     alt = _alt_of(entry, pool)
@@ -224,9 +339,39 @@ def build(entry: dict, entries: Iterable[dict]) -> dict:
         # that silently omits a step.
         return {"level": FULL, "desc": desc, "untargetable": True}
     out = {"level": FULL, "desc": desc, "nth": nth, "of": len(hits)}
+    # ONLY HERE, and only when it is UNIQUE. A descriptor that resolved
+    # without an ordinal makes no positional claim, so there is nothing for a
+    # permutation to break and nothing to witness.
+    #
+    # Unique AT RECORD TIME is the whole test, exactly as it is for ALT: a
+    # witness shared with another member of the crowd cannot say which one was
+    # meant, so storing it would put a field in the file that looks like a
+    # safeguard and is not. MEASURED, and this is why the rule is uniqueness
+    # rather than mere presence: an `after` anchor exists for almost every
+    # control on a page (something named nearly always precedes it), so a
+    # presence test recorded a witness for 100% of tied crowds while only
+    # ~61% of them had one that discriminates. The other ~39% would have
+    # carried false comfort and silenced the record-time warning that is the
+    # only honest answer for them.
+    wm = witness_map(entries, hits)
+    mine = wm.get(str(entry.get("mmid")))
+    if mine and sum(1 for e in hits
+                    if wm.get(str(e.get("mmid"))) == mine) == 1:
+        out["witness"] = mine
     if alt:
         out["alt"] = alt
     return out
+
+
+def unwitnessed_ordinal(target: dict) -> bool:
+    """Does this step rest on a position with nothing to confirm it?
+
+    Read by the recorder so an agent is told at RECORD time, which is the one
+    moment the answer is cheap to act on: adding any distinguishing control to
+    the row, or scoping the step differently, costs nothing while the agent is
+    still driving and costs a re-record afterwards.
+    """
+    return target.get("of") is not None and not target.get("witness")
 
 
 def _alt_of(entry: dict, pool: list[dict]) -> Optional[dict]:
@@ -251,12 +396,28 @@ class Unresolved(Exception):
     this class enforces: when zero or several match, REFUSE AND NAME THEM.
     `find`'s miss path (#39) establishes the second half -- a refusal has to
     hand over enough to act on, or it just costs a turn.
+
+    AND WHICH TARGET IT WAS, which it did not carry and which made the whole
+    escalation path unusable on a multi-target step. `fill_form` names one
+    target per field; the runner walked them in order and gave the agent's
+    answer to the FIRST, which was never the one that failed. Measured on a
+    login step whose Email resolved and whose Password was ambiguous: the bind
+    landed on Email, Password failed identically on every attempt so the run
+    could never be resumed past the step, and the proposed patch rewrote
+    EMAIL's descriptor to the password box -- which `record_flow(action=
+    "patch")` would then have written to disk, making the flow type the user's
+    email into a password field for ever. `resolve()` does not know the path
+    (it is handed one descriptor), so the runner stamps it on the way out; the
+    attribute exists here so there is one declared shape rather than an
+    attribute invented at the raise site.
     """
 
-    def __init__(self, reason: str, candidates: Optional[list] = None):
+    def __init__(self, reason: str, candidates: Optional[list] = None,
+                 path: Optional[str] = None):
         super().__init__(reason)
         self.reason = reason
         self.candidates = candidates or []
+        self.path = path
 
 
 def resolve(target: dict, entries: list[dict],
@@ -290,7 +451,7 @@ def resolve(target: dict, entries: list[dict],
     patch it then proposes is a mid-render reading.
     """
     try:
-        return _resolve_recorded(target, entries)
+        return _resolve_recorded(target, entries, notes)
     except Unresolved as exc:
         alt = target.get("alt") if allow_alt else None
         if not alt:
@@ -307,7 +468,8 @@ def resolve(target: dict, entries: list[dict],
         return str(hits[0].get("mmid"))
 
 
-def _resolve_recorded(target: dict, entries: list[dict]) -> str:
+def _resolve_recorded(target: dict, entries: list[dict],
+                      notes: Optional[list] = None) -> str:
     desc = target.get("desc") or {}
     full = target.get("full") or desc
     pool = [e for e in entries if _targetable(e)]
@@ -342,6 +504,40 @@ def _resolve_recorded(target: dict, entries: list[dict]) -> str:
             raise Unresolved(
                 f"ordinal {nth} is outside the {len(hits)} matches",
                 _candidates(hits))
+        # THE CROWD IS THE SAME CROWD; IS IT IN THE SAME ORDER? Everything
+        # above tests composition, and a permutation changes none of it. See
+        # the WITNESS block at the top for the measurement: before this, a
+        # re-sorted crowd mis-bound 94.4% of the time with no signal at all.
+        #
+        # The witness was unique when it was recorded, so ONE member carrying
+        # it is the member that was recorded -- at whatever position it now
+        # sits, which is how a re-sort resolves correctly instead of costing a
+        # turn. Zero or several means the thing that identified it is gone,
+        # and then the position is not evidence of anything.
+        wit = target.get("witness")
+        if wit:
+            wm = witness_map(entries, hits)
+            cand = [e for e in hits if wm.get(str(e.get("mmid"))) == wit]
+            if len(cand) != 1:
+                raise Unresolved(
+                    f"the {len(hits)} element(s) matching {_describe(desc)} are the "
+                    f"same crowd that was recorded, but {len(cand)} of them now carry "
+                    f"what identified this one ({_witness_text(wit)}) — so position "
+                    f"{nth} is no longer evidence of which one this step meant. A "
+                    f"re-sorted list, a row removed while another was added, and a "
+                    f"rename of the controls around it all produce this",
+                    _candidates(hits))
+            if str(cand[0].get("mmid")) != str(hits[nth].get("mmid")):
+                # Resolved, and NOT where it was recorded. Deterministic -- the
+                # witness names exactly one element -- but the list has moved
+                # under the flow and the caller has to be able to say so, the
+                # same reason the href fallback reports itself (#61).
+                if notes is not None:
+                    notes.append({"via": "position",
+                                  "was": dict(desc), "nth": nth,
+                                  "now": hits.index(cand[0]),
+                                  "mmid": str(cand[0].get("mmid"))})
+            return str(cand[0].get("mmid"))
         return str(hits[nth].get("mmid"))
 
     # No ordinal was recorded, which means the descriptor was unique at record
@@ -367,6 +563,17 @@ def _resolve_recorded(target: dict, entries: list[dict]) -> str:
         f"{len(hits)} elements match {_describe(desc)} and the step records no "
         f"ordinal, so which one it meant is not recoverable",
         _candidates(hits))
+
+
+def _witness_text(w: Optional[dict]) -> str:
+    if not w:
+        return "nothing distinguishing"
+    bits = []
+    if w.get("self"):
+        bits.append(" ".join(f"{k}={v!r}" for k, v in w["self"].items()))
+    if w.get("after"):
+        bits.append("after " + " / ".join(repr(a) for a in w["after"]))
+    return "; ".join(bits) or "nothing distinguishing"
 
 
 def _describe(desc: dict) -> str:

@@ -219,6 +219,92 @@ def main() -> int:
           num_self_test(),
           "see self-test output above")
 
+    # ---- P7: SOURCE HYGIENE — the corruption class with no tripwire ----------
+    # FIVE silent corruptions of a shipped source file so far, none caught by a
+    # test: a PowerShell UTF-8 rewrite; four heredoc-escape mangles; a NUL byte
+    # inside a string literal that `node --check` ACCEPTS as valid JS and that
+    # turned grep's own output into "Binary file matches"; and listener_tag.js
+    # coming out of an edit ENTIRELY CRLF (309 CRLF, 0 bare LF) where HEAD was
+    # entirely LF, on macOS, with .gitattributes declaring LF in-repo.
+    #
+    # Every one of them passes `node --check` and every suite. The project memory
+    # already says "scan for control bytes after a bulk edit" — which is a thing a
+    # human has to remember, and is therefore the same shape as the suite-count
+    # drift #30 had to automate for the same reason (PRINCIPLES #15).
+    #
+    # Checks BYTES, not decoded text, because that is the level at which all five
+    # incidents happened.
+    _SRC = [
+        "extension/background.js", "extension/listener_tag.js",
+        "extension/panel.js", "extension/panel.html", "extension/manifest.json",
+        "mcp_server.py", "config.py",
+        "core/bridge/server.py", "core/bridge/driver.py",
+        "core/flows/model.py", "core/flows/descriptor.py",
+        "core/flows/recorder.py", "core/flows/runner.py",
+    ]
+    _missing, _crlf, _ctrl, _bom = [], [], [], []
+    for rel in _SRC:
+        p = ROOT / rel
+        if not p.exists():                       # a renamed file must FAIL, not vanish
+            _missing.append(rel)                 # (audit_patterns.py scanned a file
+            continue                             #  that did not exist for entries)
+        b = p.read_bytes()
+        if b.count(b"\r\n"):
+            _crlf.append(f"{rel}({b.count(b'\r\n')})")
+        bad = [(i, x) for i, x in enumerate(b) if x < 9 or 13 < x < 32]
+        if bad:
+            _ctrl.append(f"{rel}@{bad[0][0]}=0x{bad[0][1]:02x}")
+        if b.startswith(b"\xef\xbb\xbf"):
+            _bom.append(rel)
+
+    check("P7 every listed source file exists (a rename must fail this, not "
+          "silently shrink the scan)", not _missing, ", ".join(_missing))
+    check("P7b no shipped source carries CRLF line endings",
+          not _crlf, ", ".join(_crlf) or f"{len(_SRC)} files, all LF")
+    check("P7c no shipped source carries a control byte (a NUL inside a string "
+          "literal is valid JS and invisible to node --check)",
+          not _ctrl, ", ".join(_ctrl) or "clean")
+    check("P7d no shipped source carries a UTF-8 BOM",
+          not _bom, ", ".join(_bom) or "clean")
+
+    # ---- P7e: the CORRUPTION signals, over EVERY python/js file in the repo ---
+    # CRLF is deliberately NOT checked here, and the reason matters. It is a
+    # line-ending CONVENTION that .gitattributes normalises on commit (HEAD is
+    # LF for every text file), and a large number of tools/*.py carry CRLF in the
+    # working copy from a checkout that predates this session — including files
+    # nobody has touched. Failing on that would make this check permanently red
+    # for a thing git already handles, which is how a tripwire gets disabled.
+    #
+    # A NUL byte and a BOM are different: they are not a convention, nothing
+    # normalises them, and both have actually happened here — a NUL reached
+    # background.js inside a string literal (valid JS, accepted by node --check,
+    # turned grep's own output into "Binary file matches"), and a BOM sat at the
+    # head of background.js from the PowerShell rewrite incident until it was
+    # found by P7d on its first run.
+    _wide_ctrl, _wide_bom, _scanned = [], [], 0
+    for _pat in ("tools/*.py", "tools/*.js", "core/**/*.py", "extension/*.js"):
+        for _f in sorted(ROOT.glob(_pat)):
+            _scanned += 1
+            _b = _f.read_bytes()
+            _hit = [(i, x) for i, x in enumerate(_b) if x < 9 or 13 < x < 32]
+            if _hit:
+                _wide_ctrl.append(f"{_f.relative_to(ROOT)}@{_hit[0][0]}=0x{_hit[0][1]:02x}")
+            if _b.startswith(b"\xef\xbb\xbf"):
+                _wide_bom.append(str(_f.relative_to(ROOT)))
+    check("P7e no python or js file anywhere carries a control byte or a BOM",
+          not _wide_ctrl and not _wide_bom,
+          ", ".join(_wide_ctrl + _wide_bom) or f"{_scanned} files scanned, clean")
+
+    # THE DETECTOR MUST BE SHOWN TO FIRE. A hygiene check reporting "clean" is
+    # worth nothing until it has been demonstrated on a planted byte — which is
+    # exactly the rule audit_patterns.py was built under, and the reason P1's
+    # first version (which could not fire at all) was caught.
+    _probe = b"const a = 1;\r\nconst b = '\x00';\n"
+    check("P7* ...and the detector provably fires on planted CRLF and a NUL",
+          _probe.count(b"\r\n") == 1
+          and [(i, x) for i, x in enumerate(_probe) if x < 9 or 13 < x < 32],
+          "planted probe detected")
+
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} pattern-lint checks passed.")
     return 0 if passed == len(results) else 1
