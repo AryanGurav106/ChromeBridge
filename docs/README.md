@@ -20,6 +20,7 @@ fix it.
 | You are… | Read, in order |
 |---|---|
 | **working anywhere in this repo** | `PRINCIPLES.md` — non-negotiable, 20 rules |
+| catching up on the most recent work | CLAUDE.md **#70** (readiness), **#71** (the generality audit), **#72** (the ordinal/witness problem), **#73** (the Mind2Web audit) |
 | changing the DOM collector | `PRINCIPLES.md` → `REPRESENTATION.md` → CLAUDE.md #27, #28, #29, #37 |
 | changing what the listing *says* | `REPRESENTATION.md` → CLAUDE.md #13, #22, #24 (truncation and silence) |
 | touching readiness / settling | `READINESS.md` — this is the active open problem |
