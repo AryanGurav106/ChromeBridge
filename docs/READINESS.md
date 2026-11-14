@@ -369,7 +369,16 @@ code (R11–R21 in `tools/test_readiness.py`):
   the suite read 10/10, because `executeScript({func})` stringifies one function
   and a sibling call becomes a free identifier whose ReferenceError lands in a
   swallowing catch.
-- **Per-subtree attribution** (§5b). Designed, not built. The kind-split covers
+- **Per-subtree attribution** (§5b). Designed, not built — and `query(scope,…)`
+  plus its `inScope()` helper are therefore **dead code**: all five callers pass
+  `null`. Either wire it or delete the parameter; a half-contract is what
+  PRINCIPLES §14 names.
+- **The observation window is 3000ms, and that number was measured** rather than
+  chosen. A 1000ms window reports zero changes on **50.7%** of reads while a
+  page committing every 2s is still building — a false quiet, the direction that
+  makes an agent conclude absence. 3000ms is 0.0% at 1s, 2s and 3s commit
+  intervals. The cost is the opposite error for up to 3s after a page settles,
+  which costs a re-check rather than a wrong answer (R23/R23b). The kind-split covers
   the dominant case; scope would cover the rest.
 - **Cross-origin frames** are not reachable and are deliberately not counted as
   quiet, which is a stated limit rather than a fix.
