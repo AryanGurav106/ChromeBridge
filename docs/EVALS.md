@@ -74,6 +74,11 @@ and where the claim is therefore weakest.** Designing it around our strengths
 would be #25's rule applied to a benchmark: a sample containing only the shape
 you are best at cannot measure generality.
 
+**Eval 4 is pre-registered at `tools/bench_turns/eval4/PREREG.md`**, written
+before its tasks existed. Its `H4` is deliberately a test we may fail — on the
+interaction-only subset, where eval 3 measured us at 0.88 (level). A null there
+is pre-registered as publishable and must be reported as prominently as a win.
+
 Target archetypes, in priority order:
 
 1. **Multi-step stateful forms** — a flow where step 3 depends on a value
