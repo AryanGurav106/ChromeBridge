@@ -41,6 +41,7 @@ fix it.
 | `MEASUREMENT.md` | The rulers. What each one can and cannot see, and how each has lied |
 | `EVALS.md` | The head-to-head protocol and the results index |
 | `OPEN.md` | The single ranked list of open questions, each with its evidence |
+| `SHOWCASE.md` | Content written for posting, with the claims it is not allowed to make |
 
 ## Documents at the repo root (older, still current)
 
