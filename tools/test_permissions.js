@@ -221,6 +221,19 @@ const GATED = [
   check("P15 tabs_context needs no grant (it is how the agent names the site)",
     (await refusal("tabs_context")) === null);
 
+  // steer_ack marks a message the USER typed in the side panel as having reached
+  // the agent. It carries nothing about any page and delivers no input, so gating
+  // it on an origin would mean asking a site's permission to update our own UI —
+  // and it stays answerable while PAUSED because pause is exactly when someone
+  // wants to say what went wrong. Both are claims the code makes; these prove them
+  // rather than trusting two set literals to have been edited.
+  reset();
+  check("P22 steer_ack needs no grant (it is about the panel, not the page)",
+    (await refusal("steer_ack", { ids: ["x"] })) === null);
+  reset(); state.storage.bridge_paused = true;
+  check("P23 steer_ack still answers while paused (a note landing must not go unsaid)",
+    (await refusal("steer_ack", { ids: ["x"] })) === null);
+
   // -- closed schemes get their own message, not the permission one ---------
   reset(); setTab("chrome://settings");
   const closed = await refusal("click");

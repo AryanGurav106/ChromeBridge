@@ -859,6 +859,47 @@ input:hover { border-color: var(--line-3); }
 input:focus { border-color: var(--line-hi); outline: none; box-shadow: 0 0 0 3px rgba(255,255,255,.06); }
 input[type="number"]::-webkit-inner-spin-button { opacity: .35; }
 
+/* steering note composer ------------------------------------------------- */
+textarea {
+  width: 100%;
+  min-height: 62px;
+  resize: vertical;
+  font-family: var(--font);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--well);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  padding: 9px 11px;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+textarea::placeholder { color: var(--text-3); }
+textarea:hover { border-color: var(--line-3); }
+textarea:focus { border-color: var(--line-hi); outline: none; box-shadow: 0 0 0 3px rgba(255,255,255,.06); }
+
+.steer-foot {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 8px;
+}
+.steer-foot .btn-primary { flex: 0 0 auto; height: 32px; padding: 0 13px; }
+.steer-when { font-size: 11px; color: var(--text-3); line-height: 1.35; }
+
+.steer-list { list-style: none; margin: 12px 0 0; padding: 0; }
+.steer-list li {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 7px 0; border-top: 1px solid var(--line);
+  font-size: 12px; line-height: 1.45;
+}
+.steer-list .txt { flex: 1 1 auto; color: var(--text); word-break: break-word; }
+.steer-state {
+  flex: 0 0 auto; font-family: var(--mono); font-size: 10px;
+  letter-spacing: .04em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 999px;
+  border: 1px solid var(--line-2); color: var(--text-3);
+}
+.steer-state.is-done { color: var(--ok); border-color: var(--ok-line); }
+
 .input-wrap { position: relative; display: flex; align-items: center; }
 .input-wrap input { padding-right: 38px; }
 .input-wrap .btn-icon { position: absolute; right: 4px; }
@@ -1109,6 +1150,29 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .35; }
   </details>
 
   <!-- activity ------------------------------------------------------------ -->
+  <!-- steer ----------------------------------------------------------------
+       Sits directly above Activity on purpose: you read what the agent just did,
+       then say something about it. -->
+  <details class="card fold" data-fold="steer">
+    <summary class="head">
+      <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+      <div class="label" id="steer-h">Steer</div>
+      <button class="btn-mini" id="clear_steer" hidden>Clear</button>
+      <span class="caret" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></span>
+    </summary>
+    <div class="body">
+      <textarea id="steer_text" rows="3" spellcheck="false"
+                placeholder="e.g. the filter is in the left sidebar, not the toolbar"></textarea>
+      <div class="steer-foot">
+        <button class="btn-primary" id="steer_send">Send</button>
+        <span class="steer-when" id="steer_when">Reaches Claude on its next browser action.</span>
+      </div>
+      <ul class="steer-list" id="steer_list" hidden></ul>
+    </div>
+  </details>
+
   <details class="card fold" data-fold="feed" open>
     <summary class="head">
       <svg class="i" viewBox="0 0 24 24" aria-hidden="true">

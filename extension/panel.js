@@ -597,13 +597,77 @@ async function save() {
 }
 
 // --------------------------------------------------------------------------
+// steering notes
+// --------------------------------------------------------------------------
+
+// What the user typed, mirrored from storage. background.js is the only writer;
+// this document only renders it and asks for a new one, which keeps ONE queue.
+let steerNotes = [];
+
+// Three states, because they need three different answers from the reader:
+// queued  — the bridge is down, so nothing has left this browser yet
+// waiting — the server has it and is holding it for the agent's next action
+// delivered — it was attached to a tool result, so Claude has read it
+function steerStateWord(s) {
+  return s === "delivered" ? "delivered" : s === "sent" ? "waiting" : "queued";
+}
+
+function steerStateWhy(s) {
+  if (s === "delivered") return "Claude has this — it rode along with a tool result.";
+  if (s === "sent") return "The bridge has it. It arrives the next time Claude acts on the browser.";
+  return "Not sent yet — the bridge is not connected. It goes out on reconnect.";
+}
+
+function renderSteer() {
+  const list = $("steer_list");
+  list.textContent = "";
+  $("clear_steer").hidden = steerNotes.length === 0;
+  const recent = steerNotes.slice(-6).reverse();
+  list.hidden = recent.length === 0;
+  for (const n of recent) {
+    const li = document.createElement("li");
+    const txt = document.createElement("span");
+    txt.className = "txt";
+    // textContent, like everything else in this document — it has extension
+    // privileges, and a habit that holds only for page strings is not a habit.
+    txt.textContent = n.text;
+    const st = document.createElement("span");
+    st.className = "steer-state" + (n.state === "delivered" ? " is-done" : "");
+    st.textContent = steerStateWord(n.state);
+    st.title = steerStateWhy(n.state);
+    li.append(txt, st);
+    list.appendChild(li);
+  }
+}
+
+async function sendSteer() {
+  const ta = $("steer_text");
+  const text = ta.value.trim();
+  if (!text) return;
+  ta.value = "";
+  let res = null;
+  try { res = await chrome.runtime.sendMessage({ kind: "steer", text }); } catch (e) {}
+  if (!res || !res.ok) {
+    // Put it back rather than losing what they wrote. A steering note is usually
+    // typed in a hurry while something is going wrong, and that is the worst
+    // moment to make someone retype it.
+    ta.value = text;
+    $("steer_when").textContent = "Could not queue that — try reloading the panel.";
+    return;
+  }
+  $("steer_when").textContent = res.connected
+    ? "Reaches Claude on its next browser action."
+    : "Bridge is down — saved here, and it goes out on reconnect.";
+}
+
+// --------------------------------------------------------------------------
 // boot
 // --------------------------------------------------------------------------
 
 (async function init() {
   const saved = await chrome.storage.local.get([
     "bridge_host", "bridge_port", "bridge_token",
-    "bridge_status", "bridge_last_action", "bridge_action_log",
+    "bridge_status", "bridge_last_action", "bridge_action_log", "bridge_steer",
     PERM_KEY, PAUSE_KEY, PENDING_KEY, DEBUG_BLOCK_KEY,
   ]);
   if (saved.bridge_host) $("host").value = saved.bridge_host;
@@ -620,6 +684,8 @@ async function save() {
   renderEndpoint();
   actionLog = Array.isArray(saved.bridge_action_log) ? saved.bridge_action_log : [];
   paintFeed();
+  steerNotes = Array.isArray(saved.bridge_steer) ? saved.bridge_steer : [];
+  renderSteer();
   paintAction(saved.bridge_last_action);
   paintStatus(saved.bridge_status);
 
@@ -679,6 +745,24 @@ $("reconnect").addEventListener("click", async () => {
   beginPending();
 });
 
+$("steer_send").addEventListener("click", sendSteer);
+
+// Enter sends, Shift+Enter is a newline — the convention anyone typing a short
+// correction already has in their hands. Cmd/Ctrl+Enter sends either way, so the
+// habit from a multi-line composer still works.
+$("steer_text").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  if (e.shiftKey && !(e.metaKey || e.ctrlKey)) return;
+  e.preventDefault();
+  sendSteer();
+});
+
+$("clear_steer").addEventListener("click", async () => {
+  try { await chrome.runtime.sendMessage({ kind: "clear_steer" }); } catch (e) {}
+  steerNotes = [];
+  renderSteer();
+});
+
 $("clear_log").addEventListener("click", async () => {
   try { await chrome.runtime.sendMessage({ kind: "clear_log" }); } catch (e) {}
   actionLog = [];
@@ -728,6 +812,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
     actionLog = Array.isArray(changes.bridge_action_log.newValue)
       ? changes.bridge_action_log.newValue : [];
     paintFeed();
+  }
+  // background.js is the only writer, so this is how a note typed here turns
+  // into "delivered" once the server acknowledges it.
+  if (changes.bridge_steer) {
+    steerNotes = Array.isArray(changes.bridge_steer.newValue)
+      ? changes.bridge_steer.newValue : [];
+    renderSteer();
   }
   // The gate writes bridge_pending_origin the moment it refuses an op, and the
   // panel is usually already open when that happens — this is what turns a

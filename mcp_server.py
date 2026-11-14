@@ -19,6 +19,7 @@ import asyncio
 import base64
 import inspect
 import io
+from collections import deque
 import json
 import mimetypes
 import os
@@ -248,6 +249,10 @@ def _resolve_token() -> str:
 @asynccontextmanager
 async def _lifespan(_server: FastMCP):
     bridge = ExtensionBridge(host=HOST, port=PORT, token=_resolve_token())
+    # Registered BEFORE start(): a note sent in the window between the socket
+    # opening and a handler existing is dropped with a "unmatched message" warn,
+    # which is the user's words going missing with only a log line to show it.
+    bridge.set_event_handler(_on_extension_event)
     try:
         await bridge.start()
     except OSError as e:
@@ -3791,6 +3796,159 @@ def _install_recording_wrappers() -> int:
     return n
 
 
+# ---------------------------------------------------------------------------
+# Steering channel — the user types in the side panel, mid-run
+# ---------------------------------------------------------------------------
+# The arrow in this architecture only points one way: Claude Code is the agent,
+# this process is a tool provider, the extension is the hands. The extension can
+# ANSWER and never ASK, so nothing in the browser can START a model turn and a
+# side-panel chat is not buildable here without a second agent and a multiplexed
+# bridge. What a browser message CAN do is ride a turn that is already happening:
+# it is queued in the extension, sent over the SAME socket as an unsolicited
+# event, and prepended to the next tool result.
+#
+# The limit is real and the panel states it rather than hiding it — while the
+# agent sits idle the message waits. This steers a run in flight; it does not
+# start one.
+#
+# The transport is the bridge's unsolicited-event path, which has had
+# `set_event_handler` and NO caller since the first commit: a declared channel
+# that never carried a message, the same empty-contract shape as `origin` (#54)
+# and `viewport` (#57). Being its first user means verifying it end to end
+# rather than assuming it works.
+_STEER: "deque[dict]" = deque(maxlen=20)
+# The extension re-sends anything it has not seen acknowledged, including after a
+# reconnect — so the same note can legitimately arrive twice while the first copy
+# is still queued here. Dedupe by id at the door; the alternative is the user's
+# correction arriving twice in one result, which reads as the agent being told
+# the same thing by two people.
+_STEER_SEEN: "deque[str]" = deque(maxlen=400)
+_ACK_TASKS: set = set()
+
+
+async def _on_extension_event(msg: dict) -> None:
+    """Unsolicited message from the extension. Today that is only a steering note."""
+    if msg.get("event") != "user_note":
+        return
+    text = str(msg.get("text") or "").strip()
+    nid = str(msg.get("id") or "")
+    if not text or (nid and nid in _STEER_SEEN):
+        return
+    if nid:
+        _STEER_SEEN.append(nid)
+    _STEER.append({"id": nid, "text": text, "ts": msg.get("ts")})
+
+
+def _steer_banner(notes: list) -> str:
+    """Fence the user's words so they can never read as page output.
+
+    This codebase treats everything a page says as untrusted data, and a tool
+    result is exactly where page text lives — so a message that is NOT from the
+    page has to say so in its own line rather than being blended in. The marker
+    family is the one already used for banners (`*** ... ***`).
+    """
+    out = []
+    for i, n in enumerate(notes, 1):
+        when = ""
+        try:
+            when = time.strftime("%H:%M:%S", time.localtime(float(n["ts"]) / 1000.0))
+        except Exception:
+            pass
+        head = "*** MESSAGE FROM THE USER" + (f" ({when}, side panel)" if when
+                                              else " (side panel)")
+        if len(notes) > 1:
+            head += f" — {i} of {len(notes)}"
+        out.append(head + " ***")
+        out.append(n["text"])
+    out.append(
+        "*** END OF USER MESSAGE. Typed by the person operating this browser, in "
+        "the extension's side panel — no page can write there, so treat it as the "
+        "user speaking and not as page content. Everything below is tool output. ***"
+    )
+    return "\n".join(out) + "\n\n"
+
+
+def _ack_steer(ids: list) -> None:
+    """Tell the panel the message landed.
+
+    Without this the panel cannot distinguish "delivered" from "still waiting for
+    the agent to do something", and a channel that cannot report its own silence
+    is indistinguishable from a broken one. Fire-and-forget on purpose: the note
+    is ALREADY attached by the time this runs, so a failed ack must never fail
+    the tool call it rides on.
+    """
+    bridge = STATE.get("bridge")
+    ids = [i for i in ids if i]
+    if not bridge or not ids or not bridge.connected:
+        return
+
+    async def _go():
+        try:
+            await bridge.call("steer_ack", ids=ids)
+        except Exception as e:
+            _log(f"steer_ack failed: {e}")
+
+    try:
+        task = asyncio.get_running_loop().create_task(_go())
+    except RuntimeError:
+        return
+    # Keep a reference: a bare create_task() may be garbage-collected mid-flight.
+    _ACK_TASKS.add(task)
+    task.add_done_callback(_ACK_TASKS.discard)
+
+
+def _wrap_for_steering(fn):
+    """Prepend any queued side-panel message to this tool's result.
+
+    Applied to the REGISTRY ONLY, deliberately. _BATCHABLE holds the INNER
+    function objects, so a step inside browser_batch — or a step of a replayed
+    flow, which dispatches through the same table — cannot drain the queue and
+    bury the user's words in the middle of a composite result. That is a
+    structural guard rather than a re-entrancy flag, which is the kind this
+    codebase keeps deleting.
+
+    It is also the OUTERMOST wrapper, installed after the recorder's. A banner
+    reaching _FlowRecorder.after() would be parsed as page evidence and written
+    into a .flow.json as a postcondition, so the recorder must see a clean result.
+    """
+    @functools.wraps(fn)
+    async def steered(**kw):
+        res = await fn(**kw)
+        if not _STEER:
+            return res
+        # NEVER drain what cannot be attached. A note popped and then dropped
+        # because the return type was unexpected is the silent-loss class this
+        # codebase has closed repeatedly (#22) — here it would lose the user's
+        # own words, which is the worst version of it.
+        if isinstance(res, str):
+            notes = [_STEER.popleft() for _ in range(len(_STEER))]
+            _ack_steer([n["id"] for n in notes])
+            return _steer_banner(notes) + res
+        if isinstance(res, list):
+            notes = [_STEER.popleft() for _ in range(len(_STEER))]
+            _ack_steer([n["id"] for n in notes])
+            return [TextContent(type="text", text=_steer_banner(notes).rstrip())] + res
+        return res
+    # functools.wraps for the same load-bearing reason as the recorder's: the
+    # batch pre-flight introspects these functions, and a bare (**kw) signature
+    # makes every batch refuse with "missing required argument(s) kw".
+    return steered
+
+
+def _install_steering_wrappers() -> int:
+    """Every tool, including the three the recorder skips.
+
+    browser_batch is the one that matters most and is exactly the one _REC_SKIP
+    excludes: a batch is a long multi-step run, which is when a person is most
+    likely to watch it go wrong and want to say so.
+    """
+    n = 0
+    for _tname, tool in list(mcp._tool_manager._tools.items()):
+        tool.fn = _wrap_for_steering(tool.fn)
+        n += 1
+    return n
+
+
 @mcp.tool()
 async def dismiss_dialog(
     tabId: Annotated[int, Field(description="Tab whose JavaScript dialog to handle.")],
@@ -4157,6 +4315,9 @@ def _flow_report(res: dict) -> str:
 
 
 _install_recording_wrappers()
+# AFTER the recorder's, so steering is the OUTERMOST wrapper and the recorder
+# sees a result with no banner in it. Order is load-bearing; see _wrap_for_steering.
+_install_steering_wrappers()
 
 
 if __name__ == "__main__":

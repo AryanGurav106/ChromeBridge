@@ -155,6 +155,76 @@ async function _loadActionLog() {
   } catch (e) {}
 }
 
+// --- steering notes --------------------------------------------------------
+// The user types a correction in the side panel while the agent is working. The
+// note is queued HERE and sent over the same socket as an unsolicited event; the
+// server prepends it to the next tool result. Nothing in the browser can start a
+// model turn, so this rides a turn that is already happening — which is why the
+// panel says "reaches Claude on its next action" rather than implying a chat.
+//
+// The queue lives in storage for the same reason the action log does: both ends
+// are disposable. The panel document dies when the panel closes and this worker
+// is evicted on Chrome's schedule, so an in-memory queue loses what the user
+// typed. A note written while the bridge is DOWN waits here and goes out on the
+// next welcome — late, not lost, and the panel distinguishes the two.
+const STEER_MAX = 20;
+let _steer = [];
+let _steerLoaded = false;
+
+async function _loadSteer() {
+  if (_steerLoaded) return;
+  _steerLoaded = true;
+  try {
+    const s = await chrome.storage.local.get(["bridge_steer"]);
+    if (Array.isArray(s.bridge_steer)) _steer = s.bridge_steer.slice(-STEER_MAX);
+  } catch (e) {}
+}
+
+async function _saveSteer() {
+  try { await chrome.storage.local.set({ bridge_steer: _steer }); } catch (e) {}
+}
+
+// Send everything the server has not acknowledged. Re-sending a note that is
+// merely "sent" is deliberate: after a reconnect the server process may be a new
+// one whose in-memory queue never had it. The server dedupes by id, so the cost
+// of being wrong in this direction is nothing, while the cost of the other
+// direction is the user's correction silently never arriving.
+function flushSteer() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return 0;
+  let n = 0;
+  for (const note of _steer) {
+    if (note.state === "delivered") continue;
+    try {
+      ws.send(JSON.stringify({
+        event: "user_note", id: note.id, text: note.text, ts: note.ts,
+      }));
+      note.state = "sent";
+      n++;
+    } catch (e) { break; }
+  }
+  return n;
+}
+
+async function queueSteer(text) {
+  await _loadSteer();
+  const t = String(text || "").trim();
+  if (!t) return null;
+  const note = {
+    id: (self.crypto && crypto.randomUUID) ? crypto.randomUUID()
+        : String(Date.now()) + "-" + Math.random().toString(16).slice(2),
+    // A bound, because this is pasted into a model's context. Generous enough
+    // that a real instruction is never clipped; marked so a clip is never silent.
+    text: t.length > 2000 ? t.slice(0, 2000) + "…(clipped)" : t,
+    ts: Date.now(),
+    state: "queued",
+  };
+  _steer.push(note);
+  if (_steer.length > STEER_MAX) _steer = _steer.slice(-STEER_MAX);
+  flushSteer();               // before the save, so the state persisted is post-flush
+  await _saveSteer();
+  return note;
+}
+
 async function broadcastAction(op, tab) {
   await _loadActionLog();
   _lastAction = {
@@ -213,6 +283,10 @@ const UNGATED_OPS = new Set([
   "ping", "sw_info", "debug_targets",
   "tabs_context", "tabs_create", "tabs_close",
   "get_active_tab", "get_url", "resize_window", "detach_debugger",
+  // steer_ack carries NOTHING about any page and delivers no input — it marks a
+  // message the user typed in this panel as having reached the agent. Gating it
+  // on an origin would be asking a site's permission to update our own UI.
+  "steer_ack",
 ]);
 
 // Ops that still answer while PAUSED. They read nothing out of the page and
@@ -222,6 +296,10 @@ const UNGATED_OPS = new Set([
 const PAUSE_EXEMPT_OPS = new Set([
   "ping", "sw_info", "debug_targets",
   "get_url", "get_active_tab", "tabs_context", "detach_debugger",
+  // Pause is exactly when someone wants to SAY what went wrong. Refusing the
+  // acknowledgement would leave the panel showing "waiting" for a message that
+  // had already landed, which is the one thing this channel must not do.
+  "steer_ack",
 ]);
 
 // Schemes no grant can ever unlock: Chrome refuses extension script injection and
@@ -473,6 +551,11 @@ async function connect() {
       _server = { protocol: msg.protocol, version: msg.version || "unknown" };
       reconnectDelayMs = 1000;
       await setStatus(true, "");
+      // Anything the user typed while the bridge was down goes out now. The
+      // server dedupes by id, so a note already sitting in its queue is not
+      // duplicated by this.
+      await _loadSteer();
+      if (flushSteer()) await _saveSteer();
       return;
     }
     if (msg.id && msg.op) {
@@ -12908,8 +12991,10 @@ async function handleOp({ id, op, params }) {
     // no-op. See assertOpAllowed for the ungated set and the navigate rule.
     await assertOpAllowed(op, params);
     // Broadcast "what the agent is about to touch" to the side panel, except
-    // for the silent keepalive ping which would flood the UI.
-    if (op !== "ping") {
+    // for the silent keepalive ping which would flood the UI — and steer_ack,
+    // which touches no page at all and would put the user's own message back in
+    // the feed as though the agent had done something to a tab.
+    if (op !== "ping" && op !== "steer_ack") {
       try {
         const _t = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
         await broadcastAction(op, _t && _t[0]);
@@ -12918,6 +13003,24 @@ async function handleOp({ id, op, params }) {
     switch (op) {
       case "ping":
         result = { pong: Date.now() }; break;
+      case "steer_ack": {
+        // The server attached these notes to a tool result, so the agent has
+        // them. Marking them here is what lets the panel say "delivered"
+        // instead of leaving the user guessing whether their correction landed.
+        await _loadSteer();
+        const _ids = new Set(Array.isArray(params.ids) ? params.ids : []);
+        let _n = 0;
+        for (const note of _steer) {
+          if (_ids.has(note.id) && note.state !== "delivered") {
+            note.state = "delivered";
+            note.delivered_ts = Date.now();
+            _n++;
+          }
+        }
+        if (_n) await _saveSteer();
+        result = { acknowledged: _n };
+        break;
+      }
       case "get_active_tab": {
         const t = await resolveTab(params);
         result = { id: t.id, url: t.url, title: t.title, windowId: t.windowId };
@@ -14643,6 +14746,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // presumably just reloaded the extension or restarted the server.
     restartConnection();
     sendResponse({ ok: true });
+  } else if (msg && msg.kind === "steer") {
+    // The panel never touches the socket itself — same shape as every other
+    // panel action, and it keeps ONE writer for the queue.
+    queueSteer(msg.text)
+      .then((note) => sendResponse({
+        ok: !!note,
+        note,
+        connected: !!(ws && ws.readyState === WebSocket.OPEN),
+      }))
+      .catch(() => sendResponse({ ok: false }));
+  } else if (msg && msg.kind === "clear_steer") {
+    _steer = [];
+    _steerLoaded = true;      // don't let a later load resurrect what we cleared
+    _saveSteer()
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false }));
   } else if (msg && msg.kind === "clear_log") {
     _actionLog = [];
     _actionLogLoaded = true;   // don't let a later load resurrect what we cleared

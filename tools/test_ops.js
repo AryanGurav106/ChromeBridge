@@ -1746,6 +1746,56 @@ const FIELDS3 = () => ([
   });
 
   // -------------------------------------------------------------------------
+  // steer_ack -- the acknowledgement half of the steering channel.
+  //
+  // #19 is explicit that the op router is where a feature ships inert, and this
+  // one is invisible when it breaks: the note still reaches the agent, only the
+  // panel never stops saying "waiting". That is the silent half of a channel
+  // whose whole point is not being silent.
+  await test("steer_ack marks the right note delivered, and only that one", async () => {
+    resetState();
+    state.storage.bridge_steer = [
+      { id: "a-1", text: "the filter is in the sidebar", ts: 1, state: "sent" },
+      { id: "b-2", text: "wrong tab", ts: 2, state: "sent" },
+    ];
+
+    let r = await callOp("steer_ack", { ids: ["a-1"] });
+    let saved = state.storage.bridge_steer || [];
+    check("ST1 an acknowledged note is marked delivered",
+      r.ok && r.result.acknowledged === 1
+        && saved[0].state === "delivered" && saved[0].delivered_ts > 0,
+      JSON.stringify(r.result || r.error));
+
+    // CONTROL. Without it, marking EVERY note delivered on any ack would pass
+    // ST1 while telling the user their later correction had landed when it had
+    // not -- a false "delivered" is worse than no signal at all.
+    check("ST1b CONTROL: a note that was not acknowledged is untouched",
+      saved[1].state === "sent" && saved[1].delivered_ts === undefined,
+      JSON.stringify(saved[1]));
+
+    // CONTROL. A stray or replayed ack carrying an id we never issued must
+    // change nothing -- the same refuse-rather-than-guess rule the rest of the
+    // surface uses.
+    r = await callOp("steer_ack", { ids: ["never-issued"] });
+    saved = state.storage.bridge_steer || [];
+    check("ST1c CONTROL: an unknown id acknowledges nothing",
+      r.ok && r.result.acknowledged === 0 && saved[1].state === "sent",
+      JSON.stringify(r.result || r.error));
+
+    // An ack is idempotent: the server re-sends on reconnect, so the same id can
+    // arrive twice and must not be counted twice.
+    r = await callOp("steer_ack", { ids: ["a-1"] });
+    check("ST1d a repeated ack for an already-delivered note counts zero",
+      r.ok && r.result.acknowledged === 0, JSON.stringify(r.result || r.error));
+
+    // Malformed input is a refusal to act, not a throw: this op rides on a
+    // fire-and-forget call whose failure nobody is watching.
+    r = await callOp("steer_ack", {});
+    check("ST1e CONTROL: a missing ids list is handled, not thrown",
+      r.ok && r.result.acknowledged === 0, JSON.stringify(r.result || r.error));
+  });
+
+  // -------------------------------------------------------------------------
   console.log(`\n${passCount} passed, ${failCount} failed, ${passCount + failCount} total checks`);
   if (failCount) {
     console.log("Failed checks:");

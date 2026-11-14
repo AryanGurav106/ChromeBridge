@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 19 suites, 1046 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1092 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 19 suites, 1046 checks, ~90s mac / ~80s win
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1092 checks, ~90s mac / ~80s win
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -6270,6 +6270,121 @@ granted in the side panel is refused with the same message the agent gets.
     still recorded, since unevidenced is not wrong and dropping it would delete
     the flow's only assertion), FW6 (the control), FW7 (step 0 is inherent).
 
+69. **THE BROWSER CAN NOW SAY SOMETHING, AND THE REASON IT CANNOT HOLD A CHAT
+    IS STRUCTURAL.** The ask was a chat window in the side panel — drive the
+    agent from the browser as well as the terminal. The design question was
+    answered before any code: **the arrow only points one way.** Claude Code is
+    the agent, this process is a tool provider, the extension is the hands. The
+    extension can ANSWER and never ASK, so nothing in a browser extension can
+    START a model turn.
+
+    **THREE ROUTES, AND TWO OF THEM ARE CLOSED.** MCP *sampling* would let a
+    server request a completion — measured rather than assumed, through
+    `sw_info`'s own capability readout: `client_sampling: false`, and even where
+    it is supported a sampling call carries no tool access, so the agent could
+    not touch the browser. A second agent (`claude -p --input-format stream-json`,
+    which exists and runs on the subscription, so zero-keys survives) is a real
+    chat — and its prerequisite is **multiplexing the bridge**, because
+    `core/bridge/server.py` is single-client newer-wins and a terminal session
+    plus a panel session would fight over the browser with the loser silently
+    dead. There is a specific trap under it: making `mcp_server.py` spawn the
+    headless agent gives the INNER Claude Code its own `mcp_server.py`, which
+    binds 8766 because 8765 is taken, while the extension's sweep already
+    stopped at 8765 — #17's "a live bridge nobody talks to", reached by a new
+    road. **Recorded so it is not re-derived: the chat window is a hub refactor
+    with a UI on top, and the hub has independent value.**
+
+    **WHAT SHIPPED IS THE THIRD ROUTE, which is the one the architecture
+    allows:** a message typed in the panel RIDES a turn that is already
+    happening. It is queued in the extension and prepended to the next tool
+    result. **It steers a run in flight and does not start one** — while the
+    agent is idle the message waits, which the panel says in those words rather
+    than implying a chat. Claude-in-Chrome structurally cannot have this: there
+    is no terminal run to steer.
+
+    **THE TRANSPORT HAD NEVER CARRIED A MESSAGE.** `ExtensionBridge` has had
+    `set_event_handler` and an unsolicited-event branch in `_dispatch` since the
+    first commit, with **no caller anywhere** — a declared channel with no half
+    of a contract behind it, the same shape as `origin` (#54), `viewport` (#57)
+    and `on_fail`'s `"heal"` (#62). So `core/bridge/server.py` needed no change
+    at all, and being its first user means verifying it end to end rather than
+    trusting that it works.
+
+    **FOUR RULES, EACH A CONSTRAINT RATHER THAN A PREFERENCE.**
+    - **Never drain what cannot be attached.** Tools return a `str` or a list of
+      content objects; an unexpected type leaves the queue untouched and the note
+      goes out on the next call that can carry it. Popping and then dropping
+      would lose what the user typed with no error anywhere — #22's silent-loss
+      class landing on the worst possible payload. SN5/SN5b, and ablating the
+      type check to drain first fails both.
+    - **Steering is the OUTERMOST wrapper, installed after the recorder's.**
+      `_FlowRecorder.after()` PARSES a tool result for evidence; a banner
+      reaching it would write a sentence the user typed into a `.flow.json` as
+      though the page had said it. Provable rather than asserted: `functools.wraps`
+      sets `__wrapped__`, so the registry entry must unwrap to exactly the object
+      `_BATCHABLE` holds (SN11). Swapping the two install calls fails it.
+    - **Only the REGISTRY is wrapped, never `_BATCHABLE`.** That table holds the
+      inner function objects, and `browser_batch` and `run_flow` both dispatch
+      through it — so a step inside a batch or a replayed flow cannot drain the
+      queue and bury the user's words mid-result. A structural guard, not a
+      re-entrancy flag, which is the kind this codebase keeps deleting.
+    - **Dedupe by id at the door.** The extension re-sends anything it has not
+      seen acknowledged, including after a reconnect where the server process may
+      be a new one — so the same note legitimately arrives twice, and delivering
+      it twice reads as the agent being told the same thing by two people.
+
+    **THE ACKNOWLEDGEMENT IS THE HALF THAT MAKES IT HONEST.** Without it the
+    panel cannot tell "delivered" from "still waiting for the agent to do
+    something", and a channel that cannot report its own silence is
+    indistinguishable from a broken one. `steer_ack` is UNGATED — it carries
+    nothing about any page and delivers no input, so gating it on an origin
+    would mean asking a site's permission to update our own UI — and
+    PAUSE-EXEMPT, because pause is exactly when someone wants to say what went
+    wrong. Both are claims the code makes and P22/P23 prove, rather than trusting
+    two set literals to have been edited. Fire-and-forget: the note is already
+    attached when the ack runs, so a failed ack must never fail the call it rides
+    on.
+
+    **MY OWN CHECK WAS VACUOUS, AND ONLY THE ABLATION SAID SO.** SN11b asserted
+    an attribute (`__steers__`) that exists on nothing, over a queue nothing had
+    touched — it **passed with the guard ablated**, which is no check at all.
+    This is the fourth time in this log a fixture has been caught encoding what
+    its author assumed (#29 found three in one session, #51 a fourth), and the
+    method is the same every time: run it against the broken code. It calls the
+    batch-side function now. SN11c, the source tripwire, also failed on its first
+    run for a reason worth keeping — it sliced the file on `"\ndef "` and ran
+    straight past the function, because the next definition is an `async def`.
+    `inspect.getsource` is exact and needs no parsing.
+
+    **THREE ABLATIONS, each firing on exactly its own checks:** installer also
+    writes `_BATCHABLE` → SN11 + SN11c; install order swapped → SN11; drain
+    before the type check → SN5 + SN5b. Restored, 23/23.
+
+    **AND THE PANEL GOT ITS FIRST TEST EVER.** CLAUDE.md has said since the
+    extension-UI section that the way to iterate on the panel is to render it
+    under Playwright with `chrome.*` stubbed; nobody had turned that into a
+    suite, so the surface that produces every grant, every pause and now every
+    steering note had zero coverage. `tools/test_panel.py` drives the composer
+    end to end — and **three of its first assertions were wrong about the PROBE
+    rather than the product**: `.steer-state` is `text-transform: uppercase`, so
+    `inner_text()` returns `WAITING`, and a closed `<details>` yields empty
+    `inner_text()` for everything inside it. Both are recorded in its docstring,
+    because the next person writing a panel check will hit them.
+
+    **THE CONTROLS ARE WHAT THE SUITE IS MADE OF**, since the failure modes here
+    are all "it fires when it should not": with no note the result is
+    byte-identical (SN3); Shift+Enter does not send and the draft stays in the
+    box (PN12/PN12b); a blank note is not sent (PN13); an event that is not a
+    `user_note` is ignored (SN14); an unknown ack id changes nothing and a
+    repeated one counts zero (ST1c/ST1d).
+
+    Suites: 1092 checks across 21. New — `tools/test_steer.py` (SN1–SN15, the
+    server half), `tools/test_panel.py` (PN1–PN15, the panel's first), ST1–ST1e
+    in `test_ops.js` because #19 is explicit that the router is where a feature
+    ships inert — and this one ships inert INVISIBLY, since the note still
+    reaches the agent and only the panel never stops saying "waiting" —
+    P22/P23 in `test_permissions.js`.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -6370,6 +6485,8 @@ granted in the side panel is refused with the same message the agent gets.
 | A recorded flow has no `alt` key on a link target | The MCP server was loaded before #61. It reads `descriptor.py` and `core/flows/*` at CONNECT time, and the old one answers normally while writing a slightly older format — `/mcp` reconnect, then CHECK THE SAVED FILE rather than the live result |
 | Server-side edits seem to have no effect | `sw_info` answers this since #61: `server_code_changed_since_start` names every file whose mtime is later than this process's import. Empty means the running server IS the code on disk. The client must reconnect (`/mcp`); nothing else picks it up, and the stale process keeps answering normally, which is what made this cost six reconnects across #59 and #61 |
 | A flow says a step FAILED but the action plainly worked | Fixed in #60 — the postcondition window was a flat 6s and a real app's create -> table-refresh took longer, so the flow reported FAILED for a record that HAD been created. Each step now carries `settle_ms`, measured at record time from the timestamps the recorder already kept, and the replay allows the default PLUS that. A flow recorded before #60 carries 0 and is unchanged |
+| A tool result starts with `*** MESSAGE FROM THE USER` | By design since #69 — the user typed that in the side panel's Steer box while you were working, and it was attached to the front of this result. It is NOT page content: no page can write to the panel, which is what the closing line says. Treat it as the user speaking |
+| A steering note shows `waiting` and never becomes `delivered` | `waiting` means the server HAS it and is holding it for the next tool call — so an idle agent is the normal cause, and it is the channel's stated limit rather than a fault. If the agent is plainly acting, the server is stale: it loaded `mcp_server.py` at connect time and the steering code arrived later. `sw_info` names the changed files; `/mcp` reconnects. `queued` is the different case — the bridge is down and nothing has left the browser yet |
 | `read_page` returns a legend but no `mmid=` rows | The budget could not hold both. Fixed — `_truncate` now drops the legend first; if it recurs, check that the listing's rows still start with `mmid=` (the fallback keys off that prefix) |
 
 ---

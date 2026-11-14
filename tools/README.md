@@ -21,7 +21,7 @@ Two kinds of thing live here, and the difference matters:
   --------------------------------------------------
   delta       unit     PASS        3.3s  10/10
   ...
-  19 passed, 0 failed, 0 skipped of 19 suite(s); 1046 checks; 90.4s
+  21 passed, 0 failed, 0 skipped of 21 suite(s); 1092 checks; 93.4s
   ALL GREEN
 ```
 
@@ -59,6 +59,7 @@ Discovery is by source inspection, not a hardcoded list — add a
 | `ops` | node | `handleOp` — the service worker's op router, in a `node:vm` with a mocked `chrome` |
 | `patterns` | python | no `\b` beside a non-ASCII alternative, no ASCII class gating page text, and the auditor still fires |
 | `permissions` | node | the extension's permission/consent gate |
+| `steer` | python | the steering channel: a side-panel message rides the next tool result, exactly once, fenced as the user's words — and never drains where it would be buried |
 | `truncate` | python | `_truncate` and `get_page_text`: truncation must never remove the payload |
 
 **`browser`** — headless Chromium via Playwright. Each suite extracts the real
@@ -72,6 +73,7 @@ and runs them against a fixture, so what is tested is the shipped code.
 | `gaps` | 48-probe inventory over `gap_fixture.html` (see the caveat below) |
 | `generality` | non-Latin labels, shadow DOM, editors, detail levels, media |
 | `ledger` | the drop ledger: every removed element carries a rule id |
+| `panel` | the side panel itself, rendered with `chrome.*` stubbed — the steering composer, its three delivery states, and that the card renders without throwing |
 | `pixels` | device-pixel to CSS-pixel screenshot normalisation at 1.0 / 1.25 / 2.0 |
 | `readiness` | the page-readiness probe (in-flight requests, `aria-busy`, progressbars) |
 | `shadow` | open **and closed** shadow roots: collect, click and type through `window.__mmidReg` |
