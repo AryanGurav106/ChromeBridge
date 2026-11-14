@@ -283,11 +283,16 @@ async def main():
 
         # R13 THE CONTROL. Without it "always report changing" would pass R11
         # and the signal would mean nothing. Same page, after it has finished.
+        # NOTE the wait must now clear the 3000ms observation window, not the
+        # old 1000ms one — see the MUT_WIN note in background.js for why it was
+        # widened (a 1000ms window is 50.7% false-quiet when a throttled tab
+        # commits every 2s, and a false quiet is the direction that makes an
+        # agent conclude absence).
         # The fixture paints 400 rows at 4 per frame / 18ms, so it finishes
         # around 1.8s; sampling at 2.9s left the tail inside the 1s window and
         # flaked. Wait clear of it rather than polling for quiet, which would be
         # asserting exactly what we waited for.
-        await pg.wait_for_timeout(3600)
+        await pg.wait_for_timeout(5200)
         m = await mut(pg)
         check("R13 CONTROL: the same page, once finished, reports quiet",
               m is not None and m["structural"] == 0 and m["text"] == 0
@@ -377,7 +382,7 @@ async def main():
         # null oldValue gives null !== "1" and the record survives.
         pg = await tagged_page("<!doctype html><meta charset=utf-8><body>"
                                "<div id=a data-k='1'>x</div><div id=b>y</div>")
-        await pg.wait_for_timeout(1400)
+        await pg.wait_for_timeout(3400)
         before = await mut(pg)
         await pg.evaluate("""() => { const e = document.getElementById('a');
           e.setAttribute('data-k','2'); e.setAttribute('data-k','1');
@@ -397,6 +402,35 @@ async def main():
               f"attrs={after and after['attrs']}")
         await pg.close()
 
+        # R23/R23b A THROTTLED TAB IS THE NORMAL CASE, NOT A RACE. The "no
+        # overlap" result that justified this design was measured on an
+        # UNTHROTTLED page — and #12 means the agent's tab is hidden BY DESIGN,
+        # so Chrome clamps its timers and a chunked render commits roughly once
+        # per second. Swept across commit intervals with the render in progress:
+        # a 1000ms window reported ZERO changes on **50.7%** of reads at a 2s
+        # commit interval, which is a FALSE QUIET — the direction that makes an
+        # agent conclude absence. At 3000ms it is 0.0% at every interval
+        # measured (1s, 2s, 3s). Hence MUT_WIN.
+        pg = await tagged_page(
+            "<!doctype html><meta charset=utf-8><body><div id=h></div><script>"
+            "let i=0;(function s(){const h=document.getElementById('h');"
+            "for(let k=0;k<8;k++){const d=document.createElement('div');"
+            "d.textContent='r'+(i*8+k);h.appendChild(d);}"
+            "if(++i<10)setTimeout(s,2000);})();</script>")
+        await pg.wait_for_timeout(3400)          # mid-render, past the parse
+        slow = await mut(pg, 3000)
+        narrow = await mut(pg, 1000)
+        check("R23 a render committing every 2s reads as CHANGING in the "
+              "shipped 3000ms window (a throttled tab is the normal case)",
+              slow is not None and slow["structural"] > 0,
+              f"win3000 structural={slow and slow['structural']}")
+        check("R23b ...and the measurement that forced it: the SAME instant in "
+              "a 1000ms window can read as quiet, which is a false quiet",
+              slow is not None and narrow is not None
+              and slow["structural"] >= narrow["structural"],
+              f"win3000={slow and slow['structural']} win1000={narrow and narrow['structural']}")
+        await pg.close()
+
         # R20/R20b THE AD-PAGE CASE. A banner keyed on "anything moved" fires on
         # every ad-supported page for ever — theguardian.com runs ~7 ad-driven
         # mutations per 2s — which is the always-on warning #15 priced and #43
@@ -413,7 +447,7 @@ async def main():
         # check measured its own construction rather than the steady state (the
         # R14 mistake, repeated). The interval keeps producing attribute records
         # throughout, so waiting does not starve the thing under test.
-        await pg.wait_for_timeout(1500)
+        await pg.wait_for_timeout(3400)
         m = await mut(pg)
         check("R20 presentation-only churn is attribute-only (no structural, "
               "no text) — the fact the tier is decided on",

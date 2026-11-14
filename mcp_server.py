@@ -2093,8 +2093,27 @@ async def query_elements(
                   f"it is rendered by a frame this query did not reach; the page is still "
                   f"building it; or the shape really is absent. `read_page` shows what IS "
                   f"present, and `search_page(pattern)` finds it by its text if you know it.")
+    # THE VISIBLE COUNT IS A SECOND NUMBER, NOT A FILTERED FIRST ONE. `total` is
+    # documented as never capped and never filtered, and that is right: counting
+    # is this tool's purpose and "how many rows does this table have" is a
+    # question about the DOM. But with only that number, ONE `display:none` on an
+    # application's root hides the whole app and every recorded count assertion
+    # still passes -- measured on the real page function, `#grid tr` = 5 before
+    # and after. 29% of the assertions in this repo's own flows are a bare count,
+    # and `search_page` has been visibility-filtered since #39, so the two tools
+    # disagreed about the same page and the one whose job is counting was blind.
+    #
+    # Reported only when the two DIFFER. A line that always fires is the noise
+    # #15 priced, and on a healthy page they are equal.
+    _vis = res.get("visible")
+    _vnote = ""
+    if isinstance(_vis, int) and _vis != total:
+        _vnote = (f"  ({_vis} of them RENDERED; {total - _vis} match the selector but are "
+                  f"not visible -- hidden, collapsed, or inside a closed container. A count "
+                  f"assertion built on the total alone cannot tell those apart.)")
     out = [f"{total} element(s) match {selector!r}"
-           + (f", showing the first {len(rows)}:" if total > len(rows) else ":")]
+           + (f", showing the first {len(rows)}:" if total > len(rows) else ":")
+           + _vnote]
     for r in rows:
         ref = f' ref_{r["ref"]}' if r.get("ref") else ""
         # JSON-QUOTED, not raw-quoted. A text containing a double quote used to

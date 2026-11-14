@@ -1558,6 +1558,52 @@ async def main():
               r.get("total") == 6 and r.get("shown") == 2,
               f"total={r.get('total')} shown={r.get('shown')}")
 
+        # Q6c-Q6f: A COUNT WITH NO VISIBILITY SIGNAL CANNOT SEE A HIDDEN APP.
+        # `total` is documented as never capped and never filtered and that
+        # contract is right — counting is this tool's purpose. But with ONLY that
+        # number, one `display:none` on an application's root hides the entire
+        # app and every recorded count assertion still passes. Measured on the
+        # real page function before the fix: `#grid tr` = 5 before AND after.
+        # 29% of the assertions in this repo's own recorded flows are a bare
+        # count, and `search_page` has been visibility-filtered since #39 — so
+        # the two tools disagreed about one page and the one whose whole job is
+        # counting was the blind one.
+        r = await query("table tr")
+        base_t, base_v = r.get("total"), r.get("visible")
+        check("Q6c a visible count is reported ALONGSIDE the total",
+              base_t == 3 and base_v == 3, f"total={base_t} visible={base_v}")
+
+        # BODY, not the table: the fixture's table lives inside a shadow root,
+        # which `_queryElementsPage` pierces and `document.querySelector` does
+        # not. Hiding the whole document is also the closer match to the real
+        # scenario — one `display:none` on an application's root.
+        await qp.evaluate("document.body.style.display='none'")
+        r = await query("table tr")
+        check("Q6d hiding the container drops `visible` to 0 while `total` is "
+              "unchanged (the DOM really does still have those rows)",
+              r.get("total") == 3 and r.get("visible") == 0,
+              f"total={r.get('total')} visible={r.get('visible')}")
+
+        # visibility:hidden is the case a BARE checkVisibility() misses — #36
+        # priced that hole at a probe reporting 3.81% identity loss where the
+        # truth was 0.00%.
+        await qp.evaluate("document.body.style.display='';"
+                            "document.body.style.visibility='hidden'")
+        r = await query("table tr")
+        check("Q6e ...and `visibility:hidden` is caught too, which a bare "
+              "checkVisibility() would not see",
+              r.get("total") == 3 and r.get("visible") == 0,
+              f"total={r.get('total')} visible={r.get('visible')}")
+
+        # THE CONTROL. Without it, "always report 0 visible" would pass Q6d and
+        # Q6e and the signal would mean nothing.
+        await qp.evaluate("document.body.style.visibility=''")
+        r = await query("table tr")
+        check("Q6f CONTROL: restoring the container restores `visible` "
+              "(a counter hardwired to 0 would pass Q6d/Q6e)",
+              r.get("total") == 3 and r.get("visible") == 3,
+              f"total={r.get('total')} visible={r.get('visible')}")
+
         r = await query("a", attributes=["href"])
         hrefs = [(x.get("attrs") or {}).get("href", "") for x in r["rows"]]
         # The count is coupled to the fixture (3 links: receipt, reorder, and the

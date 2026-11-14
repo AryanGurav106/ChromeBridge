@@ -2145,7 +2145,31 @@ function _readinessPage() {
   // treats null as "unknown", never as "quiet" -- a false quiet is the worst
   // direction this probe can fail in (#30).
   try {
-    if (window.__abMut) o.mut = window.__abMut.query(null, 1000);
+    // 3000ms, NOT 1000 — MEASURED, and the reason is the regime this probe
+    // actually runs in. The "no overlap" result that justified the design
+    // (9-18ms building vs 907-3514ms done) came from an UNTHROTTLED page, while
+    // #12 means the agent's tab is hidden BY DESIGN and Chrome clamps a hidden
+    // tab's timers, so a chunked render commits roughly once per second and a
+    // mid-render read is the NORMAL case rather than a race.
+    //
+    // Swept across commit intervals with the render still in progress, counting
+    // how often a read reported ZERO changes while the page was being built:
+    //        commit every   win=1000ms    win=3000ms
+    //              60ms       0.0%          0.0%
+    //             250ms       0.0%          0.0%
+    //             500ms       0.0%          0.0%
+    //            1000ms       0.0%          0.0%
+    //            2000ms     **50.7%**       0.0%
+    // The 1000ms window fails exactly where the clamp puts a slow page, and the
+    // failure is a FALSE QUIET -- the direction that makes an agent conclude
+    // absence, which is the worst this probe can do.
+    //
+    // The cost of widening is the opposite error: a page that settled up to 3s
+    // ago still reports as changing. That costs a re-check, not a wrong answer,
+    // and `since` is printed beside the count so the reader can tell "changed
+    // 20ms ago" from "changed 2,900ms ago" without trusting the window at all.
+    const MUT_WIN = 3000;
+    if (window.__abMut) o.mut = window.__abMut.query(null, MUT_WIN);
     // SAME-ORIGIN FRAMES TOO, or this reports QUIET for a page whose content
     // lives in an iframe while that frame is actively painting -- a FALSE quiet,
     // which is the worst direction this probe can fail in and the thing R17 was
@@ -2168,7 +2192,7 @@ function _readinessPage() {
           let f = null;
           try { f = w[i]; if (!f || !f.document) continue; } catch (e) { continue; }  // cross-origin
           let q = null;
-          try { q = f.__abMut ? f.__abMut.query(null, 1000) : null; } catch (e) {}
+          try { q = f.__abMut ? f.__abMut.query(null, MUT_WIN) : null; } catch (e) {}
           if (q) {
             o.mut.total += q.total;
             o.mut.saturated = o.mut.saturated || q.saturated;
@@ -12861,6 +12885,7 @@ function _queryElementsPage(selector, opts) {
   } catch (e) {}
   const rows = [];
   let total = 0;
+  let visible = 0;
   let firstEl = null;
   const seen = new Set();
   for (const r of roots) {
@@ -12873,6 +12898,28 @@ function _queryElementsPage(selector, opts) {
       seen.add(el);
       if (!firstEl) firstEl = el;
       total++;
+      // A SECOND NUMBER, NEVER A FILTERED FIRST ONE. `total` is documented as
+      // never capped and never filtered, and that contract is right -- counting
+      // is this tool's whole purpose and "how many rows does this table have" is
+      // a question about the DOM, not about what is painted.
+      //
+      // But with ONLY that number, one `display:none` on an application's root
+      // element hides the entire app and EVERY recorded count assertion still
+      // passes. Measured on the real function: `#grid tr` = 5 and `.modal.show`
+      // = 1 both before and after. 29% of the assertions in this repo's own
+      // recorded flows are a bare count, and `search_page` has been
+      // visibility-filtered since #39, so the two tools disagreed about the same
+      // page and the one that counts was the blind one.
+      //
+      // Same question the collector asks (#36: a BARE checkVisibility() checks
+      // layout only and misses visibility:hidden and opacity, which is how a
+      // probe once reported 3.81% identity loss that was really 0.00%).
+      try {
+        if (!el.checkVisibility ||
+            el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) {
+          visible++;
+        }
+      } catch (e) { visible++; }   // unknown counts as visible: never UNDER-report
       if (rows.length >= MAX) continue;
       const row = { tag: (el.tagName || '').toLowerCase() };
       try { const m = el.getAttribute('mmid'); if (m) row.ref = m; } catch (e) {}
@@ -12991,7 +13038,7 @@ function _queryElementsPage(selector, opts) {
       }
     }
   } catch (e) {}
-  const out = { rows: rows, total: total, shown: rows.length };
+  const out = { rows: rows, total: total, visible: visible, shown: rows.length };
   if (declared > total) { out.declaredTotal = declared; out.declaredVia = declaredVia; }
   return out;
 }
@@ -13455,7 +13502,7 @@ async function handleOp({ id, op, params }) {
         // itself is unchanged, so no listing gains a banner.
         if (!result) {
           let q = null;
-          try { q = await runInTab(t.id, () => (window.__abMut ? window.__abMut.query(null, 1000) : null)); }
+          try { q = await runInTab(t.id, () => (window.__abMut ? window.__abMut.query(null, 3000) : null)); }
           catch (e) {}
           result = (q && q.since >= 0)
             ? `The page is SETTLED: no DOM change for ${q.since}ms and nothing in flight. ` +
