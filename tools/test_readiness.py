@@ -480,19 +480,37 @@ async def main():
         # the same file all use non-enumerable defineProperty; this is that
         # invariant, stated as a test rather than as a convention.
         pg = await tagged_page("<!doctype html><meta charset=utf-8><body>hi")
+        # BOTH REPLACEMENT PATHS. The first version of this check drove only
+        # `window.__abMut = x`, and passed while the hole was wide open: the
+        # property was `configurable: true`, which blocks assignment and does
+        # NOT block Object.defineProperty. So a check whose own title said
+        # "cannot be replaced by page script" could not fire on the way a page
+        # would actually do it. Found by an independent audit, reproduced in a
+        # real page (viaAssign false, viaDefine TRUE, spoofed since=999999).
         hardened = await pg.evaluate("""() => {
           const d = Object.getOwnPropertyDescriptor(window, '__abMut');
           const before = window.__abMut;
-          try { window.__abMut = { query: () => ({since: 99999}) }; } catch (e) {}
+          const spoof = { query: () => ({ since: 999999, structural: 0, text: 0,
+                                          attrs: {}, total: 1, saturated: false,
+                                          win: 1000 }) };
+          let viaAssign = false, viaDefine = false;
+          try { window.__abMut = spoof; viaAssign = window.__abMut === spoof; } catch (e) {}
+          try { Object.defineProperty(window, '__abMut',
+                  { value: spoof, configurable: true });
+                viaDefine = window.__abMut === spoof; } catch (e) {}
           return { enumerable: d && d.enumerable, writable: d && d.writable,
+                   configurable: d && d.configurable,
                    inKeys: Object.keys(window).includes('__abMut'),
-                   replaced: window.__abMut !== before };
+                   viaAssign, viaDefine, replaced: window.__abMut !== before };
         }""")
-        check("R18 the recorder is non-enumerable and cannot be replaced by "
-              "page script (a substituted query() that always says 'quiet' "
-              "would silently disable the signal)",
+        check("R18 the recorder is non-enumerable and cannot be replaced by page "
+              "script — BY ASSIGNMENT **OR** BY defineProperty (a substituted "
+              "query() that always says 'quiet' would silently disable the signal)",
               hardened["enumerable"] is False and hardened["writable"] is False
-              and hardened["inKeys"] is False and hardened["replaced"] is False,
+              and hardened["configurable"] is False
+              and hardened["inKeys"] is False
+              and hardened["viaAssign"] is False and hardened["viaDefine"] is False
+              and hardened["replaced"] is False,
               str(hardened))
         await pg.close()
 

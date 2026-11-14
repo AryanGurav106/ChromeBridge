@@ -165,6 +165,10 @@ counting reading.
 
 ---
 
+### T15  **[DROPPED]**
+> DROPPED before any run — the host's footer states "Automated or scripted access is prohibited" and this benchmark would drive it repeatedly across two arms. Not a quality judgement and not ours to trade off.
+
+<!-- original below, kept for the record -->
 ### T15  [shape: non-Latin script with interaction]
 **Task:** Look up 图书馆 in the MDBG Chinese-English dictionary. What is its traditional-character form, and what HSK level is it marked with?
 **Start URL:** https://www.mdbg.net/chinese/dictionary
@@ -198,6 +202,10 @@ counting reading.
 
 ---
 
+### T18  **[DROPPED]**
+> DROPPED before any run — the answer is jQuery UI's default mm/dd/yy applied to the date in the task, so an agent that types it without opening the calendar is indistinguishable from one that does the work. A task that cannot separate doing from guessing cannot measure turns.
+
+<!-- original below, kept for the record -->
 ### T18  [shape: widget that is not a plain HTML control]
 **Task:** On the jQuery UI Datepicker page, open the "Display month & year menus" demo. Using that calendar, select 15 January 2020. What value appears in the Date field?
 **Start URL:** https://jqueryui.com/datepicker/

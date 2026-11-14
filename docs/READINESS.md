@@ -81,7 +81,17 @@ callback:
 
 Drift control (same arm twice): **2.4% floor**. Re-measured against the shipped
 file with 9 replicates and a 1.7% floor: **+0.10ms / +1.40ms / +2.70ms** at
-200 / 2,000 / 10,000 mutations. **The observer is free at any realistic rate.**
+200 / 2,000 / 10,000 mutations.
+
+**It is not "free at any rate", which is what this said first.** Re-derived
+further out by an independent audit: **+63ms at 40,000 mutations in one batch**,
+against a 0.0% A/A drift floor at that size. The cost is **superlinear** — 4×
+the mutations for 17× the cost — and a 2,000-row grid render reaches it. It
+stays a caveat rather than a refutation for two measured reasons: an
+**empty-callback** observer with the same options costs essentially the same at
+40k, so this is the inherent price of a document-wide subtree observer and not
+of our callback; and +63ms is **1.7% of a model turn**, so the conclusion
+survives even though the wording did not.
 
 **And so is the per-read query**, which is a separate claim and was separately
 measured — "the observer is free" says nothing about the scan every observation
@@ -197,7 +207,11 @@ churning cross-origin is a stated limit rather than a silent zero.
 
 `listener_tag.js` is a manifest content script and **injects into every page
 before any grant** (CLAUDE.md #17). What runs pre-grant today is bounded and
-documented: the `addEventListener` wrap and a 500-entry console ring. A
+documented, and **has now been updated in `README.md` and CLAUDE.md #17 to
+include this recorder** — it was stale in three places for several hours and an
+independent audit found it, which is the failure this paragraph predicted. The
+pre-#70 bound was the `addEventListener` wrap, the `attachShadow` wrap and a
+500-entry console ring. A
 mutation ring is the same class — it stays in the page, and reading it is
 gated — but **the README's statement of that bound must be updated in the same
 change**, or we have a documented guarantee that is quietly false.

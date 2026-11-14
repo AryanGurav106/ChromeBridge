@@ -93,10 +93,22 @@
 // reason the two wraps above are here, and document_start MAIN world is the only
 // place it can be.
 //
-// COST, interleaved A/B on the same page load, 3 replicates, 2.4% drift floor:
-// -7.7% / -5.6% / +6.1% at 200 / 2,000 / 10,000 mutations. Free at any realistic
-// rate. The callback does nothing but record -- the 32-record prefix bound means
-// a 10,000-record burst costs 32 -- and ALL attribution is deferred to read time.
+// COST, interleaved A/B on the same page load, order rotated, 9 replicates:
+// +0.10ms / +1.40ms / +2.70ms at 200 / 2,000 / 10,000 mutations against a 1.7%
+// drift floor. The callback does nothing but record -- only 32 survivors per
+// batch are STORED, though every record is INSPECTED -- and all attribution is
+// deferred to read time.
+//
+// IT IS NOT "FREE AT ANY RATE", WHICH IS WHAT THIS COMMENT USED TO SAY. An
+// independent audit re-derived it further out: **+63ms at 40,000 mutations in
+// one batch**, against a 0.0% A/A drift floor at that size. The cost is
+// SUPERLINEAR -- 4x the mutations for 17x the cost -- and a 2,000-row grid
+// render lands there. Two things keep it a caveat rather than a refutation: an
+// EMPTY-callback observer with the same options costs essentially the same at
+// 40k, so this is the inherent price of a document-wide subtree observer rather
+// than of this implementation; and +63ms is 1.7% of a model turn (#38), so the
+// conclusion ("nothing here to optimise") survives even though the words did
+// not. 2,000 shadow-root registrations add ~+1.0ms at 10k.
 //
 // NO ATTRIBUTE FILTER, deliberately. A filter is a list that drifts from what the
 // listing actually prints (#21's one-concept-two-spellings). Instead every record
@@ -118,6 +130,7 @@
     const an = new Array(CAP);            // attribute name, or null
     const tg = new Array(CAP);            // WeakRef(target), or null
     let n = 0;                            // monotonic total; slot = n % CAP
+    let wrote = 0;                        // slots actually written -- NOT n
     let obs = null;
 
     const rec = (recs) => {
@@ -163,18 +176,21 @@
         if (!netZero) netZero = new Map();
         let per = netZero.get(r.target);
         if (!per) { per = new Map(); netZero.set(r.target, per); }
-        const e = per.get(r.attributeName);
-        if (e) e.last = r;                       // keep the FIRST old and the LAST record
-        else per.set(r.attributeName, { first: r, last: r });
+        // ONLY the FIRST record's oldValue is needed: the test is whether the
+        // attribute ENDS the batch at the value it STARTED with, and the live
+        // value supplies the other end. An earlier version also stored `last`
+        // and never read it -- a dead field in the block whose own comment
+        // cites the both-halves-of-a-contract rule.
+        if (!per.has(r.attributeName)) per.set(r.attributeName, r.oldValue);
       }
       if (netZero) {
         for (const [el, per] of netZero) {
-          for (const [name, e] of per) {
+          for (const [name, firstOld] of per) {
             let now = null;
             try { now = el.getAttribute(name); } catch (x) {}
             // Unchanged across the whole batch -> drop every record for this
             // (element, attribute) pair, not just the last one.
-            per.set(name, now === e.first.oldValue);
+            per.set(name, now === firstOld);
           }
         }
       }
@@ -216,7 +232,7 @@
         an[s] = r.attributeName || null;
         const el = r.target && r.target.nodeType === 1 ? r.target : (r.target && r.target.parentElement);
         try { tg[s] = el ? new WeakRef(el) : null; } catch (e) { tg[s] = null; }
-        n++;
+        n++; wrote++;
       }
       // A burst beyond the prefix still COUNTS -- losing the count would make a
       // flood look like quiet, which is the direction that misleads.
@@ -252,7 +268,11 @@
       query(scope, winMs) {
         const now = performance.now();
         const cut = now - (winMs || 1000);
-        const out = { total: n, saturated: n > CAP, since: -1, sinceAny: -1,
+        // `saturated` means THE RING WRAPPED, so it must count slots WRITTEN.
+        // Keying it on `n` was wrong: n also counts records that were
+        // inspected and discarded past the 32-per-batch store bound, so one
+        // large burst reported a wrapped ring while only 32 slots were used.
+        const out = { total: n, saturated: wrote > CAP, since: -1, sinceAny: -1,
                       structural: 0, text: 0, attrs: {}, win: winMs || 1000 };
         const seen = Math.min(n, CAP);
         for (let i = 0; i < seen; i++) {
@@ -276,16 +296,24 @@
         return out;
       },
     };
-    // NON-ENUMERABLE AND NON-WRITABLE, like __abConsole and the two expandos
-    // above. A plain assignment puts this in Object.keys(window), which both
-    // fingerprints the extension to every page and lets any script replace the
-    // object wholesale -- substituting a query() that always answers "quiet"
-    // would silently disable the signal, and a false quiet is the worst
-    // direction this probe can fail in.
+    // NON-ENUMERABLE, NON-WRITABLE AND **NON-CONFIGURABLE**. The first version
+    // left `configurable: true`, which blocks `window.__abMut = x` and does NOT
+    // block `Object.defineProperty(window, '__abMut', …)` -- so any page could
+    // substitute a `query()` that always answers "quiet" while repainting, which
+    // is the false-quiet direction this whole probe exists to avoid. Measured
+    // in a real page: viaAssign false, **viaDefine true**, spoofed reading
+    // `{since: 999999, structural: 0}`.
+    //
+    // The check written for it passed anyway, because it only exercised the
+    // ASSIGNMENT path -- a check that cannot fire on the thing its own title
+    // asserts. R18 now drives both paths.
+    //
+    // `configurable: false` is safe here: this runs at document_start before any
+    // page script, and the guard above means we never define it twice.
     try {
       Object.defineProperty(window, '__abMut',
-        { value: api, enumerable: false, writable: false, configurable: true });
-    } catch (e) { window.__abMut = api; }
+        { value: api, enumerable: false, writable: false, configurable: false });
+    } catch (e) { /* leave undefined: the probe treats absent as UNKNOWN, never quiet */ }
   } catch (e) {}
 })();
 

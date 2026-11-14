@@ -1725,6 +1725,47 @@ const FIELDS3 = () => ([
       r && r.ok !== false && !/-\d+ *ms/.test(String(r.result))
         && String(r.result).includes("aria-busy"), JSON.stringify(r));
 
+    // ---- THE TIER DECISION ITSELF, which had NO coverage ------------------
+    // R20/R20b in the browser suite assert on the PROBE's returned `mut` dict.
+    // The branch that chooses between the sentences lives here in
+    // `readinessNote`, and `grep -rc readinessNote tools/` was 0 — so the
+    // headline deliverable of #70 was unguarded, in a function that had just
+    // been rewritten. #65 added C25 for exactly this class, one function over,
+    // after a rewording silently deleted five features.
+    const _mut = (o) => Object.assign(
+      { total: 50, saturated: false, since: 12, sinceAny: 12,
+        structural: 0, text: 0, attrs: {}, win: 1000 }, o);
+
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0,
+      mut: _mut({ structural: 40 }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("page_readiness TIER structural churn -> THE DOM IS STILL CHANGING",
+      String(r.result).includes("THE DOM IS STILL CHANGING")
+        && String(r.result).includes("40 structural"), JSON.stringify(r).slice(0, 200));
+
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0,
+      mut: _mut({ attrs: { style: 25 } }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("page_readiness TIER attribute-only churn -> Minor DOM activity, and "
+          + "NOT the absence warning (an ad page must not be told it may be incomplete)",
+      String(r.result).includes("Minor DOM activity")
+        && String(r.result).includes("25 @style")
+        && !String(r.result).includes("STILL CHANGING"), JSON.stringify(r).slice(0, 200));
+
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 2,
+      mut: _mut({ since: 1511 }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("page_readiness TIER quiet DOM + busy signal -> DOM STABLE, NETWORK BUSY",
+      String(r.result).includes("DOM STABLE, NETWORK BUSY")
+        && String(r.result).includes("1511ms"), JSON.stringify(r).slice(0, 200));
+
+    check("page_readiness TIER ...and it RECOMMENDS nothing (the code refused "
+          + "\"safe to read\" as a judgement; C15's class)",
+      !/safe to read/i.test(String(r.result)), String(r.result).slice(0, 160));
+
     currentStubs["_readinessPage"] = () => ({ ready: "loading", imgs: 3, prog: 1, busy: 2 });
     r = await callOp("page_readiness", { tabId: 1 });
     check("page_readiness: an UNSETTLED page yields a banner",

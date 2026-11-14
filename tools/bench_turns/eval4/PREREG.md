@@ -124,6 +124,54 @@ adjudicated**. Eval 3 dropped two tasks at this step — an "address form" that 
 an error page with no `<form>` on it, and a question contradicted by its own
 page's footnote — and that step is why the rest is trustworthy.
 
+**AMENDMENT 3 — 2026-11-15, after the referee and BEFORE any run. Two tasks
+dropped, two reclassified, and a disclosed deviation.**
+
+**THE REFEREE SAW THE ANSWER KEY.** Its first command was `cat` on the whole
+task file, so it read the author's `**Answer:**` lines before it could filter
+them. It disclosed this unprompted, compensated by deriving every value with its
+own scripts and actively attacking the author's premises — which found one false
+premise and corrected three counts — and named **T7, T20 and T21** as the three
+worth re-refereeing blind. Recorded rather than papered over: **its independence
+is strong but not blind**, and anyone quoting this eval should know that. A
+blind second opinion on those three is owed.
+
+**DROPPED — T15 (MDBG Chinese dictionary).** The host's own footer states
+verbatim *"Automated or scripted access is prohibited."* It served us normally
+and the lookup is read-only, but this benchmark would drive it repeatedly across
+two arms. **That is not a quality judgement and not ours to trade off**, so it
+is out. The non-Latin shape drops from 3 tasks to 2, which is a real weakness of
+this eval and is stated rather than hidden.
+
+**DROPPED — T18 (jQuery UI datepicker).** The answer is `01/15/2020`, which is
+jQuery UI's default `mm/dd/yy` applied to the date named in the task — so an
+agent that types the string without touching the calendar produces an
+**indistinguishable** result. A task that cannot separate doing the work from
+guessing cannot measure turns, which is the only thing this eval measures.
+(It would also have needed revisiting ~2031: the year dropdown is a window
+centred on the current year.)
+
+**RECLASSIFIED — T7 is not a filter task.** On arrival, "Foundation Foods" is
+already the ACTIVE tab, so the filter the task asks for is applied by default
+and the answer is visible with **zero interactions**. Verified by polling at
+5/10/15/20/25/30/40s with no click at all. The answer is still correct and
+unambiguous so the task stays, but it tests **waiting for an SPA**, not
+filtering, and is counted under the late-arriving shape. T21's interaction count
+is 1, not 2, for the same reason.
+
+**RECLASSIFIED — T13 is not a late-loading task.** The children were already
+present 500ms after the click. Its real difficulty is that the clickable target
+is the arrow icon rather than the label, so it counts as a custom widget.
+
+**FALSE-DISAGREEMENT RISKS, ranked by the referee and carried into the scorer**
+(these are where the two arms will "disagree" without either being wrong):
+T9 asks for `Start Order` (**21**), not `Pos` (**3**) — and 3 is also the medal
+rank, so the wrong answer looks internally consistent and **must be rejected
+explicitly**. T20's Average and Median are both **258** while Max is **271**.
+T11's answer is literally `(exact)`, not the numerical value. T16 has `部外 0`
+immediately before `总笔画 12`. T2's first table row is `100-0000`, not the
+answer. T14 prints Kun readings immediately above the On line.
+
 **Known fragilities the author recorded**, carried here so they are not
 rediscovered as surprises: T3's expected string contains a **typo the site
 itself ships** ("Please select the Paymeny Method") and changes if they fix it;

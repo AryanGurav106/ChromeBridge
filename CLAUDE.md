@@ -804,8 +804,12 @@ granted in the side panel is refused with the same message the agent gets.
       manifest content script **cannot** be conditioned on a runtime grant — that is the whole
       reason it can beat page scripts to `addEventListener`. What runs on an ungranted page is
       bounded: the `addEventListener` wrap (a non-enumerable expando, invisible to any selector,
-      MutationObserver or serializer) and a 500-entry `console.*` ring buffer. **Nothing leaves
-      the page** — reading the buffer is `read_console_messages`, which IS gated. Making this
+      MutationObserver or serializer), the `attachShadow` wrap, a 500-entry `console.*` ring
+      buffer, and — SINCE #70 — a document-wide `MutationObserver` feeding a 1,024-slot ring of
+      WeakRefs and attribute names. #70 said the README must be updated to say so and it was not,
+      for several hours; an independent audit found the stale sentence in three places. **Nothing
+      leaves the page** — reading the console buffer is `read_console_messages` and reading the
+      mutation ring happens inside the readiness probe, both gated. Making this
       grant-conditional means moving to `chrome.scripting.registerContentScripts` per granted
       origin, which trades the pre-grant injection for losing tagging on the first load of a
       newly granted site. Not obviously the better trade; decide it deliberately, do not drift
@@ -6481,9 +6485,14 @@ granted in the side panel is refused with the same message the agent gets.
     **THE TWO FACTS NOW GET TWO SENTENCES**, which is the whole fix as the agents
     experienced it. DOM changing → `*** THE DOM IS STILL CHANGING (last change
     9ms ago; 512+ change(s) in the last 1000ms: 480 structural, 32 text) ...***`.
-    DOM quiet, network busy → `*** The DOM has been unchanged for 1511ms, so WHAT
-    IS ON THE PAGE NOW IS STABLE and safe to read. Separately, 5 network
-    request(s) in flight (3 xmlhttprequest, 2 image) ... ***`. Both quiet → **nothing
+    DOM quiet, network busy -> `*** DOM STABLE, NETWORK BUSY. No DOM change for
+    1511ms; separately 5 network request(s) in flight (3 xmlhttprequest, 2
+    image). What is rendered now is not being rewritten -- whether MORE will
+    arrive is what those requests decide. ***`. **An earlier draft of this entry
+    quoted a sentence the CODE HAD ALREADY REJECTED** ("stable and safe to
+    read"), which is a judgement rather than a measurement -- #33's class, in
+    the entry describing the banner rewritten to fix #33's class. Found by an
+    independent audit. Both quiet → **nothing
     at all**. The only number chosen is how far BACK to look, and it is printed.
 
     **OUR OWN INSTRUMENTATION SHOWED UP AS PAGE ACTIVITY, one attribute over
@@ -7260,7 +7269,7 @@ granted in the side panel is refused with the same message the agent gets.
 | Server-side edits seem to have no effect | `sw_info` answers this since #61: `server_code_changed_since_start` names every file whose mtime is later than this process's import. Empty means the running server IS the code on disk. The client must reconnect (`/mcp`); nothing else picks it up, and the stale process keeps answering normally, which is what made this cost six reconnects across #59 and #61 |
 | A flow says a step FAILED but the action plainly worked | Fixed in #60 — the postcondition window was a flat 6s and a real app's create -> table-refresh took longer, so the flow reported FAILED for a record that HAD been created. Each step now carries `settle_ms`, measured at record time from the timestamps the recorder already kept, and the replay allows the default PLUS that. A flow recorded before #60 carries 0 and is unchanged |
 | The banner says `THE DOM IS STILL CHANGING` | By design since #70 — the page is actively being rewritten, measured by mutation recency rather than by the network. Every other signal reads ZERO on this case (an SPA painting rows after its one fetch has resolved), which is why it was invisible for so long. The kinds are named because `40 @style` (an ad carousel) and `40 structural` (the table you are reading) are opposite facts |
-| The banner says the DOM is unchanged but requests are in flight | By design since #70, and it is the HONEST answer rather than a hedge: what is rendered now is stable and safe to read, and more may still arrive. Measured — a page with a poll and a beacon keeps 3–6 requests pending for ever while its DOM finished in 300ms, and the old banner said "STILL SETTLING" to that page until you gave up on it. Network idle is the best wait rule published (0.46% stale) and it is reached within 3s on only 15% of booking/buying pages, so this is the commercial web rather than a defect |
+| The banner says the DOM is unchanged but requests are in flight | By design since #70, and it is the HONEST answer rather than a hedge: what is rendered now is not being rewritten, and whether MORE arrives is what those requests decide. (This row said "stable and safe to read" until an audit caught it: the code deliberately refuses to recommend, and a debugging table that recommends on its behalf is the same defect one file over.) Measured — a page with a poll and a beacon keeps 3–6 requests pending for ever while its DOM finished in 300ms, and the old banner said "STILL SETTLING" to that page until you gave up on it. Network idle is the best wait rule published (0.46% stale) and it is reached within 3s on only 15% of booking/buying pages, so this is the commercial web rather than a defect |
 | `page_readiness` returns a sentence on a settled page where it used to return `""` | By design since #70. It exists only for `find`'s MISS path (#39), where the question is whether "no match" means ABSENT or NOT YET — and `""` answers neither, reading the same as a probe that failed. Only this op; `readinessNote` is unchanged, so no listing gained a banner |
 | Mutation recency reports `-1` / the probe says unknown | `listener_tag.js` did not run on that page — it is a manifest content script, so a page loaded before the extension was installed or reloaded has no recorder. Reload the page. Unknown is deliberately NOT reported as quiet (R17): a false quiet is the worst direction this probe can fail in |
 | A tool result starts with `*** MESSAGE FROM THE USER` | By design since #69 — the user typed that in the side panel's Steer box while you were working, and it was attached to the front of this result. It is NOT page content: no page can write to the panel, which is what the closing line says. Treat it as the user speaking |

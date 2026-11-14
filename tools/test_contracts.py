@@ -638,11 +638,50 @@ def main() -> int:
             for _h in _hosts:
                 if _h in _txt:
                     _leaks.append(f"{_rel}:{_h}")
+    # IT IS INERT ON EVERY MACHINE THAT DOES NOT HOLD THE PRIVATE FLOWS, AND
+    # THAT INCLUDES CI. The patterns now travel (.gitignore), but the HOSTS are
+    # read out of the excluded flow FILES, which are gitignored and therefore
+    # absent from every clone — so a fresh checkout derives zero hosts, scans
+    # nothing, and passes. The named failure mode moved one step later rather
+    # than being removed.
+    #
+    # It is NOT fixed by committing a hash of the host: a hash in a public repo
+    # confirms a guess cheaply, which trades real privacy for detection on the
+    # one machine that already has the better protection. And CI genuinely
+    # cannot detect a hostname it is not allowed to know.
+    #
+    # So the honest shape is: this check protects the RECORDING MACHINE, where
+    # a leak can originate, and it must SAY when it is not protecting anything.
+    # `C29b` enforces that it is live wherever excluded flows exist, and the
+    # INERT detail below is written so `run_tests.py` surfaces it as a warning
+    # rather than letting a developer on a fresh clone believe they are covered.
+    _inert = not _hosts
     check("C29 no origin of a deliberately-excluded flow appears in a tracked file",
           not _leaks,
           "; ".join(sorted(set(_leaks))[:6]) if _leaks
           else (f"{len(_hosts)} excluded origin(s) checked against the tracked tree"
-                if _hosts else "no excluded flows on this checkout — check inert"))
+                if _hosts else
+                "C29 INERT: no excluded flow files on this checkout, so zero "
+                "origins were derived and NOTHING was scanned. This check "
+                "protects the machine that records against a private app; it "
+                "cannot protect a clone, because CI is not allowed to know the "
+                "hostname it would be looking for."))
+
+    # C29b: WHEREVER THE EXCLUDED FLOWS EXIST, THE CHECK MUST BE LIVE. Without
+    # this, the inert state above is indistinguishable from a working one on the
+    # machine where a leak can actually originate — and "passes having checked
+    # nothing" is the exact failure PRINCIPLES #15 names. The pattern list is
+    # read from the same two sources as above, never restated (#21).
+    _declared = [l.strip() for l in _pat_lines
+                 if l.strip().startswith("flows/") and not l.strip().startswith("#")]
+    _present = [f for pat in _declared for f in _Path(ROOT).glob(pat)]
+    check("C29b the leak check is LIVE wherever excluded flows exist "
+          "(inert is only acceptable when there is genuinely nothing to scan)",
+          (not _present) or bool(_hosts),
+          f"{len(_present)} excluded flow file(s) present, "
+          f"{len(_hosts)} origin(s) derived"
+          + ("  -> files exist but NO origin was derived: the derivation is broken"
+             if _present and not _hosts else ""))
 
     check("C28 tools/README.md has a row for every suite on disk",
           not _undoc,

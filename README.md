@@ -540,12 +540,20 @@ The manifest registers it as a `document_start`, MAIN-world content script on
 grant — that is the whole reason it can beat page scripts to
 `addEventListener`.
 
-What it does there is bounded: it wraps `EventTarget.addEventListener` to tag
-elements that have click handlers (the one element class no DOM walk can see),
-wraps `attachShadow` so closed roots stay reachable without a debugger, and
-mirrors `console.*` into a capped 500-entry in-page ring buffer. **Nothing
-leaves the page** — reading that buffer requires the `read_console_messages`
-op, which *is* gated. If injecting at all is unacceptable to you, remove the
+What it does there is bounded, and the bound is **four** things. It wraps
+`EventTarget.addEventListener` to tag elements that have click handlers (the one
+element class no DOM walk can see); wraps `attachShadow` so closed roots stay
+reachable without a debugger; mirrors `console.*` into a capped 500-entry in-page
+ring buffer; and — since the readiness work — runs a document-wide
+`MutationObserver` (subtree, attributes with old values, character data,
+re-registered on every shadow root the page creates) writing timestamps and
+attribute names into a 1,024-slot ring of weak references.
+
+That last one is new and is stated here deliberately: a documented guarantee
+that is quietly false is worse than a larger one that is stated. **Nothing
+leaves the page** — reading the console buffer requires `read_console_messages`
+and reading the mutation ring happens inside `read_page`'s own readiness probe,
+both of which *are* gated. If injecting at all is unacceptable to you, remove the
 `content_scripts` block from `extension/manifest.json`; you lose handler-tagged
 elements, closed shadow roots and console capture, and nothing else.
 

@@ -81,6 +81,18 @@ DEFAULT_TIMEOUT = 300  # seconds per suite; slowest observed is ~7s
 # derived belong here, and each one names the observed behaviour it exists for.
 # ---------------------------------------------------------------------------
 OVERRIDES: dict[str, dict] = {
+    "contracts": {
+        # C29 (no private hostname in a tracked file) derives the hosts it looks
+        # for from the EXCLUDED flow files, which are gitignored — so on any
+        # clone, and in CI, it derives none, scans nothing and passes. That is
+        # unavoidable (CI is not allowed to know the hostname) but it must not
+        # be SILENT: a developer on a fresh checkout would otherwise believe the
+        # protection is running. Surfaced as a warning, the same way gaps'
+        # PARTIAL probes are, rather than failing a build that cannot do better.
+        "warn_if": re.compile(r"\bC29 INERT\b"),
+        "warn_if_why": ("the private-origin leak check scanned nothing here "
+                        "(expected on a clone/CI; it protects the recording machine)"),
+    },
     "gaps": {
         # test_gaps.py is an INVENTORY, not a pass/fail suite: it ends with
         # `asyncio.run(main())` and no sys.exit, so it returns 0 even when it
