@@ -144,6 +144,15 @@ by the three `MutationRecord` types, which the spec declares so no list of
 | attributes only | **Minor DOM activity** — nothing was added, removed or re-texted, so the listing is structurally current. The attribute *names* are printed |
 | DOM quiet, network busy | **DOM STABLE, NETWORK BUSY** — what is rendered is not being rewritten; whether more arrives is what those requests decide |
 | both quiet | **nothing at all** |
+| **no recorder at all** | the pre-#70 **PAGE IS STILL SETTLING** banner, unchanged |
+
+That last row is the degradation path and it still ships: when
+`listener_tag.js` did not run (a page open since before the extension was
+installed or reloaded), there is no recency reading, so the old network-only
+banner is used verbatim. **Unknown is never rendered as quiet** — `R17` pins the
+probe reporting `null`, and the branch guard keys on `since >= 0` rather than on
+`total >= 0`, because an empty ring returns `since = -1` and that is "never
+observed", not a duration. The first version printed `No DOM change for -1ms`.
 
 **The two tiers exist because the first version rebuilt the bug it was fixing.**
 A banner keyed on "anything moved" fires forever on any ad-supported page —
