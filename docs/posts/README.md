@@ -19,10 +19,11 @@ thing being shown, which is why 001 leaves the head-to-head out entirely.
 | 001 | Record and replay: the assertions come free because we record the AGENT, not a human | `flows/todomvc-add-items.flow.json`, CLAUDE.md #49/#55/#60/#72 | **DRAFTED**, needs sending |
 | 002 | We ran 20 blind tasks against Claude-in-Chrome. 110 turns vs 176. | `tools/bench_turns/eval4/` — prereg, tasks, referee key, analyse.py | **DRAFTED**, needs sending |
 | 003 | Four defects in one session, and none of them were in the product | eval 4 Amendments 6 & 7: the ruler was broken four ways | material complete |
-| 004 | Your agent is reading a page that is still being built, and nothing tells it | CLAUDE.md #70, `docs/READINESS.md`, R11–R23 | material complete |
+| 004 | Your agent is reading a page that is still being built, and nothing tells it | CLAUDE.md #70 and #76, `docs/READINESS.md`, R11–R29 | **DRAFTED**, needs sending |
 | 005 | A table with a hidden column handed back the wrong number, silently | this session's TB15, `tools/audit_table_hidden_cells.py` | material complete |
 | 006 | Every way record-and-replay can break, by stage | `docs/FLOWS-FAILURE-SURFACE.md` | material complete |
 | 007 | "Nothing went missing" is not "what is left is enough" | `docs/SUFFICIENCY.md`, DS 0.933 | material complete |
+| 008 | A feature can be dead in production behind a green suite, and only a live run will say so | CLAUDE.md #30 (two such), #76 (the scoped banner), `delta` dead for its whole life | material complete |
 
 ## What each post must NOT do
 

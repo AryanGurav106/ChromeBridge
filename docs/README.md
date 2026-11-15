@@ -21,7 +21,7 @@ fix it.
 | You are… | Read, in order |
 |---|---|
 | **working anywhere in this repo** | `PRINCIPLES.md` — non-negotiable, 20 rules |
-| catching up on the most recent work | CLAUDE.md **#70** (readiness), **#71** (the generality audit), **#72** (the ordinal/witness problem), **#73** (the Mind2Web audit) |
+| catching up on the most recent work | CLAUDE.md **#70** (readiness), **#71** (the generality audit), **#72** (the ordinal/witness problem), **#73** (the Mind2Web audit), **#74** (the listing was right and the tool reading it was not), **#75** (presence is not success, and why the benchmark substrate cannot tell us which), **#76** (scoped readiness, and a banner that had never been visible on a scoped read) |
 | changing the DOM collector | `PRINCIPLES.md` → `REPRESENTATION.md` → CLAUDE.md #27, #28, #29, #37 |
 | changing what the listing *says* | `REPRESENTATION.md` → CLAUDE.md #13, #22, #24 (truncation and silence) |
 | touching readiness / settling | `READINESS.md` — this is the active open problem |
@@ -29,6 +29,7 @@ fix it.
 - [FLOWS-FAILURE-SURFACE.md](FLOWS-FAILURE-SURFACE.md) — every way record/replay can break, by stage, with status for each
 | adding or changing a measurement | `MEASUREMENT.md` — **read this before you quote a number** |
 | asking whether the listing is *enough*, not just complete | `SUFFICIENCY.md` → `tools/measure_sufficiency.py` |
+| asking whether an element can be REACHED, not just whether it survived | `tools/measure_findability.py` → CLAUDE.md #74, #75. Nearly every ruler here scores PRESENCE; #74 found 118 elements present in all of them and unreachable by their own printed label |
 | running a head-to-head | `EVALS.md` → `tools/bench_turns/` |
 | about to claim something is general | `PRINCIPLES.md` §I → `tools/audit_patterns.py` |
 
