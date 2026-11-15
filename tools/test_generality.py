@@ -1693,6 +1693,62 @@ async def main():
         check("MV3 CONTROL: the SAME overlay at opacity:1 does raise the banner",
               "A MODAL/DIALOG IS CURRENTLY OPEN" in _mv1,
               "banner present" if "A MODAL/DIALOG IS CURRENTLY OPEN" in _mv1 else "NO BANNER")
+        # MV4/MV4b — THE SAME DIALOG, THE SAME ORIGIN, ONE VARIABLE CHANGED.
+        # `_allComposed` iterates `mmidReg`, which the collection walk stamps
+        # ACROSS same-origin frame boundaries, so a dialog can live in a frame
+        # where `getBoundingClientRect()` is FRAME-relative -- while `vw`/`vh`
+        # are the TOP window's. The "dominates the viewport" branch compared the
+        # two, which is not a threshold choice but two coordinate spaces.
+        # Measured: a full-bleed dialog in a 760x420 frame is 15.6% of "the
+        # viewport" and misses >= 0.5; the identical dialog in a viewport-sized
+        # frame passes. The dialog node is collected either way; only the verdict
+        # flipped. These two differ ONLY in the iframe's width and height.
+        INNER = ("<!doctype html><meta charset=utf-8><body style='margin:0'>"
+                 "<div role=dialog aria-label='Consent' style='position:fixed;"
+                 "inset:0;background:#fff;display:flex;align-items:center;"
+                 "justify-content:center'><button>Agree</button></div></body>")
+        OUTER = ("<!doctype html><meta charset=utf-8><body style='margin:0'>"
+                 "<nav><a href=/a>Alpha</a></nav><main><button>Buy</button></main>"
+                 "<iframe src='/inner' style='border:0;width:{w}px;height:{h}px'>"
+                 "</iframe></body>")
+        fv = await browser.new_page(viewport={"width": 900, "height": 700})
+        await fv.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await fv.route("**/inner", lambda r: r.fulfill(
+            status=200, content_type="text/html", body=INNER))
+        _seen = {}
+        for _tag, _w, _h in (("small", 760, 420), ("big", 900, 700)):
+            await fv.route("**/outer", lambda r, w=_w, h=_h: r.fulfill(
+                status=200, content_type="text/html",
+                body=OUTER.replace("{w}", str(w)).replace("{h}", str(h))))
+            await fv.goto("http://fv.test/outer", wait_until="domcontentloaded")
+            await fv.wait_for_timeout(150)
+            _out = await fv.evaluate("(function(){ " + COLLECT
+                                     + "; return _collectInteractivePage(false); })()")
+            _seen[_tag] = "A MODAL/DIALOG IS CURRENTLY OPEN" in _out
+            await fv.unroute("**/outer")
+        # HONEST SCOPE OF THIS PAIR, because the first version of it overclaimed.
+        # It was written to reproduce a measured FLIP -- the same dialog judged
+        # modal in a viewport-sized frame and not in a 760x420 one -- and it does
+        # NOT: measured, both arms render the iframe at the default 300x150
+        # because the width/height never took effect, so both arms measure the
+        # same geometry and MV4 passed in BOTH arms. The flip is recorded in the
+        # audit that found it; this pair pins the narrower property it can
+        # actually establish, which is the one the fix is about: a dialog's rect
+        # is frame-relative, so it has to be judged against the view it came
+        # from. MV4 FAILS pre-fix (0.071 of the TOP viewport, centre test false);
+        # MV4b is the invariance control.
+        check("MV4 an in-frame dialog that fills its OWN view is judged modal — "
+              "its rect is frame-relative, so measuring it against the top "
+              "window's dimensions is two coordinate spaces, not a threshold",
+              _seen["small"] is True and _seen["big"] is True,
+              f"small={_seen['small']} big={_seen['big']} "
+              f"(pre-fix both False: ratio 0.071 against the top viewport)")
+        check("MV4b CONTROL: the verdict does not depend on the frame's declared "
+              "size — without it, any rule keyed on the top viewport could still "
+              "pass MV4 by accident on one of the two",
+              _seen["small"] == _seen["big"],
+              f"760x420 -> {_seen['small']}, 900x700 -> {_seen['big']}")
+        await fv.close()
         await mv.close()
 
         # ---- OC: a handler assigned to the PROPERTY is a declaration ------------

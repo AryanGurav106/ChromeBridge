@@ -26,7 +26,15 @@ window is 50.7% false-quiet at a 2s commit interval; 3000ms is 0.0%). Closed thi
 the kana fold collision, silent truncation loss in the default format,
 `require` never firing, resume binding the wrong target, the handler-property
 blindness, and the locale hazard (which did NOT reproduce) — all in `CLAUDE.md`
-#71, #72 and #73; and **`query(scope,…)` as dead code** — WIRED rather than
+#71, #72 and #73; **item 14 (`opacity:0`)** — measured and CLOSED as DON'T
+BUILD (#78): 175 elements across 21/96 sites, **0 declare any ARIA role**, **0
+identities lost**, and Chrome keeps 149 of them but the only interactive ones are
+14 skip links and 2 back-to-top buttons, transparent precisely because the page
+is not offering them; on the text half the risk surface is **505 characters
+corpus-wide** (in-viewport AND not aria-hidden) against 22,252 if you cut on
+opacity alone, with **0 of 434 sampled strings matching the success/error
+vocabulary** that motivated the question. Probe kept at
+`tools/audit_opacity.py`. And **`query(scope,…)` as dead code** — WIRED rather than
 deleted, on a measurement (`CLAUDE.md` #76, `READINESS.md` §5b). Its residual is
 narrower and lives in `READINESS.md`'s own open list: landmark attribution for
 an UNSCOPED read is still unbuilt and is a different problem, needing a rule for
@@ -121,21 +129,6 @@ What would close it: a declared per-member discriminator the collector does not
 currently emit. Geometry would do it (87.3% coverage, measured) and is refused —
 it drifts, so the safeguard would fire on every reflow.
 
-### 2b. `run_flow(stop_after=N)` has never worked over the wire `OPEN`
-`_flow_report`'s `head` is a three-key dict — `passed` / `failed` /
-`needs_decision` — and the runner's fourth status is `stopped_early`, so the
-tool raises `KeyError: 'stopped_early'` on every call that uses the flag.
-Reproduced against **git HEAD**, not against a working tree:
-`_flow_report({... "status": "stopped_early" ...})`. FR22/FR22b/FR22c pin the
-RUNNER and are green; nothing pins the renderer — principle 13 verbatim.
-
-This is half the route item 12 names for the TEXT-sufficiency measurement, so
-that measurement would have died on its first call. The fix is one dict entry
-in `mcp_server.py`; it was found by an agent scoped out of that file, which is
-why it is here rather than done. The check that should land with it belongs in
-`tools/test_flows.py` beside FR22 and must drive `mcp_server._flow_report`
-rather than the runner.
-
 ### 2c. Starting state: the precondition reaches 1 flow in 20 `OPEN`
 `require` is derived from the observations between the landing navigation and
 the first action, and `_checks` understands exactly three tools: `get_url`,
@@ -219,8 +212,44 @@ The page declares the fact (`<html lang>`); the recorded half is missing, and
 time, so closing this needs a writer there as well as a reader in the runner —
 both halves or neither (rule 14).
 
-### 7. Page-level scans never cross an iframe boundary `OPEN`
-An open dialog inside a frame gets no modal banner and no `section=dialog`.
+### 7. Page-level scans and the iframe boundary `MEASURE FIRST`
+**HALF THIS ITEM WAS WRONG and is corrected (#78).** Same-origin frames ARE
+reached: `dialogOpen` queries `_allComposed`, which iterates `mmidReg`, and the
+collection walk stamps mmids across same-origin frame boundaries; `_readinessPage`
+already merges same-origin frames (#70/R19). The real decomposition is:
+- **cross-origin frames are invisible to all three page-level scans.**
+  `collectCrossFrames` runs AFTER the banner is built and merely appends rows, so
+  no cross-frame dialog can ever raise it. Nine constructed fixtures (two ports,
+  so cross-origin is real): a cross-origin CMP as a full-page fixed overlay gets
+  NO banner, **0 rows flagged `(occluded/blocked)`**, and no dialog text — while
+  the same-origin version raises the banner and names what it omitted.
+- **`section=dialog` is on 0 rows in all 9 fixtures**, including the three where
+  the banner correctly fires: an in-frame dialog's controls resolve to
+  `section=iframe`. Extends #23's open `section=` item across the boundary.
+- ~~same-origin geometry~~ **FIXED (#78, MV4).**
+
+**FREQUENCY IS NOT ANSWERABLE ON THIS CORPUS, and the zero is verified real.**
+42/96 sites have a child frame (128 frames), 17/96 have a RENDERED one, and
+**0 of 128 declare any page-level trigger**. Probe firing confirmed by a control
+over the same pages' TOP documents: 91 dialog nodes, 15 visible, 7 `aria-modal`,
+6/96 raising the banner. The corpus cannot hold the shape because **HARs are
+captured after consent**, 21/128 frames no longer replay, and the one CMP-shaped
+frame present declares its `role=dialog aria-modal` wrapper in the TOP document.
+
+**THE COST ASSUMPTION IN THIS ITEM WAS ALSO WRONG.** `collectCrossFrames`
+already injects the collector into **27 of 33 rendered frames (81.8%)** on every
+unscoped string read, so the per-frame round trip is ALREADY PAID — it just calls
+the structured arm (no modal verdict) and appends after the banner. Per-frame
+injection is median 14ms against a 66ms top-level collect. The "free"
+same-origin-only variant reaches **12/33 (36.4%)** and misses exactly where CMPs
+live.
+
+**Do not build on this evidence** — #26's rule needs both halves and the benefit
+half is unmeasured. What makes it answerable: re-freeze a corpus slice with
+cookies cleared so the CMP shape exists, or a live pass. If it is ever built, the
+design the cost data points at is zero-round-trip: have the existing per-frame
+call return each frame's verdict and feed it back before the banner is built.
+Probe: `tools/audit_frames.py` (`--fixtures` serves the 9 shapes from two ports).
 
 ### 8. Coordinate trust on canvas-dominated pages `ACCEPTED`
 On OpenStreetMap the same ref reported clicks 1,097px apart, and a missed click
@@ -345,21 +374,29 @@ Two measurement debts the control half surfaced, both cheap:
   printed identity vs 6.7% of the rows a human needed). `audit_dom_quality.py`'s
   `ambiguous` rate is the first number and has never been the second.
 
-### 13. The browser-use A/B may be measuring a legacy path `MEASURE FIRST`
+### 13. The browser-use A/B measures a path that is no longer theirs `RETIRE THE FRAMING`
 The 84.5%-junk figure (#33) was measured against their `ClickableElementDetector`.
-Their current `ax.py` takes existence from the Chrome AX tree instead. The
-conclusion (do not import their admission rules) is unaffected; the **framing**
-"we are more disciplined than browser-use about existence" is going stale.
-Re-run before quoting it forward.
+**Confirmed by reading their current source (#78): the AX-tree path is now the
+DEFAULT** — their README documents `mode='ultrafast'` acting on accessibility-tree
+ids as the default on `bu-fast`, and `bu-fast` is their stated default. So this is
+past "going stale": the comparison describes code that is no longer the thing it
+names, and **re-running it would measure the same obsolete path again.**
 
-### 14. `opacity:0` and the accessibility tree `MEASURE FIRST`
-We deliberately do not pass `opacityProperty` when deriving a NAME, because
-opacity:0 content is still in the accessibility tree and excluding it would be
-our judgement rather than the page's (#37, #39). browser-use's `ax.py` carries
-the counter-case explicitly: *"the AX tree keeps opacity:0 text (pre-rendered
-success banners), which agents then report as success"*. Our reasoning is sound
-for naming and weaker for a tool whose output an agent reads as "what the page
-says". Worth re-deciding deliberately rather than by inherited rule.
+The CONCLUSION is unaffected and still earned — we did not import their admission
+rules, and the measurement of why is in #33. What must stop is the FRAMING "we
+are more disciplined than browser-use about existence", which is now a claim
+about a path they do not take.
+
+**One thing from their current source is worth more than the re-run would be:**
+they split opacity BY PURPOSE, with a reason on each side — `checkOpacity: true`
+for the text surface, because "the AX tree keeps opacity:0 text (pre-rendered
+success banners), which agents then report as success", and OFF for action-target
+validation, because "custom-styled widgets often keep an opacity-0 native select
+underneath". That is the distinction item 14 was reaching for, and our own
+measurement found **0 of 434 sampled opacity:0 strings matching success/error
+vocabulary** — so their stated hazard has zero instances on our corpus while
+their counter-case (the hidden native control) is exactly what our
+`_declaredCtl` exemption already rescues.
 
 ### 15. What our 31 tool schemas cost at session start `MEASURE FIRST`
 Playwright MCP's own README now steers people toward CLI+skills over MCP on

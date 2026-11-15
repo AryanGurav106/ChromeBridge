@@ -9689,9 +9689,35 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       // viewport CENTER and be overlay-positioned. A tall right-rail widget
       // marked role=dialog (Yahoo Finance's trending panel) passed the bare
       // area test and falsely told the agent the whole page was modal.
-      if ((rr.width * rr.height) / (vw * vh) >= 0.5 &&
-          rr.left <= vw / 2 && rr.right >= vw / 2 &&
-          rr.top <= vh / 2 && rr.bottom >= vh / 2 &&
+      // MEASURED IN THE VIEW THE RECT CAME FROM. `_allComposed` iterates
+      // `mmidReg`, which the collection walk stamps ACROSS same-origin frame
+      // boundaries -- so `d` can live in a frame, where `getBoundingClientRect()`
+      // is FRAME-relative, while `vw`/`vh` are the TOP window's. Comparing them
+      // is not a threshold choice, it is two different coordinate spaces.
+      //
+      // Measured on two fixtures that are the same markup on the same origin
+      // with ONE variable changed -- the iframe's size: a full-bleed dialog in a
+      // 760x420 frame measured 15.6% of "the viewport" and missed the >= 0.5
+      // branch, while the identical dialog in a viewport-sized frame passed it.
+      // The dialog node is collected in both cases; only the verdict flipped.
+      //
+      // This fixes the ARITHMETIC and deliberately not the POLICY: the question
+      // becomes "does this dialog dominate the viewport it lives in", which is
+      // the question the rect can actually answer. Whether an in-frame modal
+      // should raise the PAGE-level banner at all is a separate design question,
+      // and it is unmeasured -- 0 of 128 frames across 96 corpus sites declare
+      // any page-level trigger, because HARs are captured after consent.
+      let _dw = vw, _dh = vh;
+      try {
+        const _ov = d.ownerDocument && d.ownerDocument.defaultView;
+        if (_ov && _ov !== window) {
+          _dw = _ov.innerWidth || _dw;
+          _dh = _ov.innerHeight || _dh;
+        }
+      } catch (e) {}
+      if ((rr.width * rr.height) / (_dw * _dh) >= 0.5 &&
+          rr.left <= _dw / 2 && rr.right >= _dw / 2 &&
+          rr.top <= _dh / 2 && rr.bottom >= _dh / 2 &&
           /^(fixed|absolute|sticky)$/.test(dcs.position)) return true;
     }
     // ARIA-HIDDEN SIBLINGS — how Radix, HeadlessUI and every focus-trap library
