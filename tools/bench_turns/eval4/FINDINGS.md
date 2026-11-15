@@ -1187,3 +1187,43 @@ Also in that run, ours: the settled read did not surface the search input
 because it sits below the fold, so `query_elements` was needed to locate it.
 That is #44's measured and deliberately-not-widened trade showing its cost on
 a real task.
+
+## E4-D12, CLOSED: the corpus regression check
+
+`tools/audit_table_hidden_cells.py`, 34 frozen sites, all quantities read from
+ONE page load per site (there are no arms to rotate: "cells that exist" and
+"cells the page lays out" come from the same DOM in the same evaluate).
+
+| | |
+|---|---|
+| sites with any table | 8 of 34 |
+| sites with a `display:none` TD/TH | **1** (shoelace) |
+| cells seen / unpainted | 662 / **11** |
+| ragged tables before the fix | 6 |
+| ragged tables after | **6 — unchanged** |
+
+**No regression.** The number that would have mattered is the last row: if the
+filter dropped a cell that genuinely occupies a column, tables that previously
+agreed on a width would start disagreeing. None did.
+
+**Where it fires, it is right.** shoelace's API docs hide a "React Event"
+column (`onSlChange`, `onSlClear`), `display:none` on BOTH the `<th>` and the
+matching `<td>`, so every row narrows 4 -> 3 together and the grid stays
+aligned. That is the symmetric case.
+
+**AND THE CORPUS CANNOT VALIDATE THE CASE THE FIX WAS BUILT FOR.** USDA's shape
+is ASYMMETRIC — a hidden `<th>` whose `<td>` is simply absent, which is what
+made the counts disagree and shifted every column after the gap. No site in
+this sample has that shape. So:
+
+> The corpus demonstrates **no regression** and says **nothing** about whether
+> the fix works. TB15/TB15b/TB15c remain the only evidence for the asymmetric
+> case, and TB15 fails against the previous renderer reproducing the live
+> symptom byte-for-byte (`Max=258`, `Samples=238`).
+
+#25's rule, stated rather than dressed up: an ablation measures the code
+against the sample, and it cannot measure the sample. 1 site in 34 is not a
+measurement of a fix, it is a measurement of this corpus's tables.
+
+Sample caveat: 34 of 106 sites, and tables are concentrated — 26 of the 34 have
+no `<table>` at all, so the effective n for anything table-shaped is 8.
