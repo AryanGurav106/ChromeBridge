@@ -2431,7 +2431,29 @@ async def find(
         # no direct text of its own, yet a name exists — and the element stays fully
         # findable by role, near=, placeholder and value. Only the borrowed text stops
         # being treated as its own.
-        _borrowed = bool(el.get("subtreeName"))
+        # ...UNLESS THIS ELEMENT IS THE ONLY CARRIER OF THAT TEXT.
+        #
+        # Blanking is right when the contributors are themselves listed: the app
+        # shell borrows from nav items and headings that each have their own row,
+        # so the text stays findable through them. It is WRONG when no kept entry
+        # lives inside this one, because then blanking loses the text from the
+        # search space entirely.
+        #
+        # Measured live on ptable.com: a tile is `<li tabindex>` holding
+        # <b>36</b><abbr>Kr</abbr><em>Krypton</em><data>83.798</data>. Those four
+        # declare nothing clickable so they are correctly dropped, the <li> is
+        # correctly kept, and its identity is therefore borrowed -- so
+        # find("Krypton") returned NO MATCH on a page the readiness probe itself
+        # called SETTLED, and so did find on the tile's VERBATIM label. 118 tiles
+        # unreachable by the one tool whose job is finding things, while
+        # read_page listed every one of them correctly. That is #18's asymmetry
+        # in its sharpest form yet: not two rules disagreeing about what a
+        # control IS, but two tools disagreeing about what it is CALLED.
+        #
+        # `subtreeNameSole` is the collector's answer to "does any kept entry
+        # live inside this one", computed after the kept set is known. A
+        # structural fact, no threshold.
+        _borrowed = bool(el.get("subtreeName")) and not el.get("subtreeNameSole")
         label = "" if _borrowed else _fold(_nfc(el.get("label")))
         tag = str(el.get("tag") or "").casefold()
         role = str(el.get("role") or "").casefold()

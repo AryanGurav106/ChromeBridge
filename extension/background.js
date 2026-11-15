@@ -9389,6 +9389,51 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       }
     }
   }
+
+  // IS THE BORROWED NAME REACHABLE ANYWHERE ELSE? `subtreeName` means this
+  // element's name is a CONCATENATION of several descendants' text, and `find`
+  // blanks it so an app shell does not match every query. That is right when
+  // the contributors are THEMSELVES listed -- demoqa's shell borrows from nav
+  // items and headings that each have their own row, so blanking the container
+  // loses nothing and the text stays findable.
+  //
+  // It is wrong when NO contributor is kept. Measured live on ptable.com: an
+  // element tile is `<li tabindex>` holding <b>36</b><abbr>Kr</abbr>
+  // <em>Krypton</em><data>83.798</data>. Those four declare nothing clickable
+  // so they are correctly dropped, the <li> is correctly kept, and its identity
+  // is therefore borrowed -- so `find("Krypton")` returned NO MATCH on a page
+  // the probe itself called SETTLED, and so did `find` on the tile's VERBATIM
+  // label. 118 tiles, unreachable by the one tool whose job is finding things,
+  // while read_page listed every one of them correctly.
+  //
+  // The distinguishing fact is structural and needs no threshold: does any KEPT
+  // entry live inside this one? If yes the text has another carrier; if no this
+  // element is the only carrier and blanking it loses the text entirely. It is
+  // computed HERE rather than at build time because only now is the kept set
+  // known.
+  try {
+    const _kept = [];
+    for (const e of out) {
+      let _el = null;
+      try {
+        const _r = window.__mmidReg;
+        if (_r && e && e.mmid != null) _el = _r.get(String(e.mmid)) || null;
+        if (_el && !_el.isConnected) _el = null;
+      } catch (_) {}
+      if (_el) _kept.push([e, _el]);
+    }
+    for (const [e, el] of _kept) {
+      if (!e.subtreeName) continue;
+      let _other = false;
+      for (const [e2, el2] of _kept) {
+        if (e2 === e) continue;
+        try { if (el.contains(el2)) { _other = true; break; } } catch (_) {}
+      }
+      // SOLE CARRIER: keep the name matchable. The flag stays set, because the
+      // LISTING still wants to know the name was assembled rather than declared.
+      if (!_other) e.subtreeNameSole = true;
+    }
+  } catch (e) {}
   // Detect whether a TRUE blocking modal is open — if yes, the agent should
   // focus on it and ignore the rest of the page. CRITICAL: do NOT fire this for
   // every role="dialog". Cookie/consent toasts and notification popovers use
