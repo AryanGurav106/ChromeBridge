@@ -317,6 +317,48 @@ async def main():
     check("F31 ...while that element is still findable by what IS its own (role, near=)",
           "ref_4" in out, out.splitlines()[0][:100])
 
+    # F40: A BORROWED NAME WITH NO OTHER CARRIER MUST STAY MATCHABLE.
+    # (F38/F39 are taken -- CLAUDE.md #67 records id collisions in three
+    #  suites as an unresolved annoyance; not adding a fourth knowingly.)
+    #
+    # F30 blanks a borrowed name so an app shell does not win every query, and
+    # that is right WHEN the contributors are themselves listed -- the shell
+    # borrows from nav items and headings that each have their own row, so the
+    # text stays findable through them.
+    #
+    # It is wrong when no kept entry lives inside. Measured live on ptable.com:
+    # a tile is `<li tabindex>` holding <b>36</b><abbr>Kr</abbr>
+    # <em>Krypton</em><data>83.798</data>. Those four declare nothing clickable
+    # so they are correctly dropped, the <li> is correctly kept, and its
+    # identity is therefore borrowed -- so find("Krypton") returned NO MATCH on
+    # a page the readiness probe itself called SETTLED, and so did find on the
+    # tile's VERBATIM label. 118 tiles unreachable by the one tool whose job is
+    # finding things, while read_page listed every one of them correctly.
+    #
+    # The collector answers "does any kept entry live inside this one" after the
+    # kept set is known (`subtreeNameSole`). Structural, no threshold.
+    page(el(mmid="919", tag="li", label="36 Kr Krypton 83.798",
+            subtreeName=True, subtreeNameSole=True, w=60, h=60, y=300),
+         el(mmid="25", tag="a", name="Properties", w=80, h=20, y=10))
+    out = await run("Krypton")
+    check("F40 a borrowed name with NO other carrier is still findable",
+          "ref_919" in out, out.splitlines()[0][:110]
+          + (" | " + next((l.strip()[:60] for l in out.splitlines() if "ref_" in l), "")))
+    out = await run("36 Kr Krypton")
+    check("F40b ...and so is its verbatim label, which also returned nothing live",
+          "ref_919" in out, out.splitlines()[0][:110])
+
+    # THE CONTROL, and it is the whole reason this is a flag and not a deletion:
+    # the SAME shape WITHOUT the sole-carrier mark must still be blanked, or
+    # this change has simply reverted F30 and the app shell wins every query
+    # again.
+    page(el(mmid="919", tag="li", label="36 Kr Krypton 83.798",
+            subtreeName=True, w=60, h=60, y=300),
+         el(mmid="25", tag="a", name="Properties", w=80, h=20, y=10))
+    out = await run("Krypton")
+    check("F40c CONTROL: a borrowed name WITH other carriers is still blanked",
+          "ref_919" not in out, out.splitlines()[0][:110])
+
     # F32-F35: THE CONFIDENCE GATE HAD A CLIFF AT THREE TOKENS, so every TWO-word
     # query was effectively ungated — one covered word out of two earned a confident
     # header. Each of these came back under `Found N element(s) matching` in a live
