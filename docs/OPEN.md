@@ -159,7 +159,17 @@ alarming, and unmeasured here either way.
 Baseline: **`DS | reachable` = 0.933** (83/89 labelled targets distinguishable
 among the rows we printed), LOSO 0.921–0.951, both negative controls passing and
 both cross-checks against `bench_mind2web` / `bench_trajectory` exact. The
-accessible name carries **38.2pp**, the tree's ancestry path **11.2pp**.
+accessible name carries **51.7pp**, the tree's ancestry path **11.2pp** — a
+number #27 never had, since the tree shipped on a NULL A/B result because no
+metric there could read a listing the way an agent does.
+
+**The 38.2pp this entry carried until now was a RULER BUG**, caught in
+`SUFFICIENCY.md` and not propagated back to here — the listing prints identity
+two ways (a bare quoted string after the tag, and `name="…"`) and the ablation
+removed only the first, so it meant different things on different row shapes.
+Recorded because a correction at the bottom of a long document does not correct
+the index that points at it (#67), and this index was wrong for the hour
+between the two being written.
 
 **The larger half is open and it is the one the source paper ranks first:
 TEXT** (30.5 / 59.5 coverage drop when ablated, against 4.8–13.6 for any control
