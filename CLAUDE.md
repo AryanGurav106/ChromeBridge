@@ -7240,6 +7240,85 @@ granted in the side panel is refused with the same message the agent gets.
     that the app-shell case is still blanked, and F30 passing in both arms is the
     other half of that proof.
 
+75. **EVERY RULER HERE MEASURES PRESENCE, AND THE ATTEMPT TO MEASURE SUCCESS
+    FOUND THE BENCHMARK SUBSTRATE CANNOT CARRY IT.** Recall, presence,
+    `lost_identities`, findability, #OPEN-12's DS — all of them ask whether an
+    element SURVIVED. None asks whether a model then PICKS it. The field's own
+    benchmark says they come apart: [arXiv:2605.29397] evaluates 11 extractive
+    reduction methods and its best retains **84% of success on WorkArena, 89%
+    on WebLinx**. We are a reduction method. So: `tools/bench_success_retention.py`,
+    three arms, blind judges, Mind2Web's labelled targets.
+
+    **There is no number, and the reason generalises past this project.**
+
+    **The baseline leaked the answer.** Mind2Web's `cleaned_html` carries
+    `backend_node_id` attributes that are NOT in document order — the clicked
+    target is allocated anomalously early, apparently because the recorder
+    resolved the clicked node over CDP before snapshotting. Measured: the gold
+    id precedes `<html>`'s own id in **12 of 20** sampled pages, and in 8 it is
+    among the first handful on the page. A blind judge found it three for three
+    by inspection and **disclosed it rather than exploiting it**, noting one of
+    its own answers had been changed by it. Visible as a symptom first: the
+    baseline climbed 0.250 → 0.375 → 0.545 as judges worked through it, and its
+    absolute level was already impossible, since cleaned_html scores ~1.00 on
+    element RECALL. **Fixed** by renumbering in document order (gold precedes
+    `<html>` in 0/16 after), and fixing it was not enough.
+
+    **The substrate defeats all three arms, each differently.** The AX arm is
+    unaddressable: **0 of 40 samples contain a single `href`**, so every anchor
+    is AX-ignored and collapses to `generic` or is dropped — **14 of 20 AX
+    pages have no `link` role at all**. Ours is viewport-scoped by design, so a
+    single-read test cannot follow the "scope into this region" its own listing
+    prints. And two more hit every arm equally: the step VALUE is stripped
+    (`"CLICK"` with no target text leaves items with no determinate answer —
+    one judge called a Discogs item "a genuine ~50/50" and declined), and with
+    no CSS, responsive duplicates are indistinguishable (Six Flags ships FOUR
+    identical utility navs; a judge located "Investors" correctly, picked the
+    first of four in document order, and was wrong by construction).
+
+    **Anyone benchmarking observation formats on this corpus is partly
+    measuring the corpus**, including the papers being compared against.
+
+    **EIGHT HARNESS DEFECTS, SIX FOUND BY THE JUDGES.** The judge file carried
+    the arm label; then the gold answer; then the filenames leaked the arm; the
+    AX arm was rendered with NO identifiers so it was unanswerable (two judges
+    proved it independently and both warned that scoring it as-is would hand us
+    a win "for a reason unrelated to representation quality"); the renderer was
+    fixed and the pages were not rebuilt; matched pairs landed in one batch so
+    arms could be compared directly; **our arm had no ref→id mapping and scored
+    0 BY CONSTRUCTION** — the scorer's docstring promised that mapping and the
+    builder never wrote it; and the first mapping then read Chrome's runtime
+    `backendNodeId` (a per-session counter) instead of the `backend_node_id`
+    ATTRIBUTE baked into the saved HTML. **Without the last two this would have
+    published "ChromeBridge: 0% success against full HTML."**
+
+    **The one thing it did establish about us**, consistently and across
+    judges: under a SINGLE READ, viewport scoping is what costs us. The target
+    sits below the fold, the listing correctly names the region and its ref, and
+    a one-shot reader cannot make the follow-up call a live agent makes. One
+    judge put it exactly: on the same task, "the AX file has the form's content
+    and no identifier; the ChromeBridge file has identifiers and not the form."
+    #26/#41/#44 priced that trade in TOKENS and rejected widening it; this is
+    the first time it has been priced in the currency the literature uses, and
+    the pricing is incomplete because the literature's figure comes from an
+    agent LOOP.
+
+    **What a real answer needs:** live pages rather than stripped snapshots,
+    step values intact, and a loop so each representation gets the follow-up
+    call its own output asks for. That is the `bench_turns` harness pointed at a
+    new question. Method and failure modes in `docs/SUCCESS-RETENTION.md` so the
+    rerun is a day's work and not a rediscovery.
+
+    **Also measured this round, and it stands:** `tools/measure_findability.py`
+    — can `find` reach an element by the identity the LISTING printed for it?
+    **1858/1901 = 0.9774 across 95 frozen sites.** It exists because #74 found
+    118 elements present in every presence-metric and unreachable by their own
+    printed label. `--self-test` FAILS against the pre-#74 scorer, with a
+    known-miss control passing in both arms; the corpus run is the population
+    number and F40/F40b are the regression guard. A descendant-credit arm added
+    **0** at 95 sites, which refuted the label-plus-badge theory I had formed
+    from a 34-site sample — recorded because I would have reported it.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
