@@ -1,0 +1,12 @@
+order	task	arm	agent_report
+1	T1	cb	ANSWER: ¥30 | TOOL_CALLS: 7 | BROWSER_CALLS: 6 | FIRST_CONTENT_AT: 2 | BATCHED: yes, 5 times
+2	T1	cic	ANSWER: ¥30 | TOOL_CALLS: 19 | BROWSER_CALLS: 17 | FIRST_CONTENT_AT: 3 | BATCHED: yes, 11 times
+3	T2	cic	ANSWER: 100-0001 | TOOL_CALLS: 18 | BROWSER_CALLS: 16 | FIRST_CONTENT_AT: 4 | BATCHED: yes, 10 times
+4	T2	cb	ANSWER: 100-0001 | TOOL_CALLS: 5 | BROWSER_CALLS: 4 | FIRST_CONTENT_AT: 2 | BATCHED: yes, 3 times | DEFECTS: none
+5	T3	cb	ANSWER: Please select the Paymeny Method. | TOOL_CALLS: 5 | BROWSER_CALLS: 4 | FIRST_CONTENT_AT: 2 | BATCHED: yes, 3 times | DEFECTS: none
+6	T3	cic	ANSWER: Please select the Paymeny Method. | TOOL_CALLS: 5 | BROWSER_CALLS: 3 | FIRST_CONTENT_AT: 4 | BATCHED: yes, 2 times | DEFECTS: none
+7	T4	cic	ANSWER: 1 result; Depth 29.0 km | TOOL_CALLS: 12 | BROWSER_CALLS: 10 | FIRST_CONTENT_AT: 4 | BATCHED: yes, 5 times
+8	T4	cb	ANSWER: 1 result; Depth 29.0 km | TOOL_CALLS: 5 | BROWSER_CALLS: 4 | FIRST_CONTENT_AT: 2 | BATCHED: yes, 4 times
+9	T5	cb	ANSWER: Regice, Sp. Def 200 | TOOL_CALLS: 5 | BROWSER_CALLS: 4 | FIRST_CONTENT_AT: 2 | BATCHED: yes, 3 times | DEFECTS: none
+10	T5	cic	ANSWER: Regice, Sp. Def 200 | TOOL_CALLS: 6 | BROWSER_CALLS: 3 | FIRST_CONTENT_AT: 4 | BATCHED: yes, 1 times
+11	T6	cic	ANSWER: Swiss Woodcarving Chisels — $22.96 | TOOL_CALLS: 8 | BROWSER_CALLS: 7 | FIRST_CONTENT_AT: 5 | BATCHED: yes, 4 times | BLOCKERS: browser_batch opening with tabs_create_mcp failed ("No tab available"), costing a separate tabs_context_mcp round trip; a find batched right after navigate ran before the Angular SPA had rendered and failed, costing a read_page round trip. | DEFECTS: tabs_create_mcp inside browser_batch errored "No tab available"; find asserted no Chisels filter exists with no readiness signal; read_page(filter=interactive) omitted every category filter checkbox that find then located

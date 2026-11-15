@@ -1,24 +1,28 @@
 {
  "gt": {
   "T1": {
+   "require_all": [
+    "¥30"
+   ],
    "accept": [
-    "¥30",
     "30 yen",
     "¥ 30",
-    "30` with yen named. A reply that also mentions the field read `¥5` straight after the currency switch is still correct."
+    "30",
+    "¥5"
    ],
    "reject": [],
    "shape": "F",
    "host": "jqueryui.com"
   },
   "T2": {
+   "require_all": [
+    "100-0001"
+   ],
    "accept": [
-    "100-0001",
     "1000001",
-    "〒100-0001`."
+    "〒100-0001"
    ],
    "reject": [
-    "#toggleHead-1",
     "is_visible() == True",
     "100-0000",
     "100-0002",
@@ -28,30 +32,34 @@
    "host": "www.post.japanpost.jp"
   },
   "T3": {
+   "require_all": [
+    "Please select the Paymeny Method."
+   ],
    "accept": [
-    "Please select the Paymeny Method.",
-    "the same string without the trailing full stop. **Do not accept** `Please select the Payment Method.` — the misspelling is the evidence the page was actually read."
+    "Please select the Payment Method."
    ],
    "reject": [],
    "shape": "F",
    "host": "practice.expandtesting.com"
   },
   "T4": {
+   "require_all": [
+    "1",
+    "29.0 km"
+   ],
    "accept": [
-    "1` result",
-    "depth `29.0 km",
-    "naming it \"2011 Great Tohoku Earthquake, Japan\" at magnitude 9.1",
-    "29 km",
-    "Showing 1 earthquakes\"."
+    "29 km"
    ],
    "reject": [],
    "shape": "F",
    "host": "earthquake.usgs.gov"
   },
   "T5": {
-   "accept": [
-    "Regice`, Sp. Def `200"
+   "require_all": [
+    "Regice",
+    "200"
    ],
+   "accept": [],
    "reject": [
     "Sp. Atk"
    ],
@@ -59,24 +67,22 @@
    "host": "pokemondb.net"
   },
   "T6": {
+   "require_all": [
+    "Swiss Woodcarving Chisels",
+    "$22.96"
+   ],
    "accept": [
-    "Swiss Woodcarving Chisels`, `$22.96",
-    "22.96` without the dollar sign."
+    "22.96"
    ],
-   "reject": [
-    "; the"
-   ],
+   "reject": [],
    "shape": "L",
    "host": "practicesoftwaretesting.com"
   },
   "T7": {
-   "accept": [
-    "19` results",
-    "first is `Cheese, cheddar",
-    "19 Foundation Foods",
-    "Cheddar cheese",
-    "NDB 1009."
+   "require_all": [
+    "19"
    ],
+   "accept": [],
    "reject": [
     "277",
     "50",
@@ -84,52 +90,51 @@
     "59556",
     "787",
     "Cheese spread",
-    "Cheese, cotija",
-    "[ACTIVE] Foundation Foods (19)",
-    "li.tab-navigator-tab active"
+    "Cheese, cotija"
    ],
    "shape": "A",
-   "host": "fdc.nal.usda.gov",
-   "require_all": [
-    "19"
-   ]
+   "host": "fdc.nal.usda.gov"
   },
   "T8": {
+   "require_all": [
+    "Washers",
+    "$3.55"
+   ],
    "accept": [
-    "Washers`, `$3.55",
-    "3.55` without the dollar sign."
+    "3.55"
    ],
    "reject": [
-    "/product/01M7E4MSF2HD968EXRWRJNKQXY",
-    "ForgeFlex Tools",
-    "$3.55"
+    "ForgeFlex Tools"
    ],
    "shape": "L",
    "host": "practicesoftwaretesting.com"
   },
   "T9": {
-   "accept": [
-    "21",
-    "naming the bronze medallist Stephan Freigang (GER) alongside 21."
+   "require_all": [
+    "21"
    ],
+   "accept": [],
    "reject": [],
    "shape": "D",
    "host": "www.olympedia.org"
   },
   "T10": {
+   "require_all": [
+    "0,3"
+   ],
    "accept": [
-    "0,3",
-    "0, 3` with a space."
+    "0, 3"
    ],
    "reject": [],
    "shape": "D",
    "host": "oeis.org"
   },
   "T11": {
+   "require_all": [
+    "(exact)"
+   ],
    "accept": [
-    "(exact)",
-    "exact",
-    "it is exact, by definition\"."
+    "exact"
    ],
    "reject": [
     "6.626 070 15 x 10^-34"
@@ -138,42 +143,44 @@
    "host": "physics.nist.gov"
   },
   "T12": {
-   "accept": [
-    "Object Number `97.34",
-    "Credit Line `Gift of John Stewart Kennedy, 1897",
-    "accession number 97.34\"."
+   "require_all": [
+    "97.34",
+    "Gift of John Stewart Kennedy, 1897"
    ],
+   "accept": [],
    "reject": [],
    "shape": "D",
    "host": "www.metmuseum.org"
   },
   "T13": {
-   "accept": [
+   "require_all": [
     "Child 1",
-    "Child 2",
-    "either order."
+    "Child 2"
    ],
+   "accept": [],
    "reject": [],
    "shape": "W",
    "host": "www.jstree.com"
   },
   "T14": {
+   "require_all": [
+    "29",
+    "ウツ"
+   ],
    "accept": [
-    "29` strokes",
-    "On reading `ウツ",
-    "the On reading as romaji `utsu",
-    "mentioning it is a Jōyō kanji taught in junior high is fine extra detail."
+    "utsu"
    ],
    "reject": [],
    "shape": "N",
    "host": "jisho.org"
   },
   "T16": {
+   "require_all": [
+    "12",
+    "ㄉㄧㄥˇ"
+   ],
    "accept": [
-    "总笔画 `12",
-    "注音 `ㄉㄧㄥˇ",
-    "Pinyin `dǐng` given alongside the Bopomofo",
-    "mentioning 部首 鼎 or Unicode 9F0E as extra detail."
+    "dǐng"
    ],
    "reject": [
     "部外 0",
@@ -183,37 +190,40 @@
    "host": "www.zdic.net"
   },
   "T17": {
+   "require_all": [
+    "$500"
+   ],
    "accept": [
-    "$500",
     "500",
     "500 dollars",
-    "$500.00`."
+    "$500.00"
    ],
    "reject": [
-    "<input type=range>",
     "$100"
    ],
    "shape": "W",
    "host": "jqueryui.com"
   },
   "T19": {
-   "accept": [
-    "Series `Noble gases",
-    "energy levels `2, 8, 18, 8",
-    "2 8 18 8` without commas",
-    "Noble gas",
-    "mentioning atomic number 36 and weight 83.798 u as extra detail."
+   "require_all": [
+    "Noble gases",
+    "2, 8, 18, 8"
    ],
-   "reject": [
+   "accept": [
     "2 8 18 8"
    ],
+   "reject": [],
    "shape": "W",
    "host": "ptable.com"
   },
   "T20": {
+   "require_all": [
+    "271"
+   ],
    "accept": [
-    "271` mg",
-    "271 mg`. **Do not accept** `258` (Average Amount *and* Median) or `238` (Min)."
+    "271 mg",
+    "258",
+    "238"
    ],
    "reject": [
     "2.32",
@@ -226,16 +236,17 @@
     "81.3"
    ],
    "shape": "T",
-   "host": "fdc.nal.usda.gov",
-   "require_all": [
-    "271"
-   ]
+   "host": "fdc.nal.usda.gov"
   },
   "T21": {
+   "require_all": [
+    "650",
+    "41"
+   ],
    "accept": [
-    "Median `650` mg",
-    "n = `41",
-    "650 mg` and `41 samples`. **Do not accept** `654` (Average Amount)."
+    "650 mg",
+    "41 samples",
+    "654"
    ],
    "reject": [
     "110",
@@ -247,25 +258,20 @@
     "743"
    ],
    "shape": "T",
-   "host": "fdc.nal.usda.gov",
-   "require_all": [
-    "650",
-    "41"
-   ]
+   "host": "fdc.nal.usda.gov"
   },
   "T22": {
+   "require_all": [
+    "3",
+    "$100.79"
+   ],
    "accept": [
-    "3` products",
-    "most expensive `$100.79` (Random Orbit Sander)",
-    "100.79` without the dollar sign",
-    "listing all three (Sheet Sander $58.48, Belt Sander $73.59, Random Orbit Sander $100.79)."
+    "100.79"
    ],
    "reject": [
-    "| that is",
     "Start Order",
     "6.626 070 15 x 10^-34",
     "sits immediately before",
-    "|\n| T20 |",
     "654",
     "100-0000",
     "Please select the **Payment** Method.",

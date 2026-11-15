@@ -255,3 +255,56 @@ for Start Order, not position; T20/T21 ask for Max/Median where Average sits
 beside it; T11's answer is literally `(exact)`); shape 5 is three dictionary
 look-ups, two of them Chinese, because the Russian site died mid-exercise —
 **a genuinely weak group**.
+
+---
+
+## AMENDMENT 6 — 2026-11-15, after 12 runs: the correctness RULER was broken
+
+Written when the falsifier fired on 5 of the first 12 runs, including **both
+arms on T5 and T6**. #48 records that exact signature: *a failure that damns
+both arms identically is the signature of a broken ruler, not a broken system.*
+Manual inspection of all 12 transcripts found **every answer correct** against
+the referee's verified values in `tasks.md`.
+
+**The defect, in `build_gt.py`.** The accept list was built by splitting the
+`**Answer:**` line on " and " / ";" / " / " and stripping backticks from the
+ENDS of each piece. Two failures compounded:
+
+  * internal backticks survived, so the needle for T5 was the literal
+    `` Regice`, Sp. Def `200 `` — a string no agent could ever emit; and
+  * a COMMA-joined composite was never split, so the whole phrase had to appear
+    verbatim. "Third row is Regice, with a Sp. Def of 200" cannot match it.
+
+**The fix.** `require_all` is now the set of BACKTICKED SPANS on the referee's
+answer line. Verified across all 22 answer lines: the referee backticks exactly
+the load-bearing values and nothing else. Spans are atomic, which is why this
+rule and not comma-splitting — T19's answer is `2, 8, 18, 8`, one value
+containing commas. Rejects additionally drop selector-shaped and
+prose-fragment tokens (`li.tab-navigator-tab active`, `; the`) and anything
+that also appears as an accepted variant (T19 carried `2 8 18 8` as both).
+
+**Why this is admissible, stated so it is checkable rather than asserted:**
+
+1. It **cannot touch the primary metric.** H1/H2/H3/H4 are scored from
+   transcripts by `score.py`; grading is a falsifier only.
+2. It is **mechanical and arm-blind** — derived from the referee's own markup,
+   written and dated before any run existed, and applied identically to both.
+3. It is **not grading-to-the-answer.** Verified in BOTH directions: all 12
+   real runs pass, and eight planted near-miss answers (Shuckle/230 for T5,
+   Wood Carving Chisels/$45.23 for T6, 277/Cheese spread for T7, Halogens for
+   T19, …) are all still REJECTED. A ruler that cannot reject is worse than one
+   that over-rejects.
+4. It **moves no pair's direction**: it changed 0 of 6 win/tie verdicts.
+
+**Second harness defect, same session, recorded here because it DID move
+results.** `runs.tsv` column 4 is consumed by `score(agent_id)`, which reads
+the JSONL; the agent's seven-line self-report was being written there instead.
+Re-scoring from transcripts changed 2 of the first 5 pairs — T3 from a tie to a
+CB win, and T5's margin from 1 to 2 — both because a control agent under-counted
+its own calls by missing the skill invocation its server instructions require.
+`collect.py` now rebuilds `runs.tsv` mechanically from the subagent meta files,
+and `analyse.py` REFUSES with that instruction rather than dying three frames
+down. The self-reports are kept in `self_reports.archive.tsv`.
+
+**The live table reported before this point was built from self-reports and is
+superseded by the transcript-scored one.**

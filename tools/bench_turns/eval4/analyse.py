@@ -83,6 +83,26 @@ res = {}
 for _o, t, arm, ag in rows:
     res.setdefault(t, {})[arm] = score(ag.strip())
 
+# REFUSE LOUDLY. The fourth column must be an AGENT ID -- score() reads that
+# agent's JSONL. Writing the agent's seven-line self-report there instead is a
+# defect this eval actually shipped: every row scored {"error": ...} and the
+# live table got built from the TOOL_CALLS line each agent wrote about itself,
+# which score.py's own first docstring line forbids. It changed 2 of the first
+# 5 pairs. A KeyError three frames down does not say any of that, and #66 is
+# explicit that a check which cannot report its own failure is the problem.
+# `python collect.py --write` rebuilds the file from the subagent meta files.
+_bad = [f"{t}/{a}: {r['error']}" for t, d in res.items() for a, r in d.items()
+        if r.get("error")]
+if _bad:
+    sys.exit("REFUSING: runs.tsv column 4 must be an AGENT ID, not a report.\n  "
+             + "\n  ".join(_bad)
+             + "\n  Fix with: python collect.py --write")
+_half = sorted(t for t, d in res.items() if len(d) < 2)
+if _half:
+    print(f"NOTE: incomplete pair(s) excluded: {', '.join(_half)}\n")
+    for t in _half:
+        del res[t]
+
 pairs, wrong = [], []
 print(f"{'task':<5} {'shape':<18} {'host':<28} {'CB':>3} {'CIC':>4}  "
       f"{'win':<4} {'CBf':>4} {'CICf':>5}")

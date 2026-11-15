@@ -1,3 +1,16 @@
-order	task	arm	agent_report
-1	T1	cb	ANSWER: ¥30 | TOOL_CALLS: 7 | BROWSER_CALLS: 6 | FIRST_CONTENT_AT: 2 | BATCHED: yes, 5 times
-2	T1	cic	ANSWER: ¥30 | TOOL_CALLS: 19 | BROWSER_CALLS: 17 | FIRST_CONTENT_AT: 3 | BATCHED: yes, 11 times
+order	task	arm	agent_id
+1	T1	cb	a671da4e196344a38
+2	T1	cic	a03ecca8c87131709
+3	T2	cic	a5e89dbe35eb12ceb
+4	T2	cb	aa96639dad396a7dd
+5	T3	cb	ae03baf4e8f7fb5fe
+6	T3	cic	af832fc9c69bf1a3e
+7	T4	cic	a2559bdcc7cf076cc
+8	T4	cb	acb7a0c986dfb7254
+9	T5	cb	a48b19fa549e16577
+10	T5	cic	a23cb6bf282d42e54
+11	T6	cic	a0066fdb68e55a424
+12	T6	cb	a2bde475af2603dfe
+13	T7	cb	a73c4faf443ce0c37
+14	T7	cic	af5b520e5852c03e2
+15	T8	cic	a3c584b4d185d56d7

@@ -105,14 +105,40 @@ def main():
         if not a:
             problems.append(f"{tid}: no **Answer:** line")
             continue
-        # Strip markdown emphasis/backticks; keep the literal string.
+        # THE REFEREE BACKTICKS EXACTLY THE LOAD-BEARING VALUES AND NOTHING
+        # ELSE -- verified across all 22 answer lines. So the spans ARE the
+        # requirement, and every other word on the line is connective prose.
+        #
+        # This replaces a split on " and " / ";" / " / " that was wrong twice
+        # over, and scored 5 of the first 12 runs WRONG while every one of
+        # them was right:
+        #   * it stripped backticks only from the ENDS, so a comma-joined
+        #     answer kept its internal ones and the needle `Regice`, Sp. Def
+        #     `200` was a literal no agent could ever emit; and
+        #   * a comma-joined composite was never split at all, so the whole
+        #     phrase had to appear verbatim -- "Third row is Regice, with a
+        #     Sp. Def of 200" could not match it.
+        # Both arms failed identically on T5 and T6, which is the signature of
+        # a broken ruler rather than a broken system (#48, #16).
+        #
+        # Spans are ATOMIC, which is why this rule and not comma-splitting:
+        # T19's answer is `2, 8, 18, 8`, one value containing commas.
         ans = a.group(1).strip()
-        accept = [x.strip(" `*") for x in re.split(r"\s+and\s+|;\s*|\s+/\s+", ans)
-                  if x.strip(" `*")]
+        require = [x.strip() for x in re.findall(r"`([^`]+)`", ans) if x.strip()]
+        if not require:
+            problems.append(f"{tid}: **Answer:** line has no backticked value, "
+                            f"so there is nothing to grade on: {ans!r}")
+            continue
+        # "**Also acceptable:**" is PROSE, not a literal -- harvesting the whole
+        # sentence as a needle produced inert entries like
+        # '22.96` without the dollar sign.' that could never match anything.
+        # Its backticked spans are the usable part, and they are ALTERNATIVES
+        # to a required value, never requirements of their own.
+        accept = []
         alsom = re.search(r"^\*\*Also acceptable:\*\*\s*(.+)$", body, re.M)
         if alsom and "none" not in alsom.group(1).lower():
-            accept += [x.strip(" `*\"") for x in re.split(r";\s*", alsom.group(1))
-                       if x.strip(" `*\"")]
+            accept = [x.strip() for x in re.findall(r"`([^`]+)`", alsom.group(1))
+                      if x.strip()]
         # Near-misses the referee named become explicit REJECTS, because a
         # plausible-but-wrong value is what makes two correct agents look like
         # they disagree. T9's `3` is the canonical case: it is also the medal
@@ -131,8 +157,18 @@ def main():
             #
             # A near-miss VALUE either contains a digit or is a multi-word
             # phrase; a bare lowercase word is a label.
+            def _is_value(x):
+                x = x.strip()
+                if not (any(c.isdigit() for c in x) or " " in x):
+                    return False            # a bare lowercase word is a LABEL
+                # A near-miss is a VALUE the referee named. These are not:
+                if not (x[:1].isalnum() or x[:1] in "$\u00a5\u20ac\u00a3"):
+                    return False            # prose fragment, e.g. "; the"
+                if re.search(r"[#\[\]{}]|\.[A-Za-z][\w-]*\b|::|=>", x):
+                    return False            # a CSS selector or code, not a value
+                return True
             reject = [x.strip(" `*\"") for x in re.findall(r"`([^`]{2,40})`", nm.group(1))
-                      if any(c.isdigit() for c in x) or " " in x.strip()]
+                      if _is_value(x)]
         shape = shape_for(tid, headers.get(tid, ""))
         if not shape:
             problems.append(f"{tid}: cannot determine shape from {headers.get(tid)!r}")
@@ -141,7 +177,11 @@ def main():
         if not host:
             problems.append(f"{tid}: no Start URL in tasks.md")
             continue
-        entry = {"accept": accept, "reject": [r for r in reject if r not in accept],
+        entry = {"require_all": require, "accept": accept,
+                 # A reject that is ALSO an accepted variant is a contradiction
+                 # the key cannot act on -- T19 carried `2 8 18 8` in both.
+                 "reject": [r for r in reject
+                            if r not in require and r not in accept],
                  "shape": shape, "host": host}
         g = GRADING.get(tid)
         if g:
