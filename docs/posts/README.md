@@ -31,8 +31,10 @@ thing being shown, which is why 001 leaves the head-to-head out entirely.
 
 ## What each post must NOT do
 
-- **Quote a bare "96%".** It is a band, 95.1–98.1 leave-one-site-out, and the
-  element-itself figure is 85.5%. CLAUDE.md #73 says quote ~96%, never 96.0%.
+- **Quote a bare "96%".** It is **~95%** since #78 — 177/186 = 95.2%, one
+  denominator — and the element-itself figure is 86.6%. The old 96.0% was over
+  173 actions, excluding 13 the benchmark wrongly called absent. Quote ~95%,
+  never a point estimate, and never the superseded 96.0%.
 - **Quote eval 4's zero-wrong on flow descriptors without its qualifier.** That
   zero is for WITNESSED descriptors on a realistic re-sort. 59.4% have no
   witness and are unchanged (#72).

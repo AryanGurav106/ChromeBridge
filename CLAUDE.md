@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1307 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1309 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1307 checks, ~125s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1309 checks, ~126s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -7193,10 +7193,15 @@ granted in the side panel is refused with the same message the agent gets.
     hash changed mid-run — a working-tree number would not have been
     reproducible.
 
-    **NOT DONE, and owed:** fix the false comment in `bench_mind2web.py`; add the
-    ~6-line serialization repair so the denominator is the full 186 (which also
-    fixes the ikea credit for free); and bound the ancestor path or rely on the
-    repair to do it.
+    ~~**NOT DONE, and owed:**~~ **ALL THREE CLOSED in #78, and four things in
+    this entry were wrong.** The headline moves DOWN — **177/186 = 95.2%**,
+    replacing 166/173 = 96.0% — because the repair removes the excuse for two
+    denominators. "Mirroring the cap gives 165/173 = 95.4%" was arithmetic I got
+    wrong here: refusing an ancestor credit is not losing the row, it falls
+    through to a descendant, so the real figure was 166/173. "The correct all-in
+    figure is 96.2%" and "which also fixes the ikea credit for free" are both
+    the MINIMAL repair's claims and they cannot both hold — the minimal repair
+    leaves the ikea credit standing. See #78.
 
 74. **TWO TOOLS DISAGREED ABOUT WHAT AN ELEMENT IS CALLED — 118 of them, on a
     page the readiness probe called SETTLED.** Every previous instance of #18's
@@ -7626,6 +7631,153 @@ granted in the side panel is refused with the same message the agent gets.
     render checks including the unscoped and observed-quiet controls, C32/C32b/C32c
     (the three banner cases, behavioural where C32 had been a grep), C34/C34*
     (the call site), FR22d (every runner status renders).
+
+78. **FIVE AGENTS, AND THE HEADLINE NUMBER WENT DOWN.** The brief was to
+    orchestrate rather than do, so five ran in parallel on independent work: an
+    adversarial review of #76 (that is #77), the #73 Mind2Web debts, two
+    MEASURE-FIRST items, the flow failure surface, and an external survey. Four
+    of the five found something that corrected a claim already recorded here,
+    which is the yield worth noting — more of this round's findings were about
+    our own CLAIMS than about our code.
+
+    **THE MIND2WEB HEADLINE IS NOW 177/186 = 95.2%, NOT 166/173 = 96.0%**, and
+    the reason is the denominator rather than the collector. #73 proved the 13
+    excluded targets were present in the snapshot string and lost at re-parse;
+    #78 repaired the parse, which removes the excuse for two denominators. One
+    remains: **186**. Exact-own rises to **86.6%** (161/186) while the all-in
+    figure falls, because the recovered actions are exact hits and the old
+    numerator was being divided by a smaller, friendlier denominator.
+    **Re-derived independently before it went into the README: `ok: 177,
+    missed_present: 9`, zero unresolvable.** `--no-repair` still prints the
+    historical 96.0%/173 labelled as what it is.
+
+    **THE REPAIR CHOSEN IS THE FAITHFUL ONE, AND NOT ON RECALL.** Repairing only
+    the RAWTEXT elements gives a prettier 96.2%. Measured on all 186 snapshots,
+    all arms per page load: unrepaired and RAWTEXT-only both leave **137 of 186
+    samples with CLONED nodes** (duplication 1.021, max 2.48x), because HTML's
+    adoption agency RE-CREATES unclosed formatting elements — so one
+    `backend_node_id` lands on several DOM nodes. The faithful repair is the only
+    arm with **0**, and it never recovers fewer distinct ids. A ruler whose
+    labels are ambiguous on three quarters of its samples is not a ruler.
+
+    **FOUR THINGS #73 GOT WRONG**, found by the agent closing its debts:
+    "mirroring the cap gives 165/173 = 95.4%" is **166/173 = 96.0%** — refusing
+    an ancestor credit does not lose the row, it falls through to a descendant,
+    and #73's table had no way to express that; "the correct all-in figure is
+    96.2%" and "which also fixes the ikea credit for free" are the MINIMAL
+    repair's claims and **cannot both hold**, since the minimal repair leaves the
+    ikea credit standing; and the minimal repair leaves two further artefact
+    credits (sixflags, underarmour) whose "wrapping anchors" are self-closed and
+    carry Mind2Web's own `bounding_box_rect="-1,-1,-1,-1"`, i.e. rendered
+    nothing. Under the faithful repair they become misses and the residual miss
+    profile gets CLEANER: all five underarmour misses are collapsed accordion
+    headers. **The agent also caught its own probe reporting "1706 ancestor
+    credits refused by the cap" — counting every oversized ancestor that merely
+    existed, including rows already credited via `own`. That is verbatim the bug
+    #73 records catching in itself ("reported 8 where the real number is 1").**
+
+    **ITEM 14 (`opacity:0`): DON'T BUILD, decisively.** 175 elements across
+    21/96 sites against a drift floor of +0.006% entries. **0 of 175 declare any
+    ARIA role** — the `_declaredCtl` exemption already rescues everything that
+    does, which is PRINCIPLES §1 behaving as specified. **0 identities lost.**
+    Chrome keeps 149 of them, and the only ones with an interactive role are
+    exhaustively **14 skip links and 2 back-to-top buttons**, transparent
+    precisely because the page is not currently offering them. On the text half
+    the honest cut is **in-viewport AND not aria-hidden = 505 characters
+    corpus-wide**, against 22,252 if you cut on opacity alone — and **0 of 434
+    sampled strings match the success/error vocabulary** that motivated the
+    question at all. browser-use names "pre-rendered success banners" as the
+    hazard; it has zero instances here, while the bulk is github's scroll-in
+    marketing copy and ~11k characters of real mastodon content.
+
+    **AND THAT AGENT RETRACTED ITS OWN SCARIEST FINDING, by the same rule this
+    log keeps applying.** Its identity probe reported **6 named controls lost**
+    to the phantom-mirror rule — a §3 violation is the worst thing this system
+    can do, so it re-derived with EFFECTIVE opacity and found all 78 at exactly
+    0: a Lexical toolbar revealed on hover, a CLOSED surveyjs dropdown, a Carbon
+    "Clear search" that appears when the box has content. **A bare
+    `checkVisibility()` calls all 78 visible**, which is #36's 3.81%-identity-loss
+    trap reproduced live, by someone who had read #36.
+
+    **ITEM 7 WAS HALF WRONG, AND ITS COST ASSUMPTION WAS WRONG TOO.** Same-origin
+    frames ARE reached — `dialogOpen` queries `_allComposed`, which iterates
+    `mmidReg`, and the walk stamps across same-origin boundaries. What is
+    invisible is **cross-origin** frames, because `collectCrossFrames` runs AFTER
+    the banner is built. Frequency is **0 of 128 frames on 96 sites** and that
+    zero is verified real (a control over the same pages' TOP documents returns
+    91 dialog nodes, 15 visible, 6/96 raising the banner) — but the corpus
+    **cannot** hold the shape, because HARs are captured AFTER consent. And the
+    "free same-origin variant vs expensive per-frame injection" trade is false:
+    `collectCrossFrames` **already injects into 27 of 33 rendered frames** on
+    every unscoped read, so the round trip is paid; the same-origin-only variant
+    reaches 12 of 33. If it is ever built, the design is zero-round-trip — have
+    the existing per-frame call return its verdict before the banner is built.
+
+    **ONE THING FROM THAT AUDIT WAS FIXED, because it is arithmetic and not
+    policy.** `dialogOpen`'s "dominates the viewport" branch compared a
+    **frame-relative** `getBoundingClientRect()` against the **top** window's
+    `innerWidth`/`innerHeight`. A dialog filling its own frame measures **0.071**
+    of "the viewport" and fails the centre test outright. It is measured in the
+    view the rect came from now, which is the question the rect can answer;
+    whether an in-frame modal should raise the PAGE-level banner is a separate,
+    unmeasured question and was deliberately not changed.
+
+    **AND MY FIXTURE FOR IT OVERCLAIMED ON ITS FIRST VERSION.** MV4 was written
+    to reproduce a measured FLIP between a 760x420 frame and a viewport-sized
+    one, and it does not: measured, **both arms render the iframe at the default
+    300x150** because the width/height never took effect, so both measured the
+    same geometry and the check passed in BOTH arms. Rewritten to pin the
+    narrower property it can actually establish, with the limitation in the
+    fixture's own comment. The live flip stays in the audit that found it.
+
+    **THE FLOW FEATURE: a replay PASSED 5/5 ON THE WRONG RECORD.** `_paramize`
+    covered `expect` (#54) and never `targets`; `resolve_vars` covered `input`
+    and never `targets`. So the headline use — type a name, submit, act on the
+    thing the app just made, whose accessible name IS the typed value — kept the
+    RECORDED literal in the target. Measured live, two arms differing only in
+    `core/flows`: pre-fix **PASSED 5/5 having opened the record the PREVIOUS run
+    made**; fixed, it opens the right one. That is the #10/#11/#12 family in the
+    feature whose whole job is to assert. **It is already on disk** in a flow
+    recorded against a real staging app. Also closed: an assertion tool that
+    could not ANSWER (gate refusal, pause, dropped bridge) was reported as a page
+    that FAILED, including an uncaught `RuntimeError` naming no step on a flow
+    whose earlier steps had already mutated the app.
+
+    **`run_flow(stop_after=N)` HAD NEVER WORKED OVER THE WIRE.** `_flow_report`'s
+    head is a three-key dict and the runner has four statuses, so the first real
+    call raises `KeyError('stopped_early')`. FR22/FR22b/FR22c pin the runner
+    three ways and nothing crossed into the renderer — #19 and #30's class, in
+    **half the route `OPEN.md` item 12 names for the TEXT-sufficiency
+    measurement**. #76's status report had called that item "blocked on
+    recordings"; it was also blocked on a one-line bug. FR22d enumerates every
+    status the runner can return and renders each.
+
+    **TWO EXTERNAL CORRECTIONS, from a survey briefed with everything we already
+    knew so it could not hand old news back.** #26's **"WebMCP — the one
+    capability no Playwright-based agent can have"** is false: Playwright
+    **1.64.0, 2026-10-07** ships `page.webmcp` and its notes say *"Playwright MCP
+    supports WebMCP by default"*; and "WebMCP explicitly does not support
+    headless browsing" misreads the W3C repo, where headless task completion is a
+    GOAL. **What is actually differentiating is consent and auth, not
+    capability.** And `SUCCESS-RETENTION.md`'s 84%/89% ceiling was that paper's
+    own pruner's LATENCY trade, not the best of 11 reduction methods — it had
+    been load-bearing as a ceiling it does not establish, and it is an operating
+    point we would not choose anyway, since #38 prices per-step latency at ~4% of
+    a tool call. The survey also found **no benchmark offering live pages +
+    per-step element labels + intact step values + an agent loop**, which dates
+    rather than softens `MEASUREMENT.md` §6, and **a measured 12–14% rerun noise
+    floor for observation-format A/Bs** (arXiv:2608.06171) that item 11 must be
+    designed around.
+
+    **ITEM 13 IS RETIRED RATHER THAN RE-RUN.** #33's 84.5%-junk figure was
+    measured against browser-use's `ClickableElementDetector`; their AX-tree path
+    is now their DEFAULT, so re-running that A/B would measure the same obsolete
+    path again. The conclusion stands and the framing does not.
+
+    Suites: 1,309 checks. New — C33–C35 (the serialization repair, the credit
+    cap, and the cap-withdrawal counter, with four controls), MV4/MV4b (the
+    dialog rect is judged in its own view), FV7–FV9 and FR23 (variables reach the
+    TARGET; an unanswerable assertion tool says so), FR22d.
 
 ## Debugging starting points
 

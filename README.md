@@ -15,7 +15,7 @@ extensions already there.
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%20–%203.13-blue.svg)](pyproject.toml)
 [![Tools](https://img.shields.io/badge/MCP-31%20tools-FF6B35.svg)](#what-claude-gets)
-[![Checks](https://img.shields.io/badge/tests-1%2C307%20checks-success.svg)](#running-the-tests)
+[![Checks](https://img.shields.io/badge/tests-1%2C309%20checks-success.svg)](#running-the-tests)
 
 </div>
 
@@ -86,7 +86,7 @@ definition, 16 sites never used in development:
 
 | representation | target recall | median tokens | size |
 |---|---|---|---|
-| **ChromeBridge** | **~96%** | **1,242** | **1.00×** |
+| **ChromeBridge** | **~95%** | **1,242** | **1.00×** |
 | Chrome accessibility tree | 100.0% | 8,886 | 7.15× |
 | MindAct `cleaned_html` | 100.0% | 41,716 | 33.59× |
 
@@ -95,16 +95,28 @@ accessibility tree needs a debugger attach that Chrome refuses outright on
 password-manager pages.
 
 **What that recall number means, precisely.** The element the human acted on is
-in our listing **166 of 173 times (96.0%)**, counting an ancestor or descendant
-we surfaced instead as a hit; **85.5%** as the element itself. These are
+in our listing **177 of 186 times (95.2%)**, counting an ancestor or descendant
+we surfaced instead as a hit; **86.6%** as the element itself. These are
 Mind2Web's stripped HTML snapshots — no scripts, no CSS — so two of the
 collector's eight admitting signals (a registered listener, `cursor:pointer`)
-**cannot fire at all**: measured 0/173 each. It is therefore a structural lower
-bound, and all seven misses are elements that declare nothing clickable in
-static markup. The 173 actions come from only **22 trajectories**, so
-leave-one-site-out moves the figure between **95.1% and 98.1%** — quote it as
-~96%, never as a point estimate with a confidence interval. Audited in
-`CLAUDE.md` #73; `tools/audit_mind2web_labels.py` re-derives all of it.
+**cannot fire at all**: measured 0/186 each. It is therefore a structural lower
+bound, and all nine misses are elements that declare nothing clickable in static
+markup. The actions come from only **22 trajectories**, so leave-one-site-out
+moves the figure by several points — quote it as ~95%, never as a point estimate
+with a confidence interval.
+
+**This number went DOWN when it was audited, and the denominator is why.** It
+read 96.0% for a year, over 173 actions — excluding 13 whose targets the
+benchmark said were "absent from the snapshot entirely". They were not absent.
+Mind2Web serializes XML-style, so an empty non-void element comes back as
+`<a/>` or `<textarea/>`; HTML has no self-closing syntax for those, the tag
+OPENS, and a RAWTEXT element swallows the rest of the document. One site went
+from 4,115 ids in the string to 744 in the DOM. Repairing the parse recovers all
+13 and removes the excuse for two denominators, so there is now **one**: 186.
+It also removes node CLONING — HTML's adoption agency re-creates unclosed
+formatting elements, which put one label on several DOM nodes in **137 of 186**
+snapshots. Audited in `CLAUDE.md` #73 and #78; `tools/bench_mind2web.py
+--no-repair` still prints the old 96.0%/173, labelled as what it is.
 
 ---
 
@@ -312,7 +324,7 @@ not by convention.
 .venv/bin/python tools/run_tests.py                    # POSIX (run on macOS; CI runs it on Linux)
 ```
 
-**21 suites, 1,307 checks, about 125 seconds.** Ten are browser-free; the other
+**21 suites, 1,309 checks, about 126 seconds.** Ten are browser-free; the other
 eleven drive headless Chromium and need two packages that are deliberately not
 runtime dependencies:
 
