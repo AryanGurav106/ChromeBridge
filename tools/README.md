@@ -97,6 +97,31 @@ developer who has not installed Playwright still gets a useful run. CI passes
 that do are the `diag_*` probes, and the pattern for writing one is in
 CLAUDE.md under "Test-harness pattern".
 
+## Probes that carry a self-test
+
+A probe is not a suite — `run_tests.py` does not run these, and a number from
+one is worth nothing until the probe has been shown to DETECT something.
+`audit_patterns.py` self-tests against three historical bugs for that reason;
+all three had passed code review before they were measured.
+
+| probe | self-test | what it proves |
+|---|---|---|
+| `audit_patterns.py` | built in | fires on the three historical pattern bugs in their pre-fix form |
+| `measure_findability.py --self-test` | `--self-test` | **FAILS against the pre-#74 scorer** and passes against the fix, with a known-miss control (a deliberately blanked app shell) passing in both arms |
+
+`measure_findability` exists because every other ruler here measures PRESENCE
+and #74 found 118 elements that were present in all of them and unreachable by
+their own printed label. **It is a population measurement, not a regression
+guard**: ablating the #74 fix and re-running over 8 frozen sites gives the
+identical number, because that corpus does not contain #74's shape. The guard
+is `F40`/`F40b` in `test_find.py` plus the `--self-test` above. Running it with
+no browser:
+
+```
+python tools/measure_findability.py --self-test     # no corpus, no browser
+python tools/measure_findability.py --n 20          # the population number
+```
+
 ## Caveat: `test_gaps.py` has no exit code
 
 It is an inventory, not a pass/fail suite — it ends with `asyncio.run(main())`

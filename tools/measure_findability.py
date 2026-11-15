@@ -163,11 +163,66 @@ async def main(n, cap):
           "is: handed an element's own printed words, does find return it.")
 
 
+async def self_test():
+    """PROVE THE RULER CAN FIRE. A detector reporting 0 findings is worth
+    nothing until it has been shown to detect something -- `audit_patterns.py`
+    self-tests against three historical bugs for exactly this reason, and all
+    three had passed code review before they were measured.
+
+    This matters more than usual here, because ablating the #74 fix and
+    re-running over 8 frozen sites gave the IDENTICAL number: that corpus does
+    not contain #74's shape, so the live run alone cannot show the ruler works.
+
+    The shape, synthetically: an interactive container whose every
+    text-contributing child is NON-interactive, so the container is the only
+    carrier of its own name -- ptable's `<li tabindex>` over
+    <b>36</b><abbr>Kr</abbr><em>Krypton</em><data>83.798</data>.
+    """
+    def _e(**kw):
+        b = dict(mmid="1", tag="div", role=None, label="", name="", value="",
+                 placeholder="", text="", near="", w=60, h=60, y=10)
+        b.update(kw)
+        return b
+
+    sole = _e(mmid="919", tag="li", label="36 Kr Krypton 83.798",
+              subtreeName=True, subtreeNameSole=True)
+    other = _e(mmid="25", tag="a", name="Properties", w=80, h=20)
+    shell = _e(mmid="3", tag="body", label="Skip to content Home Docs Pricing "
+                                           "Sign in Contact Footer", subtreeName=True)
+
+    ok = True
+    ms.STATE["bridge"] = _FB([sole, other])
+    out = await _find(query="36 Kr Krypton 83.798", tabId=1)
+    hit = "ref_919" in str(out)
+    print(f"  sole carrier is reachable by its own identity: {'YES' if hit else 'NO'}")
+    ok &= hit
+
+    # ...and the ruler must still SCORE a genuine miss as a miss. An app shell
+    # is blanked ON PURPOSE, so it is the known-miss case: if this came back a
+    # hit, the metric could not distinguish reachable from unreachable at all.
+    ms.STATE["bridge"] = _FB([shell, other])
+    out = await _find(query="Skip to content Home Docs Pricing Sign in Contact Footer",
+                      tabId=1)
+    miss = "ref_3" not in str(out)
+    print(f"  deliberately blanked shell scores as a MISS: {'YES' if miss else 'NO'}")
+    ok &= miss
+
+    print("\nSELF-TEST " + ("PASSED — the ruler distinguishes reachable from not."
+                            if ok else
+                            "FAILED — this metric cannot tell the two apart and "
+                            "its number means nothing."))
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--cap", type=int, default=40, help="entries probed per site")
+    ap.add_argument("--self-test", action="store_true",
+                    help="prove the ruler fires, with no browser and no corpus")
     a = ap.parse_args()
+    if a.self_test:
+        sys.exit(asyncio.run(self_test()))
     asyncio.run(main(a.n, a.cap))
 
 
