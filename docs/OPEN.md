@@ -307,13 +307,54 @@ than the other arms. Residue, stated: a median 99.8% of each snapshot's ids
 parse, worst 43.4%, because Mind2Web nests a frame's whole document inside the
 `<iframe>` element. No labelled target is among them.
 
-### 11. No task-success measurement for our own ladder `MEASURE FIRST`
+### 11. No task-success measurement for our own ladder — A ROUTE EXISTS `MEASURE FIRST`
 `detail` and `format` are priced on recall and tokens, never on end-to-end
-success with a strong model. The literature disagrees with itself about which
-way this cuts — [arXiv:2604.01535](https://arxiv.org/abs/2604.01535) measures
-**+14.6 to +17.5pp for full HTML over a compact a11y tree** on strong models,
-while EconWebArena measures **−10.2pp** for raw HTML. Unsettled rather than
-alarming, and unmeasured here either way.
+success with a strong model.
+
+**"The literature disagrees with itself" was wrong and is withdrawn (#78).**
+Verified at source: EconWebArena's −10.2pp arm is **o4-mini**, and its 36.7%
+figure is labelled `- use_ax_tree + use_html`, i.e. raw HTML *replacing* the
+AXTree. A small reasoning model degrading on raw HTML is exactly what
+[arXiv:2604.01535](https://arxiv.org/abs/2604.01535) predicts. Both support ONE
+capability-dependent model, and 2604.01535 raises the format confound itself and
+controls it — the effect survives, and is *larger* under indentation (+20.9),
+which is our format.
+
+**THE ROUTE: WebPageBench ([arXiv:2609.35026](https://arxiv.org/abs/2609.35026),
+Apache-2.0).** Verified from the released artefact rather than the paper
+(`tools/audit_webpagebench.py` exits nonzero if any claim fails and self-tests
+against three planted violations): 152 tasks / 65 canonical + 87 variants, 6
+sites, 19 event types, 521 conditions, all exact; **no judge model** — `check()`
+imports only `requests/os/json/re/datetime` and the oracle is a semantic event
+emitted by business logic AFTER the state mutation, so it cannot see how the
+agent acted or what it was shown; and the control swap keeps prompt AND success
+conditions **byte-identical on 87/87**. Design in `docs/WEBPAGEBENCH.md`.
+
+**Caveats that must travel with any number from it.** It is a **v1 preprint, 5
+authors, no venue, not peer reviewed**. It is a **Russian-language benchmark** —
+152/152 prompts are Cyrillic, which no description of it mentioned. The sites are
+**synthetic**, which is the real missing leg; it is softened but not removed by
+the fact that our only out-of-sample number today comes from stripped static
+snapshots with no CSS and no scripts. Per-step element ground truth is **absent**
+(end-of-task only), so this measures SUCCESS, not element recall. Hotels is 30%
+of the set, so leave-one-site-out is mandatory.
+
+**Build M-B first even though M-A is the question as asked**, because it needs
+one arm instead of two: the same task re-rendered through a different date
+picker or combobox, with identical success conditions, which is a direct test of
+"works on framework-heavy SPAs without site-specific code". **The benchmark
+ships its own negative control** — 12 `theme_dark` variants change colour only,
+so a structural representation must score identically on them; if dark theme
+moves the number, the instrument is wrong before any result is believed.
+
+**The confound to design out:** our surface has escape hatches. An agent that
+reaches the state via `javascript_tool` or by typing a URL measures Claude's
+ingenuity, not the listing. Pin the toolset and report the fallback rate beside
+every number, as #27 pinned `filter="interactive"`.
+
+**Blocked on standing the site up**, which needs Docker started or `npm install`
+on a third-party repo. Not established yet: real `href`/roles (expected from a
+Vue router app, unverified), and the oracle has never fired end to end.
 
 ### 12. Sufficiency: measured for CONTROLS, unmeasured for TEXT `MEASURE FIRST`
 `tools/measure_sufficiency.py` + `docs/SUFFICIENCY.md` close the control half.
