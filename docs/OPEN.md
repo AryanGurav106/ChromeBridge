@@ -25,6 +25,22 @@ blindness, and the locale hazard (which did NOT reproduce) — all in `CLAUDE.md
 
 ## Tier 1 — a wrong answer reaches the user
 
+### 0. Nothing measures REACHABILITY BY NAME `MEASURE FIRST`
+Every ruler here measures PRESENCE — presence, `lost_identities`, Mind2Web
+recall, and item 12's own DS. CLAUDE.md #74 found 118 elements that were
+present in all of them and unreachable by `find`, on a page the readiness probe
+called settled, including by their VERBATIM label. The listing was correct
+throughout; the tool reading it was not.
+
+Three of this session's defects were in the tools that READ the listing rather
+than in the listing (the `find` blanking, the table column misalignment, the
+submit verdict), and **no offline measurement in this repo could have caught
+any of them**. A ruler that scores `find` against the labels the collector
+emitted — ask for each entry's own printed identity and check it comes back —
+would be cheap and would have caught #74 the day it shipped.
+
+
+
 ### 1. The observe→act gap is unguarded `OPEN`
 We re-measure refs at click time but never compare what is there **now** against
 what was **observed**. The model turn in between is ~3.6s (#38), which is the

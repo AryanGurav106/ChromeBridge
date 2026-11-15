@@ -7187,6 +7187,59 @@ granted in the side panel is refused with the same message the agent gets.
     fixes the ikea credit for free); and bound the ancestor path or rely on the
     repair to do it.
 
+74. **TWO TOOLS DISAGREED ABOUT WHAT AN ELEMENT IS CALLED — 118 of them, on a
+    page the readiness probe called SETTLED.** Every previous instance of #18's
+    asymmetry was two rules disagreeing about what a control IS. This one is
+    sharper: the collector, the listing and the names were all correct, and the
+    tool whose entire job is locating something by its label could not reach any
+    of them.
+
+    ptable.com's element tiles are `<li tabindex>` holding
+    `<b>36</b><abbr>Kr</abbr><em>Krypton</em><data>83.798</data>`. The four
+    children declare nothing clickable, so they are correctly dropped; the `<li>`
+    is correctly kept; `read_page` lists it correctly as `li "36 Kr Krypton
+    83.798"`. And **`find("Krypton")` returned NO MATCH — as did `find` on the
+    tile's VERBATIM LABEL**, with the probe itself reporting "no DOM change for
+    65502ms and nothing in flight", so timing was ruled out by the tool's own
+    output.
+
+    **The cause was a correct fix applied too widely.** A container whose name is
+    borrowed from its subtree has that name blanked for scoring, so an app shell
+    does not match every query (F30, from the ~2,500-character demoqa blob). That
+    is sound **when the contributors are themselves listed** — the shell borrows
+    from nav items and headings that each have their own row, so the text stays
+    findable through them. It is wrong when NO kept entry lives inside: the tile
+    is then the ONLY carrier of the word, and blanking removes it from the search
+    space entirely.
+
+    **The distinguishing fact is structural and needs no threshold:** does any
+    kept entry live inside this one? Computed in the collector AFTER the kept set
+    is known (`subtreeNameSole`) — the only point at which it CAN be known — and
+    read by the scorer.
+
+    **The display was wrong in a second, opposite way, and only the live run
+    showed it.** With the scorer fixed, find returned `ref_919 | li section=main
+    (container — the text here belongs to the elements inside it)`: the right
+    element, identifying nothing, under a note that is FALSE here because there is
+    nothing inside for the text to belong to. A sole carrier now prints its name
+    and says it was assembled rather than declared.
+
+    **WHY NO RULER CAUGHT THIS, which is the part worth carrying forward.** Every
+    metric in this project measures whether an element is PRESENT — presence,
+    `lost_identities`, Mind2Web recall, and #OPEN-12's own DS. The tile is present
+    in all of them. None asks whether it can be REACHED BY NAME, and that is a
+    different question about a different half of the system. Three defects this
+    session were in the tools that READ the listing rather than in the listing
+    (this, the table misaligner, the submit verdict), and not one was reachable by
+    an offline measurement.
+
+    Live-verified end to end after reload:
+    `ref_919 | [li] "36 Kr Krypton 83.798" section=main (name assembled from its
+    own contents)`, with ordinary elements unaffected. Fixtures F40/F40b fail
+    against the blanket rule and reproduce the live symptom; F40c is the control
+    that the app-shell case is still blanked, and F30 passing in both arms is the
+    other half of that proof.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
