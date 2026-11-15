@@ -989,6 +989,34 @@ async def main():
             "<table id=span1><tr><th colspan=3>Quarterly totals</th></tr>"
             "<tr><td>a</td><td>b</td><td>c</td></tr>"
             "<tr><td>d</td><td>e</td><td>f</td></tr></table>"
+            # TB15: A HIDDEN COLUMN. USDA FoodData Central's nutrient table
+            # declares 13 <th> of which 2 are not rendered, while its data rows
+            # contribute 12 cells -- a column-toggle feature leaving the headers
+            # in the DOM. The grid counted ELEMENTS on both sides, so the counts
+            # could never match and every column after the gap shifted by one:
+            # asking for Max returned the Median. Silent, and authoritative
+            # looking. The shape has to be ASYMMETRIC (a hidden <th> whose <td>
+            # is simply absent) or both sides drop the same count and the bug
+            # cannot reproduce.
+            "<table id=hidcol><thead><tr>"
+            "<th>Nutrient</th><th style='display:none'>Lab Method</th>"
+            "<th>Samples</th><th>Min</th><th>Max</th><th>Median</th>"
+            "</tr></thead><tbody>"
+            "<tr><td>Magnesium</td><td>8</td><td>238</td><td>271</td><td>258</td></tr>"
+            "<tr><td>Sodium</td><td>41</td><td>575</td><td>743</td><td>650</td></tr>"
+            "</tbody></table>"
+            # TB15c's control: visibility:hidden is NOT display:none. The cell
+            # still OCCUPIES its column and its row-mates still sit beside it,
+            # so dropping it would reintroduce the same off-by-one pointing the
+            # other way. Both rows carry the hidden cell, so a rule that drops
+            # "anything hidden" still produces a consistent-looking grid -- the
+            # check has to assert the COLUMN COUNT, not just the mapping.
+            "<table id=vishid><thead><tr>"
+            "<th>Item</th><th style='visibility:hidden'>Code</th><th>Price</th>"
+            "</tr></thead><tbody>"
+            "<tr><td>Widget</td><td style='visibility:hidden'>W1</td><td>9.99</td></tr>"
+            "<tr><td>Gadget</td><td style='visibility:hidden'>G2</td><td>14.50</td></tr>"
+            "</tbody></table>"
             "<button>Go</button></body>")
         await tb.wait_for_timeout(130)
         await tb.evaluate("(function(){ " + COLLECT
@@ -1069,6 +1097,42 @@ async def main():
         check("TB14 the data-table hint's column count is what the renderer produces",
               _hint_cols is not None and _rend_cols > 0 and _hint_cols == _rend_cols,
               f"hint={_hint_cols} rendered={_rend_cols} :: {_hdr.strip()[:60]}")
+
+        # TB15: THE HEADER AND THE ROWS MUST COUNT THE SAME CELLS. A <th> the
+        # page is not painting is not a column. The renderer counted cell
+        # ELEMENTS on the header row and whatever the data rows carried, so a
+        # table with a hidden column produced a header one wider than its rows
+        # and every value after the gap sat under the wrong name -- measured
+        # live on USDA FoodData Central, where asking for Max returned Median
+        # (E4-D12). This asserts the MAPPING, not the widths: the value under
+        # "Max" must be the Max.
+        _hg = await scoped("hidcol") or ""
+        _hlines = [l for l in _hg.splitlines() if "|" in l and "---" not in l]
+        _hhdr = [c.strip() for c in _hlines[0].split("|")] if _hlines else []
+        _hrow = [c.strip() for c in _hlines[1].split("|")] if len(_hlines) > 1 else []
+        _map = dict(zip(_hhdr, _hrow))
+        check("TB15 a hidden column does not shift every value after it",
+              _map.get("Max") == "271" and _map.get("Median") == "258"
+              and _map.get("Samples") == "8",
+              f"hdr={_hhdr} row={_hrow} -> Max={_map.get('Max')!r} "
+              f"Median={_map.get('Median')!r} Samples={_map.get('Samples')!r}")
+        # THE CONTROL. Without it, "drop every hidden cell" also passes TB15
+        # while silently breaking every table that uses visibility:hidden to
+        # reserve space -- the same defect one direction over. CSS draws the
+        # line and we follow it: display:none leaves the grid, visibility:hidden
+        # does not.
+        _vg = await scoped("vishid") or ""
+        _vlines = [l for l in _vg.splitlines() if "|" in l and "---" not in l]
+        _vhdr = [c.strip() for c in _vlines[0].split("|")] if _vlines else []
+        _vrow = [c.strip() for c in _vlines[1].split("|")] if len(_vlines) > 1 else []
+        check("TB15c a visibility:hidden cell KEEPS its column, unlike display:none",
+              len(_vhdr) == 3 and len(_vrow) == 3
+              and dict(zip(_vhdr, _vrow)).get("Price") == "9.99",
+              f"hdr={_vhdr} row={_vrow}")
+
+        check("TB15b ...and the un-painted header is not emitted as a column",
+              "Lab Method" not in _hg,
+              f"header line: {(_hlines[0].strip() if _hlines else '')[:90]}")
 
         check("TB11 the <caption> is rendered, so a figure's UNIT is not lost",
               "[caption] Revenue by region (thousands of JPY)" in w,

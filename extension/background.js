@@ -4928,6 +4928,32 @@ function _domTextPage(scopeMmid) {
       // declared to have three columns. Escaped, markdown-style.
       const _cell = (c) => ((c.innerText || c.textContent || '')
         .replace(/\s+/g, ' ').trim().replace(/\|/g, '\\|'));
+      // A CELL THE PAGE DOES NOT LAY OUT IS NOT A COLUMN.
+      //
+      // USDA FoodData Central's nutrient table declares 13 <th> of which 2 are
+      // display:none (a column-toggle feature that leaves the headers in the
+      // DOM), while its data rows contribute 12 cells. Counting cell ELEMENTS
+      // on both sides, the counts could never match, and the grid right-padded
+      // the short row -- so every column after the gap shifted by one and
+      // asking for Max returned the Median. Measured live, 48 rows, and it is
+      // the worst failure this renderer can have: #26 added it because
+      // innerText loses the row/column association entirely, and an association
+      // that is WRONG while looking authoritative is worse than none.
+      //
+      // THE BARE checkVisibility() IS CORRECT HERE AND IS A HOLE EVERYWHERE
+      // ELSE, which is worth stating because #36 measured that hole at 3.81%
+      // phantom identities and every other call site in this file passes
+      // {opacityProperty, visibilityProperty}. The question here is not "can a
+      // human see this" but "does this cell occupy a column in the table's
+      // layout", and CSS answers those differently: `display:none` removes the
+      // cell from the grid, while `visibility:hidden` and `opacity:0` leave it
+      // occupying its column with its row-mates still beside it. Passing
+      // visibilityProperty would therefore DROP a column that is still there
+      // and reintroduce the same off-by-one pointing the other way.
+      const _laidOut = (c) => {
+        try { return c.checkVisibility ? c.checkVisibility() : true; }
+        catch (e) { return true; }
+      };
       const _grids = [];
       for (const t of _tbls.slice(0, 5)) {
         let trs = [];
@@ -4955,7 +4981,10 @@ function _domTextPage(scopeMmid) {
         const carry = [];        // column -> { text, left }
         for (const tr of trs) {
           let cells = [];
-          try { cells = Array.from(tr.children).filter((c) => /^(TD|TH)$/.test(c.tagName)); } catch (e) {}
+          try {
+            cells = Array.from(tr.children)
+              .filter((c) => /^(TD|TH)$/.test(c.tagName) && _laidOut(c));
+          } catch (e) {}
           if (!cells.length) continue;
           const row = [];
           const place = (col, text) => { while (row.length < col) row.push(''); row[col] = text; };
