@@ -17,7 +17,7 @@ thing being shown, which is why 001 leaves the head-to-head out entirely.
 | # | Post | Source already in repo | Status |
 |---|---|---|---|
 | 001 | Record and replay: the assertions come free because we record the AGENT, not a human | `flows/todomvc-add-items.flow.json`, CLAUDE.md #49/#55/#60/#72 | **DRAFTED**, needs sending |
-| 002 | We ran 20 blind tasks against Claude-in-Chrome. 110 turns vs 176. | `tools/bench_turns/eval4/` — prereg, tasks, referee key, analyse.py | material complete |
+| 002 | We ran 20 blind tasks against Claude-in-Chrome. 110 turns vs 176. | `tools/bench_turns/eval4/` — prereg, tasks, referee key, analyse.py | **DRAFTED**, needs sending |
 | 003 | Four defects in one session, and none of them were in the product | eval 4 Amendments 6 & 7: the ruler was broken four ways | material complete |
 | 004 | Your agent is reading a page that is still being built, and nothing tells it | CLAUDE.md #70, `docs/READINESS.md`, R11–R23 | material complete |
 | 005 | A table with a hidden column handed back the wrong number, silently | this session's TB15, `tools/audit_table_hidden_cells.py` | material complete |
