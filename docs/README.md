@@ -26,6 +26,7 @@ fix it.
 | changing what the listing *says* | `REPRESENTATION.md` → CLAUDE.md #13, #22, #24 (truncation and silence) |
 | touching readiness / settling | `READINESS.md` — this is the active open problem |
 | changing the flow recorder | `FLOWS.md` → CLAUDE.md #49, #57, #61, #68 |
+- [FLOWS-FAILURE-SURFACE.md](FLOWS-FAILURE-SURFACE.md) — every way record/replay can break, by stage, with status for each
 | adding or changing a measurement | `MEASUREMENT.md` — **read this before you quote a number** |
 | asking whether the listing is *enough*, not just complete | `SUFFICIENCY.md` → `tools/measure_sufficiency.py` |
 | running a head-to-head | `EVALS.md` → `tools/bench_turns/` |

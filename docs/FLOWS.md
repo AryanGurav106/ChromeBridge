@@ -156,6 +156,10 @@ re-recorded.**
 
 ## 7. Still open
 
+See `FLOWS-FAILURE-SURFACE.md` for the systematic version: every way this can
+break, by the stage it breaks at, with evidence and status for each. What
+follows is the short list.
+
 - `query_elements` has no visibility filter — one `display:none` on the app root
   hides everything and **every count assertion still passes**. 29% of assertions
   in the repo's own flows are a bare count. `OPEN.md` Tier 1.
@@ -192,7 +196,7 @@ The others, all reproduced, all tracked in `OPEN.md`:
 | `settle_ms` widens the **assertion** window but not the **target** window, on exactly the slow SPAs it was measured for | Tier 2 |
 | `require` has never once fired — `{}` in all 19 flows, because `MUTATES` contains the `tabs_create_mcp` every agent is taught to open with | Tier 2 |
 
-## 6. What this is not
+## 9. What this is not
 
 It is **not** a claim that a recorded flow cannot break. It can, and §5 is how.
 The defensible claim is narrower and stronger:
