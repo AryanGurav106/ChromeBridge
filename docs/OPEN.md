@@ -178,6 +178,22 @@ Recorded because a correction at the bottom of a long document does not correct
 the index that points at it (#67), and this index was wrong for the hour
 between the two being written.
 
+**MEASURED AND REFUTED, as a design: the obvious probe cannot work.**
+`tools/measure_text_sufficiency.py` uses eval 4's blind labels (author told
+only to write varied two-hop tasks; every answer re-derived by an independent
+referee) and harvests the pages mechanically from both arms' transcripts. On
+4 tasks it reports 2/5 values carried, and both misses are a validation
+message and a search result -- values that do not EXIST until the page is
+interacted with. The confound is total and checkable in one line: `tasks.md`
+records `Interactions needed` per task and **0 of 22 need zero**. The probe
+measures how many eval tasks are two-hop, which is 100%.
+
+**The route that would work runs through the flow recorder**: replay a
+recorded flow to the step before the answer, then ask the text surface there.
+That separates "the text surface failed to carry it" from "the value did not
+exist yet", which no static load can. The labels already exist; what is
+missing is 20 recordings and a harness that stops a replay at step N.
+
 **The larger half is open and it is the one the source paper ranks first:
 TEXT** (30.5 / 59.5 coverage drop when ablated, against 4.8–13.6 for any control
 type). Our listing is a listing of *controls*; prose and table data reach the
