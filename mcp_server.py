@@ -2086,11 +2086,47 @@ async def query_elements(
         # byte-identical, which is #39's `find` gap one tool over — so the banner is
         # fetched HERE, on the miss path only.
         _rb = await _readiness_note(b, tabId)
-        return ((_rb + "\n" if _rb else "")
+        # ...AND WHEN A CAUSE IS A CHECKABLE FACT, CHECK IT RATHER THAN LISTING
+        # IT. "it is rendered by a frame this query did not reach" sat fourth in
+        # a list of four, so the HEADLINE still read as absence -- measured live
+        # (eval 4 T17): `read_page` surfaced the jQuery UI slider demo's input
+        # and handle as ordinary refs and said in its own trailer that it
+        # reaches cross-origin frames, while this tool, run moments later on the
+        # same page, reported no match. Two observation tools, one page, one
+        # instant, opposite answers about whether an element exists -- #18's
+        # asymmetry, fourth instance.
+        #
+        # Whether the page HAS such a frame is a fact we can ask for, so a miss
+        # on a frame-bearing page now LEADS with it instead of burying it among
+        # three causes that do not apply. Asked only on the miss path, so a
+        # successful query pays nothing (#38).
+        #
+        # THIS IS THE NOTICE, NOT THE CAPABILITY. Querying INTO those frames is
+        # the real fix and is deliberately not attempted here: the cross-origin
+        # path goes through chrome.scripting frameIds and is runtime-verifiable
+        # only in a live extension, and this project has already paid for a
+        # batch of fixtured-but-unexercised changes. Recorded as E4-D2.
+        _frames = 0
+        try:
+            _fr = await b.call("query_elements", tabId=tabId,
+                               selector="iframe, frame", maxResults=1,
+                               includeText=False)
+            _m = re.search(r"(\d+)\s+element\(s\) match", str(_fr) or "")
+            _frames = int(_m.group(1)) if _m else 0
+        except Exception:
+            _frames = 0
+        _frame_line = (
+            f"This page contains {_frames} frame(s), and THIS QUERY DID NOT LOOK "
+            f"INSIDE THEM — a cross-origin frame is a separate document. "
+            f"`read_page` does reach them, so if the element is in one it will "
+            f"have a ref there. Check that before concluding it is absent.\n"
+            if _frames else "")
+        return ((_rb + "\n" if _rb else "") + _frame_line
                 + f"No element matches {selector!r} in the rendered document. The selector "
                   f"itself is valid. Causes that need different responses: the element is "
                   f"inside a CLOSED menu, dialog or collapsed section (open it and re-query); "
-                  f"it is rendered by a frame this query did not reach; the page is still "
+                  + ("" if _frames else "it is rendered by a frame this query did not reach; ")
+                  + f"the page is still "
                   f"building it; or the shape really is absent. `read_page` shows what IS "
                   f"present, and `search_page(pattern)` finds it by its text if you know it.")
     # THE VISIBLE COUNT IS A SECOND NUMBER, NOT A FILTERED FIRST ONE. `total` is

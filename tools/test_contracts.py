@@ -813,6 +813,36 @@ def main() -> int:
           "asserting a fact about the page it cannot establish",
           "has that shape right now" not in _out and "Causes" in _out,
           _out.replace("\n", " ")[:140])
+    # C19b: WHEN A CAUSE IS A CHECKABLE FACT, CHECK IT. "it is rendered by a
+    # frame this query did not reach" sat fourth in a list of four, so the
+    # headline still read as absence -- measured live on the jQuery UI slider
+    # demo, where read_page surfaced the frame's controls as ordinary refs and
+    # this tool, moments later on the same page, reported no match.
+    class _FBF(_FBQ):
+        async def call(self, op, **kw):
+            if op == "page_readiness":
+                return ""
+            if kw.get("selector") == "iframe, frame":
+                return "2 element(s) match 'iframe, frame'"
+            return self.payload
+
+    _ms.STATE["bridge"] = _FBF({"rows": [], "total": 0})
+    _out = _aio.run(_qe(selector=".nope", tabId=1))
+    check("C19b a miss on a page WITH frames leads with that, instead of "
+          "burying it among causes that do not apply",
+          "DID NOT LOOK INSIDE THEM" in _out
+          and _out.index("frame(s)") < _out.index("No element matches"),
+          _out.replace("\n", " ")[:150])
+    # THE CONTROL. A page with no frames must not acquire the clause, or it
+    # becomes the always-on note #15 priced -- and the cause stays in the list
+    # there, because on a frameless page it is still a thing that can be true
+    # of a frame the query could not see.
+    _ms.STATE["bridge"] = _FBQ({"rows": [], "total": 0})
+    _out = _aio.run(_qe(selector=".nope", tabId=1))
+    check("C19c CONTROL: a frameless page does NOT get the frame clause",
+          "DID NOT LOOK INSIDE THEM" not in _out
+          and "rendered by a frame" in _out,
+          _out.replace("\n", " ")[:140])
 
     # ---- C21: fill_form's batched write must not trust a held reference ----
     # The batched text pass CLEARS each field and dispatches `input` before
