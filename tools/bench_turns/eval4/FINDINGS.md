@@ -975,6 +975,40 @@ reads as "Krypton" that we name `Kr` is a findability gap. But (a) and (b)
 need different responses and the difference is exactly what #16 says to
 re-derive before believing.
 
+**NARROWED OFFLINE — reading (b) is now much the likelier, and our naming
+agrees with Chrome exactly.** Built the four plausible tile shapes as a
+fixture and ran the real collector on them (symbol only; symbol + `title`;
+symbol + a visible full-name label; symbol + `aria-label`):
+
+| tile shape | listed? | identity |
+|---|---|---|
+| `<div onclick>` symbol only | **yes** | `36 Kr` |
+| …+ `title="Krypton"` | **yes** | `36 Kr` |
+| …+ visible `<small>Krypton</small>` | **yes** | `36 Kr Krypton` |
+| …+ `aria-label="Krypton"` | **yes** | `Krypton` |
+
+**All four are LISTED**, so a handler-bound `<div>` tile is not dropped, and
+the agent's "the census accounted for none of the 118 tiles" was an INFERENCE
+from a census line rather than an observation. That is the half of (a) that
+can be settled without the live site, and it is settled.
+
+The `title` row looked like a defect — the full name is declared and the
+identity is the symbol — so it was checked against Chrome's own AX tree over
+CDP rather than against my reading of the spec. **Chrome names that div `''`
+too.** We agree with it on every shape, including `<a>`/`<button>` where
+content wins over `title` (AccName 2F before 2I, which is #37's `hasText`
+guard doing its job).
+
+So the live question that remains is narrow: does ptable render "Krypton" as
+text INSIDE the tile, or only in the detail panel? If the latter, `find`
+missing it is CORRECT — the tile's visible identity really is `Kr` — and this
+is a findability characteristic rather than a `lost_identities` counterexample.
+`search_page` winning is consistent with either, since it greps rendered text
+wherever it sits.
+
+**Still requires the live page and a grant for `ptable.com`**, and is NOT
+being written up as resolved until then.
+
 **VERIFICATION, to run as the first thing after the eval ends** (it needs the
 browser, which is busy):
 1. `read_page(ledger=true)` scoped to the table — are the 118 tiles present,
