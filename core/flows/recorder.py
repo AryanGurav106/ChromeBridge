@@ -578,6 +578,36 @@ class Recorder:
                 f'observed AFTER this step'
                 + (' (inherent: nothing precedes the first step)' if _first else
                    ', so nothing here says it would have failed before'))
+
+        # WHEN *EVERY* CHECK IS UNEVIDENCED, THE STEP IS AS UNGUARDED AS ONE
+        # WITH NO CHECKS AT ALL -- and the runner's dead-click guard could not
+        # see that, because it gates on `not step.expect` and a hollow check is
+        # still a truthy expect. So the at-risk population #57 and #68 exist to
+        # IDENTIFY was precisely the population that guard skipped.
+        #
+        # Decided HERE rather than by parsing these sentences at replay time:
+        # the recorder already knows which checks were hollow or unproven, and
+        # re-deriving it from prose would be a second spelling of a fact we
+        # hold (#21). The runner keys on the `unevidenced:` prefix alone.
+        #
+        # NOT a failure by itself. Unevidenced is not wrong (#68), and a step
+        # whose assertions merely lack evidence still passes on a normal run.
+        # It only decides the tie when the tool ALSO reports it did nothing.
+        _unev: dict = {}
+        for _n, _which, _all in hollow:
+            _unev.setdefault(_n, set())
+            _unev[_n] |= ({"*"} if _all else {x.strip() for x in _which.split(",")})
+        for _n, _kind, _which, _first in unproven:
+            _unev.setdefault(_n, set()).add(str(_kind))
+        for _n, _flagged in _unev.items():
+            _keys = self._check_items(kept[_n].expect or {})
+            if not _keys:
+                continue
+            _names = {str(k[0]) for k in _keys}
+            if "*" in _flagged or _names <= _flagged:
+                kept[_n].review.append(
+                    'unevidenced: every check on this step is hollow or unproven, '
+                    'so none of them is known to be able to fail')
         # AN ABSENCE ALONE IS SATISFIED BY A BLANK PAGE. `absent: true` and
         # `count: 0` are both true of an empty document, of a crashed SPA, and
         # of a session that bounced the flow to a login screen -- so a step

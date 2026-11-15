@@ -75,16 +75,23 @@ present tense and marks it "Designed, not built" near the END of the file, which
 is the retraction-at-the-bottom pattern the same doc set warns about. Either
 wire it or delete the parameter.
 
-### 4. `no_effect` and the hollow/unproven classifier do not compose `OPEN`
-`runner.py` guards a dead click with `if not step.expect and no_effect(result)`.
-A step whose only assertion is classified `hollow` (same value before and after)
-or `unproven` has a **truthy** `step.expect`, so the guard is skipped and the
-hollow assertion passes — which is exactly the at-risk population #57 and #68
-were built to identify.
+### 4. `no_effect` and the hollow/unproven classifier — CLOSED
+They now compose. The dead-click guard gated on `not step.expect`, and a
+hollow assertion is a TRUTHY dict, so the guard skipped exactly the population
+#57 and #68 exist to identify: a check that was already true before the step
+cannot catch a click that did nothing, and nothing else was looking.
 
-`Step.review` is persisted (#72) and **the runner never reads it**
-(`grep -n review core/flows/runner.py` → nothing). One line closes the overlap:
-treat `no_effect` as fatal when every check on the step is `hollow`/`unproven`.
+`Step.review` was persisted by #72 and read by nobody — the half-contract
+shape this project keeps finding. The recorder now marks the fully-unevidenced
+case at RECORD time (`unevidenced:`), because it already knows which checks
+were hollow or unproven and re-deriving that from prose at replay would be a
+second spelling of a fact we hold (#21). The runner keys on that prefix alone.
+
+Unevidenced is still NOT a failure on its own (#68) — it only decides the tie
+when the tool ALSO reports it did nothing. FR21 fails against the pre-fix
+runner; FR21b and FR21c pass in both arms, which is what makes them controls,
+and they assert WHICH PATH stopped the step rather than the fixture's row
+count.
 
 
 ### 5. SPA readiness, the remaining half `OPEN`

@@ -334,10 +334,24 @@ class Run:
             # is not "no effect" -- a native select opening, a focus change, a
             # canvas repaint all produce it -- so where a real assertion
             # exists it is the better judge and gets to decide.
-            if not step.expect and no_effect(result):
+            #
+            # ...AND A STEP WHOSE EVERY CHECK IS UNEVIDENCED IS IN THE SAME
+            # POSITION AS ONE WITH NO CHECKS. `not step.expect` is false for a
+            # hollow assertion -- it is a truthy dict -- so this guard skipped
+            # exactly the population #57 and #68 were built to find: a check
+            # that was already true before the step, or that nothing was ever
+            # observed to contradict. The recorder marks that case at record
+            # time (`unevidenced:` in `review`), so this reads a decided fact
+            # rather than re-deriving it from prose.
+            _unevidenced = any(str(r).startswith("unevidenced:")
+                               for r in (getattr(step, "review", None) or []))
+            if (not step.expect or _unevidenced) and no_effect(result):
+                _why = ("this step asserts nothing" if not step.expect else
+                        "every check on this step is hollow or unproven, so none of "
+                        "them is known to be able to fail")
                 return self._stop(FAILED,
                                   f"step {self.i} ({step.name}) reported NO DETECTABLE "
-                                  f"EFFECT and this step asserts nothing, so there is "
+                                  f"EFFECT and {_why}, so there is "
                                   f"nothing else that could have caught it. The element "
                                   f"may be disabled, covered, or wired to handlers that "
                                   f"synthetic events do not reach; the click may also "

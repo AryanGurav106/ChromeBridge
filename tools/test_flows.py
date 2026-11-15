@@ -1937,6 +1937,57 @@ async def record_and_replay():
           "this is not just failing every unasserted step",
           rd3["status"] == PASSED, str(rd3["reason"])[:120])
 
+    # ---- FR21: the dead-click guard and the hollow/unproven classifier --
+    # They did not compose. The guard gates on `not step.expect`, and a hollow
+    # assertion is a TRUTHY dict, so the step the classifier exists to flag was
+    # exactly the step the guard skipped: a check that was already true before
+    # the step ran cannot catch a click that did nothing, and nothing else was
+    # looking. `review` was persisted by the recorder (#72) and read by nobody.
+    def _click_flow_rev(expect, review):
+        f = _click_flow(expect)
+        f.steps[0].review = list(review)
+        return f
+
+    d4 = _Dead([E(1, "button", name="Save")])
+    rd4 = await start(_click_flow_rev(
+        {"query": {"selector": ".row", "count": 3}},
+        ["hollow: every check had this value BEFORE this step ran, so the step "
+         "could do nothing and still pass",
+         "unevidenced: every check on this step is hollow or unproven, so none "
+         "of them is known to be able to fail"]), 1, d4.call, d4.entries_fn)
+    check("FR21 a dead click FAILS when every check on the step is unevidenced, "
+          "even though the step HAS an expect",
+          rd4["status"] == FAILED and "NO DETECTABLE EFFECT" in rd4["reason"]
+          and "hollow or unproven" in rd4["reason"],
+          str(rd4["reason"])[:160])
+
+    # THE CONTROL THAT MAKES IT MEAN ANYTHING. A step carrying review notes but
+    # at least one EVIDENCED check must still be left to that check -- "no
+    # DETECTABLE effect" is not "no effect" (a native select opening, a focus
+    # change), so where a real assertion exists it is the better judge. Without
+    # this, "fail on any review note" would also pass FR21.
+    d5 = _Dead([E(1, "button", name="Save")])
+    rd5 = await start(_click_flow_rev(
+        {"query": {"selector": ".row", "count": 3}},
+        ["unproven: query '.row' was first observed AFTER this step, so nothing "
+         "here says it would have failed before"]), 1, d5.call, d5.entries_fn)
+    # The invariant is WHICH PATH stops it, not whether it passes: this fake
+    # bridge answers 7 rows against a recorded 3, so the step fails its
+    # POSTCONDITION either way. What must not happen is the dead-click guard
+    # taking the decision away from that assertion. Asserting PASSED here
+    # would be asserting the fixture's row count, not the rule.
+    check("FR21b CONTROL: a review note that is NOT the unevidenced marker "
+          "leaves the step to its own assertion, not to the dead-click guard",
+          "NO DETECTABLE EFFECT" not in str(rd5["reason"]),
+          str(rd5["reason"])[:160])
+
+    d6 = _Dead([E(1, "button", name="Save")])
+    rd6 = await start(_click_flow_rev({"query": {"selector": ".row", "count": 3}}, []),
+                      1, d6.call, d6.entries_fn)
+    check("FR21c CONTROL: no review notes at all and the assertion still decides",
+          "NO DETECTABLE EFFECT" not in str(rd6["reason"]),
+          str(rd6["reason"])[:160])
+
     # ---- FR19: `text` was matched with `in`, unanchored at both ends -------
     async def _text_run(recorded, live):
         class _T(FakeBridge):
