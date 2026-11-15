@@ -1005,3 +1005,185 @@ one result for the THIRD time (T5, T12, now T19): the "Available tabs" list
 showed a tab already at ptable.com while the `tabs_context_mcp` JSON in the
 SAME output still showed it as jsTree. Cost them nothing here, because the
 agent screenshotted instead of trusting it.
+
+## T20/cb — E4-D12: THE WORST DEFECT IN THIS EVAL. A SILENT WRONG ANSWER.
+
+cb 7 turns, cic 10. Both correct (271 mg). **We won the pair with a defect that
+would have made us lose it.**
+
+> `read_page(ref_id=…, filter="all")` renders the nutrient table as "aligned
+> columns" under its own `<th>` headers, but the alignment is WRONG: the header
+> row has **13 `<th>`** while data rows have **12 `<td>`** (no "Data Prov.
+> Deriv. Method" cell), and the renderer **pads the short row at the END
+> instead of at the missing middle cell.** Reading by header position therefore
+> shifts every column after #3 by one — it puts 238 under "Samples", 271 under
+> "Min" and 258 under "Max". **A naive read of that output would have reported
+> the Max as 258, i.e. the wrong answer, with no sign anything was off.**
+
+This is the failure mode this project treats as worst, in the feature built to
+prevent it. #26 added columnar table rendering precisely because `innerText`
+flattens a table into a run of cells "with nothing saying which COLUMN a value
+belongs to, so the row/column association — the entire content of a table — was
+lost". The renderer now preserves the association and **gets it wrong**, which
+is worse than not having it, because the output looks authoritative.
+
+It also propagates: `th:nth-child(9)` returns "Max" while `td:nth-child(9)`
+returns the Median column, verified by the agent across all 48 data rows. So
+`query_elements` is internally inconsistent on the same table, which is what
+tipped the agent off.
+
+**Why padding at the end is not a small bug.** It is a GUESS about where the
+missing cell goes, and the two plausible guesses (pad at the end, pad at the
+gap) give different answers. #24, #27 and #28 all take guesses out of paths
+that decide things, and the established answer when a page does not declare
+enough is to REFUSE AND NAME rather than pick. HTML does provide declarations
+for this — `colspan`, and `headers=` on a cell — so the rule is available:
+
+> When a row's cell count differs from the header count and nothing in the
+> markup (`colspan`/`headers=`) explains WHICH column is missing, the mapping
+> is undetermined. Say so on that table instead of aligning it silently.
+
+That is strictly better than either padding choice, costs one line, and is
+decidable from the two counts we already have.
+
+**Not fixed mid-eval** (the run is still going and this touches the collector),
+but this is the FIRST thing to fix afterwards, ahead of everything else in the
+queue — it is the only defect in this eval that silently produces a wrong
+value an agent would report.
+
+Also from the same run: **E4-D5's fourth sighting** (`search_page` chained
+after navigate returning a clean "No match" for text that is present, because
+the settle covers DOMContentLoaded and this SPA paints after it) and
+**E4-D4's third** (the trailing-slash redirect reported in the wording of a
+substantive one).
+
+## T21/cb — E4-D12's ROOT CAUSE, handed over by the next agent, plus E4-D13
+
+cb 8 turns, correct (Median 650 mg, n = 41).
+
+**This report explains T20's silent misalignment, and the fix is better than
+the one I proposed an hour ago.** Its defect note:
+
+> `query_elements("table thead th")` returned "1063 element(s) match, showing
+> the first 50 (**11 of them RENDERED**; 1052 match the selector but are not
+> visible)" … the first 14 entries include two columns (**"Data Prov. Deriv.
+> Method", "Lab Method") that are not rendered**
+
+So the USDA table has **HIDDEN COLUMNS**. The header row declares 13 `<th>` of
+which only 11 are rendered; the data rows contribute 12 cells. The counts can
+never match, because **the header pass counts every `<th>` while the row pass
+yields what is painted** — two passes over one table asking different
+visibility questions.
+
+That is #18's asymmetry and #51's modal defect in a third place, and it means
+my proposed fix (refuse when the counts differ) would have been treating the
+SYMPTOM. The real fix is the one this codebase already applies everywhere
+else: **the header pass must ask the collector's own visibility question**,
+`checkVisibility({opacityProperty: true, visibilityProperty: true})`, exactly
+as `_dlgVisible` was made to in #51. With hidden `<th>` excluded, 11 headers
+meet 11 rendered cells and the alignment is correct BY CONSTRUCTION rather
+than by a padding rule.
+
+The refuse-and-name clause is still worth having AFTER that, for a table where
+the counts genuinely differ with nothing declaring why. But it is the backstop,
+not the fix. **Measure first**: does excluding non-rendered `<th>` make the
+USDA table align, and does it change any other table in the frozen corpus?
+
+**E4-D13, new, and causally the same thing.** The rendered/hidden split that
+told the agent "11 of them RENDERED" is an AGGREGATE:
+
+> the rendered/hidden split is given only as an AGGREGATE COUNT and is not
+> attributed per element, while the 50 shown interleave rendered and hidden
+> headers in document order with no marker on any row. So the listing told me
+> 11 headers were real but **not WHICH 11**
+
+That count was added earlier TODAY (Q6c–Q6f). It is a half-measure in exactly
+the way #37 describes `near=` being: a signal that does not discriminate where
+it matters. The agent had to spend a `search_page("Median")` call, relying on
+the climb rendering only what is painted, to recover the true column order.
+A per-row marker, or a rendered-only option, removes that call.
+
+**Two things of ours this agent called out as actively useful**, worth
+recording because the eval should not only collect failures: `navigate`
+reporting the trailing-slash redirect rather than silently claiming the
+requested URL (the same message T7 and T16 called over-strong — so the
+information is right and only the wording is wrong), and `search_page`'s ` | `
+cell-boundary markers plus the climb-to-record behaviour, which "let me align
+a data row against its header row positionally, which is what made the answer
+verifiable rather than inferred". That is #42's and #47's climb work paying off
+on the hardest page in the eval.
+
+## T21/cic — cb 8, cic 12, and NEITHER arm handles this table well
+
+Both correct.
+
+**Their `get_page_text` returned only the `<article>` blurb on the USDA search
+page for the THIRD time** (T7, T20, now T21), and their agent named the
+property that makes it dangerous:
+
+> an empty-looking result is indistinguishable from a page with no results
+
+That is the silent-bound class, and it is the same sentence this project wrote
+about its own tools in #22 and #13.
+
+**And on the nutrient table specifically, the honest comparison is that both
+arms failed differently:**
+
+> `get_page_text` flattens the nutrient table into space-separated values with
+> **no column headers attached to each row**, so Min/Max/Median could only be
+> mapped positionally — I verified the mapping visually rather than trusting it
+
+That is the exact defect #26 built our columnar renderer to fix, quoted back
+from the other arm two entries after our own renderer got the same table
+**silently misaligned** (E4-D12). So on the hardest page in the eval:
+
+| | column association |
+|---|---|
+| theirs | none at all — the agent mapped positionally and verified by eye |
+| ours | present, authoritative-looking, and **wrong by one column** |
+
+Ours is arguably the worse failure, because theirs announces its own
+uselessness and ours does not. That is the right way round to report it, and
+it is why E4-D12 is first in the fix queue rather than somewhere in the middle.
+
+## T22 — a TIE at 6, and E4-D14: fill_form reported a FALSE FAILURE
+
+Both correct (3 products, $100.79).
+
+> `fill_form` returned submit `ok:false` with "submit had NO real effect:
+> modal still open, URL unchanged. DOM nodes added=-248."
+
+**Three things wrong in one message, and the agent enumerated them:**
+
+1. **"modal still open" on a page with no modal.** Its own debug payload in
+   the same result reported `dialogs:0` and `modal_closed:false` — for a modal
+   that never existed. A message contradicting its own payload is worse than a
+   bare failure.
+2. **"URL unchanged" is not evidence here.** The search is an in-place XHR
+   filter, so the URL is not expected to change. Treating an unchanged URL as
+   a failure signal is a guess about how the page works, which is the class
+   #24, #27 and #28 removed from deciding paths.
+3. **It then advised retrying with an "UNFILLED field in dialog"**, naming the
+   page's own Sort `<select>` — an unrelated optional control. **Acting on that
+   advice would have re-submitted a search that had already worked and changed
+   the sort order for no reason.**
+
+And the signal it read as failure was the signal of success: `-248` DOM nodes
+is exactly what filtering 9 products down to 3 looks like. The heuristic tests
+for nodes ADDED; a filter REMOVES them.
+
+This is #23's class ("`fill_form` reported FAILED on selections that worked,
+3/3") in a new form, and it is specifically the kind of false negative that
+costs calls — the agent only avoided retrying because it had chained
+`get_page_text` into the same batch and could see the search had worked.
+
+Second in the fix queue after E4-D12, and it shares E4-D12's shape: **a
+verdict asserted from a proxy signal rather than from what was asked.** The
+readback principle #24 established for `form_input` is the answer — judge the
+submit by whether the page now shows what the submit was for, not by a node
+delta and a URL.
+
+Also in that run, ours: the settled read did not surface the search input
+because it sits below the fold, so `query_elements` was needed to locate it.
+That is #44's measured and deliberately-not-widened trade showing its cost on
+a real task.
