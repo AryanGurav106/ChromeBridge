@@ -219,6 +219,34 @@ changing it rescales every statistic proportionally (271 → 81.3 at 30 g), so a
 portion change produces a wrong answer that is internally consistent. Those
 values are rejects too.
 
+**AMENDMENT 5 — 2026-11-15, written BEFORE the gate is armed and before any
+run. The consent gate.**
+
+The 15 task origins are not granted, and ChromeBridge refuses the first op on an
+ungranted origin **by design** — that is the consent model working, not a
+failure. Every CB run would therefore stall on a refusal that the other arm does
+not have.
+
+`ALLOW_ALL_ORIGINS` is armed for the duration of the run and restored
+immediately after. The justification is the one #47 recorded: per-origin consent
+is a **one-time, per-origin** cost, not a per-task turn cost, so counting it
+would charge us 20 times for a security feature the comparison is not about.
+
+**Therefore this eval says NOTHING about what the consent model costs, and must
+not be quoted as though it did.**
+
+Restore is verified three ways before any number is published: the flag reads
+`false` in the source, `git diff` is empty, and `tools/test_permissions.js`
+reports 24/24 **with no "gate off" caveat**. A suite that passes while reporting
+`not-applicable (gate off)` is a suite that proved nothing, which is why the
+caveat is checked and not just the count.
+
+Also recorded: the flag is a module-scope `const`, so the service worker must
+restart to pick it up. #47 measured that a flag change does **not** take effect
+while the bridge holds the worker alive, and that a flag restored on disk is not
+a flag restored in the browser. Whether the arming took is therefore **tested
+against a known-ungranted origin before any run**, rather than assumed.
+
 **Known fragilities the author recorded**, carried here so they are not
 rediscovered as surprises: T3's expected string contains a **typo the site
 itself ships** ("Please select the Paymeny Method") and changes if they fix it;
