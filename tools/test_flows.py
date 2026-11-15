@@ -908,6 +908,159 @@ async def record_and_replay():
           asked and set(asked) == {"beta-svc"},
           f"search_page called with {asked}")
 
+    # ---- FV7: ...AND SO MUST THE TARGET. ---------------------------------
+    #
+    # FV6 connected the typed INPUT to the ASSERTION. The TARGET stayed
+    # disconnected, which is the same defect one field over (#21) and the more
+    # dangerous half, because a target decides WHAT IS ACTED ON.
+    #
+    # The shape is the headline use of the feature: type a name, submit, then
+    # act on the thing the app just made -- whose accessible name IS the value
+    # that was typed. Measured both directions with this fixture before the
+    # fix: against a clean app the step could not resolve and the run paused
+    # saying the control was gone, which is a false description of what
+    # happened; against an app still holding the record a PREVIOUS run made
+    # (no fixture reset -- 5.2, INHERENT) it bound to the OLD record, acted on
+    # it, and PASSED. Acting somewhere else and reporting success is the
+    # #10/#11/#12 family.
+    #
+    # It is on disk, not hypothetical: crm-records-filter step 2 targets
+    # `name='ZZ Flow'`, the text step 1 types, which became that input's
+    # accessible name once the placeholder was displaced.
+    mk_form = [E(70, "input", type_="text", name="Project name",
+                 editable=True, clickable=False),
+               E(71, "button", name="Create", type_="submit")]
+
+    async def _mk_flow(click_name="atlas-svc"):
+        b = FakeBridge(list(mk_form))
+        rc = Recorder("mk3", b.entries_fn, origin="https://app.test")
+        i1 = {"fields": [{"ref": "ref_70", "value": "atlas-svc"}],
+              "submit": True, "submit_ref": "ref_71", "tabId": 1}
+        t1 = await rc.before("fill_form", i1)
+        rc.after("fill_form", i1, "Filled 1/1", t1)
+        b.entries = list(mk_form) + [E(90, "a", name=click_name, href="/p/x")]
+        i2 = {"ref": "ref_90", "action": "left_click", "tabId": 1}
+        t2 = await rc.before("computer", i2)
+        rc.after("computer", i2, "left_click on [mmid='90']", t2)
+        return rc.compile()[0]
+
+    vf7 = await _mk_flow()
+    check("FV7 a target named by a value an EARLIER step types is stored as "
+          "that variable, not as the literal it happened to have",
+          (vf7.steps[1].targets["ref"]["desc"].get("name")
+           == "{{project_name}}"),
+          json.dumps(vf7.steps[1].targets["ref"]["desc"]))
+    check("FV7b ...and the step says so in `review`, because a control named "
+          "that by COINCIDENCE rather than by this flow is the one case this "
+          "gets wrong, and the re-grader reads the diff (#68)",
+          any(r.startswith("parameterised:") for r in vf7.steps[1].review),
+          str(vf7.steps[1].review))
+
+    # THE CONTROL THAT IT DOES NOT OVER-APPLY. A target whose name coincides
+    # with a value typed by a LATER step cannot have been produced by it --
+    # the recording's own ORDER says so -- so it keeps the literal. Without
+    # this, "parameterise anything that matches" would pass FV7 while
+    # rewriting unrelated descriptors.
+    fbL = FakeBridge([E(80, "button", name="atlas-svc"),
+                      E(81, "input", type_="text", name="Project name",
+                        editable=True, clickable=False)])
+    rcL = Recorder("late", fbL.entries_fn)
+    iL1 = {"ref": "ref_80", "action": "left_click", "tabId": 1}
+    tL1 = await rcL.before("computer", iL1)
+    rcL.after("computer", iL1, "left_click on [mmid='80']", tL1)
+    iL2 = {"ref": "ref_81", "value": "atlas-svc", "tabId": 1}
+    tL2 = await rcL.before("form_input", iL2)
+    rcL.after("form_input", iL2, "Typed", tL2)
+    vfL = rcL.compile()[0]
+    check("FV7c CONTROL: a target that merely COINCIDES with a value typed "
+          "LATER keeps its literal — a target exists before its own step runs",
+          vfL.steps[0].targets["ref"]["desc"].get("name") == "atlas-svc",
+          json.dumps(vfL.steps[0].targets["ref"]["desc"]))
+
+    # THE REPLAY HALF, and the one that was a silent mis-bind. The app holds
+    # BOTH the record a previous run made and the one this run makes.
+    async def _which_ref(flow, overrides):
+        page = list(mk_form) + [E(90, "a", name="atlas-svc", href="/p/a"),
+                                E(91, "a", name="beta-svc", href="/p/b")]
+        b = FakeBridge(page)
+        await start(flow, 1, b.call, b.entries_fn, overrides=overrides)
+        return [i.get("ref") for t, i in b.calls if t == "computer"]
+
+    check("FV7d an override reaches the TARGET, so the step acts on the record "
+          "THIS run made and not on the one a previous run left behind",
+          await _which_ref(vf7, {"project_name": "beta-svc"}) == ["ref_91"],
+          str(await _which_ref(vf7, {"project_name": "beta-svc"})))
+    check("FV7e CONTROL: with no override the same flow still binds to exactly "
+          "what it recorded — substitution must be invisible on a plain replay",
+          await _which_ref(vf7, None) == ["ref_90"],
+          str(await _which_ref(vf7, None)))
+
+    # ---- FV8: an UNDECLARED variable in an ASSERTION -----------------------
+    #
+    # FV4 pins that the INPUT path refuses one. The assertion path resolved
+    # with the missing names DISCARDED, so `search_page("{{nope}}")` was sent
+    # to the page as written -- which fails confusingly, or passes on a page
+    # that happens to contain it. Same hole as #62's `on_fail` fallthrough,
+    # reached through a different door: a hand edit, a rename in `vars`, or
+    # record_flow(action="patch").
+    fb8 = FakeBridge()
+    r8 = await start(Flow(name="u", vars={}, steps=[
+        Step(name="computer", input={"action": "left_click"},
+             expect={"search": {"pattern": "{{nope}}", "min": 1}})]),
+        1, fb8.call, fb8.entries_fn)
+    check("FV8 an undeclared variable in an ASSERTION fails and names it, "
+          "instead of searching the page for the placeholder text",
+          r8["status"] == FAILED and "nope" in r8["reason"]
+          and not any(t == "search_page" for t, _ in fb8.calls),
+          f'{r8["status"]}: {r8["reason"][:90]!r} calls={[t for t, _ in fb8.calls]}')
+    fb8b = FakeBridge()
+    fb8b.search_hits = 2
+    r8b = await start(Flow(name="d", vars={"who": "Ada"}, steps=[
+        Step(name="computer", input={"action": "left_click"},
+             expect={"search": {"pattern": "{{who}}", "min": 1}})]),
+        1, fb8b.call, fb8b.entries_fn)
+    check("FV8b CONTROL: a DECLARED variable in an assertion still resolves "
+          "and is searched for by value",
+          r8b["status"] == PASSED
+          and [i.get("pattern") for t, i in fb8b.calls if t == "search_page"] == ["Ada"],
+          f'{r8b["status"]} {[i.get("pattern") for t, i in fb8b.calls if t == "search_page"]}')
+
+    # ---- FV9: a PATCH must not quietly un-parameterise the step ------------
+    #
+    # A patch is built from the PAGE, so every field in it is a literal, and
+    # record_flow(action="patch") writes the whole target. Applying one to a
+    # parameterised step would hard-code this run's value into the file and
+    # delete the override -- the half-contract shape (rule 14) reached from the
+    # repair end: the recorder writes a placeholder and the repair loop unwrites
+    # it. Only the names the ORIGINAL target carried are put back, so this
+    # cannot invent a parameterisation the recorder did not make.
+    twin = [E(90, "a", name="beta-svc", href="/p/1"),
+            E(91, "a", name="beta-svc", href="/p/2")]
+    pf = Flow(name="pp", vars={"project_name": "beta-svc"}, steps=[
+        Step(name="computer", input={"action": "left_click"},
+             targets={"ref": {"level": 1,
+                              "desc": {"tag": "a", "role": "", "type": "",
+                                       "name": "{{project_name}}"}}})])
+    fb9 = FakeBridge(twin)
+    r9 = await start(pf, 1, fb9.call, fb9.entries_fn)
+    r9b = await resume(r9["run_id"], "ref_90") if r9["status"] == NEEDS else r9
+    patched = (r9b.get("patches") or [{}])[0].get("target", {}).get("desc", {})
+    check("FV9 a proposed patch keeps the step parameterised — applying it "
+          "must not hard-code this run's value and delete the override",
+          patched.get("name") == "{{project_name}}", json.dumps(patched))
+    pf2 = Flow(name="pq", steps=[
+        Step(name="computer", input={"action": "left_click"},
+             targets={"ref": {"level": 1,
+                              "desc": {"tag": "a", "role": "", "type": "",
+                                       "name": "beta-svc"}}})])
+    fb9b = FakeBridge(twin)
+    rq = await start(pf2, 1, fb9b.call, fb9b.entries_fn)
+    rqb = await resume(rq["run_id"], "ref_90") if rq["status"] == NEEDS else rq
+    patched2 = (rqb.get("patches") or [{}])[0].get("target", {}).get("desc", {})
+    check("FV9b CONTROL: a target that carried NO variable is patched with the "
+          "literal the page actually declares",
+          patched2.get("name") == "beta-svc", json.dumps(patched2))
+
     # ---- FR13: A TARGET THAT IS NOT THERE *YET* --------------------------
     #
     # #55 gave postconditions a window to BECOME true and left resolution asking
@@ -2028,6 +2181,133 @@ async def record_and_replay():
           and len([c for c in b23.calls if c[0] == "computer"]) == 3,
           f"status={r23['status']} computer calls="
           f"{len([c for c in b23.calls if c[0] == 'computer'])}")
+
+    # FR22d — THE RENDERER, which FR22/FR22b/FR22c never crossed into.
+    # `stop_after` shipped with the runner's fourth status pinned three ways and
+    # NOTHING checking that the tool reporting it could print it, so the first
+    # real `run_flow(stop_after=N)` raised KeyError('stopped_early') -- #19 and
+    # #30's class, in the feature that is half the route OPEN.md item 12 names
+    # for the TEXT sufficiency measurement. It would have died on call one.
+    import importlib.util as _il
+    from core.flows.runner import STOPPED as _STOPPED
+    _spec = _il.spec_from_file_location("ms_fr22d", ROOT / "mcp_server.py")
+    _msr = _il.module_from_spec(_spec)
+    _spec.loader.exec_module(_msr)
+    _unrenderable = []
+    for _st in (PASSED, FAILED, NEEDS, _STOPPED):
+        try:
+            _msr._flow_report({"status": _st, "run_id": "r", "flow": "f", "at": 1,
+                               "of": 3, "reason": "", "candidates": [], "log": [],
+                               "patches": [], "drifted": [], "moved": [],
+                               "seconds": 0.1})
+        except Exception as _e:
+            _unrenderable.append(f"{_st}: {type(_e).__name__}")
+    check("FR22d every status the RUNNER can return is renderable by the tool "
+          "that reports it — the runner was pinned three ways and the renderer "
+          "not at all, so the fourth status crashed on its first real call",
+          not _unrenderable, "; ".join(_unrenderable) or "all 4 render")
+
+    # ---- FR23: AN ASSERTION TOOL THAT COULD NOT ANSWER --------------------
+    #
+    # A failed check is a FACT about the page. A check that never ran is the
+    # ABSENCE of one, and the runner reported the second as the first. Every
+    # way a verification call can go wrong was handled on the ACT path (FR16)
+    # and on neither VERIFY path:
+    #
+    #   gate refuses search_page -> "the result-string contract moved"
+    #   PAUSE mid-run            -> the same, after a 6s poll
+    #   gate refuses get_url     -> the refusal TEXT reported as the url
+    #   the bridge drops         -> an UNCAUGHT exception out of start(), with
+    #                               no step named and no `at`, on a flow whose
+    #                               earlier steps had already mutated the app
+    #
+    # The first three name a cause nobody verified (#33/C15) and send a reader
+    # hunting for a parser mismatch that does not exist -- `recorder.
+    # query_total`'s own docstring records that sentence being printed for an
+    # expired session, and fixed the ZERO case while leaving the REFUSED one.
+    _GATE = ("Permission required: ChromeBridge is not allowed to act on "
+             "https://app.test — allow this site in the side panel.")
+
+    class _Bad(FakeBridge):
+        """Answers normally except for one tool, which refuses or raises."""
+
+        def __init__(self, entries, on, mode, text=""):
+            super().__init__(entries)
+            self.on, self.mode, self.text = on, mode, text
+
+        async def call(self, tool, inp):
+            if tool == self.on:
+                self.calls.append((tool, dict(inp)))
+                if self.mode == "raise":
+                    raise RuntimeError("websocket closed")
+                return self.text
+            return await FakeBridge.call(self, tool, inp)
+
+    def _one_step(exp):
+        return Flow(name="v", steps=[Step(
+            name="computer", input={"action": "left_click"},
+            targets={"ref": {"level": 1, "desc": {"tag": "button", "role": "",
+                                                  "type": "", "name": "Save"}}},
+            expect=exp)])
+
+    async def _vrun(on, mode, text="", exp=None, flow=None):
+        b = _Bad([E(1, "button", name="Save")], on, mode, text)
+        try:
+            return await start(flow or _one_step(
+                exp or {"search": {"pattern": "Welcome", "min": 1}}),
+                1, b.call, b.entries_fn), None
+        except Exception as exc:          # pre-fix: this is how it comes back
+            return None, f"{type(exc).__name__}: {exc}"
+
+    rS, eS = await _vrun("search_page", "refuse", _GATE)
+    check("FR23 an assertion tool that was REFUSED says so — it never looked, "
+          "so the check did not run, and blaming the result-string contract "
+          "names a cause nobody verified",
+          eS is None and rS["status"] == FAILED
+          and "REFUSED" in rS["reason"] and "contract moved" not in rS["reason"],
+          f'{eS or rS["status"]}: {(rS or {}).get("reason", "")[:120]!r}')
+    rU, eU = await _vrun("get_url", "refuse", _GATE, exp={"url": "https://app.test/done"})
+    check("FR23b ...including get_url, which reported the refusal TEXT as the "
+          "page's url",
+          eU is None and rU["status"] == FAILED and "REFUSED" in rU["reason"],
+          f'{eU or rU["status"]}: {(rU or {}).get("reason", "")[:120]!r}')
+    rX, eX = await _vrun("search_page", "raise")
+    check("FR23c ...and one that RAISES stops the run naming the step and "
+          "saying the step RAN, instead of escaping start() as a traceback "
+          "with no `at` — FR16's defect in the two places FR16 did not reach",
+          eX is None and rX["status"] == FAILED and rX["at"] == 0
+          and "RAN" in rX["reason"],
+          f'{eX or rX["status"]}: {(rX or {}).get("reason", "")[:120]!r}')
+    _preflow = Flow(name="p", require={"search": {"pattern": "Welcome", "min": 1}},
+                    steps=[Step(name="computer", input={"action": "left_click"},
+                                targets={"ref": {"level": 1,
+                                                 "desc": {"tag": "button", "role": "",
+                                                          "type": "", "name": "Save"}}})])
+    rP, eP = await _vrun("search_page", "raise", flow=_preflow)
+    check("FR23d ...and so does the PRECONDITION, which is the same checks "
+          "asked at a different moment (#21) and was the other unguarded site",
+          eP is None and rP["status"] == FAILED
+          and "precondition" in rP["reason"],
+          f'{eP or rP["status"]}: {(rP or {}).get("reason", "")[:120]!r}')
+
+    # THE TWO CONTROLS. "Call every failure Unanswerable" would pass all four
+    # above while deleting the distinction the change exists to make.
+    rC, eC = await _vrun("search_page", "refuse", "some unparseable sentence")
+    check("FR23e CONTROL: a result that is merely unreadable, with no refusal "
+          "in it, still reports the result-string contract — that message is "
+          "right for the case it was written for",
+          eC is None and rC["status"] == FAILED
+          and "contract moved" in rC["reason"] and "REFUSED" not in rC["reason"],
+          f'{eC or rC["status"]}: {(rC or {}).get("reason", "")[:120]!r}')
+    bOK = FakeBridge([E(1, "button", name="Save")])
+    bOK.search_hits = 0
+    rOK = await start(_one_step({"search": {"pattern": "Welcome", "min": 1}}),
+                      1, bOK.call, bOK.entries_fn)
+    check("FR23f CONTROL: an assertion that was EVALUATED and failed still "
+          "reports the comparison, not an inability to ask",
+          rOK["status"] == FAILED and "found 0" in rOK["reason"]
+          and "REFUSED" not in rOK["reason"],
+          f'{rOK["status"]}: {rOK["reason"][:100]!r}')
 
     # ---- FR19: `text` was matched with `in`, unanchored at both ends -------
     async def _text_run(recorded, live):

@@ -721,8 +721,137 @@ cr.innerHTML = '<div role="progressbar" aria-valuenow="5" style="width:200px;hei
         check("R29 a signal inside a CLOSED shadow root is seen (#31's "
               "__abClosedRoot handle; nine traversal sites read it and this "
               "probe was the one that did not)",
-              d_closed["prog"] == 1 and d_doc["prog"] >= 2,
-              f"scoped prog={d_closed['prog']} doc prog={d_doc['prog']}")
+              d_closed["prog"] == 1 and d_doc["prog"] == 3,
+              f"scoped prog={d_closed['prog']} doc prog={d_doc['prog']} "
+              f"(3 = two in the open page plus one inside the closed root; "
+              f"`>= 2` passed in BOTH arms and pinned nothing)")
+        await pg.close()
+
+        # R29b — THE DISCRIMINATING PAGE for the UNSCOPED half of the closed-root
+        # fix, which R29 above could not reach. R29's own fixture carries two
+        # progressbars outside the closed root, so a doc-side `>= 2` is satisfied
+        # whether or not `_deepAll` descends `__abClosedRoot`. Here the ONLY
+        # signals on the page are inside a closed root, so the ablated collector
+        # reports a completely settled page.
+        CLOSED_ONLY = """<!doctype html><meta charset=utf-8><body>
+<div id=host></div>
+<script>
+const r = document.getElementById('host').attachShadow({mode:'closed'});
+r.innerHTML = '<div role="progressbar" aria-valuenow="30" style="width:200px;height:12px"></div>'
+            + '<div aria-busy="true" style="width:200px;height:40px">loading</div>';
+</script></body>"""
+        pg = await tagged_page(CLOSED_ONLY)
+        await pg.wait_for_timeout(150)
+        c_only = await probe(pg)
+        check("R29b a page whose ONLY readiness signals live in a CLOSED shadow "
+              "root is not reported as settled (ablated: prog 0, busy 0)",
+              c_only["prog"] == 1 and c_only["busy"] == 1,
+              f"prog={c_only['prog']} busy={c_only['busy']}")
+        await pg.close()
+
+        # ------------------------------------------------------------------
+        # R30-R32  FRAMES AND THE UNKNOWN STATE
+        #
+        # `_inScope` -- the composed + cross-frame containment walk -- had ZERO
+        # coverage: it is called from exactly one place (the scoped frame merge)
+        # and no fixture in this suite contained an iframe, so ablating it to
+        # `return true` OR `return false` left every check green. The defect that
+        # was hiding there is R30.
+        FRAMED = """<!doctype html><meta charset=utf-8><body>
+<div id=quiet mmid="1">settled</div>
+<iframe id=f mmid="2" src="/painting" style="width:300px;height:200px"></iframe>
+</body>"""
+        # PROGRESSBAR FIRST. In the first version it sat after a div growing to
+        # 4000 rows, which pushed it thousands of px down the frame document
+        # where the off-viewport filter correctly dropped it -- the fixture
+        # measuring itself, not the collector.
+        PAINTING = """<!doctype html><meta charset=utf-8><body>
+<div role="progressbar" aria-valuenow="20" style="width:200px;height:12px"></div>
+<div id=inner mmid="9"></div>
+<script>
+let i=0;(function s(){for(let k=0;k<6&&i<4000;k++,i++){
+  const d=document.createElement('div');d.textContent='r'+i;
+  document.getElementById('inner').appendChild(d);}
+  if(i<4000)setTimeout(s,16);})();
+</script></body>"""
+        pg = await browser.new_page(viewport={"width": 900, "height": 700})
+        await pg.add_init_script(TAG)
+        await pg.route("**/parent", lambda r: r.fulfill(
+            status=200, content_type="text/html", body=FRAMED))
+        await pg.route("**/painting", lambda r: r.fulfill(
+            status=200, content_type="text/html", body=PAINTING))
+        await pg.goto("http://frame.test/parent", wait_until="domcontentloaded")
+        await pg.wait_for_timeout(700)
+        # The real collector's `_walkInject` recurses into contentDocument, so a
+        # frame-internal element genuinely IS in the TOP registry and a scoped
+        # read genuinely resolves it. Build the registry the same way.
+        await pg.evaluate("""() => {
+            const reg = new Map();
+            const visit = (d) => {
+              d.querySelectorAll('[mmid]').forEach(e => reg.set(e.getAttribute('mmid'), e));
+              d.querySelectorAll('iframe,frame').forEach(f => {
+                try { if (f.contentDocument) visit(f.contentDocument); } catch (e) {}
+              });
+            };
+            visit(document);
+            window.__mmidReg = reg;
+        }""")
+        f_doc = await probe(pg)
+        f_inner = await probe_scoped(pg, "9")    # a div INSIDE the frame
+        f_frame = await probe_scoped(pg, "2")    # the <iframe> ITSELF
+        f_quiet = await probe_scoped(pg, "1")    # a settled div beside it
+
+        check("R30 a scope INSIDE a same-origin frame reports that frame's churn "
+              "— the frame guard must answer 'is the scope inside this frame', "
+              "not only 'is this frame inside the scope'",
+              f_doc["mut"]["structural"] > 0
+              and f_inner["mut"]["since"] >= 0 and f_inner["mut"]["since"] < 600
+              and f_inner["mut"]["structural"] > 0,
+              f"doc struct={f_doc['mut']['structural']} | "
+              f"scoped-into-frame since={f_inner['mut']['since']} "
+              f"struct={f_inner['mut']['structural']}")
+        check("R31 a scope that IS an <iframe> sees the declarative signals "
+              "inside it (querySelectorAll(root) never matches the root, so its "
+              "contentDocument has to be walked explicitly)",
+              f_frame["prog"] == 1,
+              f"prog={f_frame['prog']} busy={f_frame['busy']}")
+        check("R31b CONTROL: a settled sibling of that frame does NOT inherit "
+              "its churn — without this, 'merge every frame' would pass R30. "
+              "Its own parse record is legitimately in the window, so this is a "
+              "magnitude claim, not a zero",
+              f_quiet["mut"]["structural"] * 20 < f_doc["mut"]["structural"]
+              and f_quiet["prog"] == 0,
+              f"sibling struct={f_quiet['mut']['structural']} vs doc "
+              f"{f_doc['mut']['structural']}, prog={f_quiet['prog']}")
+        await pg.close()
+
+        # R32 — `scoped && since === -1` IS CONSTRUCTIBLE, and it is the state
+        # every scoped false-quiet lands in. An element's own parse generates a
+        # childList record, so a merely-settled element has a recency reading;
+        # what produces -1 is the record being LOST — here by flooding the
+        # 1024-slot ring after touching the scope once. The probe must call that
+        # UNKNOWN rather than returning silence.
+        EVICT = """<!doctype html><meta charset=utf-8><body>
+<div id=scope mmid="1"></div><div id=sink></div>
+<script>
+document.getElementById('scope').appendChild(document.createElement('b'));
+const sink = document.getElementById('sink');
+let i = 0;
+(function burst(){
+  for (let k = 0; k < 20 && i < 1400; k++, i++) sink.appendChild(document.createElement('i'));
+  if (i < 1400) setTimeout(burst, 1);
+})();
+</script></body>"""
+        pg = await tagged_page(EVICT)
+        await pg.wait_for_timeout(500)
+        ev = await probe_scoped(pg, "1")
+        check("R32 a scope whose record was EVICTED reports unknown, not quiet: "
+              "since=-1 with sinceAny set and saturated true, which is what the "
+              "renderer needs to say 'could not attribute' instead of nothing",
+              ev["mut"]["since"] < 0 and ev["mut"]["sinceAny"] >= 0
+              and ev["mut"]["saturated"] is True and ev["mut"].get("scoped") is True,
+              f"since={ev['mut']['since']} sinceAny={ev['mut']['sinceAny']} "
+              f"saturated={ev['mut']['saturated']} total={ev['mut']['total']}")
         await pg.close()
 
         await browser.close()

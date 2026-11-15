@@ -12,6 +12,13 @@ Status key: `OPEN` · `IN FLIGHT` (being fixed now) · `MEASURE FIRST` (do not
 build until the number exists) · `ACCEPTED` (a limit we are choosing to keep,
 documented rather than fixed).
 
+Closed this session and deleted from here: a variable reaching the input and
+the assertion but **not the target** (a flow acting on the thing it just
+created bound to the record a PREVIOUS run left and reported PASSED), and an
+assertion tool that was REFUSED or RAISED being reported as a failed assertion
+rather than as a check that never ran. Both in `FLOWS-FAILURE-SURFACE.md`
+(2.6, 5.6), both pinned by checks that fail against the pre-fix code.
+
 Last reviewed: 2026-11-15. Closed and deleted from here since the last
 review: `query_elements`' missing visibility count (Q6c-Q6f), and the
 readiness window measured in an unthrottled regime (R23/R23b — a 1000ms
@@ -85,11 +92,23 @@ computed at listing time, not action time), and observation **through** the
 model turn rather than at step boundaries.
 
 ### 2. 59.4% of ordinal-bearing descriptors cannot be witnessed `ACCEPTED`
-The re-sort mis-bind is **closed for the witnessed majority** (#72): `resort` on
-a witnessed descriptor is **0.0% WRONG at 94.3% CORRECT**, for +0.2pp refusals
-on the six pre-existing mutations. What remains is crowds identical in every
-declared field *and* in their surroundings, where nothing the collector emits
-separates the members. They are no worse than before and no better.
+The re-sort mis-bind is **closed on the `resort` arm, for the witnessed
+minority** (#72): `resort` on a witnessed descriptor is **0.0% WRONG at 94.3%
+CORRECT**, for +0.2pp refusals on the six pre-existing mutations. What remains
+is crowds identical in every declared field *and* in their surroundings, where
+nothing the collector emits separates the members. They are no worse than
+before and no better.
+
+**Two corrections to how that was written down**, both checkable and both now
+carried in `FLOWS-FAILURE-SURFACE.md` 3.3a. The witnessed set is a **minority**,
+not a majority — 212 of 558 (38.0%) on resort, 238 of 586 (40.6%) on reorder,
+which is the same fact as the 59.4% in this heading. And the closure number is
+from the `resort` arm alone: on the adversarial `reorder` arm a **witnessed**
+descriptor is **71.4% WRONG** (#72's own table; re-derived at 55.6% on a
+different 6-site sample). An anchor-only witness stays put while its element
+moves, so whichever member arrives at the recorded anchor is bound confidently
+and reported as a successful `moved` re-bind. #72 dismisses that arm as not
+physically realisable, which is an argument rather than a measurement.
 
 Refusing them was rejected deliberately: it would pause ~14% of all descriptors
 on an **unchanged** page, which is not a safety cost but losing the feature. The
@@ -101,6 +120,43 @@ re-recorded.
 What would close it: a declared per-member discriminator the collector does not
 currently emit. Geometry would do it (87.3% coverage, measured) and is refused —
 it drifts, so the safeguard would fire on every reflow.
+
+### 2b. `run_flow(stop_after=N)` has never worked over the wire `OPEN`
+`_flow_report`'s `head` is a three-key dict — `passed` / `failed` /
+`needs_decision` — and the runner's fourth status is `stopped_early`, so the
+tool raises `KeyError: 'stopped_early'` on every call that uses the flag.
+Reproduced against **git HEAD**, not against a working tree:
+`_flow_report({... "status": "stopped_early" ...})`. FR22/FR22b/FR22c pin the
+RUNNER and are green; nothing pins the renderer — principle 13 verbatim.
+
+This is half the route item 12 names for the TEXT-sufficiency measurement, so
+that measurement would have died on its first call. The fix is one dict entry
+in `mcp_server.py`; it was found by an agent scoped out of that file, which is
+why it is here rather than done. The check that should land with it belongs in
+`tools/test_flows.py` beside FR22 and must drive `mcp_server._flow_report`
+rather than the runner.
+
+### 2c. Starting state: the precondition reaches 1 flow in 20 `OPEN`
+`require` is derived from the observations between the landing navigation and
+the first action, and `_checks` understands exactly three tools: `get_url`,
+`search_page`, `query_elements`. The opening every agent is taught (#45's
+`instructions=`, #46's `browser_batch` description) is
+`tabs_create_mcp → navigate → read_page`, and **`read_page` contributes
+nothing**. Measured across `flows/*.flow.json`: **1 of 20 carries a `require`**,
+and that one was recorded to demonstrate the feature.
+
+Not a one-liner: `read_page`'s first line is
+`Current URL: <pathname + search>` while `expect.url` compares against
+`get_url`'s ABSOLUTE url, so deriving one from the other would put two
+spellings of one fact into the file (rule 17). Either a path-shaped check kind
+or a reconstruction from the flow's origin, and both are schema-level.
+
+Compounding it, and unlisted until now: nothing isolates one replay from the
+next. `run_flow(stop_after=N)` ends mid-flow by design, `run_flows.py` creates
+ONE tab for a whole batch, and `_pg_reset` runs only under `--playground` — so
+the `ev-*` flows replay back-to-back in one tab with no isolation. Every flow on
+disk happens to begin with a `navigate`, which is what has hidden it.
+`FLOWS-FAILURE-SURFACE.md` 6.5–6.7.
 
 ### 4. `no_effect` and the hollow/unproven classifier — CLOSED
 They now compose. The dead-click guard gated on `not step.expect`, and a
@@ -148,6 +204,21 @@ a click that had worked. A fixed transition duration would be a chosen number;
 the mutation signal from #70 may answer it properly, and that has not been
 tried.
 
+### 6b. A flow replayed against a LOCALISED app names no cause `OPEN`
+The descriptor's identity rung IS the accessible name, so changing the app's
+language invalidates every step at once. The playground already ships a `ja`
+chaos flag whose own comment says "the whole descriptor design rests on the
+accessible name" — and the failure surface had no entry for it.
+
+Measured: a target recorded as `name='Sign in'`, replayed against a Japanese
+render, reports *"no element on the page matches this step's target:
+tag='button' name='Sign in'"* and nothing else, while the SAME failure at a
+different viewport width appends *"The window is also a different WIDTH…"*.
+The page declares the fact (`<html lang>`); the recorded half is missing, and
+`Flow` has no `lang` field. `viewport` is populated by `mcp_server` at stop
+time, so closing this needs a writer there as well as a reader in the runner —
+both halves or neither (rule 14).
+
 ### 7. Page-level scans never cross an iframe boundary `OPEN`
 An open dialog inside a frame gets no modal banner and no `section=dialog`.
 
@@ -178,12 +249,34 @@ our ruler uses one of them and may be stricter or looser than MindAct's.
 under every number derived from it. Closing it means re-downloading from
 HuggingFace.
 
-Also owed from #73, all small: `bench_mind2web.py`'s comment claiming the 13
-excluded targets are "absent from the saved snapshot entirely" is **false** and
-hid a real input defect for a year; the ~6-line serialization repair would make
-the denominator the full 186 (and fix the one false ancestor credit for free);
-and the ancestor credit path has **no area bound** while the descendant path —
-the direction that cannot fail — has one.
+**CLOSED — the three small debts #73 left.** The false comment is gone, the
+snapshot is repaired before it is rendered (`tools/_m2w_ruler.py`), and the
+ancestor credit path carries the same area bound as the descendant path. One
+denominator now, all 186 actions: **177/186 = 95.2%**, exact 161/186 = 86.6%.
+`--no-repair` reproduces the pre-#73 arm (166/173 = 96.0% of the targets that
+resolved) so both figures stay obtainable from the tool rather than from memory.
+Three things #73 got wrong, each found by running rather than by arithmetic:
+
+- the repair "fixes the ikea credit for free" is true only of the FAITHFUL
+  repair (every non-void self-closed tag), not of the RAWTEXT-only one that
+  yields the 96.2% #73 headlines — so the two sentences in its closing
+  paragraph cannot both hold;
+- "mirroring the cap gives 165/173 = 95.4%" is **166/173 = 96.0%**: refusing an
+  ancestor credit is not losing the row, and that one falls through to the
+  target's own `<input>`, which is sound by bubbling. **The bound costs zero
+  recall on either arm** and removes the one credit #73 called false;
+- the minimal repair also leaves two further ancestor credits standing
+  (sixflags, underarmour) whose "wrapping anchor" the raw bytes show is a
+  self-closed `<a … bounding_box_rect="-1,-1,-1,-1"/>` — empty and rendering
+  nothing in the original page.
+
+The faithful repair was chosen on a signal independent of recall: it is the only
+arm with **zero cloned nodes** (the unrepaired parse re-creates unclosed
+formatting elements, emitting several DOM nodes under one `backend_node_id` on
+**137 of 186 samples**, up to 2.48×), and it never recovers fewer distinct ids
+than the other arms. Residue, stated: a median 99.8% of each snapshot's ids
+parse, worst 43.4%, because Mind2Web nests a frame's whole document inside the
+`<iframe>` element. No labelled target is among them.
 
 ### 11. No task-success measurement for our own ladder `MEASURE FIRST`
 `detail` and `format` are priced on recall and tokens, never on end-to-end

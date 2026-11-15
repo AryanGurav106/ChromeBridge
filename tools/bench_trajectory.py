@@ -210,10 +210,11 @@ async def score_step(page, s: dict, policy: dict) -> dict:
         return r
 
     by_mmid = {str(e.get("mmid")): e for e in (structured or [])}
-    credited = [x for x in ([probe.get("own")] + (probe.get("ancs") or [])
-                            + (probe.get("descs") or [])) if x]
-    # Same credit rule as bench_mind2web: the target itself, any ancestor, or any
-    # (area-capped) descendant we surfaced instead.
+    # The credit rule itself, not a second copy of it. This block used to
+    # concatenate own + ancs + descs inline, four lines under a comment saying a
+    # second copy "would drift away silently" -- and it had: when the ancestor
+    # path acquired an area cap, only bench_mind2web got it.
+    credited = [ref for ref, _ in bm.credit_refs(probe)]
     in_structured = [c for c in credited if c in by_mmid]
     shown = listing_refs(listing)
     in_listing = [c for c in in_structured if c in shown]
@@ -256,7 +257,12 @@ async def score_step(page, s: dict, policy: dict) -> dict:
             r["reads"] += 1
             r["recovery"] = "rescan"
             best = None
-            for anc in (probe.get("ancs") or [])[:6]:
+            # EVERY ancestor, uncapped and unfiltered: this is looking for a
+            # REGION to scope a second read to, and a large ancestor is a
+            # perfectly good region — the credit cap answers a different
+            # question (may this element stand in for the target) and applying
+            # it here would delete the cheapest recoveries.
+            for anc in [a["mmid"] for a in (probe.get("ancs") or [])][:6]:
                 if anc not in by_mmid and anc != in_structured[0]:
                     pass
                 try:

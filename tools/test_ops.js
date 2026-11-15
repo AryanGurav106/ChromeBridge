@@ -1783,6 +1783,51 @@ const FIELDS3 = () => ([
           + "\"safe to read\" as a judgement; C15's class)",
       !/safe to read/i.test(String(r.result)), String(r.result).slice(0, 160));
 
+    // ---- THE SCOPED **UNKNOWN** STATE, which rendered as SILENCE -----------
+    // Under a scope, `since === -1` means three different things: the ring never
+    // recorded anything, the subtree genuinely never moved, or the subtree moved
+    // and the record was not RETAINED. The third is routine once scoped -- a
+    // record past the 32-per-batch store bound, a wrapped ring, or an element
+    // deeper than the containment walk -- and it was falling through to the
+    // network branch, which with no network bits returns ''. Silence is correct
+    // for exactly one of the three. Unscoped, only the first was reachable.
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0, scoped: true, scopeMiss: false,
+      mut: _mut({ since: -1, sinceAny: 12, scoped: true, saturated: true }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("page_readiness SCOPED UNKNOWN: a scope with no attributable record is "
+          + "reported as UNKNOWN, never as quiet, and names the page-wide recency",
+      String(r.result).includes("NOT the same as it being settled")
+        && String(r.result).includes("12ms"), JSON.stringify(r).slice(0, 260));
+    check("page_readiness SCOPED UNKNOWN: a WRAPPED ring is stated, since that is "
+          + "the one case where we KNOW absence is not evidence",
+      /WRAPPED/.test(String(r.result)), String(r.result).slice(0, 200));
+
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0, scoped: false, scopeMiss: false,
+      mut: _mut({ since: -1, sinceAny: 12, scoped: false }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("page_readiness CONTROL: the same shape UNSCOPED is still silent — "
+          + "without this, the unknown branch would fire on every page that has "
+          + "no recorder at all and the banner would mean nothing",
+      String(r.result) === "" || !String(r.result).includes("NOT the same as it being settled"),
+      JSON.stringify(r).slice(0, 200));
+
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0, scoped: true, scopeMiss: false,
+      mut: _mut({ since: 4013, structural: 0, text: 0, scoped: true }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    // NOT `result === ""`: page_readiness is the ONE caller that converts an
+    // empty note into a positive sentence, because for find's miss path a bare
+    // "" reads the same as a probe that failed (#39). The invariant here is that
+    // an OBSERVED-quiet scope does not take the unknown branch.
+    check("page_readiness CONTROL: a scope that was genuinely OBSERVED quiet "
+          + "does NOT take the unknown branch — otherwise it would swallow the "
+          + "one result this whole change exists to produce",
+      !String(r.result).includes("NOT the same as it being settled")
+        && !String(r.result).includes("COULD BE ATTRIBUTED"),
+      JSON.stringify(r).slice(0, 200));
+
     currentStubs["_readinessPage"] = () => ({ ready: "loading", imgs: 3, prog: 1, busy: 2 });
     r = await callOp("page_readiness", { tabId: 1 });
     check("page_readiness: an UNSETTLED page yields a banner",

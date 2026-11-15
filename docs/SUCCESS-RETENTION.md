@@ -9,10 +9,20 @@ to try this will hit it.
 
 Every ruler in this project measures retention of ELEMENTS — recall, presence,
 `lost_identities`, findability. None measures retention of SUCCESS. The field's
-own benchmark says they come apart: [arXiv:2605.29397](https://arxiv.org/html/2605.29397)
-evaluates 11 extractive reduction methods and its best retains **84% of success
-on WorkArena and 89% on WebLinx**. We are a reduction method. So: given our
+own benchmark says they come apart. We are a reduction method. So: given our
 listing instead of the full page, does a model still pick the right element?
+
+**CORRECTION, 2026-11-15 (see CLAUDE.md #77).** This paragraph used to cite
+[arXiv:2605.29397](https://arxiv.org/html/2605.29397) as "11 extractive
+reduction methods, best retains 84% of success on WorkArena / 89% on WebLinx",
+and used those figures as a ceiling. **They are not that.** They are the
+paper's OWN pruner's latency trade — "2.2x faster … while retaining 84%",
+"3.1x faster on WebLinx while retaining 89%" — i.e. a chosen operating point on
+a speed/accuracy curve, not the best achievable retention across methods. It
+had been doing load-bearing work here as a ceiling it does not establish, and
+it is an operating point **we would not choose anyway**, since #38 measured
+per-step latency at ~4% of a tool call and the model turn at 92–97%. The
+question below stands on its own; it does not need a borrowed ceiling.
 
 ## Why there is no answer yet
 

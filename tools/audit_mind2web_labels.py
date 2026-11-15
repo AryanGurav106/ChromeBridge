@@ -72,17 +72,12 @@ BG = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
 COLLECT = extract("_collectInteractivePage", BG, verify=True)
 TAG_JS = str(ROOT / "extension" / "listener_tag.js")
 
-# HTML's void elements: `<img/>` really is self-closing, the rest are not.
-VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
-        "meta", "param", "source", "track", "wbr"}
-# RAWTEXT / RCDATA. A self-closed one of these does not merely nest wrongly, it
-# turns every byte after it into TEXT -- which is how a labelled <select> that
-# is plainly in the snapshot is absent from the DOM.
-RAWTEXT = {"textarea", "title", "script", "style", "iframe", "noscript",
-           "noframes", "xmp", "plaintext"}
-# Attribute values may contain `/>`, so the scan tracks quoting rather than
-# stopping at the first `>`.
-SELF_CLOSED = re.compile(r"<([a-zA-Z][a-zA-Z0-9]*)((?:[^>\"']|\"[^\"]*\"|'[^']*')*?)/>")
+# The repair and the credit cap come from the RULER, not from a second copy
+# here -- this file exists to vary them, and a variant has to vary the thing the
+# benchmark actually ships. `repair_serialization(html, only)` with `only=None`
+# is what `bench_mind2web.py` now applies to every snapshot before rendering it.
+from _m2w_ruler import (CREDIT_AREA_CAP, RAWTEXT, SELF_CLOSED,  # noqa: E402,F401
+                        VOID, repair_serialization)
 
 # What the recorded operation can land on. A TYPE on a <div> or a SELECT on
 # something with no <select> in its chain is a label worth looking at -- though
@@ -97,20 +92,6 @@ SINGLE_ACTIVATION_TAG = {"a", "button", "summary", "input", "select", "textarea"
 SINGLE_ACTIVATION_ROLE = {"button", "link", "menuitem", "menuitemcheckbox",
                           "menuitemradio", "option", "tab", "checkbox", "radio",
                           "switch", "treeitem", "combobox"}
-
-
-def repair_serialization(html: str, only: set | None) -> str:
-    """Turn `<tag ... />` back into `<tag ...></tag>` for non-void elements.
-
-    `only` limits the repair to a tag set (RAWTEXT, the minimal fix) or repairs
-    every non-void element (the faithful XML->HTML reconstruction).
-    """
-    def sub(m):
-        t = m.group(1).lower()
-        if t in VOID or (only is not None and t not in only):
-            return m.group(0)
-        return f"<{m.group(1)}{m.group(2)}></{m.group(1)}>"
-    return SELF_CLOSED.sub(sub, html)
 
 
 # One probe, asked of the labelled node: everything the four questions need, so
@@ -238,8 +219,9 @@ async def score_arm(page, samples, only_tags, repair_on):
                                      "operation", "target_backend_node_id")}
         bid = str(s.get("target_backend_node_id"))
         # String presence and DOM presence are DIFFERENT claims. The benchmark's
-        # `target_not_in_html` conflates them and the distinction is the whole
-        # of the REPAIR finding.
+        # `target_not_in_html` conflated them for a year -- that is the whole of
+        # the REPAIR finding, and it is why the benchmark now repairs the
+        # snapshot and calls the residual case `target_not_in_dom`.
         rec["in_string"] = len(re.findall(
             r'backend_node_id="%s"' % re.escape(bid), s["html"]))
         try:
@@ -269,7 +251,7 @@ async def score_arm(page, samples, only_tags, repair_on):
         own = p.get("own") if p.get("own") in listed else None
         anc = next((a for a in (p.get("ancs") or []) if a["mmid"] in listed), None)
         all_desc = [d for d in (p.get("descs") or []) if d["mmid"] in listed]
-        cap_ok = p.get("area_frac", 1.0) < 0.4          # the shipped cap
+        cap_ok = p.get("area_frac", 1.0) < CREDIT_AREA_CAP   # the shipped cap
         desc = all_desc[0] if (cap_ok and all_desc) else None
         rec["n_desc_listed"] = len(all_desc)
         rec["cap_allows_desc"] = cap_ok
@@ -326,16 +308,16 @@ async def main() -> int:
         ctx = await browser.new_context(viewport={"width": 1280, "height": 1600})
         await ctx.add_init_script(path=TAG_JS)
         page = await ctx.new_page()
-        plan = [("A as shipped", None, False)]
+        plan = [("A unrepaired (pre-#73)", None, False)]
         if args.repair:
             plan += [("B rawtext repaired", RAWTEXT, True),
-                     ("C all self-closed repaired", None, True)]
+                     ("C faithful repair = SHIPPED", None, True)]
         for label, tags, on in plan:
             arms[label] = await score_arm(page, samples, tags, on)
             print(f"  {label} done")
         await browser.close()
 
-    rows = arms["A as shipped"]
+    rows = arms["A unrepaired (pre-#73)"]
     scored = [r for r in rows if r.get("status") in
               ("ok", "missed_present", "missed_invisible")]
     notdom = [r for r in rows if r.get("status") == "not_in_dom"]
@@ -413,24 +395,38 @@ async def main() -> int:
     print(f"    own only                              {own_n}/{n} = {own_n/max(1,n):.1%}")
     print(f"    own + descendant                      {own_n+desc_n}/{n} = "
           f"{(own_n+desc_n)/max(1,n):.1%}")
+    # REFUSING AN ANCESTOR CREDIT IS NOT THE SAME AS LOSING THE ROW. `via` names
+    # the FIRST path that worked, and ancestor outranks descendant -- so a row
+    # shown here as `ancestor` may also have a perfectly good descendant credit
+    # underneath it, and the first version of this table assumed it did not.
+    # Measured: it reported "mirror the cap -> 165/173 = 95.4%" where running the
+    # rule gives 166/173, because the one credit it withdraws (ikea, a <label>
+    # credited to a 90%-of-viewport <a>) falls through to that label's own
+    # <input>, which is sound by bubbling. The cap costs ZERO recall.
     for name, f in (
-            ("ancestor < 40% of viewport (mirror the cap)", lambda a: a["anc"]["area_frac"] < 0.4),
+            (f"ancestor < {CREDIT_AREA_CAP:.0%} of viewport  <- SHIPPED",
+             lambda a: a["anc"]["area_frac"] < CREDIT_AREA_CAP),
             ("ancestor is single-activation",               lambda a: a.get("anc_single_activation")),
             ("ancestor holds < 20 listed elements",         lambda a: a["anc"]["kids"] < 20)):
-        k = sum(1 for a in anc_rows if f(a))
+        kept = [a for a in anc_rows if f(a)]
+        fell = [a for a in anc_rows if not f(a)
+                and a.get("n_desc_listed") and a.get("cap_allows_desc")]
+        k = len(kept) + len(fell)
         print(f"    own + desc + {name:<41} {own_n+desc_n+k}/{n} = "
-              f"{(own_n+desc_n+k)/max(1,n):.1%}  ({k}/{len(anc_rows)} kept)")
+              f"{(own_n+desc_n+k)/max(1,n):.1%}  ({len(kept)}/{len(anc_rows)} kept"
+              + (f", {len(fell)} fall through to a descendant)" if fell else ")"))
 
     print("\n=== AREA CAP ABLATION (descendant credit) ===")
     blocked = [r for r in scored if not r.get("cap_allows_desc")]
     rec_un = sum(1 for r in scored if r.get("recalled_uncapped"))
-    print(f"  targets >= 40% of the viewport (the cap engages) : {len(blocked)}")
+    print(f"  targets >= {CREDIT_AREA_CAP:.0%} of the viewport (the cap engages) : {len(blocked)}")
     print(f"  recall capped {rec}/{len(scored)} = {rec/max(1,len(scored)):.1%}   "
           f"uncapped {rec_un}/{len(scored)} = {rec_un/max(1,len(scored)):.1%}")
     if rec_un == rec:
-        print("  -> the cap changes NO verdict here: a guard that has never had to "
-              "fire, not a correction doing work. The UNCAPPED direction is the\n"
-              "     ancestor path, which has no bound at all.")
+        print("  -> the cap changes NO verdict on the DESCENDANT side: a guard that "
+              "has never had to fire. The ancestor side, where a\n"
+              "     false credit is structurally possible, now carries the same "
+              "bound -- see the stricter-rules table above for what it costs.")
 
     misses = [r for r in scored if r.get("status") == "missed_present"]
     if misses:

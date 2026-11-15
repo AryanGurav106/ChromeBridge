@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1268 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1307 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1268 checks, ~122s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1307 checks, ~125s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -1333,7 +1333,18 @@ granted in the side panel is refused with the same message the agent gets.
       hide-read-restore, which fixed two bugs: appending without hiding emitted every value
       twice, and hiding without restoring made `innerText` empty so the `textContent`
       fallback returned `"RegionQ1North1,240東京2,300"` above a clean grid of the same data.
-    - **WebMCP — the one capability no Playwright-based agent can have.** Chrome ships
+    - **WebMCP — ~~the one capability no Playwright-based agent can have~~.**
+      **THAT CLAIM IS NOW FALSE AND BOTH HALVES OF ITS JUSTIFICATION WERE
+      WRONG** — corrected 2026-11-15 by an external survey, see #77. Playwright
+      **1.64.0, published 2026-10-07**, ships `page.webmcp` / `frame.webmcp`,
+      and its release notes say *"Playwright MCP supports WebMCP by default"*
+      (`--no-webmcp` opts out). And "WebMCP explicitly does not support headless
+      browsing" misreads the W3C repo: headless task completion is listed as a
+      GOAL; the non-goal is fully autonomous agents with no browser UI.
+      **The residual differentiation that IS real is consent and auth** — the
+      user's own logged-in profile behind a per-origin gate — **not
+      capability.** The feature below is unaffected and still worth having; only
+      the uniqueness claim was wrong, and it had been quoted forward. Chrome ships
       `document.modelContext`; a page declares its own tools with names and JSON Schemas, and
       **WebMCP explicitly does not support headless browsing** while we are an MV3 extension
       in the user's real logged-in Chrome. `page_tools` / `call_page_tool` (22→24 tools), MAIN
@@ -7469,6 +7480,152 @@ granted in the side panel is refused with the same message the agent gets.
     scope falls back loudly), R27/R27b (declarative signals outside the scope do
     not fire; one inside still does), R28 (the scope element itself), R29 (a
     closed shadow root).
+
+77. **AN ADVERSARIAL REVIEW OF #76 FOUND SIX FALSE-QUIET PATHS, AND THE
+    STRUCTURAL ROOT IS ONE SENTENCE: scoping narrows what the probe can SEE
+    faster than it narrows what the probe is ASKED about, and the one output
+    state meaning "I could not see" rendered identically to "there is nothing to
+    see".** #76 scoped the readiness answer to the subtree a caller scoped the
+    READ to, and measured the win. A reviewer given the code and deliberately
+    NOT my reasoning found eleven things, proved all of them, and the six that
+    matter are all the same shape.
+
+    **UNDER A SCOPE, `since === -1` MEANS THREE DIFFERENT THINGS** — the ring
+    never recorded anything, the subtree genuinely never moved, or the subtree
+    moved and the record was not RETAINED. `readinessNote` gated on
+    `since >= 0`, so all three fell through to the network branch, which with no
+    network bits returns `''`. Silence is the correct answer for exactly one of
+    them. **Unscoped, only the first was reachable, which is why this was
+    survivable for a year and stopped being survivable the moment scope shipped.**
+    Three separate mechanisms produce the third, each measured:
+    - a record past the **32-per-batch STORE bound**. That bound is a cost
+      control, not a containment rule, so whether a scope is visible depends on
+      its position inside a framework's render batch — a property of nothing the
+      caller controls. 40 appends outside the scope then 5 inside, one batch:
+      doc `63ms / 32 structural`, scoped `-1 / 0`. **This contradicts #76's own
+      "each of which has an element so containment is exact"**: containment is
+      exact and is not what decides the answer.
+    - **ring saturation** evicting the scope's slot, while `saturated` is known
+      and was printed only inside the `moved > 0` branch that `since === -1`
+      never reaches. The one case where we KNOW absence is not evidence was the
+      one case we said nothing.
+    - the containment hop bound.
+
+    The fix is to say so. A scoped read with no attributable record now reports
+    **UNKNOWN**, names the page-wide recency from `sinceAny` (the most recent
+    record REGARDLESS of scope — the fact that separates the three), and states
+    a wrapped ring when it knows. That converts five findings from a false quiet
+    into an over-warn, which is the direction everything else in this probe is
+    built around.
+
+    **THE FRAME GUARD ASKED ONE OF THE TWO QUESTIONS, AND ITS OWN COMMENT NAMED
+    THE HAZARD IT SHIPPED.** `_inScope(f.frameElement, _scope)` walks UP from the
+    `<iframe>`, so it can only ever answer *is this frame inside the scope*. When
+    the scope lives INSIDE the frame the walk goes the wrong way, the `continue`
+    fired, and that frame's ring was never read — while the TOP ring holds no
+    records for it either, because each frame records into its own. Measured: a
+    read scoped to a div inside a same-origin iframe reported **silence** while
+    the frame painted 4,000 rows, and the same page unscoped reported `152
+    structural`. The comment two lines above reads *"skipping frames altogether
+    would report a scope whose content lives in an iframe as quiet, which is the
+    worse error"* — true of the direction it handled, and the code handled only
+    that one. Worse, the collector's `composedParent` DOES cross `frameElement`,
+    so the listing scopes to such a ref perfectly: **the listing and its own
+    banner disagreed about one scope.**
+
+    **AND THE THIRD "the root is not its own descendant" CASE WAS MISSING.**
+    `_scan` repaired two — `_scope.matches(sel)` and the scope's own shadow root
+    — and omitted `_scope.contentDocument`, so a read scoped TO an `<iframe>`
+    reported `prog=0 busy=0` with a visible progressbar inside it. The mutation
+    half worked there, so only the DECLARATIVE signals were lost, which is
+    exactly where a CSS-animated spinner lives.
+
+    **THE SERVER FIX FROM #76 DELETED A GENUINE WARNING, and its justification
+    was factually wrong.** #76 stripped the appended text block's readiness
+    banner "because the two describe the same page at the same instant". They do
+    not: they are two separate bridge round trips, and `get_dom_text`'s
+    readiness runs AFTER `_domTextPage`, i.e. after a hide-read-restore whose
+    `@style` round-trip #70 explicitly records as NOT caught by the net-zero
+    rule. So the second observation is systematically later AND systematically
+    contaminated by our own instrumentation. `filter` defaults to `"all"`, so
+    **every default `read_page` took that branch.** Worst case measured: the
+    listing's surviving banner asserts *"no element was added, removed or
+    re-texted, so the listing below is structurally current"* while the stripped
+    one said the opposite about the very text printed beneath it. Now decided by
+    **exact string equality**, so nothing is a judgement: identical → strip (the
+    common duplicate, the only case the strip was ever right for); different →
+    keep inline, where position shows which observation it is; listing has none
+    → promote to the front, where `_truncate` protects it.
+
+    **`imgs` WAS SCOPED AND SHOULD NOT HAVE BEEN, on its own stated rationale.**
+    The comment says the set that matters is the one that will REFLOW what we
+    are about to print — and reflow is not subtree-local: an unloaded hero image
+    ABOVE the scope pushes the scope down and invalidates every coordinate in
+    it. `aria-busy` and `role=progressbar` are genuine subtree declarations and
+    stay scoped; this one is a layout-instability measure and belongs page-wide
+    with the network count.
+
+    **TWO OF MY OWN CHECKS WERE WORTH NOTHING AND THE REVIEWER PROVED IT BY
+    ABLATION.** Ablating the entire 15-line `_inScope` helper to `return true`
+    **or** `return false` left all ten new checks green, because it is called
+    from exactly one place and **no fixture in the suite contained an iframe** —
+    the function #76 devotes twelve comment lines to was untested, and F1 above
+    was a defect inside it. And R29's doc-side assertion was `>= 2` on a fixture
+    carrying two progressbars outside the closed root, so it **passed in both
+    arms**; #76's own text states the discriminating value is 3 and I wrote
+    `>= 2` anyway. That is the identical class I had just recorded catching
+    twice while writing R25, caught a third time by someone else.
+
+    **AND THE CALL SITE WAS UNTESTED WHILE THE HELPER WAS PINNED.** C31 drives
+    `_prepend_to_listing` directly and no test drives `read_page` with a
+    `ref_id`, so reverting the one call site to the naive concatenation kept all
+    1,268 checks green and silently restored the shipped bug — **and the bug
+    being fixed WAS a call-site bug.** C34 closes it.
+
+    **THREE OF MY NEW FIXTURES WERE WRONG ABOUT THE FIXTURE, NOT THE CODE**, and
+    each failed loudly rather than vacuously, which is the good direction: a
+    progressbar placed after a div growing to 4,000 rows was pushed thousands of
+    px down and correctly dropped as off-viewport; and two checks asserted
+    `structural == 0` / `since < 0` on an element whose own PARSE generates a
+    childList record well inside the 3,000ms window. The second taught something
+    worth keeping: **`since === -1` is not reachable by letting a page settle** —
+    an element's parse is a record — so the fixture that produces it has to
+    EVICT one, which is why R32 floods the ring.
+
+    **A SECOND AGENT FOUND THAT `run_flow(stop_after=N)` HAS NEVER WORKED OVER
+    THE WIRE.** `_flow_report`'s head is a three-key dict and the runner has a
+    fourth status, so the first real call raises `KeyError('stopped_early')`.
+    FR22/FR22b/FR22c pin the runner three ways and nothing crossed into the
+    renderer — #19 and #30's class again, in the feature that is **half the
+    route `OPEN.md` item 12 names for the TEXT-sufficiency measurement**. That
+    measurement would have died on call one, and #76's status report had called
+    it merely "blocked on recordings". FR22d enumerates every status the runner
+    can return and renders each.
+
+    **TWO EXTERNAL CORRECTIONS, from a survey briefed with everything we already
+    knew so it could not report old news back.**
+    - **#26's "WebMCP — the one capability no Playwright-based agent can have"
+      is FALSE.** Playwright **1.64.0, 2026-10-07** ships `page.webmcp` and its
+      notes say *"Playwright MCP supports WebMCP by default"*. Both halves of the
+      justification were wrong too: headless task completion is a stated GOAL of
+      the W3C repo, not a non-goal. The feature is unaffected; the uniqueness
+      claim was wrong and had been quoted forward. **What is actually
+      differentiating is consent and auth — the user's own logged-in profile
+      behind a per-origin gate — not capability.**
+    - **`SUCCESS-RETENTION.md`'s opening ceiling was misattributed.** The
+      84%/89% figures are that paper's OWN pruner's latency trade ("2.2x faster
+      … while retaining 84%"), not the best of 11 reduction methods. It had been
+      doing load-bearing work here as a ceiling it does not establish, and it is
+      an operating point we would not choose anyway, since #38 prices per-step
+      latency at ~4% of a tool call.
+
+    Suites: 1,307 checks. New — R29b (a page whose ONLY signals are in a closed
+    root; R29 could not see its own fix), R30 (a scope inside a same-origin
+    frame), R31/R31b (a scope that IS a frame, with the settled-sibling
+    control), R32 (an EVICTED record reports unknown), four `page_readiness`
+    render checks including the unscoped and observed-quiet controls, C32/C32b/C32c
+    (the three banner cases, behavioural where C32 had been a grep), C34/C34*
+    (the call site), FR22d (every runner status renders).
 
 ## Debugging starting points
 

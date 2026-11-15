@@ -21,7 +21,7 @@ Two kinds of thing live here, and the difference matters:
   --------------------------------------------------
   delta       unit     PASS        3.3s  10/10
   ...
-  21 passed, 0 failed, 0 skipped of 21 suite(s); 1268 checks; 122s
+  21 passed, 0 failed, 0 skipped of 21 suite(s); 1307 checks; 125s
   ALL GREEN
 ```
 
@@ -108,6 +108,8 @@ all three had passed code review before they were measured.
 |---|---|---|
 | `audit_patterns.py` | built in | fires on the three historical pattern bugs in their pre-fix form |
 | `measure_findability.py --self-test` | `--self-test` | **FAILS against the pre-#74 scorer** and passes against the fix, with a known-miss control (a deliberately blanked app shell) passing in both arms |
+| `audit_opacity.py` | built in | the `probe` arm wraps the gate in a recorder that returns the SAME value, so `probe == base` entry counts prove observing changed nothing; and `ablate − base` must never EXCEED the recorded population, which would mean the recorder missed elements |
+| `audit_frames.py` | `--fixtures`, plus a built-in control | the corpus returns **0 of 128 frames** declaring a page-level trigger; the SAME census over those pages' TOP documents returns 91 dialog nodes on 31 sites, which is what proves the zero is the sample rather than the probe. `--fixtures` builds the shapes the corpus cannot hold (HARs are captured after consent) from two ports, so cross-origin is real |
 
 `measure_findability` exists because every other ruler here measures PRESENCE
 and #74 found 118 elements that were present in all of them and unreachable by

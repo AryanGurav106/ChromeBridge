@@ -38,11 +38,48 @@ from typing import Any, Callable, Optional
 
 from . import secrets
 from .descriptor import Unresolved, build, resolve
-from .model import NAVIGATIONAL, Flow, Step, resolve_vars, set_ref
+from .model import NAVIGATIONAL, VAR_RE, Flow, Step, resolve_vars, set_ref
 from .recorder import (no_effect, query_first_attrs, query_first_text,
                        query_total, refused, search_hits)
 
 PASSED, FAILED, NEEDS = "passed", "failed", "needs_decision"
+
+
+class Unanswerable(Exception):
+    """An assertion tool could not answer, so the check never ran.
+
+    NOT a failed assertion, and keeping the two apart is the whole point. A
+    failed check is a FACT about the page; this is the absence of one, and
+    reporting it as the former is the thing C15 exists to catch.
+
+    MEASURED with a fake bridge, before this existed. Every way a verification
+    call can go wrong was handled on the ACT path and on neither VERIFY path:
+
+      the gate refuses search_page   -> "could not read a hit count out of
+                                         search_page for 'Welcome' — the
+                                         result-string contract moved"
+      the user hits PAUSE mid-run    -> the same sentence, after a 6s poll
+      the gate refuses get_url       -> "url is 'Permission required:
+                                         ChromeBridge is not allowed to act
+                                         on …', recorded 'https://…'"
+      the bridge drops               -> an UNCAUGHT RuntimeError out of
+                                         start(), with no step named, no `at`,
+                                         no log and no elapsed — on a flow
+                                         whose earlier steps had already
+                                         mutated the app
+
+    The first three name a cause nobody verified, and the one they name sends
+    a reader hunting for a parser mismatch that does not exist -- `recorder.
+    query_total`'s own docstring records this exact sentence being printed for
+    a session that expired, and fixed the ZERO case while leaving the REFUSED
+    case printing it. The fourth is FR16's defect (an error escaping `start()`
+    with a hardcoded `at: 0`) in the two places FR16 did not reach.
+
+    NOT RETRIED inside the settle window. A gate refusal and a kill switch are
+    decisions by the user; re-asking for six seconds spends the window on an
+    answer that cannot change, and the server's own instructions say not to
+    retry a refusal in a loop.
+    """
 # A PARTIAL run is not a pass. `stop_after` ends the replay deliberately
 # with later assertions unchecked, and a caller that saw "passed" would
 # read a flow most of which did not execute as a green test.
@@ -212,16 +249,27 @@ class Run:
             # before step 0 while the app was merely still rendering.
             if not self.checked_require and self.i >= self._require_at:
                 self.checked_require = True
+                miss = self._missing_vars(self.flow.require)
+                if miss:
+                    return self._stop(FAILED, self._no_value(miss, "this flow's "
+                                                             "precondition"))
                 # AND THE MARGIN FOLLOWS THE CHECKS. `settle_ms` on the last
                 # navigational step is the time the recording measured for
                 # exactly these checks to hold -- they used to be that step's
                 # postcondition. Leaving it behind would hold a slow app to the
                 # plain default for the one assertion that runs before it has
                 # finished painting (#60).
-                bad = await self._await_checks(
-                    self.flow.require,
-                    self.flow.steps[self._require_at - 1].settle_ms
-                    if self._require_at > 0 else 0)
+                try:
+                    bad = await self._await_checks(
+                        self.flow.require,
+                        self.flow.steps[self._require_at - 1].settle_ms
+                        if self._require_at > 0 else 0)
+                except Unanswerable as exc:
+                    return self._stop(FAILED,
+                                      f"this flow's precondition could not be "
+                                      f"evaluated, so whether the app is in the "
+                                      f"state it starts from is UNKNOWN — nothing "
+                                      f"has run.\n  {exc}")
                 if bad:
                     ran = ("Nothing was run." if self._require_at == 0 else
                            f"Only the {self._require_at} navigation step(s) in "
@@ -251,6 +299,21 @@ class Run:
             # 13s got 19s for its assertions and 6s for the control it has to
             # click first. #59's live failure WAS target resolution on a slow
             # SPA, which makes this the half likelier to bite.
+            # EVERY VARIABLE THIS STEP NEEDS, ASKED ONCE AND BEFORE ANYTHING
+            # HAPPENS. It used to be asked of the INPUT alone, and after the
+            # target had already been resolved -- so a `{{name}}` in an
+            # assertion was resolved with the missing names DISCARDED and the
+            # placeholder was then searched for LITERALLY (measured:
+            # `search_page("{{nope}}")`, which fails confusingly or, on a page
+            # that happens to contain it, passes), and one in a TARGET was not
+            # substituted at all. Three places, one question; asking it here
+            # also stops a flow with a typo'd variable from spending a settle
+            # window and then acting.
+            miss = self._missing_vars(step.input, step.targets, step.expect)
+            if miss:
+                return self._stop(FAILED, f"step {self.i} ({step.name}): "
+                                  + self._no_value(miss, "this step"))
+
             deadline = time.time() + (self.SETTLE_MS + (step.settle_ms or 0)) / 1000.0
             unresolved = None
             while True:
@@ -319,12 +382,7 @@ class Run:
             # VARIABLES FIRST, then secrets -- a variable is an ordinary
             # parameter and may be printed; a secret may not, so it is resolved
             # last and exists only for this one call.
-            inp, unknown = resolve_vars(inp, self.vars)
-            if unknown:
-                return self._stop(FAILED,
-                                  f"step {self.i} ({step.name}): this flow has no "
-                                  f"value for {', '.join(sorted(set(unknown)))} — "
-                                  f"pass it to run_flow, or re-record.")
+            inp, _ = resolve_vars(inp, self.vars)
             inp, missing = secrets.resolve(inp)
             if missing:
                 return self._stop(FAILED,
@@ -404,7 +462,17 @@ class Run:
                                       f"previous tab without saying so.")
                 self.cur_tab = made
 
-            bad = await self._check(step)
+            try:
+                bad = await self._check(step)
+            except Unanswerable as exc:
+                # THE STEP ALREADY RAN. Saying which one, and that its
+                # postcondition was never evaluated, is the difference between
+                # this and the uncaught traceback it replaces -- on a flow that
+                # mutates, "how far did it get" is the first question.
+                return self._stop(FAILED,
+                                  f"step {self.i} ({step.name}) RAN, and its "
+                                  f"postcondition could not be evaluated, so "
+                                  f"whether it worked is UNKNOWN.\n  {exc}")
             if bad:
                 # NOT escalated, on purpose. A failed postcondition is the
                 # RESULT of the run, not an obstacle to getting through it.
@@ -416,6 +484,21 @@ class Run:
             self.i += 1
 
         return self._stop(PASSED, self._moved_note())
+
+    def _missing_vars(self, *objs) -> list:
+        """Every {{name}} in these that this run has no value for."""
+        out: list = []
+        for o in objs:
+            _, m = resolve_vars(o or {}, self.vars)
+            out += m
+        return sorted(set(out))
+
+    @staticmethod
+    def _no_value(missing: list, where: str) -> str:
+        return (f"{where} references {', '.join(missing)}, which this flow has "
+                f"no value for — pass it to run_flow, or re-record. Nothing was "
+                f"substituted, so the placeholder would have been typed, searched "
+                f"for or looked up as written.")
 
     def _moved_note(self) -> str:
         if not self.moved:
@@ -510,7 +593,12 @@ class Run:
         self._last_entries = entries
         inp = dict(step.input)
         healed = False
-        for path, target in step.targets.items():
+        # THE TARGET TAKES THE OVERRIDE TOO. Completeness was checked before
+        # the settle window opened, so nothing is missing here; what is left is
+        # the substitution itself, and it has to happen on every attempt
+        # because the descriptor is what `resolve` is handed.
+        targets, _ = resolve_vars(step.targets, self.vars)
+        for path, target in targets.items():
             key = (self.i, path)
             if binding is not None and path == self.pending_path:
                 # THE BINDING ANSWERS THE QUESTION THAT WAS ASKED, and only
@@ -573,7 +661,8 @@ class Run:
         e = next((x for x in entries if str(x.get("mmid")) == str(ref)), None)
         if e is None:
             return
-        built = build(e, entries)
+        built = self._reparam(build(e, entries),
+                              step.targets.get(path) or {})
         self.patches = [p for p in self.patches
                         if not (p["step"] == self.i and p["path"] == path)]
         self.patches.append({
@@ -587,6 +676,41 @@ class Run:
             # describing two different page states at once.
             "target": built,
         })
+
+    def _reparam(self, built: dict, was: dict) -> dict:
+        """Put a variable's placeholder back where its live value now sits.
+
+        A patch is BUILT from the page, so every field in it is a literal --
+        and `record_flow(action="patch")` writes the whole target. Applying one
+        to a step the recorder had parameterised would hard-code the value of
+        this run's `vars` into the file, deleting the override silently. That
+        is the half-contract shape (rule 14) reached from the other end: the
+        recorder writes a placeholder and the repair loop would quietly unwrite
+        it.
+
+        Only the names the ORIGINAL target already carried are substituted
+        back, so this cannot invent a parameterisation the recorder did not
+        make -- the same exactness that makes `_paramize` safe, applied in
+        reverse.
+        """
+        used = set(VAR_RE.findall(json.dumps(was, ensure_ascii=False)))
+        if not used:
+            return built
+
+        def walk(v):
+            if isinstance(v, str):
+                for nm in used:
+                    val = self.vars.get(nm)
+                    if isinstance(val, str) and val and v == val:
+                        return "{{" + nm + "}}"
+                return v
+            if isinstance(v, dict):
+                return {k: walk(x) for k, x in v.items()}
+            if isinstance(v, list):
+                return [walk(x) for x in v]
+            return v
+
+        return walk(built)
 
     # ------------------------------------------------------------------
     # How long a POSTCONDITION may take to become true, and how often it is
@@ -643,6 +767,40 @@ class Run:
         # before this existed carries 0 and is unchanged.
         return await self._await_checks(step.expect or {}, step.settle_ms or 0)
 
+    async def _ask(self, tool: str, call: dict):
+        """Make an assertion call, or say the check never ran.
+
+        The ACT path has caught a raising tool since FR16; the two VERIFY
+        paths caught nothing, so a bridge drop or a gate revoked mid-run
+        escaped `start()` as a bare traceback with no step named, no `at`, no
+        log and no elapsed -- on a flow whose earlier steps had already
+        changed the app. Same reasoning, same place in the call, one concept
+        with one spelling (#21).
+        """
+        try:
+            return await self.call(tool, call)
+        except Exception as exc:
+            raise Unanswerable(f"{tool} could not be called at all: "
+                               f"{type(exc).__name__}: {exc}")
+
+    @staticmethod
+    def _unparsed(tool: str, wanted: str, res) -> None:
+        """Explain an unreadable result when the result explains itself.
+
+        ASKED ONLY WHEN THE PARSE FAILED, which is what makes it free of false
+        positives: a tool that answered normally parses, so a page whose own
+        text contains one of these markers (`search_page` quotes the context it
+        matched) never reaches here. Checking before the parse would have been
+        the open-ended-list hazard the markers were introduced to remove (#66),
+        pointed at page content.
+        """
+        why = refused(str(res))
+        if why:
+            raise Unanswerable(
+                f"{tool} was REFUSED, so it never looked for {wanted} and this "
+                f"assertion did not run.\n  the tool said: "
+                f"{str(res).strip()[:400]}")
+
     async def _verify(self, exp: dict) -> str:
         """Every assertion, live. Returns '' when they all hold.
 
@@ -660,8 +818,10 @@ class Run:
         """
         exp, _unknown = resolve_vars(exp or {}, self.vars)
         if "url" in exp:
-            res = await self.call("get_url", {"tabId": self.cur_tab})
+            res = await self._ask("get_url", {"tabId": self.cur_tab})
             m = re.search(r'"url"\s*:\s*"([^"]+)"', str(res))
+            if not m:
+                self._unparsed("get_url", "a url", res)
             got = m.group(1) if m else str(res)
             if got != exp["url"]:
                 return f'url is {got!r}, recorded {exp["url"]!r}'
@@ -670,9 +830,10 @@ class Run:
             for _k in ("regex", "css_scope", "case_sensitive"):
                 if s.get(_k):
                     _call[_k] = s[_k]
-            res = await self.call("search_page", _call)
+            res = await self._ask("search_page", _call)
             hits = search_hits(str(res))
             if hits is None:
+                self._unparsed("search_page", f'a hit count for {s["pattern"]!r}', res)
                 return (f'could not read a hit count out of search_page for '
                         f'{s["pattern"]!r} — the result-string contract moved')
             # ABSENCE IS AN ASSERTION. Recorded when the agent looked and found
@@ -691,9 +852,10 @@ class Run:
             _qc = {"tabId": self.cur_tab, "selector": q["selector"], "max_results": 1}
             if q.get("attrs"):
                 _qc["attributes"] = sorted(q["attrs"])
-            res = await self.call("query_elements", _qc)
+            res = await self._ask("query_elements", _qc)
             tot = query_total(str(res))
             if tot is None:
+                self._unparsed("query_elements", f'a total for {q["selector"]!r}', res)
                 return (f'could not read a total out of query_elements for '
                         f'{q["selector"]!r} — the result-string contract moved')
             # THE TEXT THAT WAS READ, when one was recorded. Without this a

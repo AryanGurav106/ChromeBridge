@@ -346,6 +346,11 @@ class Recorder:
         focus_target = None
         redacted: list = []
         variables: dict = {}
+        # WHICH KEPT STEP FIRST TYPED EACH VARIABLE. Read only by the TARGET
+        # parameterisation below, which needs the causal direction: a step's
+        # target exists BEFORE that step runs, so it can only be named after a
+        # value an EARLIER step typed.
+        var_at: dict = {}
 
         def _var(target, path, value):
             """Name a typed form value so replay can override it.
@@ -362,6 +367,7 @@ class Recorder:
             while nm in variables and variables[nm] != value:
                 nm, n = f"{base}_{n}", n + 1
             variables[nm] = value
+            var_at.setdefault(nm, len(kept))
             return "{{" + nm + "}}"
 
         action_ix: list = []   # live index each kept step came from
@@ -441,16 +447,18 @@ class Recorder:
         # wrong. The cost is stated rather than hidden: a pattern that merely
         # CONTAINS the value (`search_page("Created atlas-svc")`) keeps the
         # literal and still needs a re-record.
-        def _paramize(obj):
+        def _paramize(obj, only=None):
             if isinstance(obj, str):
                 for nm, val in variables.items():
+                    if only is not None and nm not in only:
+                        continue
                     if isinstance(val, str) and val and obj == val:
                         return "{{" + nm + "}}"
                 return obj
             if isinstance(obj, dict):
-                return {k: _paramize(v) for k, v in obj.items()}
+                return {k: _paramize(v, only) for k, v in obj.items()}
             if isinstance(obj, list):
-                return [_paramize(v) for v in obj]
+                return [_paramize(v, only) for v in obj]
             return obj
 
         # AN ASSERTION THAT WAS ALREADY TRUE WITNESSES NOTHING.
@@ -540,6 +548,65 @@ class Recorder:
         for st in kept:
             if st.expect:
                 st.expect = _paramize(st.expect)
+
+        # ...AND SO MUST THE TARGET, FOR THE SAME REASON ONE STEP LOWER.
+        #
+        # #54 connected the typed INPUT to the ASSERTION and left the TARGET
+        # disconnected, which is the same defect one field over (#21). A flow
+        # that types a name and then ACTS ON THE THING IT JUST NAMED carries
+        # that name in a descriptor, and an override does not reach it:
+        #
+        #   run_flow(vars={"project_name": "beta-svc"})
+        #     step 0  fill_form   value="{{project_name}}"   -> types beta-svc
+        #     step 1  computer    target name="atlas-svc"    -> looks for the
+        #                                                       RECORDED name
+        #
+        # Measured both directions with a fake bridge. Against a clean app the
+        # step cannot resolve and the run pauses saying the control is gone --
+        # loud, and a false description of what happened, since the flow itself
+        # renamed it. Against an app that still holds the record a PREVIOUS run
+        # made (no fixture reset, which is #54's own INHERENT 5.2), it resolves
+        # to the OLD record, acts on it, and the url postcondition -- stale in
+        # exactly the same way, because a url merely CONTAINS the value -- then
+        # confirms it. PASSED, wrong record, no signal: the #10/#11/#12 family.
+        #
+        # It is not hypothetical. `crm-records-filter.flow.json`, recorded live
+        # against a real app, has step 2 targeting `name='ZZ Flow'` -- the text
+        # step 1 typed, which became that input's accessible NAME once the
+        # placeholder was displaced. The flow's own variable breaks the flow.
+        #
+        # ONLY VARIABLES TYPED BY AN EARLIER STEP, and that restriction is what
+        # keeps this from being a guess. A target exists BEFORE its step runs,
+        # so it cannot have been named by a value that step (or a later one)
+        # has not typed yet -- a coincidence like typing "Save" at step 5 and
+        # clicking a "Save" button at step 2 is excluded by the recording's own
+        # order. The residual coincidence -- type "Save", then click an
+        # unrelated "Save" -- is named in `review` rather than hidden, because
+        # the person who re-grades a recorded step is reading the diff (#68).
+        #
+        # EXACT EQUALITY, same rule as the assertion half: substituting a short
+        # value inside a longer string is the guess #27/#28 removed from every
+        # path that decides something.
+        for _n, st in enumerate(kept):
+            if not st.targets:
+                continue
+            earlier = {nm for nm, at in var_at.items() if at < _n}
+            if not earlier:
+                continue
+            before = json.dumps(st.targets, sort_keys=True, ensure_ascii=False)
+            st.targets = _paramize(st.targets, only=earlier)
+            after = json.dumps(st.targets, sort_keys=True, ensure_ascii=False)
+            if after != before:
+                used = sorted(set(re.findall(r"\{\{([A-Za-z0-9_]+)\}\}", after))
+                              & earlier)
+                st.review.append(
+                    f'parameterised: this step is targeted by '
+                    f'{", ".join("{{" + u + "}}" for u in used)}, the value an '
+                    f'earlier step types, so an override follows it here. If the '
+                    f'control is named that by coincidence rather than because '
+                    f'this flow produced it, re-record or edit the target back '
+                    f'to the literal')
+
         _require = _paramize(self._require_before(live))
 
         # ONE OWNER FOR THE LANDING STATE. The observations that become the

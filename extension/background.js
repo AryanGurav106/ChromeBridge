@@ -2173,7 +2173,11 @@ function _readinessPage(scopeMmid) {
   // it crosses shadow roots only. Two different scopes, deliberately.
   const _inScope = (el, scope) => {
     let cur = el;
-    for (let hops = 0; cur && hops < 400; hops++) {
+    // 200, matching listener_tag.js's own inScope. Two spellings of one concept
+    // with different bounds is the #21 defect, and the divergence that matters is
+    // the NUMBER: the looser bound sat on the path that is effectively unreachable
+    // (shallow frame walks) while the tighter one decides per-record containment.
+    for (let hops = 0; cur && hops < 200; hops++) {
       if (cur === scope) return true;
       if (cur.nodeType === 11) { cur = cur.host || null; continue; }
       if (cur.nodeType === 9) {
@@ -2216,8 +2220,24 @@ function _readinessPage(scopeMmid) {
       const sr = _scope.shadowRoot || _scope.__abClosedRoot;
       if (sr) _deepAll(sel, sr, 1).forEach((e) => acc.push(e));
     } catch (e) {}
+    // THE THIRD "the root is not its own descendant" CASE, and it was missing.
+    // `_deepAll(sel, root)` finds frames by `root.querySelectorAll('iframe,frame')`,
+    // which never matches the root itself -- so a read scoped TO an <iframe>
+    // reported prog=0 busy=0 while that frame held a visible progressbar and an
+    // aria-busy region. The mutation half already worked there (the frame merge
+    // accepts a frame whose element IS the scope), so only the DECLARATIVE
+    // signals were lost, which is the half a CSS-animated spinner lives in.
+    try {
+      let fd = null;
+      try { fd = _scope.contentDocument; } catch (e) { fd = null; }   // cross-origin
+      if (fd) _deepAll(sel, fd, 1).forEach((e) => acc.push(e));
+    } catch (e) {}
     return acc;
   };
+  // Which document the scope lives in. A scope inside a same-origin frame is
+  // recorded by THAT frame's ring, never by the top one, so the merge below has
+  // to know where to ask.
+  const _scopeDoc = _scope ? _scope.ownerDocument : null;
   const o = { ready: document.readyState, imgs: 0, busy: 0, prog: 0, mut: null,
               scoped: !!_scope, scopeMiss: _scopeMiss };
   // DOM MUTATION RECENCY -- the signal that answers the question actually being
@@ -2269,7 +2289,12 @@ function _readinessPage(scopeMmid) {
     // via textContent arrives as childList -- Chrome records it as remove+add of
     // a text node -- so it trips the STRONG banner. Measured above at 25
     // `structural` and 0 `text` for a clock doing nothing but `textContent=`.
-    if (window.__abMut) o.mut = window.__abMut.query(_scope, MUT_WIN);
+    if (window.__abMut) {
+      o.mut = window.__abMut.query(_scope, MUT_WIN);
+      // Carried onto the mut object itself so the renderer can key the
+      // unknown-vs-quiet branch on it without reaching outside `m`.
+      if (o.mut) o.mut.scoped = !!_scope;
+    }
     // SAME-ORIGIN FRAMES TOO, or this reports QUIET for a page whose content
     // lives in an iframe while that frame is actively painting -- a FALSE quiet,
     // which is the worst direction this probe can fail in and the thing R17 was
@@ -2291,19 +2316,38 @@ function _readinessPage(scopeMmid) {
         for (let i = 0; i < w.length; i++) {
           let f = null;
           try { f = w[i]; if (!f || !f.document) continue; } catch (e) { continue; }  // cross-origin
-          // UNDER A SCOPE, a frame counts only if its own <iframe> element is
-          // inside that scope. Merging every frame into a scoped answer would
-          // reimport exactly the churn the scope was asked to exclude; skipping
-          // frames altogether would report a scope whose content lives in an
-          // iframe as quiet, which is the worse error. `frameElement` is the
-          // declaration, and _inScope walks out through it.
+          // UNDER A SCOPE THERE ARE **TWO** QUESTIONS, and the first version of
+          // this guard asked only one of them.
+          //   frame INSIDE scope  -> merge the frame's whole ring
+          //   scope INSIDE frame  -> ask THAT ring about the scope
+          // `_inScope(f.frameElement, _scope)` walks UP from the <iframe>, so it
+          // can only ever answer the first. When the scope lives inside the frame
+          // the walk goes the wrong way, the `continue` fired, and the frame's own
+          // ring was never read -- while the TOP ring holds no records for it
+          // either, because each frame records into its own. Net effect: a read
+          // scoped to a div inside a same-origin iframe reported SILENCE while
+          // that frame painted 4000 rows, and the same page unscoped reported
+          // `152 structural`. A regression in the false-quiet direction, on a
+          // shape the collector itself handles (`composedParent` crosses
+          // `frameElement`, so the LISTING scopes to such a ref perfectly) -- the
+          // listing and its own banner disagreeing about one scope.
+          let _fscope = null;
           if (_scope) {
-            let fe = null;
-            try { fe = f.frameElement; } catch (e) { continue; }
-            if (!fe || !_inScope(fe, _scope)) continue;
+            let fdoc = null;
+            try { fdoc = f.document; } catch (e) { continue; }
+            if (_scopeDoc && fdoc === _scopeDoc) {
+              // The scope LIVES in this frame. Its records are in this ring and
+              // containment inside one document is what `inScope` is for.
+              _fscope = _scope;
+            } else {
+              let fe = null;
+              try { fe = f.frameElement; } catch (e) { continue; }
+              if (!fe || !_inScope(fe, _scope)) continue;
+              _fscope = null;   // the whole frame sits inside the scope
+            }
           }
           let q = null;
-          try { q = f.__abMut ? f.__abMut.query(null, MUT_WIN) : null; } catch (e) {}
+          try { q = f.__abMut ? f.__abMut.query(_fscope, MUT_WIN) : null; } catch (e) {}
           if (q) {
             o.mut.total += q.total;
             o.mut.saturated = o.mut.saturated || q.saturated;
@@ -2335,7 +2379,15 @@ function _readinessPage(scopeMmid) {
     const vh = window.innerHeight || document.documentElement.clientHeight || 0;
     const vw = window.innerWidth || document.documentElement.clientWidth || 0;
     const M = 200;
-    for (const im of _scan('img')) {
+    // PAGE-WIDE EVEN UNDER A SCOPE, and the scoping of it was wrong on its own
+    // stated rationale. The set that matters here is "the one that will REFLOW
+    // what we are about to print", and reflow is NOT subtree-local: an unloaded
+    // hero image ABOVE the scope pushes the scope down and invalidates every
+    // coordinate in it. Measured: a panel scoped to itself reported imgs=0 with
+    // a hero still loading directly above it. aria-busy and role=progressbar are
+    // genuine subtree DECLARATIONS and stay scoped; this one belongs with the
+    // network count.
+    for (const im of _deepAll('img')) {
       if (im.complete) continue;
       const r = _topRectFor(im);
       if (r.width <= 8 || r.height <= 8) continue;
@@ -2479,6 +2531,37 @@ async function readinessNote(tabId, scopeMmid) {
   // reading is the UNKNOWN case and falls through to the network-only path
   // below, which is the same answer R17 pins for a page with no recorder at
   // all: unknown is never reported as quiet.
+  // UNDER A SCOPE, `since === -1` MEANS THREE DIFFERENT THINGS and the output
+  // distinguished none of them:
+  //   (a) the ring never recorded anything at all           -> genuinely unknown
+  //   (b) the subtree genuinely never moved                 -> genuinely quiet
+  //   (c) the subtree moved and we did not RETAIN the record
+  // (c) is routine once scoped, and it was falling through to silence. Three
+  // separate mechanisms produce it, all measured: a scope whose records fall past
+  // the 32-per-batch STORE bound (the batch bound is a cost control, not a
+  // containment rule, so whether a scope is visible depends on its position in a
+  // framework's render batch -- nothing the caller controls); ring SATURATION
+  // evicting the scope's slot while `saturated` is known and was never printed;
+  // and the 200-hop containment bound.
+  //
+  // Unscoped only (a) was reachable, which is why this was survivable before and
+  // is not now. `sinceAny` is the fact that separates them: it is the most recent
+  // record REGARDLESS of scope, so "nothing attributed to your subtree, but the
+  // page moved 12ms ago" is an honest unknown where silence was a false quiet.
+  // This converts those three from a wrong answer into an over-warn, which is the
+  // direction everything else in this probe is built around.
+  if (m && m.scoped !== false && m.since < 0 && m.sinceAny >= 0) {
+    const sat = m.saturated
+      ? ' Its ring has WRAPPED, so older records were evicted and absence here is not evidence.'
+      : '';
+    return `*** NO DOM CHANGE COULD BE ATTRIBUTED TO THE SUBTREE YOU SCOPED TO, and that is ` +
+           `NOT the same as it being settled. The page as a whole last changed ${m.sinceAny}ms ago.` +
+           `${sat} A scoped read can lose a change three ways — the record fell past the ` +
+           `per-batch store bound, the ring wrapped, or the element sits deeper than the ` +
+           `containment walk reaches — so treat this as UNKNOWN rather than quiet` +
+           (bits.length ? `; also ${bits.join('; ')}` : '') + `. Re-read unscoped to get a ` +
+           `definite answer for the page. ***\n`;
+  }
   if (m && m.since >= 0) {
     const moved = m.structural + m.text +
                   Object.values(m.attrs).reduce((a, b) => a + b, 0);
@@ -2559,7 +2642,14 @@ async function readinessNote(tabId, scopeMmid) {
   // (`geometry=true`), so naming it would describe a field most reads do not
   // contain, while the warning still applies to a screenshot coordinate or one
   // carried from an earlier geometry read.
-  return `*** PAGE IS STILL SETTLING (${bits.join('; ')}). Content may still be arriving, ` +
+  // A SCOPE THAT DID NOT RESOLVE SAYS SO HERE TOO. The two DOM branches above
+  // already name it; this one is reached when there is no recency reading at all,
+  // and it was the one path where the fallback stayed silent — the exact thing
+  // the comment at the fallback calls "worse than either".
+  const _missNote = r.scopeMiss
+    ? ' NOTE: the ref you scoped to did not resolve here, so this describes the WHOLE PAGE.'
+    : '';
+  return `*** PAGE IS STILL SETTLING (${bits.join('; ')}).${_missNote} Content may still be arriving, ` +
          `and any coordinate may shift as it does — re-observe before trusting one, ` +
          `and do NOT conclude something is absent from this read alone. Refs are re-measured at ` +
          `click time, so acting BY REF is safe. ***\n`;

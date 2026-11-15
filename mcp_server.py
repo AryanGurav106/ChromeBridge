@@ -722,6 +722,44 @@ def _split_banner(text: str) -> tuple[str, str]:
     return (m.group(1), text[m.end():]) if m else ("", text or "")
 
 
+def _merge_text_banner(out: str, text: str) -> tuple[str, str]:
+    """Fold the appended text block's readiness banner into the response.
+
+    `read_page(filter="all")` -- which is the DEFAULT -- appends a text block
+    fetched by a SECOND bridge round trip, and `get_dom_text` prepends a
+    readiness banner of its own to it. An earlier version stripped that banner
+    unconditionally, on the reasoning that the two "describe the same page at the
+    same instant". **They do not.** They are two separate round trips, and the
+    text probe's readiness runs AFTER `_domTextPage`, i.e. after a
+    hide-read-restore whose `@style` round-trip is explicitly NOT caught by the
+    net-zero rule. So the second observation is systematically later and
+    systematically contaminated by our own instrumentation.
+
+    That makes the unconditional strip a DELETION of a genuine warning whenever
+    the two disagree -- worst when the listing's banner says "no element was
+    added, removed or re-texted, so the listing below is structurally current"
+    while the stripped one said the opposite about the very text printed beneath
+    it.
+
+    Three cases, decided by EXACT STRING EQUALITY so nothing here is a judgement:
+      identical            -> strip. This is the common duplicate and the reason
+                              the strip exists at all.
+      different, both set  -> keep the text's banner INLINE, where its position
+                              shows which observation it belongs to.
+      listing has none     -> PROMOTE the text's banner to the front, so
+                              `_truncate` protects it instead of cutting it.
+    """
+    tb, body = _split_banner(text)
+    if not tb:
+        return out, body
+    ob = _split_banner(out)[0]
+    if ob == tb:
+        return out, body
+    if ob:
+        return out, text
+    return _prepend_to_listing(out, tb), body
+
+
 def _prepend_to_listing(out: str, line: str) -> str:
     """Insert a server-side header line, keeping any extension banner FIRST.
 
@@ -1430,15 +1468,12 @@ async def read_page(
                 out += (f"\n\n[text for ref_{scope_mmid} unavailable — the element went "
                         "away between the two reads. Re-read for current refs.]")
             else:
-                # STRIP ITS BANNER. get_dom_text prepends a readiness banner of
-                # its own, and this response already carries one for the same page
-                # at the same instant -- so appending it unchanged printed the
-                # identical warning twice, once above the rows and once above the
-                # text, with nothing saying they were the same observation.
-                out += f"\n\n--- TEXT INSIDE ref_{scope_mmid} ---\n" + _split_banner(rtext)[1]
+                out, _rt = _merge_text_banner(out, rtext)
+                out += f"\n\n--- TEXT INSIDE ref_{scope_mmid} ---\n" + _rt
         else:
             text = await b.call("get_dom_text", tabId=tabId)
-            out = out + "\n\n--- PAGE TEXT ---\n" + _split_banner(str(text))[1]
+            out, _pt = _merge_text_banner(out, str(text))
+            out = out + "\n\n--- PAGE TEXT ---\n" + _pt
     # DELTA. Line-based on purpose: diffing structured entries would mean a THIRD
     # formatter, and vocabulary drift between the two that already exist produced
     # five of the eleven defects a live-agent study found. Diffing the exact rows
@@ -4617,7 +4652,16 @@ _LAST_PATCHES: dict = {}
 def _flow_report(res: dict) -> str:
     if res.get("patches"):
         _LAST_PATCHES[res["flow"]] = res["patches"]
+    # EVERY status the RUNNER can return has to be renderable HERE. `stop_after`
+    # shipped with FR22/FR22b/FR22c pinning the runner's fourth status and
+    # NOTHING crossing into this renderer, so `run_flow(stop_after=N)` raised
+    # KeyError('stopped_early') on its first real call -- the #19/#30 class, in
+    # the feature that is half the route OPEN.md item 12 names for the TEXT
+    # sufficiency measurement. That measurement would have died on call one.
+    # A `.get` default is deliberately NOT used: an unrenderable status should
+    # fail a test, not print a placeholder.
     head = {"passed": "PASSED", "failed": "FAILED",
+            "stopped_early": "STOPPED EARLY — replay halted at the step you asked for",
             "needs_decision": "PAUSED — a step needs your decision"}[res["status"]]
     out = [f'{head}: flow "{res["flow"]}", {res["at"]}/{res["of"]} step(s) run '
            f'in {res["seconds"]}s.']

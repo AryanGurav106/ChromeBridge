@@ -120,14 +120,32 @@ PASSED**, because "one fewer row" still holds.
 
 **The fix is a witness**: the five identity fields the descriptor ignores, plus
 an *anchor* of the nearest preceding non-crowd controls, recorded only where it
-is unique at record time. Result on the live re-sort shape:
+is unique at record time. Both arms, because quoting one of them is how this
+section was wrong:
 
 | | n | CORRECT | REFUSED | WRONG |
 |---|---|---|---|---|
 | **resort, witnessed** | 212 | **94.3%** | 5.7% | **0.0%** |
 | resort, unwitnessed | 346 | 5.8% | 0.0% | 94.2% |
+| **reorder, witnessed** | 238 | 18.1% | 10.5% | **71.4%** |
+| reorder, unwitnessed | 348 | 5.7% | 0.0% | 94.3% |
 
 Refusal cost on the six pre-existing mutations: **+0.2pp**.
+
+**`resort` moves each record with its own contents and is the live shape;
+`reorder` permutes the crowd inside a FIXED scaffold.** An anchor-only witness
+survives the first and not the second — the anchor stays put, the element
+moves, and whichever member arrives at the recorded anchor is bound
+*confidently* and reported as a successful `moved` re-bind. #72 dismisses that
+arm as not physically realisable ("a renderer cannot move the buttons and leave
+their rows"), which is an argument rather than a measurement, and the closure
+figure belongs to the other arm. Re-derived on a different 6-site sample:
+resort witnessed **0.0%** wrong, reorder witnessed **55.6%**.
+
+And the witnessed set is a **minority**: 212 of 558 (38.0%) on resort, 238 of
+586 (40.6%) on reorder — which is what the 59.4% below says from the other
+side. `FLOWS-FAILURE-SURFACE.md` 3.2 called it "the witnessed majority" and
+contradicted its own next row.
 
 **Geometry was the best witness at 87.3% coverage and is deliberately not
 used.** It is excluded from identity because it drifts (110px in #23, 1,097px in
@@ -154,6 +172,15 @@ re-recorded.**
 | **`require` had never once fired** — `{}` in all 19 flows | derived from before the first *non-navigational* action; proven firing live, both directions |
 | `Step.note`, `descriptor["untargetable"]`, and the three review markers were all half-contracts | wired or persisted; `--check-only` now prints the review lines, so CI sees them |
 
+## 6b. Closed after that
+
+| | |
+|---|---|
+| a variable reached the input and the assertion and **not the target**, so a flow that acts on the thing it just created bound to the record a PREVIOUS run left and reported PASSED | the target is parameterised too, restricted to variables an EARLIER step typed; surface 2.6 |
+| an undeclared `{{name}}` in an **assertion** was resolved with the missing names discarded and the placeholder searched for literally, where the input path had refused one since FV4 | one completeness check over input, targets and expect, asked before the step acts |
+| a proposed patch, built from the page, would have hard-coded this run's value and **deleted the parameterisation** | only the names the original target carried are substituted back |
+| a REFUSED or RAISING assertion tool was reported as *"the result-string contract moved"*, as the url, or as an uncaught traceback with no step named | `Unanswerable`: the check did not run, said as that; surface 5.6 |
+
 ## 7. Still open
 
 See `FLOWS-FAILURE-SURFACE.md` for the systematic version: every way this can
@@ -165,7 +192,17 @@ follows is the short list.
   in the repo's own flows are a bare count. `OPEN.md` Tier 1.
 - an absence assertion is satisfied by a blank page, and the settle window
   points the wrong way for it.
-- the unwitnessed 59.4% above.
+- the unwitnessed 59.4% above, and the `reorder` arm beside it.
+- **the precondition reaches 1 flow in 20.** `require` is derived from the three
+  tools `_checks` understands, and the tool agents are taught to open with —
+  `read_page` — is not one of them. Surface 6.5.
+- **nothing isolates one replay from the next**: `run_flow(stop_after=N)` ends
+  mid-flow on purpose, `run_flows.py` shares one tab across a batch, and only
+  the fixture flows are reset. Surface 6.6/6.7.
+- **a localised app invalidates every descriptor at once** and is the only
+  environment change with no cause note. Surface 3.8.
+- **`run_flow(stop_after=N)` cannot be rendered**: `_flow_report` is a three-key
+  lookup and the runner's fourth status is `stopped_early`. Surface 7.1.
 
 ## 8. Historical — the state before #72
 

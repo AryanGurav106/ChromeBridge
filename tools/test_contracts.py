@@ -1139,11 +1139,126 @@ def main() -> int:
     # The appended text block carries its own banner (get_dom_text prepends one),
     # describing the same page at the same instant as the listing's. Printing it
     # twice in one response leaves the reader asking which half each describes.
-    check("C32 the text appended to a scoped read has its duplicate readiness "
-          "banner stripped",
-          '_split_banner(rtext)[1]' in read("mcp_server.py")
-          and '_split_banner(str(text))[1]' in read("mcp_server.py"),
-          "both text-append paths strip")
+    _B1 = "*** THE DOM IS STILL CHANGING (x) ***\n"
+    _B2 = "*** Minor DOM activity (y) ***\n"
+    _L, _T = 'ref_1 | a "Home"\n', "page text\n"
+    _same = _ms._merge_text_banner(_B2 + _L, _B2 + _T)
+    _diff = _ms._merge_text_banner(_B2 + _L, _B1 + _T)
+    _bare = _ms._merge_text_banner(_L, _B1 + _T)
+    check("C32 an IDENTICAL banner on the appended text is stripped (the common "
+          "duplicate, and the only case the strip was ever right for)",
+          _ms._split_banner(_same[1])[0] == "" and _ms._split_banner(_same[0])[0] == _B2)
+    check("C32b a DIFFERENT banner is KEPT — the two are separate round trips "
+          "and the text probe runs after a hide-read-restore, so discarding it "
+          "deleted a genuine warning while the surviving one asserted the "
+          "listing was structurally current",
+          _ms._split_banner(_diff[1])[0] == _B1)
+    check("C32c a banner on the text when the LISTING has none is promoted to "
+          "the front, where _truncate protects it instead of cutting it",
+          _ms._split_banner(_bare[0])[0] == _B1
+          and _ms._split_banner(_bare[1])[0] == "")
+    # THE CALL SITE, not the helper. The defect being guarded was a call-site
+    # defect: reverting line ~1400 to a naive `line + out` concatenation leaves
+    # all 1268 checks green and silently restores the shipped bug, because C31
+    # drives the helper directly and no test drives read_page with a ref_id.
+    # #19 and #30 are explicit that this is where features die.
+    _srv2 = read("mcp_server.py")
+    check("C34 the scoped-read header goes through _prepend_to_listing, not a "
+          "bare concatenation — C31 tests the helper and this tests the only "
+          "place it matters",
+          "_prepend_to_listing(" in _srv2
+          and not re.search(r'=\s*f?"\[scoped to the subtree[^"]*"\s*\+\s*out', _srv2),
+          "scope header is composed, not concatenated")
+    check("C34* ...and the rule provably fires on the concatenation that shipped",
+          bool(re.search(r'=\s*f?"\[scoped to the subtree of ref_\{x\} — y]\\n"\s*\+\s*out',
+                         'out = f"[scoped to the subtree of ref_{x} — y]\\n" + out')))
+
+    # ------------------------------------------------------- C33 / C34 / C35 ---
+    # THE PARSE IS PART OF THE RULER, and for a year it was silently wrong.
+    # Mind2Web serializes XML-style, so `<a/>`, `<i/>`, `<iframe/>` come back as
+    # EMPTY elements. HTML has no self-closing syntax for a non-void element: the
+    # slash is ignored and the tag OPENS. `bench_mind2web.py` excluded thirteen
+    # labelled actions saying "the target element is absent from the saved
+    # snapshot entirely" when every one of those ids was in the snapshot and was
+    # lost in the PARSE -- a false sentence that hid a real input defect and
+    # produced a second, pessimistic denominator (89.2%) printed beside the
+    # headline. #73 found it; these pin the repair, the bound it exposed, and the
+    # sentence. Driven here rather than in a browser suite because the repair is
+    # a pure string transform and the credit rule is pure Python -- which is the
+    # whole reason both were hoisted out of the benchmark (#30's lesson: a
+    # function nested inside the tool is one a test can only reach by proxy).
+    import _m2w_ruler as _mw
+
+    _XML = ('<div><a href="/x" name="skip"/><h1 id="t">Balance Sheet</h1>'
+            '<img src="i.png"/><iframe src="f"/><button id="after">Go</button></div>')
+    _fixed = _mw.repair_serialization(_XML)
+    check("C33 a self-closed non-void tag is reopened and closed, so it cannot "
+          "adopt the markup that follows it",
+          '<a href="/x" name="skip"></a>' in _fixed
+          and '<iframe src="f"></iframe>' in _fixed
+          and '<button id="after">Go</button>' in _fixed,
+          repr(_fixed[:72]))
+    check("C33b ...and a VOID element is left exactly as it was, because <img/> "
+          "really is self-closing",
+          '<img src="i.png"/>' in _fixed and "</img>" not in _fixed)
+    check("C33c CONTROL: a document with nothing self-closed comes back "
+          "byte-identical, so this is not 'rewrite the markup'",
+          _mw.repair_serialization("<div><a href='/x'>hi</a><img src='i'></div>")
+          == "<div><a href='/x'>hi</a><img src='i'></div>")
+    # #13/#19: a repair that exists and is never applied is `detail="brief"`
+    # shipping inert. The benchmark must feed the REPAIRED string to the page.
+    _bm = read("tools/bench_mind2web.py")
+    check("C33d ...and the benchmark actually renders the repaired string, not "
+          "the stored one",
+          re.search(r"html\s*=\s*repair_serialization\(s\[.html.\]\)", _bm)
+          and re.search(r"set_content\(\s*html\b", _bm),
+          "repair is wired into score_one")
+
+    # C34: ONE CAP, BOTH DIRECTIONS. The descendant path was capped by area so a
+    # page-sized container could not claim credit for its contents; the ancestor
+    # path -- the direction where a false credit is structurally POSSIBLE, since
+    # an ancestor is by construction at least as large as its target -- had no
+    # bound at all. Measured on the corpus: the descendant cap has never fired
+    # (0 of 173 targets reach 40% of the viewport) while the ancestor side
+    # carried a <label> credited to an <a> holding 638 elements and 90% of the
+    # viewport.
+    _big = {"own": None, "area": 0.01, "descs": ["9"],
+            "ancs": [{"mmid": "2", "area": 0.90}, {"mmid": "3", "area": 0.02}]}
+    check("C34 an ancestor larger than the cap cannot stand in for its target",
+          [r for r, _ in _mw.credit_refs(_big)] == ["3", "9"],
+          f"{_mw.credit_refs(_big)}")
+    check("C34b CONTROL: the same rule still credits a small ancestor, so this "
+          "did not become 'never credit an ancestor'",
+          _mw.credit_refs({"own": None, "area": 0.01, "descs": [],
+                           "ancs": [{"mmid": "3", "area": 0.02}]})
+          == [("3", "ancestor")])
+    check("C34c the SAME constant bounds both directions — a page-sized TARGET "
+          "still cannot be credited with its own contents",
+          _mw.credit_refs({"own": None, "area": 0.95, "descs": ["9"], "ancs": []}) == []
+          and _mw.credit_refs({"own": None, "area": 0.39, "descs": ["9"],
+                               "ancs": []}) == [("9", "descendant")])
+    # REFUSING A CREDIT IS NOT LOSING THE ROW, and reporting it as though it were
+    # is how #73 computed "mirror the cap -> 165/173". Running it gives 166/173:
+    # the one withdrawn credit falls through to the target's own <input>.
+    check("C34d a refused ancestor falls through to a descendant credit rather "
+          "than dropping the row",
+          [v for _, v in _mw.credit_refs(_big)] == ["ancestor", "descendant"])
+    check("C34e ...and `cap_withdrew` reports a CHANGED VERDICT, not merely the "
+          "existence of an oversized ancestor (#73's own probe bug, which "
+          "reported 8 where the truth was 1)",
+          _mw.cap_withdrew(_big, {"2", "3", "9"})
+          and not _mw.cap_withdrew({"own": "5", "area": 0.01, "descs": [],
+                                    "ancs": [{"mmid": "2", "area": 0.9}]}, {"5", "2"}))
+
+    # C35: THE SENTENCE ITSELF. The comment was the defect -- it asserted a fact
+    # about the DATASET ("absent from the saved snapshot entirely") that was
+    # false, and a reader who believed it had no reason to look further.
+    check("C35 the benchmark no longer claims the excluded targets are absent "
+          "from the snapshot, and no longer excludes them",
+          "target_not_in_html" not in _bm
+          and 'target_not_in_dom' in _bm
+          and '"target_not_in_dom"' in _bm.split("SCORED = ")[1].split("\n")[0],
+          "one denominator, all 186 actions")
 
     print(f"\n{passed} passed, {failed} failed, {passed + failed} total checks")
     if failures:
