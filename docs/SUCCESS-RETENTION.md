@@ -44,10 +44,43 @@ what exploiting a partial side channel looks like. Its absolute level was
 already suspicious — full cleaned HTML scores ~1.00 on element RECALL, so
 0.375 was a signal about the instrument.
 
-**The fix** is to renumber `backend_node_id` in document order before
-rendering that arm, then re-judge. Not done here.
+**FIXED, and it was not enough.** The ids were renumbered in document order
+and verified: the gold precedes `<html>` in **0 of 16** pages, down from 12 of
+20. The arm was then re-judged from scratch. What that bought was a fair
+baseline on a substrate that still cannot carry the experiment — see below.
 
-### A second, upstream limit
+### The substrate defeats ALL THREE arms, each differently
+
+This is the finding, and it is bigger than the leak.
+
+| arm | how Mind2Web's snapshots break it |
+|---|---|
+| cleaned-html | leaked the target through id ordering (fixed) |
+| ax-tree | **0 of 40 samples contain a single `href`** — the dataset strips them, so every `<a>` is AX-ignored and collapses to `generic` or is dropped. **14 of 20 AX pages contain no `link` role at all.** Targets are literally unaddressable |
+| chromebridge | viewport-scoped by design, so a single-read test cannot follow the "scope into this region" the listing itself prints |
+
+And two that hit everything equally:
+
+* **No step VALUE.** `"CLICK"` with no target text leaves several items with no
+  determinate answer for any representation. A judge on a Discogs item called
+  it "a genuine ~50/50" between opening the account menu and clicking Lists,
+  and declined rather than coin-flipping.
+* **No CSS, so responsive duplicates are indistinguishable.** Six Flags ships
+  FOUR identical copies of its utility nav; a judge located "Investors"
+  correctly, picked the first of four in document order, and was wrong by
+  construction. On an AMC item another judge answered the nav link when the
+  gold was the menu BUTTON that opens the panel — it flagged that exact
+  possibility itself, because open-state is unknowable without CSS.
+
+**Three independent blind judges found three different ways the material
+defeats the measurement, and each refused to guess rather than produce a
+number I could have tabulated.** That is why there is no table here.
+
+**This applies to published comparisons on this corpus too.** Anyone
+benchmarking observation formats on Mind2Web snapshots is, to some degree,
+measuring the corpus.
+
+### A third, upstream limit
 
 `fetch_mind2web.py` stores the operation as a bare `"CLICK"` / `"TYPE"` with no
 VALUE. On a form with four empty fields the step is under-determined for EVERY
