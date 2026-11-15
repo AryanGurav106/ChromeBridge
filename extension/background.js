@@ -5857,12 +5857,46 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       }
       if (tag === 'aside' || role === 'complementary') return 'sidebar';
       if (tag === 'nav'   || role === 'navigation')    return 'nav';
-      if (tag === 'header'|| role === 'banner')        return 'header';
-      if (tag === 'footer'|| role === 'contentinfo')   return 'footer';
+      // A <header>/<footer> IS ONLY A LANDMARK WHEN IT IS THE PAGE'S.
+      //
+      // HTML-AAM is explicit: <header> maps to role=banner, and <footer> to
+      // role=contentinfo, ONLY when scoped to the body -- i.e. when it has no
+      // article/aside/main/nav/section ancestor. Nested, they are generic.
+      // Nearest-ancestor alone therefore inverted the field on a real page
+      // (eval 4 T4): a search form's own button row is a <footer>, so the
+      // form's submit was tagged `section=footer`, while the SITE-WIDE footer's
+      // search input sat inside a <form> and was tagged `section=form`. Both
+      // "correct" by proximity, both the opposite of the truth, and the field
+      // actively misled instead of merely under-informing.
+      //
+      // An explicit role=banner/contentinfo is NOT scoped this way -- the
+      // author said what it is, and this file's rule is to believe a
+      // declaration over an inference.
+      if (role === 'banner')      return 'header';
+      if (role === 'contentinfo') return 'footer';
+      if (tag === 'header' || tag === 'footer') {
+        let sc = null;
+        try { sc = walker.closest('article, aside, main, nav, section'); } catch (e) {}
+        if (!sc) return tag === 'header' ? 'header' : 'footer';
+        // Scoped to a sectioning element: generic. Keep walking -- the real
+        // landmark is further up.
+      }
       if (tag === 'main'  || role === 'main')          return 'main';
       if (role === 'tablist' || role === 'tabpanel')   return role;
       if (role === 'menu' || role === 'menubar' || role === 'listbox') return role;
-      if (role === 'form' || tag === 'form')           return 'form';
+      // ...AND A <form> IS ONLY A LANDMARK WHEN IT IS NAMED. ARIA says the form
+      // role is a landmark only with an accessible name; unnamed it is generic.
+      // That is the other half of the same inversion: an unnamed search <form>
+      // inside the page footer was swallowing the footer it sits in.
+      if (role === 'form' || tag === 'form') {
+        let named = false;
+        try {
+          named = !!(walker.getAttribute('aria-label') ||
+                     walker.getAttribute('aria-labelledby') ||
+                     walker.getAttribute('title'));
+        } catch (e) {}
+        if (named) return 'form';
+      }
       // Crossing a frame boundary: the element lives inside an embedded frame —
       // a strong disambiguator (embedded editor / widget vs the host page).
       if (tag === 'iframe' || tag === 'frame')         return 'iframe';

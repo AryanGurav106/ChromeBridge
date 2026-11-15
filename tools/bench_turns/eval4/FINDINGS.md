@@ -180,7 +180,17 @@ reading it off the listing.
 CLAUDE.md #23 already records that `section=` resolves to the nearest landmark
 without stopping at a dialog boundary. This is worse than that entry describes:
 the attribution is not merely coarse, it is **swapped**, so the field actively
-misleads rather than under-informing. Open; not fixed mid-eval.
+misleads rather than under-informing. ~~Open; not fixed mid-eval.~~
+
+**CLOSED.** HTML-AAM settles both halves without a heuristic: `<header>` maps
+to `banner` and `<footer>` to `contentinfo` ONLY when scoped to the body, so a
+form's own button row is generic and the walk continues; and ARIA makes the
+form role a landmark only with an accessible name, so an unnamed search form
+no longer swallows the footer it sits in. An explicit `role=banner` /
+`role=contentinfo` is deliberately NOT scoped that way — the author said what
+it is. SEC1/SEC1b fail against nearest-ancestor and reproduce the inversion
+byte-for-byte (`mainsubmit: footer`, `footsubmit: form`); SEC1c passes in both
+arms as the control that neither region was simply deleted.
 
 ## T4 — the readiness work earned its keep on a real site
 

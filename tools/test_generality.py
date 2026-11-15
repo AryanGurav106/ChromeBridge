@@ -720,6 +720,53 @@ async def main():
               "(canvas)" in _cstr2 and any(e.get("tag") == "canvas" for e in _craw2),
               f"marker={'(canvas)' in _cstr2} canvas entries="
               f"{sum(1 for e in _craw2 if e.get('tag') == 'canvas')}")
+
+        # ---- SEC1: section= was INVERTED on a real page (eval 4 T4) ---------
+        # Nearest-ancestor alone gets both of these backwards, and both are
+        # ordinary markup: a search form's button row is a <footer>, so the
+        # FORM's own submit read `section=footer`; and the site-wide footer's
+        # search input sits inside a <form>, so it read `section=form`.
+        # HTML-AAM settles both without a heuristic -- <header>/<footer> map to
+        # banner/contentinfo ONLY when scoped to the body, and ARIA makes the
+        # form role a landmark only when it has an accessible name.
+        await dp2.set_content(
+            "<body>"
+            "<section id=srch><form id=mainform aria-label='Site search'>"
+            "<input name=q><footer><button id=mainsubmit>Search</button></footer>"
+            "</form></section>"
+            "<footer id=pagefoot><form><input name=fq>"
+            "<button id=footsubmit>Go</button></form></footer>"
+            "</body>")
+        await dp2.wait_for_timeout(160)
+        _sraw = await dp2.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        _sec = {}
+        for _e in _sraw:
+            _id = None
+            try:
+                _id = await dp2.evaluate(
+                    "(m)=>{const e=document.querySelector(`[mmid='${m}']`);"
+                    "return e?e.id:null;}", _e.get("mmid"))
+            except Exception:
+                pass
+            if _id:
+                _sec[_id] = _e.get("section")
+        check("SEC1 a <footer> INSIDE a form is not the page footer",
+              _sec.get("mainsubmit") == "form",
+              f"mainsubmit section={_sec.get('mainsubmit')!r} (expected 'form'); all={_sec}")
+        check("SEC1b ...and an UNNAMED form inside the page footer does not "
+              "swallow the footer it sits in",
+              _sec.get("footsubmit") == "footer",
+              f"footsubmit section={_sec.get('footsubmit')!r} (expected 'footer'); all={_sec}")
+        # THE CONTROL. "never report form" and "never report footer" would each
+        # satisfy one of the two above; only a page where BOTH land correctly
+        # shows the rule rather than a deletion. A page-level <footer> with no
+        # form in it must still be a footer, and a NAMED form must still be a
+        # form -- which SEC1/SEC1b already assert from opposite directions.
+        check("SEC1c CONTROL: both regions are still reported, neither deleted",
+              _sec.get("mainsubmit") and _sec.get("footsubmit")
+              and _sec.get("mainsubmit") != _sec.get("footsubmit"),
+              f"all={_sec}")
         await dp2.close()
 
         # ---- N: a name belongs to the element it is printed against -------
