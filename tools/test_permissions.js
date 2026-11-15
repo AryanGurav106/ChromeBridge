@@ -158,6 +158,12 @@ const GATED = [
   // already passed the gate on the step that started the navigation. Default deny
   // costs nothing here and is the direction the gate is supposed to fail in.
   "await_navigation",
+  // await_quiet runs a function IN THE PAGE and reads the mutation recorder's
+  // counts, so it is strictly more page-touching than await_navigation (which
+  // is a Map lookup in the worker). Gated by omission for the same reasons,
+  // and listed here so "it is gated" is proven rather than assumed -- that is
+  // the whole point of this list.
+  "await_quiet",
 ];
 
 (async function main() {

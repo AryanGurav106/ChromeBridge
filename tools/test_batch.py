@@ -130,9 +130,10 @@ FPS = []
 # the first step of a batch cannot race anything in that batch, so asking before it
 # would be a round trip whose answer is never used (B14c).
 NAVS = []
+QUIETS: list = []
 
 
-def install(fingerprints, navs=None, nav_raises=False):
+def install(fingerprints, navs=None, nav_raises=False, quiets=None):
     """Point _BATCHABLE at recorders and _bridge at a scripted fingerprint sequence.
 
     `navs` scripts the `await_navigation` replies in order; `nav_raises` makes that
@@ -142,6 +143,7 @@ def install(fingerprints, navs=None, nav_raises=False):
     RAN.clear()
     FPS.clear()
     NAVS.clear()
+    QUIETS.clear()
     ms._BATCHABLE.clear()
     ms._BATCHABLE.update({"fake_tool": fake_tool, "navigate": fake_navigate,
                           "fake_act": fake_act, "computer": fake_computer,
@@ -155,12 +157,20 @@ def install(fingerprints, navs=None, nav_raises=False):
     # beyond being callable.
     seq = list(fingerprints)
     nseq = list(navs or [])
+    qseq = list(quiets or [])
 
     class _B:
         async def call(self, op, **kw):
             if op == "page_fingerprint":
                 FPS.append(kw.get("tabId"))
                 return seq.pop(0) if seq else {"url": "u", "elements": 10, "textLen": 5}
+            if op == "await_quiet":
+                QUIETS.append(kw.get("tabId"))
+                # Default QUIET with no wait, for the same reason await_navigation
+                # defaults to idle: every pre-existing check runs through here and
+                # the default must be the normal case, or adding this wait would
+                # have rewritten the expected output of checks about other things.
+                return qseq.pop(0) if qseq else {"quiet": True, "waitedMs": 0}
             if op == "await_navigation":
                 NAVS.append(kw.get("tabId"))
                 if nav_raises:
@@ -765,6 +775,63 @@ async def main():
     check("B14f a wait that timed out says the read may belong to EITHER page",
           "either page" in _txt and "NEW page" not in _txt and len(RAN) == 2,
           f"ran={len(RAN)}; {_txt.strip()[:140]}")
+
+    # ---- B15: CONTENT THAT ARRIVES AFTER THE DOCUMENT ---------------------
+    # The navigation settle ends at the new document's DOM, which is right for
+    # a navigation and is not where an SPA finishes. Eval 4's most-repeated
+    # defect of ours, four sightings: a search_page chained after a click
+    # returned a clean "No match" for text that is present, because the Angular
+    # app painted its rows afterwards. A ~300ms CSS fade does it with no
+    # navigation at all.
+    install([SAME] * 6, quiets=[{"quiet": True, "waitedMs": 310}])
+    out = await ms.browser_batch([
+        {"name": "fake_act", "input": {"tabId": 1, "ref": 9}},
+        {"name": "fake_obs", "input": {"tabId": 1}},
+    ])
+    _txt = text_of(out)
+    check("B15 an observation after an ACTING step waits for the DOM to stop "
+          "changing", "waited 310ms for the DOM to stop changing" in _txt
+          and len(RAN) == 2, f"ran={len(RAN)}; {_txt.strip()[:140]}")
+    check("B15b ...and says which step it waited for, and that the read is settled",
+          "step 0 acted" in _txt and "settled page" in _txt, _txt.strip()[:160])
+
+    # B15c — THE CONTROL THAT IT IS NOT AN ALWAYS-ON NOTE, and not an always-on
+    # ROUND TRIP. A quiet page is the normal case; a line on every step is the
+    # noise #15 priced, and "wait on everything" would pass B15 while taxing
+    # every batch there is.
+    install([SAME] * 6)          # default reply is quiet / waitedMs 0
+    out = await ms.browser_batch([
+        {"name": "fake_act", "input": {"tabId": 1, "ref": 9}},
+        {"name": "fake_obs", "input": {"tabId": 1}},
+    ])
+    _txt = text_of(out)
+    check("B15c CONTROL: a quiet page waits 0ms and says NOTHING",
+          "stop changing" not in _txt and len(RAN) == 2,
+          f"ran={len(RAN)}; {_txt.strip()[:120]}")
+
+    # B15d — the OTHER control, and the one that stops this becoming a tax:
+    # two observations in a row ask nothing, because an observation cannot have
+    # changed the page and the answer could not matter (#38).
+    install([SAME] * 6)
+    out = await ms.browser_batch([
+        {"name": "fake_obs", "input": {"tabId": 1}},
+        {"name": "fake_obs", "input": {"tabId": 1}},
+    ])
+    check("B15d CONTROL: no acting step means no quiet call at all",
+          len(QUIETS) == 0 and len(RAN) == 2,
+          f"quiet calls={len(QUIETS)} ran={len(RAN)}")
+
+    # B15e — a wait that gave up must not claim the page settled.
+    install([SAME] * 6, quiets=[{"quiet": False, "waitedMs": 1500, "timedOut": True,
+                                 "structural": 12, "text": 3}])
+    out = await ms.browser_batch([
+        {"name": "fake_act", "input": {"tabId": 1, "ref": 9}},
+        {"name": "fake_obs", "input": {"tabId": 1}},
+    ])
+    _txt = text_of(out)
+    check("B15e a wait that gave up says the DOM was STILL changing, not settled",
+          "STILL being rewritten" in _txt and "settled page" not in _txt
+          and "do not conclude something is absent" in _txt, _txt.strip()[:170])
 
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} browser_batch checks passed.")

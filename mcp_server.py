@@ -3633,6 +3633,23 @@ async def browser_batch(
         except Exception:
             return None
 
+    async def _quiet(tab_id):
+        """Wait for the DOM to stop being rewritten. Companion to `_settle`.
+
+        Same shape and the same reasons: it ASKS rather than predicting, it is
+        not fatal, and it degrades to the behaviour that shipped before it
+        existed. With no mutation recorder on the page (one loaded before the
+        extension) it returns immediately saying so, rather than waiting out
+        the cap on every step -- unknown is never reported as quiet (#70 R17).
+        """
+        try:
+            b = await _bridge()
+            r = await b.call("await_quiet", tabId=tab_id,
+                             quietMs=250, timeoutMs=1500)
+            return r if isinstance(r, dict) else None
+        except Exception:
+            return None
+
     _seen_tabs: dict = {}
     _made_tab = None       # a tab THIS batch created; later tabId-less steps inherit it
     _stale_why = None      # the page moved under the plan; set once, never cleared
@@ -3738,6 +3755,39 @@ async def browser_batch(
                         + ". This step ran anyway, so what it read may belong to "
                         "either page. The readiness banner on the result says what "
                         "was still in flight.")))
+
+            # ...AND THE OTHER HALF: CONTENT THAT ARRIVES AFTER THE DOCUMENT.
+            #
+            # The settle above ends at the new document's DOM, which is the
+            # right place for a navigation and is not where an SPA finishes.
+            # Eval 4's most-repeated defect of ours, four sightings and one
+            # mechanism: a `search_page` chained after a click returned a clean
+            # "No match" for text that is present, because the Angular app
+            # painted its rows after DOMContentLoaded. A ~300ms CSS fade does
+            # the same with no navigation at all.
+            #
+            # Gated on the previous step having ACTED. An observation after an
+            # observation changes nothing, so asking would be a round trip
+            # whose answer cannot matter (#38). Structural and text changes
+            # only -- an ad-driven page runs attribute churn for ever and
+            # waiting on "any mutation" would hang on every commercial page
+            # (#70 measured theguardian at ~7 @style mutations per 2s).
+            if _acted:
+                _q = await _quiet(_tab)
+                _qms = int((_q or {}).get("waitedMs") or 0)
+                if _q and _qms > 0:
+                    if _q.get("quiet"):
+                        out.append(TextContent(type="text", text=(
+                            f"[{i}] waited {_qms}ms for the DOM to stop changing "
+                            f"after step {i - 1} acted — this step read the "
+                            f"settled page.")))
+                    else:
+                        out.append(TextContent(type="text", text=(
+                            f"[{i}] waited {_qms}ms and the DOM was STILL being "
+                            f"rewritten ({_q.get('structural', 0)} structural, "
+                            f"{_q.get('text', 0)} text). This step ran anyway, so "
+                            f"do not conclude something is absent from what it "
+                            f"read.")))
         if _tab is not None and _tab not in _seen_tabs and _ref_from[i + 1]:
             _seen_tabs[_tab] = await _fp(_tab, _all_mmids)
 

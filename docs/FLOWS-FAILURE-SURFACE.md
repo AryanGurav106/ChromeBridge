@@ -56,7 +56,7 @@ Status: `CLOSED` (fixed + a check that fails against the old code) ·
 | 4.1 | A trusted click reports success and the page receives nothing | `BOUNDED` — not ours (Playwright's own mouse fails identically on that tab), now DETECTED by arming a capturing counter before dispatch and reading it after, with the one verified recovery named (#56). A navigating click destroys the probe, and that is reported as UNKNOWN, never as failure. |
 | 4.2 | A flow that must span tabs cannot | `CLOSED` — a recorded `tabs_create_mcp` sets the current tab, same rule as the batch (#58), and an unreadable id STOPS rather than silently continuing in the old tab. |
 | 4.3 | A popup left open by a previous step makes the next target unreachable | `BOUNDED` — the runner looks for the popup surface in its OWN listing and names it, saying nothing when there is none (#49). |
-| 4.4 | An action whose effect is a CSS transition, not a navigation | `OPEN` — the settle covers navigation; a fixed duration would be a chosen number. #70's mutation signal may answer it and has not been tried. |
+| 4.4 | An action whose effect is a CSS transition or late-arriving content, not a navigation | `CLOSED` — `await_quiet` waits for the DOM to stop being rewritten after an ACTING step, which is #70's mutation signal answering the question it was built for. Structural and text changes only, because an ad page runs attribute churn for ever. The quiet window is not a chosen number: #70 measured mid-build at 9–18ms and finished at 907–3514ms with NO overlap, so any cut in between separates them. B15/B15b/B15e fail without it; B15c and B15d are the controls that a quiet page says nothing and an observation-only batch asks nothing. |
 
 ## Stage 5 — VERIFY: the postcondition judging correctly
 
@@ -87,9 +87,7 @@ Status: `CLOSED` (fixed + a check that fails against the old code) ·
    exists and why a flow file is deliberately small enough to read in a diff.
 2. **Settled-but-wrong (5.5).** Measured live, no structural fix available.
 3. **The unwitnessed 59.4% (3.3).** Accepted with its number, not hidden.
-4. **CSS-transition settling (4.4).** Untried, and the obvious fix is a chosen
-   number, which is the thing this codebase removes.
-5. **No headless CI runner for arbitrary flows** beyond `run_flows.py`'s
+4. **No headless CI runner for arbitrary flows** beyond `run_flows.py`'s
    fixture-and-local set, and **no variable extraction beyond typed values**, so
    a flow asserting on a generated id or a timestamp is brittle by construction.
 

@@ -13172,6 +13172,59 @@ async function axNamesFor(tabId) {
   };
 }
 
+function _awaitQuietPage(quietMs, capMs) {
+  // WAIT FOR THE DOM TO STOP BEING REWRITTEN. The batch already waits for a
+  // NAVIGATION (#51) by asking Chrome, which is free because it touches no
+  // page. This is the other half, and it was the most-repeated defect of ours
+  // in eval 4 -- four sightings, one mechanism: the settle ends at the new
+  // document's DOM, and an SPA that paints its rows afterwards outruns it, so
+  // a chained search_page returns a clean "No match" for text that is present.
+  // A CSS transition (a ~300ms Bootstrap fade) does the same with no
+  // navigation at all.
+  //
+  // STRUCTURAL AND TEXT CHANGES ONLY, never attributes. #70 measured that an
+  // ad-driven page runs attribute churn forever (theguardian: ~7 @style
+  // mutations per 2s), so waiting on "any mutation" would hang on every
+  // commercial page until the cap. Elements being added, removed or re-texted
+  // is what "the content is still arriving" MEANS.
+  //
+  // THE QUIET WINDOW IS NOT A GUESS. #70 measured a page mid-build at 9-18ms
+  // since its last structural change and a finished one at 907-3514ms, with
+  // NO OVERLAP, so any cut between 50 and 500ms separates them; 250 sits in
+  // the middle of that gap. The CAP matters more than the window: this returns
+  // the moment it is quiet, so a settled page pays one tick.
+  //
+  // DEGRADES TO THE OLD BEHAVIOUR. With no recorder (a page loaded before the
+  // extension) it returns immediately and SAYS SO, rather than waiting out the
+  // cap on every step -- unknown is never reported as quiet (#70's R17).
+  return new Promise((resolve) => {
+    var m = window.__abMut;
+    if (!m || typeof m.query !== 'function') {
+      resolve({ quiet: null, why: 'no mutation recorder on this page (it loaded '
+                                + 'before the extension did); not waited', waitedMs: 0 });
+      return;
+    }
+    var t0 = Date.now();
+    var tick = function () {
+      var s = null;
+      try { s = m.query(null, quietMs); } catch (e) {}
+      var waited = Date.now() - t0;
+      var busy = !!(s && s.since >= 0 && s.since < quietMs
+                    && ((s.structural || 0) > 0 || (s.text || 0) > 0));
+      if (!busy) { resolve({ quiet: true, waitedMs: waited }); return; }
+      if (waited >= capMs) {
+        resolve({ quiet: false, waitedMs: waited, timedOut: true,
+                  structural: s.structural, text: s.text,
+                  why: 'the DOM was still being rewritten when the cap expired; '
+                     + 'the next read may be of a page still building' });
+        return;
+      }
+      setTimeout(tick, 50);
+    };
+    tick();
+  });
+}
+
 function _pageFingerprintPage(mmids) {
   const out = {
     url: location.href,
@@ -14099,6 +14152,15 @@ async function handleOp({ id, op, params }) {
         const cap = Math.max(0, Math.min(30000,
           Number(params && params.timeoutMs) || 5000));
         result = await awaitNavigationSettled(t.id, cap);
+        break;
+      }
+      case "await_quiet": {
+        const t = await resolveTab(params);
+        const q = Math.max(50, Math.min(2000,
+          Number(params && params.quietMs) || 250));
+        const cap = Math.max(0, Math.min(10000,
+          Number(params && params.timeoutMs) || 1500));
+        result = await runInTab(t.id, _awaitQuietPage, [q, cap]);
         break;
       }
       case "page_fingerprint": {
