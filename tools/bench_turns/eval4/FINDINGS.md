@@ -376,3 +376,222 @@ already lands on the Foundation Foods tab, so the restriction needs no click.
 Each confirmed the restriction was in effect from the tab count, the heading and
 the row count agreeing, rather than assuming it. The referee's value (19,
 Cheese cheddar) is unaffected.
+
+---
+
+## T8/cic — the same two defects as T6 and T7, which makes them a PATTERN
+
+cic 8 turns. Its own report:
+
+> `read_page(filter="interactive")` listed only ref_1..ref_21 **with no
+> truncation note and no off-viewport count**, yet a later `find` resolved
+> ref_137 for the brand checkbox — so the listing was silently incomplete and
+> the entire "By brand:" filter sidebar was undiscoverable from it.
+
+and
+
+> `get_page_text` on /product/… returned a page that looked complete — header,
+> "Related products", footer all present — but silently omitted the whole
+> product detail block (no name, brand, or price), with nothing indicating the
+> page was still rendering; **a finished-looking page and a half-rendered one
+> were byte-indistinguishable.**
+
+Both are repeats. The incomplete listing is T6/cic's third defect on the same
+site; the unmarked partial text is T7/cic's. Three sightings across three
+tasks, two distinct mechanisms, one shared shape:
+
+> **The control arm has no signal for "this listing is bounded" and no signal
+> for "this page is still rendering", so a bounded result and a complete one
+> are the same bytes.**
+
+Those are the two things this project spent #13/#22/#27 and #15/#43/#70 on
+respectively, and they are the reason our arm's extra round trips in this eval
+(T6, T7, T8) cost a turn instead of an answer. The honest framing: **our
+agents also hit mid-render pages on these same sites — the difference is that
+ours were told.** T7/cb: "the readiness banner correctly flagged it as
+mid-render, but it still cost a re-read." Being told costs one round trip.
+Not being told costs correctness, and on this eval it did not — because their
+agents were careful enough to cross-check with screenshots — which is the
+right thing to say rather than claiming a correctness win we did not observe.
+
+What this does NOT show: nothing here is evidence about our listing's
+completeness. That is measured by `lost_identities` (0 across 32 sites, #36)
+and Mind2Web (~96%, #73), not by another tool's failures.
+
+---
+
+## T8 — a TIE at 8-8, and the settle has a gap the navigation fix does not cover
+
+Both correct (Washers, $3.55).
+
+**Ours, and it is the clearest statement yet of #51's boundary.** Our agent
+chained `search_page` after a product-link click inside one batch. Both
+searches missed on a page where both strings are present. The batch's
+post-click settle waits for the NEW DOCUMENT's DOM, and on this Angular SPA
+that lands before the content XHRs resolve. So the settle did exactly what it
+promises and the promise is narrower than the case.
+
+> It failed LOUD, not silently: the readiness banner led both results with
+> "THE DOM IS STILL CHANGING ... do NOT conclude something is absent", which is
+> exactly why I re-checked instead of reporting absence.
+
+That is the right outcome and it still cost a round trip. It is `OPEN.md` item
+6 (a CSS transition is not waited for) widened: **the settle covers document
+commit, not content arrival**, and the mutation signal from #70 is the thing
+that could answer it. Not attempted mid-eval. Logged **E4-D5**.
+
+**Second, ours, and smaller.** The off-viewport region hint named
+`form(ref_164): 3`, our agent scoped to it expecting the brand filters, and it
+was the SEARCH BOX form. The hint names regions by TAG, not by purpose, so two
+unrelated `<form>`s are indistinguishable in it. #26 built that hint so the
+recovery would be one small scoped read instead of a scroll plus a re-listing;
+when it names the wrong form the recovery costs a read and returns nothing.
+Logged **E4-D6**.
+
+## T9 — cb 5, correct
+
+The blocker was the agent's own tool choice (`search_page` greps rendered text
+and returns no href, so finding the Athletics URL needed `query_elements`),
+which is a docstring question rather than a defect.
+
+**And a real question about #70 that this raises, stated correctly rather
+than as a false positive.** The agent quoted
+"THE DOM IS STILL CHANGING … 3 image requests in flight, readyState=interactive"
+on a results table it judged fully rendered. Read against the source, that IS
+the structural tier — the network and readyState bits arrive in its `; also`
+clause — so genuine childList or characterData records were in the window.
+
+On a freshly navigated document they would be: **parsing the document IS a
+childList mutation**, and the window is 3000ms. So a read taken within three
+seconds of a navigation will essentially always raise the structural banner,
+whether or not the page is actually incomplete.
+
+That is not a bug and it is not nothing. The window was set to 3000ms on
+measurement — R23 found a 1000ms window **50.7% false-quiet** at a 2s commit
+interval, and false quiet is the worst direction this probe can fail in. The
+cost of that choice is a trailing edge, and the trailing edge lands on exactly
+the commonest read there is.
+
+**Three for three in this eval so far**: T7/cb, T8/cb and T9/cb all raised it
+on a post-navigation read. In T7 and T8 the page genuinely was incomplete and
+the banner saved a wrong answer. In T9 it was complete and the banner cost
+nothing only because the agent cross-checked against the race narrative in the
+same read.
+
+**The measurement this owes, and it is new debt created by this morning's
+work:** of post-navigation reads that raise the structural banner, what
+fraction were genuinely incomplete? If it is low, the banner is training its
+reader to ignore it, which is the #15 noise failure arriving through a door
+#43 did not close. Not measurable mid-eval — it needs the browser. Logged
+**E4-D7**, and it belongs in `OPEN.md` item 5 when the run ends.
+
+## T9/cic — #46's wrong-tab defect, observed doing harm
+
+cb 5, cic 9. Both correct (21).
+
+Their agent's first defect, in its own words:
+
+> inside `browser_batch`, `tabs_create_mcp` made tab 1711644955 but the
+> following `navigate` (no tabId) drove a DIFFERENT, pre-existing tab
+> 1711644948 instead — **the newly created tab sat unused at chrome://newtab
+> while an unrelated tab I did not open was navigated away from its content**
+
+That is #46 exactly, and it is the first time in four evals that the defect has
+been caught DOING the harm rather than merely costing a turn. #46's entry
+describes it as the batch navigating the USER'S OWN TAB silently while
+reporting success, and the reason it is structural rather than a wording
+problem: a created tab is `active: false` on purpose, `resolveTab` falls back
+to the ACTIVE tab, and nothing threaded the new id into the later steps. On our
+side a batch's later steps inherit the tab the create just made, and B11b/B11d
+are the controls that an explicit tabId still wins and that steps BEFORE the
+create do not inherit.
+
+Four independent sightings of the opening-ceremony cost on their arm now, in
+three evals: #47's T8 ("navigate inside browser_batch requires an explicit
+tabId"), this eval's T5 (same), T6 ("No tab available" aborting the batch), and
+now T9 (the navigate silently driving someone else's tab).
+
+Their second defect is NOT ours, and I checked rather than assuming: their
+`find` returned `href` inline on one call and omitted it on an identical kind
+of link on the next, costing a `read_page(ref_id=…)` just to learn a link
+target. Ours fetches `detail="full"` unconditionally (`mcp_server.py`:2316) so
+`href` is always computed, and emits it whenever the element has one
+(`if el.get("href")`, :2788) rather than conditionally on anything. Pinned by
+F17 and F18, the second of which exists because adding `href` to the identity
+block once deleted the label beside it. **E4-D8 closed, not ours.**
+
+## T10 — cb 3, cic 4. The readiness banner stated its counts and was right.
+
+Both correct (A000108, OFFSET `0,3`).
+
+Direct evidence on **E4-D7**, from our agent on this page:
+
+> The readiness banner fired on the first read ("195 change(s) in the last
+> 3000ms: 192 structural") and was accurate — the page was still building.
+
+So on OEIS the structural tier fired with a real count on a genuinely
+incomplete page. That does not settle T9's case, where the agent did not quote
+a count, but it does say the signal is reporting measured numbers rather than
+firing on a constant. The measurement E4-D7 asks for is still owed.
+
+**A cost worth recording on both sides.** OEIS returns the full 125k-character
+A000108 entry inline on the SEARCH RESULTS url. Their arm pulled 50,000
+characters of it; ours pulled 29,130. Both truncated, and ours itemised where
+the budget went, which is #42's reconciliation fix doing its job. But neither
+is the right tool for a one-field question — `search_page` answers it in a few
+hundred characters, and our agent did use it, which is why this is 3 against 4
+rather than further apart.
+
+**A small one of ours.** `search_page("OFFSET")` is case-insensitive by
+default, so 7 of 8 hits were prose uses of "offset" in the COMMENTS and FORMULA
+sections, each carrying a `…(+14463)` residual marker. The right hit
+(`<div "OFFSET"@0> OFFSET | 0,3`) was first and unambiguous, so it cost
+nothing. Not a defect: case-insensitive is the right default, `case_sensitive`
+exists, and the residual markers are #22's work being loud rather than silent.
+Recorded because a reader of the raw output could mistake eight hits for
+ambiguity.
+
+## T11/cb — E4-D9: the settle races the navigation's own ANNOUNCEMENT, second sighting
+
+cb 6 turns, correct (`(exact)`).
+
+Our agent observed the settle behaving differently for two clicks in the same
+run:
+
+> In the batch `[form_input, computer(left_click on the Search submit button),
+> get_page_text]` the settle did NOT engage: the `get_page_text` returned the
+> old index page verbatim while its own readiness banner said "1 network
+> request(s) in flight (main_frame)". In the later batch
+> `[computer(left_click on a link), get_page_text]` the settle DID engage and
+> reported "waited 344ms for the navigation step 0 started".
+
+**This is #63's recorded race, confirmed a second time and sharpened.** #63
+wrote it as: *"`_settle` is asked before every step from `i > 0`; it asked
+before `get_url` and answered idle, and `get_url` one round trip later reported
+IN FLIGHT. #51 deliberately ASKS rather than predicts, and this is the cost:
+`onBeforeNavigate` can land in the gap between the probe and the step it
+protects, and two ops over one socket cannot be made atomic."*
+
+What is new is that it was not flaky — a link click was caught and a submit
+click was not, in the same session on the same site. That suggests a mechanism
+rather than pure chance, and gives a testable hypothesis: **clicking
+`input[type=submit]` announces its navigation LATER than clicking an `<a>`,
+because form validation and serialization sit between the mouseup and
+`onBeforeNavigate`.** Unverified.
+
+**Candidate fix, recorded and not built.** The batch already tracks `_acted` —
+whether an earlier step named a ref and ran. When the previous step ACTED and
+the probe answers idle, that is precisely the case where the announcement may
+not have landed yet, and a second lookup a moment later would close it. The
+objection is that "a moment" is a chosen number, which is the thing this
+codebase removes from paths that decide things. The counter is that it is a
+grace period for an EVENT to arrive, not a threshold for judging readiness, and
+it would be bounded by the step having acted rather than applied to every step.
+**Measure first: how long after a trusted click on `input[type=submit]` does
+`onBeforeNavigate` land, against the same for an `<a>`?** That number decides
+whether this is a grace of 5ms or of 200ms, and the second would not be
+acceptable.
+
+**It failed loud, as designed.** The readiness banner named the in-flight
+`main_frame` request, which is the only reason the stale read was caught rather
+than answered from. Cost: one round trip.
