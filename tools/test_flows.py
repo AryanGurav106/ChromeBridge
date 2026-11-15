@@ -1988,6 +1988,47 @@ async def record_and_replay():
           "NO DETECTABLE EFFECT" not in str(rd6["reason"]),
           str(rd6["reason"])[:160])
 
+    # ---- FR22: stop_after, for interrogating the page mid-flow -------------
+    # The prose/table half of sufficiency needs the page AS IT IS at the step
+    # before the answer. A static load of the same url cannot produce it: a
+    # validation message or a search result does not exist until the
+    # interaction has run, and 0 of eval 4's 22 tasks are answerable without
+    # interacting. This is the capability that makes that measurable.
+    from core.flows.runner import STOPPED  # noqa: E402
+    def _three_step():
+        return Flow(name="three", steps=[
+            Step(name="computer", input={"action": "left_click"},
+                 targets={"ref": {"level": 1, "desc": {"tag": "button", "role": "",
+                                                       "type": "", "name": "Save"}}}),
+            Step(name="computer", input={"action": "left_click"},
+                 targets={"ref": {"level": 1, "desc": {"tag": "button", "role": "",
+                                                       "type": "", "name": "Save"}}}),
+            Step(name="computer", input={"action": "left_click"},
+                 targets={"ref": {"level": 1, "desc": {"tag": "button", "role": "",
+                                                       "type": "", "name": "Save"}}})])
+
+    b22 = FakeBridge([E(1, "button", name="Save")])
+    r22 = await start(_three_step(), 1, b22.call, b22.entries_fn, stop_after=0)
+    _acts = [c for c in b22.calls if c[0] == "computer"]
+    check("FR22 stop_after=0 runs step 0 and nothing after it",
+          r22["status"] == STOPPED and len(_acts) == 1,
+          f"status={r22['status']} computer calls={len(_acts)}")
+    # A PARTIAL RUN IS NOT A PASS. A caller that saw "passed" would read a flow
+    # most of which did not execute as a green test, which is the false-green
+    # shape #62 found in the runner once already.
+    check("FR22b ...and it does NOT report passed, because later assertions "
+          "never ran", r22["status"] != PASSED and r22.get("stopped_early") is True
+          and "did NOT run" in str(r22.get("reason", "")),
+          f"status={r22['status']} reason={str(r22.get('reason'))[:90]}")
+    b23 = FakeBridge([E(1, "button", name="Save")])
+    r23 = await start(_three_step(), 1, b23.call, b23.entries_fn)
+    check("FR22c CONTROL: with no stop_after the whole flow runs and PASSES, so "
+          "this did not shorten every replay",
+          r23["status"] == PASSED
+          and len([c for c in b23.calls if c[0] == "computer"]) == 3,
+          f"status={r23['status']} computer calls="
+          f"{len([c for c in b23.calls if c[0] == 'computer'])}")
+
     # ---- FR19: `text` was matched with `in`, unanchored at both ends -------
     async def _text_run(recorded, live):
         class _T(FakeBridge):

@@ -191,8 +191,16 @@ measures how many eval tasks are two-hop, which is 100%.
 **The route that would work runs through the flow recorder**: replay a
 recorded flow to the step before the answer, then ask the text surface there.
 That separates "the text surface failed to carry it" from "the value did not
-exist yet", which no static load can. The labels already exist; what is
-missing is 20 recordings and a harness that stops a replay at step N.
+exist yet", which no static load can.
+
+**HALF OF THAT ROUTE IS NOW BUILT.** `run_flow(stop_after=N)` replays up to
+and including step N and stops with the page in the state that step left it —
+a validation message, a search result, a filtered table — which a fresh
+navigate to the same url cannot reproduce. It reports `stopped_early` and
+never `passed`, because the later steps' assertions did not run and a caller
+reading "passed" would be reading a flow most of which did not execute
+(FR22/FR22b, with FR22c the control that an ordinary replay still runs to the
+end). What remains is the 20 recordings.
 
 **The larger half is open and it is the one the source paper ranks first:
 TEXT** (30.5 / 59.5 coverage drop when ablated, against 4.8–13.6 for any control

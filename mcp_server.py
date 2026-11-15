@@ -4431,6 +4431,7 @@ async def run_flow(
     resume_id: Annotated[Optional[str], Field(description="Resume a paused run (from a needs_decision result).")] = None,
     bind: Annotated[Optional[str], Field(description="With resume_id: the ref to use for the step that could not be resolved.")] = None,
     vars: Annotated[Optional[dict], Field(description='Override the flow\'s recorded values, e.g. {"project_name": "beta-svc"}. The flow lists its variables; anything omitted uses what was recorded.')] = None,
+    stop_after: Annotated[Optional[int], Field(description="Run up to and including this 0-based step, then STOP with the page left as that step made it. For reading a page in a state that only exists after interaction — a validation message, a search result, a filtered table — which a fresh navigate to the same url cannot reproduce. Reports stopped_early, never passed: the later steps' assertions did not run.")] = None,
 ) -> str:
     """Replay a recorded flow as a test. Deterministic; no model call per step.
 
@@ -4459,7 +4460,8 @@ async def run_flow(
                     else " Nothing recorded yet — record_flow(action='start', name='...')."))
         res = await _flow_start(_flow_load(path), tabId, _flow_call, _flow_entries,
                                 viewport_fn=_flow_viewport,
-                                overrides=vars or None)
+                                overrides=vars or None,
+                                stop_after=stop_after)
     return _flow_report(res)
 
 

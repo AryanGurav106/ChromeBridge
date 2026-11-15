@@ -43,6 +43,10 @@ from .recorder import (no_effect, query_first_attrs, query_first_text,
                        query_total, refused, search_hits)
 
 PASSED, FAILED, NEEDS = "passed", "failed", "needs_decision"
+# A PARTIAL run is not a pass. `stop_after` ends the replay deliberately
+# with later assertions unchecked, and a caller that saw "passed" would
+# read a flow most of which did not execute as a green test.
+STOPPED = "stopped_early"
 
 # Live runs, so a resume continues from the stopped step instead of replaying
 # the side effects of every step before it.
@@ -109,6 +113,7 @@ class Run:
         self.viewport_fn = viewport_fn
         self.entries_fn = entries_fn
         self.i = 0
+        self.stop_after = None    # replay to this step index, then stop (see go())
         # Recorded defaults, overridden per run. A flow that creates a record
         # needs a different name on the second run, and that is an argument
         # rather than a re-record.
@@ -159,6 +164,31 @@ class Run:
         self._t0 = time.time()
 
         while self.i < len(self.flow.steps):
+            # STOP AFTER STEP N, FOR INTERROGATING THE PAGE MID-FLOW.
+            #
+            # Built for a measurement that could not otherwise be taken: the
+            # prose/table half of sufficiency needs the page AS IT IS at the
+            # step before the answer, and a static load of the same url cannot
+            # produce it -- a validation message or a search result does not
+            # exist until the interaction has run. Measured: 0 of eval 4's 22
+            # tasks are answerable without interacting, so every static probe
+            # of that label set measures nothing (`measure_text_sufficiency.py`
+            # carries the full negative).
+            #
+            # It is a PARTIAL run, not a pass: the flow's later assertions
+            # never ran, so it reports `stopped_early` and a status of its own
+            # rather than PASSED, or a caller would read "passed" for a flow
+            # most of which did not execute.
+            if self.stop_after is not None and self.i > self.stop_after:
+                r = self._stop(PASSED, f"stopped after step {self.stop_after} "
+                                       f"as asked; {len(self.flow.steps) - self.i} "
+                                       f"later step(s) did NOT run, so their "
+                                       f"assertions have not been checked")
+                r["status"] = STOPPED
+                r["stopped_early"] = True
+                r["ran"] = self.i
+                r["total"] = len(self.flow.steps)
+                return r
             step = self.flow.steps[self.i]
 
             # THE PRECONDITION, BEFORE THE FLOW CHANGES ANYTHING. Without it a
@@ -761,8 +791,11 @@ class Run:
 
 async def start(flow: Flow, tab_id: int, call: Callable, entries_fn: Callable,
                 overrides: Optional[dict] = None,
-                viewport_fn: Optional[Callable] = None) -> dict:
-    return await Run(flow, tab_id, call, entries_fn, overrides, viewport_fn).go()
+                viewport_fn: Optional[Callable] = None,
+                stop_after: Optional[int] = None) -> dict:
+    r = Run(flow, tab_id, call, entries_fn, overrides, viewport_fn)
+    r.stop_after = stop_after
+    return await r.go()
 
 
 async def resume(run_id: str, binding: str) -> dict:
