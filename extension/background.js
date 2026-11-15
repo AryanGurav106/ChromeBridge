@@ -14630,6 +14630,7 @@ async function handleOp({ id, op, params }) {
           }
 
           const ok = realEffect(after);
+          const hadDialog = before.dialogs > 0;
           const urlAfter = after.url;
           let msg;
           if (ok && urlAfter !== urlBefore) {
@@ -14717,8 +14718,26 @@ async function handleOp({ id, op, params }) {
             // attempted but failed (the CRM's decision-time combobox) must be
             // re-flagged so the retry hint names it.
             const filledSelectors = (out.fields || []).filter(f => f.ok).map(f => f.selector);
-            const unfilled = await ritFF((sel, already) => {
-              const scope = document.querySelector(sel) || document;
+            const unfilled = await ritFF((sel, already, sub) => {
+              // NEVER WIDEN TO THE WHOLE DOCUMENT. This read `document` as its
+              // fallback when no dialog was open, so on a page with no modal it
+              // swept every control there is: the Toolshop search reported the
+              // page's own Sort <select> as an "UNFILLED field in dialog" and
+              // told the agent to retry including it. Acting on that advice
+              // re-submits a search that already worked AND changes the sort
+              // order for no reason. The dialog, or the submit button's OWN
+              // form, is the only honest scope -- `btn.form` is HTML's own
+              // answer to "which form does this button submit", including the
+              // form= attribute pointing out of the subtree. With neither, we
+              // have no scope and offer no list.
+              let scope = document.querySelector(sel);
+              if (!scope && sub) {
+                try {
+                  const b = document.querySelector(sub);
+                  scope = (b && b.form) || (b && b.closest && b.closest('form')) || null;
+                } catch (e) {}
+              }
+              if (!scope) return [];
               const rows = [];
               scope.querySelectorAll('input, textarea, select, [role="combobox"], [contenteditable]').forEach(el => {
                 const m = el.getAttribute('mmid');
@@ -14784,11 +14803,51 @@ async function handleOp({ id, op, params }) {
                 }
               });
               return rows.slice(0, 12);
-            }, [dialogSelector, filledSelectors]) || [];
+            }, [dialogSelector, filledSelectors, `[mmid='${submit_mmid}']`]) || [];
+            const _where = hadDialog ? 'dialog' : "submit button's form";
             const unfilledLine = unfilled.length
-              ? ` UNFILLED fields in dialog (retry fill_form including these): ${unfilled.join("; ")}`
+              ? ` UNFILLED fields in the ${_where} (retry fill_form including these): ${unfilled.join("; ")}`
               : '';
-            msg = `submit had NO real effect${escalated ? " even after trusted retry" : ""}: modal still open, URL unchanged. DOM nodes added=${delta}.${errLine}${unfilledLine}`;
+            // SAY WHAT IS KNOWN, NOT WHAT IS ASSUMED.
+            //
+            // This read "submit had NO real effect: modal still open, URL
+            // unchanged" on a page that HAS NO MODAL and whose submit is an
+            // in-place XHR filter -- so it announced a modal that never
+            // existed (its own payload said dialogs:0) and treated an
+            // unchanged URL as evidence, which it is not when nothing was
+            // going to navigate. Measured live on the Toolshop search, where
+            // the search had plainly worked: the page read "3 products found".
+            //
+            // Worse, the signal it read as failure is the signal of success.
+            // `realEffect` is navigation-or-modal-closed, and a filter that
+            // narrows a list REMOVES nodes -- the delta was -248, which is
+            // exactly what filtering 9 products to 3 looks like.
+            //
+            // So the fix is not a third success rule with a threshold on it
+            // (#27/#28 take thresholds out of deciding paths). It is to stop
+            // asserting a verdict the signals cannot support. Three honest
+            // states, decided by facts already in `before`/`after`:
+            //   * a modal was open and is still open   -> say that
+            //   * the page CHANGED but we cannot attribute it -> say that,
+            //     and name the change, because a caller can check it
+            //   * nothing observable changed at all    -> the only case where
+            //     "no detectable effect" is defensible
+            const _sizeMoved = (after.n !== before.n) || (after.txt !== before.txt);
+            let _state;
+            if (hadDialog) {
+              _state = `the dialog is still open and the URL is unchanged`;
+            } else if (_sizeMoved) {
+              _state = `the page DID change (${delta >= 0 ? '+' : ''}${delta} DOM nodes, `
+                     + `${after.txt - before.txt >= 0 ? '+' : ''}${after.txt - before.txt} characters of text) `
+                     + `but there was no dialog to close and no navigation, so this submit's `
+                     + `effect cannot be confirmed from those two signals alone. A filter or an `
+                     + `in-place update looks exactly like this, and so does a no-op next to an `
+                     + `unrelated change. CHECK THE PAGE rather than re-submitting`;
+            } else {
+              _state = `nothing observable changed: no navigation, no dialog, `
+                     + `and the DOM and its text are byte-identical`;
+            }
+            msg = `submit NOT CONFIRMED${escalated ? " even after trusted retry" : ""}: ${_state}.${errLine}${unfilledLine}`;
             out.submit_errors = errors;
             out.unfilled = unfilled;
             dbg(`submit failed: ${errors.length} error(s); ${unfilled.length} unfilled field(s) found`);

@@ -845,11 +845,28 @@ const FIELDS3 = () => ([
     const iTrusted = idxOf((e) => e.kind === "cdp" && e.method === "Input.dispatchMouseEvent" && e.params.type === "mousePressed");
     check("submit escalation: untrusted click first, trusted CDP retry after",
       iUntrusted !== -1 && iTrusted !== -1 && iUntrusted < iTrusted, `untrusted@${iUntrusted} trusted@${iTrusted}`);
+    // INVARIANT, NOT WORDING. This asserted the literal "NO real effect",
+    // which was a sentence that LIED on any page without a modal -- it
+    // announced a dialog that never existed and treated an unchanged URL as
+    // evidence on a form that was never going to navigate. What the check is
+    // actually for is that an escalated submit which did not land REPORTS so
+    // and surfaces the page's own validation message. That is unchanged.
     check("submit escalation: reports failure even after trusted retry + surfaces validation error",
-      /NO real effect even after trusted retry/.test(String(r.result)) && /Name is required/.test(String(r.result)),
+      /NOT CONFIRMED even after trusted retry/.test(String(r.result)) && /Name is required/.test(String(r.result)),
       String(r.result).split("\n")[0]);
     check("submit escalation: unfilled required fields enumerated as retry targets",
-      /UNFILLED fields in dialog/.test(String(r.result)) && /required-empty/.test(String(r.result)));
+      /UNFILLED fields in the/.test(String(r.result)) && /required-empty/.test(String(r.result)));
+    // The scope is now NAMED, because the scan used to fall back to the whole
+    // document and reported an unrelated control as an unfilled field of a
+    // form it does not belong to (eval 4 T22: the page's own Sort <select>).
+    check("submit escalation: the unfilled list NAMES the scope it searched",
+      /UNFILLED fields in the (dialog|submit button's form)/.test(String(r.result)),
+      String(r.result).slice(0, 160));
+    // A verdict must not announce a dialog on a page that has none. This
+    // fixture has no modal, so the word must be absent from the state clause.
+    check("submit escalation: does not claim a modal on a page with no dialog",
+      !/dialog is still open/.test(String(r.result)),
+      String(r.result).slice(0, 160));
   });
 
   // ---- fill_form orphaned submit selector re-resolution

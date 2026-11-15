@@ -601,6 +601,13 @@ def main(argv: list[str] | None = None) -> int:
         # the way the tables below can" — both had the number, and both were
         # wrong (344 against 1038) while this notice reported CLAUDE.md as clean.
         # Same pattern, same advisory handling, no second spelling (#21).
+        # A URL-ENCODED COUNT IS STILL A COUNT. README.md states it TWICE:
+        # once in prose and once inside a shields.io badge spelled
+        # "tests-1%2C042%20checks", which the prose pattern below can never
+        # match. So the most visible number in the project sat 192 checks
+        # stale while this notice reported clean on every run -- a detector
+        # that cannot fire also asserts that nothing is wrong, which is the
+        # failure #30 and #39 each record. The badge is swept separately.
         for _doc in ("README.md", "tools/README.md"):
             try:
                 _t = (ROOT / _doc).read_text(encoding="utf-8")
@@ -612,6 +619,10 @@ def main(argv: list[str] | None = None) -> int:
                 _st = {int(m.group(1).replace(",", ""))
                        for m in re.finditer(r"([\d,]+) checks", _t)
                        if "suite" in _t[max(0, m.start() - 40):m.start()]}
+                # ...and the badge, whose separators are percent-encoded, so no
+                # amount of widening the prose pattern reaches it.
+                _st |= {int(m.group(1).replace("%2C", "").replace(",", ""))
+                        for m in re.finditer(r"tests-([\d%A-Fa-f]+?)%20checks", _t)}
                 if _st and checks and _st != {checks}:
                     print(f"  note: {_doc} says "
                           f"{'/'.join(str(x) for x in sorted(_st))} checks, this run"
