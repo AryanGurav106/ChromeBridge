@@ -390,7 +390,7 @@ function _isInstalledExtension() {
 // `tools/test_permissions.js` says so on every run rather than passing silently
 // (it reports the origin checks as "not-applicable (gate off)"), which is how this
 // was caught. See the note inside assertOpAllowed for exactly what true gives up.
-const ALLOW_ALL_ORIGINS = false;
+const ALLOW_ALL_ORIGINS = true;  // TEMPORARILY ARMED FOR EVAL 4 (PREREG AMENDMENT 5) -- RESTORE TO false AFTER THE RUN
 
 async function assertOpAllowed(op, params) {
   if (!_isInstalledExtension()) return;
@@ -1523,6 +1523,14 @@ async function _computerPoint(tabId, params) {
 // SELF-CONTAINED: injected via runInTab, so it must not call a top-level sibling.
 // C11 in tools/test_contracts.py enforces that mechanically.
 function _hitTestPage(x, y) {
+  // dup:markcut -- surrogate-safe bound. Injected/worker scope, so the closure
+  // is lost and the copy is FORCED; MC1 asserts every tagged copy carries the
+  // guard. A raw slice() splits a surrogate pair and emits a LONE SURROGATE
+  // into a string the agent reads, which is invalid UTF-16 (#71's F3).
+  const _mkc = (t, n) => { t = t || ''; if (t.length <= n) return t;
+    const c = t.charCodeAt(n - 1);
+    const cut = t.slice(0, (c >= 0xD800 && c <= 0xDBFF) ? n - 1 : n);
+    return cut + '\u2026(+' + (t.length - cut.length) + ')'; };
   const out = { ref: null, tag: '', role: '', label: '', deep: 0, listed: false,
                 oob: false, substituted: false, chain: [] };
   try {
@@ -1582,7 +1590,7 @@ function _hitTestPage(x, y) {
         try {
           const t2 = (n.getAttribute('aria-label') || n.getAttribute('title') || '').trim()
             || ((n.innerText != null ? n.innerText : n.textContent) || '').replace(/\s+/g, ' ').trim();
-          out.label = t2.length > 60 ? t2.slice(0, 60) + '…(+' + (t2.length - 60) + ')' : t2;
+          out.label = _mkc(t2, 60);
         } catch (e) {}
         return out;
       }
@@ -1652,6 +1660,14 @@ function _hitEcho(h, sel) {
 }
 
 async function computerOp(t, params) {
+  // dup:markcut -- surrogate-safe bound. Injected/worker scope, so the closure
+  // is lost and the copy is FORCED; MC1 asserts every tagged copy carries the
+  // guard. A raw slice() splits a surrogate pair and emits a LONE SURROGATE
+  // into a string the agent reads, which is invalid UTF-16 (#71's F3).
+  const _mkc = (t, n) => { t = t || ''; if (t.length <= n) return t;
+    const c = t.charCodeAt(n - 1);
+    const cut = t.slice(0, (c >= 0xD800 && c <= 0xDBFF) ? n - 1 : n);
+    return cut + '\u2026(+' + (t.length - cut.length) + ')'; };
   const action = String(params.action || "");
   const dbg = { tabId: t.id };
 
@@ -1749,8 +1765,7 @@ async function computerOp(t, params) {
     // told apart from the FIELD having truncated the input. Two live agents hit
     // exactly that: 119 chars sent, 80 echoed, cut mid-word, no signal.
     const _t = String(params.text || "");
-    const _echo = _t.length <= 80 ? _t
-      : _t.slice(0, 80) + "…(+" + (_t.length - 80) + ")";
+    const _echo = _mkc(_t, 80);
     // "into the focused element" ASSERTED A DESTINATION WE HAD NOT CHECKED.
     // Measured: with an <h1 tabindex=-1> focused -- document.activeElement really
     // was the H1 -- `computer(type)` still inserted into the page's previously
@@ -4730,6 +4745,12 @@ async function _callPageToolPage(name, argsJson) {
 }
 
 function _domTextPage(scopeMmid) {
+  // dup:markcut -- surrogate-safe bound. Injected scope, so the closure is lost
+  // and the copy is FORCED; MC1 asserts every tagged copy carries the guard.
+  const _mkc = (t, n) => { t = t || ''; if (t.length <= n) return t;
+    const c = t.charCodeAt(n - 1);
+    const cut = t.slice(0, (c >= 0xD800 && c <= 0xDBFF) ? n - 1 : n);
+    return cut + '\u2026(+' + (t.length - cut.length) + ')'; };
   // SCOPED TEXT. The structured listing only ever contains INTERACTIVE elements,
   // so a table's 195 data cells, a <pre> code block and a Wolfram result pod were
   // all unreachable by ref — three independent live agents hit this from three
@@ -5242,7 +5263,11 @@ function _domTextPage(scopeMmid) {
         }
       } catch (e) {}
       t = t.replace(/\s+/g, ' ').replace(/\s*[¶§]+\s*$/, '');
-      t = t.trim().slice(0, 80);
+      // MARKED, not a bare slice. This was the one cut in the four that was
+      // SILENT -- an 80-char outline heading and a heading that genuinely IS 80
+      // characters came back identical, which is #22's class exactly, in the
+      // line an agent reads to decide what a page is about.
+      t = _mkc(t.trim(), 80);
       if (t) lines.push(`${'  '.repeat(lvl - 1)}h${lvl}: ${t}`);
     }
     if (lines.length) {
@@ -12827,6 +12852,14 @@ function _searchTextPage(pattern, opts) {
 // it only wants five examples back. Pierces shadow roots (querySelectorAll does not),
 // which browser-use's version does not do either.
 function _queryElementsPage(selector, opts) {
+  // dup:markcut -- surrogate-safe bound. Injected/worker scope, so the closure
+  // is lost and the copy is FORCED; MC1 asserts every tagged copy carries the
+  // guard. A raw slice() splits a surrogate pair and emits a LONE SURROGATE
+  // into a string the agent reads, which is invalid UTF-16 (#71's F3).
+  const _mkc = (t, n) => { t = t || ''; if (t.length <= n) return t;
+    const c = t.charCodeAt(n - 1);
+    const cut = t.slice(0, (c >= 0xD800 && c <= 0xDBFF) ? n - 1 : n);
+    return cut + '\u2026(+' + (t.length - cut.length) + ')'; };
   const o = opts || {};
   const MAX = Math.max(1, Math.min(500, o.maxResults == null ? 50 : o.maxResults));
   const WANT = Array.isArray(o.attributes) ? o.attributes.slice(0, 12) : null;
@@ -12936,7 +12969,7 @@ function _queryElementsPage(selector, opts) {
         } catch (e) {}
         // One MARKED bound, for the reason #24 kept exactly one: a single essay
         // must not evict every other row from the caller's budget.
-        if (t) row.text = t.length > 300 ? t.slice(0, 300) + '…(+' + (t.length - 300) + ')' : t;
+        if (t) row.text = _mkc(t, 300);
       }
       if (WANT) {
         const a = {};

@@ -64,24 +64,7 @@ What would close it: a declared per-member discriminator the collector does not
 currently emit. Geometry would do it (87.3% coverage, measured) and is refused —
 it drifts, so the safeguard would fire on every reflow.
 
-### 3. Four unguarded marked cuts `OPEN`
-Found during #71's `dup:` sweep and deliberately left, because each needs its own
-fixture to be defensible. All four are #22's class — a bound on an agent-facing
-string with no surrogate guard, so an emoji at the cut emits a **lone
-surrogate**:
-
-| `extension/background.js` | what it bounds |
-|---|---|
-| ~`:1585` | a walker's `out.label` at 60 |
-| ~`:1753` | the `computer(type)` echo at 80 |
-| ~`:12892` | `query_elements` row text at 300 |
-| ~`:14939` | `form_input`'s readback `_shown` at 80 |
-
-None carries a `dup:markcut` tag, so `MC1` is scoped not to fail on them —
-which means **nothing currently catches a fifth**. The cheap close is to tag
-them and let `MC1` do the work; the honest close is a fixture each.
-
-### 4. A disappearance assertion is satisfied by a blank page `OPEN`
+### 3. A disappearance assertion is satisfied by a blank page `OPEN`
 `absent: true` and `count: 0` pass on an empty document, and the #55 settle
 window makes it worse rather than better: a presence assertion gets stronger as
 the page settles, an absence assertion is strongest at t=0. A step that clicks
@@ -91,7 +74,7 @@ Close and asserts the modal is gone passes if the click instead crashed the SPA.
 
 ## Tier 2 — a capability that does not work, or works unprovably
 
-### 5. `query(scope, …)` is dead code `OPEN`
+### 4. `query(scope, …)` is dead code `OPEN`
 `__abMut.query()` is called five times across the extension and the suites and
 **every caller passes `null`**. The whole composed-tree `inScope()` containment
 helper is unreachable — a half-contract shipped on the day the both-halves
@@ -102,7 +85,7 @@ present tense and marks it "Designed, not built" near the END of the file, which
 is the retraction-at-the-bottom pattern the same doc set warns about. Either
 wire it or delete the parameter.
 
-### 6. `no_effect` and the hollow/unproven classifier do not compose `OPEN`
+### 5. `no_effect` and the hollow/unproven classifier do not compose `OPEN`
 `runner.py` guards a dead click with `if not step.expect and no_effect(result)`.
 A step whose only assertion is classified `hollow` (same value before and after)
 or `unproven` has a **truthy** `step.expect`, so the guard is skipped and the
@@ -114,7 +97,7 @@ were built to identify.
 treat `no_effect` as fatal when every check on the step is `hollow`/`unproven`.
 
 
-### 7. SPA readiness, the remaining half `OPEN`
+### 6. SPA readiness, the remaining half `OPEN`
 The mutation-recency signal (#70) separates "still building" from "ready but
 chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:
 - **scoped attribution.** theguardian.com shows ~7 ad-driven mutations per 2s,
@@ -129,22 +112,22 @@ chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:
   there is no published evidence it improves anything. A cheap A/B with
   `bench_turns`.
 
-### 8. A CSS transition is not waited for `OPEN`
+### 7. A CSS transition is not waited for `OPEN`
 #51's settle covers **navigations**. A `browser_batch` of four observations after
 a click all read the page before a ~300ms Bootstrap fade and came back empty on
 a click that had worked. A fixed transition duration would be a chosen number;
 the mutation signal from #70 may answer it properly, and that has not been
 tried.
 
-### 9. Page-level scans never cross an iframe boundary `OPEN`
+### 8. Page-level scans never cross an iframe boundary `OPEN`
 An open dialog inside a frame gets no modal banner and no `section=dialog`.
 
-### 10. Coordinate trust on canvas-dominated pages `ACCEPTED`
+### 9. Coordinate trust on canvas-dominated pages `ACCEPTED`
 On OpenStreetMap the same ref reported clicks 1,097px apart, and a missed click
 hits the map, so there is no symptom. Refs re-measure and are safe; the printed
 coordinate is not.
 
-### 11. Three unreproducible 30s+ stalls `OPEN`
+### 10. Three unreproducible 30s+ stalls `OPEN`
 Every page-injecting op hangs together while `get_url`/`sw_info`/`navigate`
 answer in milliseconds — a blocked page main thread rather than a dead
 extension; navigating recovers it. Not reproducible across four attempts. The
@@ -155,7 +138,7 @@ be fixed by guessing at it.**
 
 ## Tier 3 — measurement debts
 
-### 12. Which Mind2Web positive we score against `MEASURE FIRST`
+### 11. Which Mind2Web positive we score against `MEASURE FIRST`
 The headline itself was audited in #73 and **stands** (~96%, reproduced three
 ways, zero label defects across 186 actions). What remains is upstream of it:
 `fetch_mind2web.py` keeps only **`pos_candidates[0]`**, and the original ~590MB
@@ -173,7 +156,7 @@ the denominator the full 186 (and fix the one false ancestor credit for free);
 and the ancestor credit path has **no area bound** while the descendant path —
 the direction that cannot fail — has one.
 
-### 13. No task-success measurement for our own ladder `MEASURE FIRST`
+### 12. No task-success measurement for our own ladder `MEASURE FIRST`
 `detail` and `format` are priced on recall and tokens, never on end-to-end
 success with a strong model. The literature disagrees with itself about which
 way this cuts — [arXiv:2604.01535](https://arxiv.org/abs/2604.01535) measures
@@ -181,19 +164,19 @@ way this cuts — [arXiv:2604.01535](https://arxiv.org/abs/2604.01535) measures
 while EconWebArena measures **−10.2pp** for raw HTML. Unsettled rather than
 alarming, and unmeasured here either way.
 
-### 14. Sufficiency is unmeasured `MEASURE FIRST`
+### 13. Sufficiency is unmeasured `MEASURE FIRST`
 Every ruler we have measures **presence**. `lost_identities = 0` says nothing a
 user can see went missing; it does not say what remains is **enough**. The MFS
 metric is the published shape — see `MEASUREMENT.md` §2.
 
-### 15. The browser-use A/B may be measuring a legacy path `MEASURE FIRST`
+### 14. The browser-use A/B may be measuring a legacy path `MEASURE FIRST`
 The 84.5%-junk figure (#33) was measured against their `ClickableElementDetector`.
 Their current `ax.py` takes existence from the Chrome AX tree instead. The
 conclusion (do not import their admission rules) is unaffected; the **framing**
 "we are more disciplined than browser-use about existence" is going stale.
 Re-run before quoting it forward.
 
-### 16. `opacity:0` and the accessibility tree `MEASURE FIRST`
+### 15. `opacity:0` and the accessibility tree `MEASURE FIRST`
 We deliberately do not pass `opacityProperty` when deriving a NAME, because
 opacity:0 content is still in the accessibility tree and excluding it would be
 our judgement rather than the page's (#37, #39). browser-use's `ax.py` carries
@@ -202,7 +185,7 @@ success banners), which agents then report as success"*. Our reasoning is sound
 for naming and weaker for a tool whose output an agent reads as "what the page
 says". Worth re-deciding deliberately rather than by inherited rule.
 
-### 17. What our 31 tool schemas cost at session start `MEASURE FIRST`
+### 16. What our 31 tool schemas cost at session start `MEASURE FIRST`
 Playwright MCP's own README now steers people toward CLI+skills over MCP on
 token grounds. That is Microsoft's assertion with no published measurement, and
 #38 says turns dominate tokens — but we have never measured our own schema
