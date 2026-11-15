@@ -6696,16 +6696,35 @@ granted in the side panel is refused with the same message the agent gets.
     the APIs match, but its shields are an extra variable no document in this
     repo mentions, and every doc here says "Chrome".
 
-    **LIVE VERIFICATION OF THE FIX IS OWED AND IS NOT DONE.** Everything above ran under
-    Playwright against functions sliced out of `background.js`. #30 found the three
-    DECLARATIVE signals of this very probe dead in production for an entire release
-    because `runInTab` → `executeScript({func})` stringifies one function and
-    nothing else, so a sibling call is a free identifier whose ReferenceError lands
-    in a swallowing catch. `C11` now guards that shape and passes, and the probe
-    reads `window.__abMut`, which is a member expression rather than a free
-    identifier — but **the extension has not been reloaded and the signal has not
-    been seen in a real Chrome.** Until it has, this entry describes a measurement,
-    not a shipped capability.
+    **LIVE VERIFICATION: DONE, and it is the before/after that matters.** After
+    an extension reload (worker `yjcma1` -> `wkd8te`, age 30s, `bridge_ms_total`
+    reset to 6.9 -- which is what proves the stdio process respawned rather than
+    the client merely re-handshaking -- and `server_code_changed_since_start`
+    silent), the SAME probe that produced the "before":
+
+        BEFORE (shipped build)   recorderPresent "undefined"
+                                 read_page on a page ~10% built -> NO BANNER
+        AFTER  (reloaded)        recorderPresent "object"
+                                 read_page -> *** THE DOM IS STILL CHANGING
+                                 (last change 46ms ago; 37 change(s) in the last
+                                 3000ms: 37 structural) ***
+
+    **#30's bug class did NOT recur**: the probe reached `window.__abMut` across
+    the `executeScript` boundary and the banner rendered, which is the thing that
+    was dead in production for a release last time. All four tiers confirmed on
+    the real browser: structural churn -> STILL CHANGING; attribute-only churn ->
+    `*** Minor DOM activity (3 change(s) in the last 3000ms: 3 @style). No
+    element was added, removed or re-texted ***` **with no absence warning**,
+    which is the ad-page fix working; fully quiet -> **nothing at all**
+    (`since: 4399, structural: 0`); and `saturated: false` at `total: 196`,
+    so the slots-written fix holds too.
+
+    **AND THE THROTTLING PREMISE CONFIRMED ITSELF UNASKED.** The 400-row paint
+    that finishes in ~1.8s under Playwright had painted **72 rows after 4.5
+    seconds** in the agent's real tab, because that tab is hidden BY DESIGN
+    (#12) and Chrome is clamping the timer. That is the exact regime the window
+    was widened for, observed live rather than simulated, and it is why a
+    mid-render read is the normal case for this project rather than a race.
 
     Suites: readiness 10 → 23. New — R11/R12 (a page still painting is reported as
     changing where every other signal reads zero, and the probe carries it across

@@ -361,14 +361,15 @@ code (R11–R21 in `tools/test_readiness.py`):
 
 **Still open:**
 
-- **Live verification under the extension.** Everything above ran under
-  Playwright against sliced-out functions. The *before* half IS captured live —
-  on the shipped build, a page 10% painted returned no banner at all — but the
-  fix has not been seen in a real Chrome. #30 is the precedent: this exact
-  probe's three declarative signals were dead in production for a release while
-  the suite read 10/10, because `executeScript({func})` stringifies one function
-  and a sibling call becomes a free identifier whose ReferenceError lands in a
-  swallowing catch.
+- ~~Live verification under the extension.~~ **DONE.** Before/after on the same
+  probe: the shipped build returned **no banner** on a page ~10% painted; after
+  the reload the same read returned `*** THE DOM IS STILL CHANGING (last change
+  46ms ago; 37 change(s) in the last 3000ms: 37 structural) ***`. All four tiers
+  confirmed on the real browser, including attribute-only churn rendering as
+  *Minor DOM activity* **with no absence warning**. #30's bug class did not
+  recur. And the throttling premise confirmed itself unasked: a paint that takes
+  ~1.8s under Playwright had managed **72 of 400 rows after 4.5 seconds** in the
+  agent's real (hidden, clamped) tab.
 - **Per-subtree attribution** (§5b). Designed, not built — and `query(scope,…)`
   plus its `inScope()` helper are therefore **dead code**: all five callers pass
   `null`. Either wire it or delete the parameter; a half-contract is what
