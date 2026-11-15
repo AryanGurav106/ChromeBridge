@@ -390,7 +390,7 @@ function _isInstalledExtension() {
 // `tools/test_permissions.js` says so on every run rather than passing silently
 // (it reports the origin checks as "not-applicable (gate off)"), which is how this
 // was caught. See the note inside assertOpAllowed for exactly what true gives up.
-const ALLOW_ALL_ORIGINS = true;  // TEMPORARILY ARMED FOR EVAL 4 (PREREG AMENDMENT 5) -- RESTORE TO false AFTER THE RUN
+const ALLOW_ALL_ORIGINS = false;
 
 async function assertOpAllowed(op, params) {
   if (!_isInstalledExtension()) return;
