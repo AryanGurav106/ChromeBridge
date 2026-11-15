@@ -154,10 +154,30 @@ way this cuts — [arXiv:2604.01535](https://arxiv.org/abs/2604.01535) measures
 while EconWebArena measures **−10.2pp** for raw HTML. Unsettled rather than
 alarming, and unmeasured here either way.
 
-### 12. Sufficiency is unmeasured `MEASURE FIRST`
-Every ruler we have measures **presence**. `lost_identities = 0` says nothing a
-user can see went missing; it does not say what remains is **enough**. The MFS
-metric is the published shape — see `MEASUREMENT.md` §2.
+### 12. Sufficiency: measured for CONTROLS, unmeasured for TEXT `MEASURE FIRST`
+`tools/measure_sufficiency.py` + `docs/SUFFICIENCY.md` close the control half.
+Baseline: **`DS | reachable` = 0.933** (83/89 labelled targets distinguishable
+among the rows we printed), LOSO 0.921–0.951, both negative controls passing and
+both cross-checks against `bench_mind2web` / `bench_trajectory` exact. The
+accessible name carries **38.2pp**, the tree's ancestry path **11.2pp**.
+
+**The larger half is open and it is the one the source paper ranks first:
+TEXT** (30.5 / 59.5 coverage drop when ablated, against 4.8–13.6 for any control
+type). Our listing is a listing of *controls*; prose and table data reach the
+agent only via `get_page_text`, `search_page` and `query_elements`, and nothing
+measures whether those carry what a task needs. #14's scoped text and #26's
+table rendering were both built from live-agent complaints, never priced.
+
+Two measurement debts the control half surfaced, both cheap:
+- **Mind2Web's snapshots have no `href`, no `src`, and no `aria-label`** (0 of
+  61,709 `<a>`; 0 of 6,454 `<img>`; 17,272 `aria_label` against 1 hyphenated
+  attribute). So the `detail` ladder is a near no-op there and AccName step 2C
+  is dead for every implementation. Three structurally-absent signals beyond the
+  two #73 names — **no `detail`/`brief`/`full` comparison taken on Mind2Web
+  means anything.**
+- **Density is not sufficiency, by about 4×** (27.6% of on-screen rows share a
+  printed identity vs 6.7% of the rows a human needed). `audit_dom_quality.py`'s
+  `ambiguous` rate is the first number and has never been the second.
 
 ### 13. The browser-use A/B may be measuring a legacy path `MEASURE FIRST`
 The 84.5%-junk figure (#33) was measured against their `ClickableElementDetector`.

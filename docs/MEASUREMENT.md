@@ -43,8 +43,23 @@ looked Pareto-positive at +1.1% chars and turned out to be +18.7% tokens for
 | `audit_descriptors.py`, `audit_flow_resolve.py` | locator uniqueness and survival under mutation | mis-binds under the mutations it models | **any mutation it does not model** — see §4 |
 | `tools/bench_turns/` | live head-to-head, turns, pre-registered | what a real agent costs | anything below the ~47s/task wall-clock drift floor |
 | `inspect_site.py` | `lost_identities` — a visible control named nowhere | identity loss | sufficiency: whether what survived is *enough* |
+| `measure_sufficiency.py` | **decision sufficiency** — is the human-labelled target *distinguishable* among the rows we printed, and which printed field carries the discrimination | a listing that is complete and still does not determine the action | whether an agent succeeds; anything about **prose**, which the source paper measures as the largest contributor; the 84 targets that were never printed |
 
-### The one that is missing
+### The one that is missing — half built
+
+`measure_sufficiency.py` ports the metric **shape** (see `SUFFICIENCY.md`) for
+CONTROLS: **`DS | reachable` = 0.933** on 89 reachable Mind2Web targets, LOSO
+0.921–0.951, with the accessible name worth 38.2pp and the tree's ancestry path
+worth 11.2pp. It also measures why density is not sufficiency: **27.6%** of
+on-screen rows share a printed identity against **6.7%** of the rows a human
+actually needed.
+
+**The larger half is still missing**, and it is the half the paper says matters
+most: TEXT. Our listing is a listing of controls, so prose and table data reach
+the agent only through `get_page_text`, `search_page` and `query_elements`, and
+nothing measures whether those carry what a task needs.
+
+### The original note
 
 **Minimal Failure Set / coverage** — `arXiv:2605.29397`, 28 May 2026. MFS is the
 smallest set of elements whose removal causes task failure; coverage is the

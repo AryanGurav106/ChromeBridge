@@ -27,6 +27,7 @@ fix it.
 | touching readiness / settling | `READINESS.md` — this is the active open problem |
 | changing the flow recorder | `FLOWS.md` → CLAUDE.md #49, #57, #61, #68 |
 | adding or changing a measurement | `MEASUREMENT.md` — **read this before you quote a number** |
+| asking whether the listing is *enough*, not just complete | `SUFFICIENCY.md` → `tools/measure_sufficiency.py` |
 | running a head-to-head | `EVALS.md` → `tools/bench_turns/` |
 | about to claim something is general | `PRINCIPLES.md` §I → `tools/audit_patterns.py` |
 
@@ -39,6 +40,7 @@ fix it.
 | `READINESS.md` | "Accurate at any stage" — the one open structural gap, its evidence and the design |
 | `FLOWS.md` | Record and replay: descriptors, assertions, the oracle problem, the runtime |
 | `MEASUREMENT.md` | The rulers. What each one can and cannot see, and how each has lied |
+| `SUFFICIENCY.md` | The one ruler that is not about presence: is the element a task needs *distinguishable*? What it cannot answer, and why it is not circular |
 | `EVALS.md` | The head-to-head protocol and the results index |
 | `OPEN.md` | The single ranked list of open questions, each with its evidence |
 | `SHOWCASE.md` | Content written for posting, with the claims it is not allowed to make |
