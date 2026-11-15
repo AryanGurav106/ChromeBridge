@@ -227,6 +227,30 @@ if __name__ == "__main__":
 
 
 # ---------------------------------------------------------------------------
+# THE POPULATION NUMBER, 34 frozen sites: 811/824 = 0.9842 reachable by their
+# own printed identity, 20 contested excluded.
+#
+# The 13 misses are NOT app shells, which is what I expected and is the more
+# interesting answer. The ones recoverable verbatim from the run are
+# `span "Search Cmd+K"`, `a "Issues 5k+"` and `ul "4.1.0 25.9k 6.1k"` -- all
+# the same shape: a label joined to a BADGE (a count, a keyboard hint, a
+# version). The element's name is assembled from several children, so it is
+# blanked, and unlike ptable's tile some of those children ARE kept entries,
+# so it is not a sole carrier.
+#
+# THAT MAKES THE METRIC STRICTER THAN THE AGENT'S ACTUAL SITUATION, and it is
+# worth stating rather than quietly fixing. It asks whether THIS mmid comes
+# back. When the inner <span>Issues</span> is itself listed, find("Issues")
+# returns that span, and clicking it does what clicking the link would --
+# which is exactly the reasoning #18 and #73 use to credit a DESCENDANT on
+# Mind2Web. By that standard these are hits.
+#
+# Not changed here, deliberately: loosening a metric after seeing which cases
+# it fails is grading to the answer. The honest reading is that 0.9842 is a
+# LOWER bound, the residual is one shape, and whether to credit a descendant
+# is a decision to take on its own merits rather than while looking at the
+# misses it would erase.
+#
 # WHAT THIS RULER DID NOT CATCH, recorded because I claimed it would.
 #
 # After #74 I wrote that a reachability ruler "would have caught it the day it

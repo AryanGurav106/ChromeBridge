@@ -25,7 +25,7 @@ blindness, and the locale hazard (which did NOT reproduce) — all in `CLAUDE.md
 
 ## Tier 1 — a wrong answer reaches the user
 
-### 0. Nothing measures REACHABILITY BY NAME `MEASURE FIRST`
+### 0. Reachability by name — MEASURED, residual is one shape `OPEN`
 Every ruler here measures PRESENCE — presence, `lost_identities`, Mind2Web
 recall, and item 12's own DS. CLAUDE.md #74 found 118 elements that were
 present in all of them and unreachable by `find`, on a page the readiness probe
@@ -37,7 +37,25 @@ than in the listing (the `find` blanking, the table column misalignment, the
 submit verdict), and **no offline measurement in this repo could have caught
 any of them**. A ruler that scores `find` against the labels the collector
 emitted — ask for each entry's own printed identity and check it comes back —
-would be cheap and would have caught #74 the day it shipped.
+is now built: `tools/measure_findability.py`. **811/824 = 0.9842** across 34
+frozen sites, with contested identities (shared by several entries, so the
+probed one can fall outside find's bounded result set) counted separately.
+
+**And the claim that it would have caught #74 is FALSE on this corpus** —
+ablating the fix gives the identical number, because none of these 34 sites has
+#74's shape. `--self-test` builds it synthetically and DOES fail against the
+pre-fix scorer, with a known-miss control passing in both arms; that is the
+guard, and the corpus run is the population number. Two different jobs.
+
+**Residual: 13 misses, all one shape, none an app shell** — a label joined to a
+badge (`span "Search Cmd+K"`, `a "Issues 5k+"`, `ul "4.1.0 25.9k 6.1k"`). The
+name is assembled, so it is blanked, and unlike ptable's tile some contributors
+ARE kept entries, so it is not a sole carrier. **The metric is therefore
+stricter than the agent's real situation**: find("Issues") returns the inner
+span, and clicking it does what clicking the link would, which is the same
+reasoning #18/#73 use to credit a descendant on Mind2Web. Deciding whether to
+credit a descendant here should be taken on its own merits, NOT while looking
+at the misses it would erase.
 
 
 
