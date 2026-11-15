@@ -4,9 +4,15 @@ The brief was to post REGULARLY so people get the idea, "not just numbers".
 One draft is not a cadence, so this is the pipeline: each post below is already
 backed by an artefact in this repo, so writing it is an hour, not a project.
 
-**Four are drafted now (001, 002, 003, 004).** At one a week that is a month of
-cadence already sitting in the repo, which was the point of building a queue
-rather than writing one post well.
+**Five are drafted now (001, 002, 003, 004, 009).** At one a week that is over a
+month of cadence already sitting in the repo, which was the point of building a
+queue rather than writing one post well.
+
+**Ordering note for the first four sends.** 009 should go EARLY, not last. It is
+the only one whose headline is a number moving against us, and a series that
+opens with wins and buries the correction reads as marketing however true each
+post is. 001 (capability) then 009 (the correction) then 002 (the comparison) is
+the order that earns the third one.
 
 **The rule that makes this sustainable:** a post ships only when its claim can
 be checked against something committed here. Every number in post 001 was
@@ -28,6 +34,8 @@ thing being shown, which is why 001 leaves the head-to-head out entirely.
 | 006 | Every way record-and-replay can break, by stage | `docs/FLOWS-FAILURE-SURFACE.md` | material complete |
 | 007 | "Nothing went missing" is not "what is left is enough" | `docs/SUFFICIENCY.md`, DS 0.933 | material complete |
 | 008 | A feature can be dead in production behind a green suite, and only a live run will say so | CLAUDE.md #30 (two such), #76 (the scoped banner), `delta` dead for its whole life | material complete |
+| 009 | We audited our headline number and it went down | CLAUDE.md #73 and #78, `tools/_m2w_ruler.py` | **DRAFTED**, needs sending |
+| 010 | Five agents reviewed my work and four of them corrected a claim, not a bug | CLAUDE.md #77, #78 | material complete |
 
 ## What each post must NOT do
 
