@@ -139,36 +139,28 @@ def main():
         if alsom and "none" not in alsom.group(1).lower():
             accept = [x.strip() for x in re.findall(r"`([^`]+)`", alsom.group(1))
                       if x.strip()]
-        # Near-misses the referee named become explicit REJECTS, because a
-        # plausible-but-wrong value is what makes two correct agents look like
-        # they disagree. T9's `3` is the canonical case: it is also the medal
-        # rank, so the wrong answer is internally consistent.
+        # REJECTS ARE CURATED ONLY. The auto-harvest that used to live here is
+        # DELETED, after it produced false rejections three different ways on
+        # answers that were right:
+        #   * T21 scored a correct "Median Sodium 650 mg, n = 41" WRONG because
+        #     the bare column name `n` was harvested as a near-miss;
+        #   * T8 and T16 were rejected by `ForgeFlex Tools` (the brand the task
+        #     TELLS you to filter by) and by `总笔画 12` (the literal correct
+        #     answer), because a referee's verification notes quote the CORRECT
+        #     values and the harvest assumed a notes section holds near-misses;
+        #   * T22's section regex ran past its own task boundary to \Z and
+        #     harvested answers belonging to five OTHER tasks (`Start Order`
+        #     from T9, `100-0000` from T2, `Sp. Atk` from T5...).
+        #
+        # Each fix made the filter narrower and the next hole appeared somewhere
+        # else, which is this project's own signature for a matcher that reads
+        # as general and measures as narrow (#21). A near-miss is a JUDGEMENT
+        # about what a guesser would plausibly say, and the second referee
+        # already made it for the three tasks where it matters -- those are in
+        # GRADING, written before any run. Everywhere else the require_all
+        # conjunction does the work, and a reject that can fire on a correct
+        # answer is strictly worse than no reject at all.
         reject = []
-        nm = re.search(r"\*\*(?:Notes|Near|Reject)[^:]*:\*\*\s*([\s\S]*?)(?=^\*\*|\Z)",
-                       body, re.M)
-        if nm:
-            # A BACKTICKED TOKEN IS NOT AUTOMATICALLY A WRONG VALUE. The key
-            # also backticks COLUMN NAMES (`n`, `Samples`, `Amount`), and a
-            # one-character reject matches almost any answer -- T21 scored a
-            # correct "Median Sodium 650 mg, n = 41" as WRONG because `n` was
-            # on its reject list, which would have read as the agent failing
-            # every run rather than as a broken ruler. Caught by driving
-            # graded() over a guesser/reader pair before trusting it (#16).
-            #
-            # A near-miss VALUE either contains a digit or is a multi-word
-            # phrase; a bare lowercase word is a label.
-            def _is_value(x):
-                x = x.strip()
-                if not (any(c.isdigit() for c in x) or " " in x):
-                    return False            # a bare lowercase word is a LABEL
-                # A near-miss is a VALUE the referee named. These are not:
-                if not (x[:1].isalnum() or x[:1] in "$\u00a5\u20ac\u00a3"):
-                    return False            # prose fragment, e.g. "; the"
-                if re.search(r"[#\[\]{}]|\.[A-Za-z][\w-]*\b|::|=>", x):
-                    return False            # a CSS selector or code, not a value
-                return True
-            reject = [x.strip(" `*\"") for x in re.findall(r"`([^`]{2,40})`", nm.group(1))
-                      if _is_value(x)]
         shape = shape_for(tid, headers.get(tid, ""))
         if not shape:
             problems.append(f"{tid}: cannot determine shape from {headers.get(tid)!r}")

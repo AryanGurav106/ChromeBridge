@@ -308,3 +308,96 @@ down. The self-reports are kept in `self_reports.archive.tsv`.
 
 **The live table reported before this point was built from self-reports and is
 superseded by the transcript-scored one.**
+
+---
+
+## AMENDMENT 7 — 2026-11-15, after 15 pairs: the reject harvest is DELETED
+
+Amendment 6 fixed how the key builds its REQUIREMENTS. This fixes its
+REJECTS, which were wrong in a third way and were still firing on correct
+answers: 3 of 30 runs graded wrong, **including both arms on T16** — #48's
+signature a second time in the same eval.
+
+What was rejecting them:
+
+| task | reject that fired | what it actually is |
+|---|---|---|
+| T8/cic | `ForgeFlex Tools` | the brand the TASK tells you to filter by |
+| T16/cb | `总笔画 12` | **the literal correct answer** |
+| T16/both | `部外 0` | an unrelated field of the same info table |
+
+And inspecting the rest found T22 carrying rejects belonging to **five other
+tasks** (`Start Order` from T9, `100-0000` from T2, `Sp. Atk` from T5,
+`6.626 070 15 x 10^-34` from T11, `654` from T21), because its section regex
+ran past its own task boundary to `\Z` and harvested the document's trailing
+sections.
+
+**Why deleted rather than fixed again.** Three different holes, each found
+after the previous patch narrowed the filter: a bare column name (`n`, caught
+pre-run), a verification note quoting correct values, and a boundary overrun.
+That is this project's own signature for a matcher that reads as general and
+measures as narrow (#21), and the honest response is the one #24 took with the
+submit wordlists — delete it rather than lengthen it.
+
+**What a reject actually is:** a judgement about what a GUESSER would
+plausibly say. That is not derivable from the referee's prose, and the second
+blind referee already made it for the three tasks where it matters. Those live
+in `GRADING`, written before any run: T7 (277/787/59,556 — the other tab
+counts), T20 (the near-miss magnesium figures), T21 (654/743/…). Everywhere
+else `require_all` does the work.
+
+**Verified in both directions, as Amendment 6 was:** all 30 runs now grade
+correct, and 13 planted near-miss answers are still REJECTED — including
+`总笔画 13` (the Kangxi count, which is the trap the referee planted on T16 and
+which our own agent spotted unaided) and `277 results / Cheese spread` for T7.
+A ruler that cannot reject is worse than one that over-rejects.
+
+**It changed no pair's direction, and the turn numbers are untouched.**
+
+### Two numbers I reported live that the transcripts corrected
+
+Recorded because the live commentary is in the session and the file should not
+quietly disagree with it:
+
+- **T13/cb is 8 turns, not 7.** I quoted the agent's self-report. The loss to
+  the control arm is therefore 8–6, wider than stated.
+- **Ceremony is 17 to 0, not 11 to 0.** Same cause: I counted from agents'
+  prose instead of from `score.py`.
+
+Both are the Amendment 6 defect recurring in my own commentary after the code
+was fixed, which is worth stating plainly: fixing the harness did not stop me
+quoting self-reports in conversation.
+
+### Amendment 7, addendum — the CURATED rejects were wrong the same way
+
+Deleting the auto-harvest (above) left 3 curated reject lists, and one of them
+immediately marked a correct answer wrong. T20/cic answered:
+
+> 271 mg (Magnesium, Mg — Max value; row reads Average 258 mg, Analytical,
+> 8 Samples, Min 238, Max 271, Median 258)
+
+`258` and `238` are on T20's reject list, because reporting Average or Min
+INSTEAD of Max is the plausible miss. Quoting the whole row with Max correctly
+identified is not that miss — it is more evidence, not less — and substring
+matching cannot tell "the answer is 258" from "Average 258".
+
+**Rule changed, not the list:** a reject now disqualifies only when the
+required values are ABSENT. That is how the other branch of `graded()` has
+always worked, so this is one concept with one spelling (#21) rather than two
+rules that disagree.
+
+**The motivating case survives without the reject, which is the point.** The
+planted miss "Max is 258 mg" still FAILS — not because 258 is rejected, but
+because the required `271` is absent. The conjunction the blind referee chose
+was already doing the work; the reject was belt-and-braces that fired on the
+belt. Re-verified over 11 planted near-misses, all still rejected, all 34
+scored runs correct.
+
+**What this gives up, stated rather than hidden:** an answer that hedges across
+several values while still containing all the required ones now passes. No such
+answer occurred in 40 runs.
+
+**Also:** `analyse.py` now excludes a run with no ANSWER line and says so
+loudly, naming it as "in flight, or the run failed without reporting one —
+check which". It previously crashed on a partial transcript, which is the
+better failure of the two but still no way to run an analysis.

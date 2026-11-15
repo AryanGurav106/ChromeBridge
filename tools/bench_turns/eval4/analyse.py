@@ -62,11 +62,30 @@ def graded(tid, ans):
     if need:
         if not all(x.replace("−", "-").lower() in a for x in need):
             return False
-        # a reject still wins: the discriminating value can co-occur with a
-        # near-miss when an agent reports several numbers at once
-        for bad in g.get("reject", []):
-            if bad.replace("−", "-").lower() in a:
-                return False
+        # A REJECT DISQUALIFIES ONLY WHEN THE REQUIRED VALUES ARE ABSENT.
+        #
+        # This branch used to say the opposite -- "a reject still wins: the
+        # discriminating value can co-occur with a near-miss when an agent
+        # reports several numbers at once" -- and that marked T20/cic WRONG for
+        # an answer that was RIGHT and better than the minimum:
+        #   "271 mg (Magnesium, Mg -- Max value; row reads Average 258 mg,
+        #    Analytical, 8 Samples, Min 238, Max 271, Median 258)"
+        # 258 and 238 are on T20's reject list because reporting Average or Min
+        # INSTEAD of Max is the plausible miss. Quoting the whole row with Max
+        # correctly identified is not that miss; it is more evidence, not less.
+        # Substring matching cannot tell "the answer is 258" from "Average 258"
+        # and it should not try -- a position or label heuristic here is the
+        # kind of rule this project removes from paths that decide things.
+        #
+        # The discriminating load is already carried by require_all, which the
+        # blind referee chose for exactly that reason (T21's n=41 is not
+        # guessable; T20's 271 is exact against a republished ~270). So this
+        # now matches the OTHER branch below, which has always worked this way
+        # -- one concept, one spelling (#21).
+        #
+        # What it gives up, stated rather than hidden: an answer that hedges
+        # across several values while still containing all the required ones
+        # now passes. No such answer occurred in 40 runs.
         return True
 
     for bad in g.get("reject", []):               # reject wins ties deliberately
@@ -97,9 +116,18 @@ if _bad:
     sys.exit("REFUSING: runs.tsv column 4 must be an AGENT ID, not a report.\n  "
              + "\n  ".join(_bad)
              + "\n  Fix with: python collect.py --write")
-_half = sorted(t for t, d in res.items() if len(d) < 2)
+# A run still IN FLIGHT has a partial transcript: no answer and no content
+# turn yet. Scoring it would crash on a None, or worse, silently report a
+# half-run's turn count as the result. A run that FINISHED without an ANSWER
+# line is a different thing and must NOT be swallowed here -- it will have
+# made content calls, so first_content_turn is set and it stays in, to be
+# caught by the correctness falsifier.
+_inflight = sorted(t for t, d in res.items() for r in d.values()
+                   if r.get("answer") is None)
+_half = sorted(set(t for t, d in res.items() if len(d) < 2) | set(_inflight))
 if _half:
-    print(f"NOTE: incomplete pair(s) excluded: {', '.join(_half)}\n")
+    print(f"NOTE: excluded, no ANSWER line yet (in flight, or the run failed "
+          f"without reporting one -- check which): {', '.join(_half)}\n")
     for t in _half:
         del res[t]
 

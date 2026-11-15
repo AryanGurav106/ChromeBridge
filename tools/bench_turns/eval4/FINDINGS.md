@@ -595,3 +595,413 @@ acceptable.
 **It failed loud, as designed.** The readiness banner named the in-flight
 `main_frame` request, which is the only reason the stale read was caught rather
 than answered from. Cost: one round trip.
+
+## T11/cic — cb 6, cic 7. #46 reported in its own words for the FIFTH time.
+
+Both correct (`(exact)`).
+
+> `navigate` inside `browser_batch` requires an explicit tabId, so
+> `tabs_create_mcp` could not be fused with the first navigate and the tab id
+> had to be learned in its own turn
+
+Five sightings now across three evals (#47's T8; this eval's T5, T6, T9, T11),
+from five different agents, none prompted to look for it. #46 argued
+structurally that no docstring could remove a turn the plumbing required, and
+chose a structural check over the A/B that had been planned instead. This is
+what that check was predicting, observed five times.
+
+**Their second note is about naming and is worth sitting with, because it is a
+question we could be asked about ours.** Their `find("search box input field")`
+returned the NIST search input as `textbox "(unnamed)"` with no name and no
+placeholder, so the only confirmation available was the surrounding form. Our
+answer to that shape is `near=` (#37 — assigned only where it DISCRIMINATES,
+dropped when every candidate would carry the same string) plus `(post-key)`
+(#41 — the HTML `name` attribute shown as what the field POSTS under, marked so
+it is not mistaken for a label). Whether ours actually named that specific
+field is not established by this run and should not be claimed from it: our arm
+reached the field by a different route and never printed it.
+
+## T12/cic — the wrong-tab defect did real damage, and a confound I have to declare
+
+cic 5 turns, correct.
+
+> `navigate` called without a tabId hijacked a PRE-EXISTING unrelated tab
+> (tabId 1711644948, which held "Olympedia – Marathon, Men") instead of
+> creating a new one, **destroying that page**. The same result then asserted
+> "Tabs in this group were opened for this task and are yours to clean up" —
+> false for that tab, and **acting on it would have closed a tab belonging to
+> the user.**
+
+Second time in this eval (T9 was the first) and the worse of the two, because
+the message that followed the hijack invited the agent to close someone else's
+tab. It also contradicted itself inside one result: the "Available tabs" list
+showed that tab already at the Met URL while the `tabs_context_mcp` block in
+the SAME output still showed it as Olympedia.
+
+**THE CONFOUND, declared rather than buried.** The tab it destroyed was left
+open by T9 of this eval, because my prompt says "Do not close any tab you did
+not open". So my protocol accumulates tabs, and an accumulated tab is something
+only an arm that navigates the ACTIVE tab can trip over. Three things about
+that, and the third is why I am not changing the protocol:
+
+1. It did **not** cost turns here — 5 is a good run — so it has not moved any
+   number in this eval.
+2. The defect does not require accumulation. In a browser holding one tab, a
+   tabId-less `navigate` hijacks the user's only tab just the same. The
+   leftovers make it VISIBLE, they do not make it happen.
+3. Changing the protocol after 12 pairs is the move that invalidates a
+   pre-registration. It stays as written, and this paragraph stands instead.
+
+What I will not claim: that this is evidence about turns. It is evidence about
+a user's tabs, which is a different and in some ways more serious thing, and it
+belongs in the qualitative half of the write-up rather than the table.
+
+## T13/cb — E4-D10: two contradictory state flags for one node, and the rule is right
+
+cb 7 turns, correct (Child 1 and Child 2).
+
+> After Root 1 was successfully expanded, `read_page` still flagged its anchor
+> row `ref_151 | a "Root 1" role=treeitem (collapsed)` while the toggle on the
+> row above read `ref_150 | i (expanded)` and the two children were listed
+> nested beneath it — two contradictory state markers for one node in one
+> listing.
+
+**Checked the derivation rather than accepting the agent's diagnosis.** It
+proposed that we derive the anchor's state from the wrong element. We do not:
+`collapsed` is strictly `el.getAttribute('aria-expanded') === 'false'` ON THAT
+ELEMENT (`background.js`:8968), which is what ARIA says — an ABSENT
+`aria-expanded` means not-expandable, never collapsed, and we correctly print
+nothing in that case. So each flag is individually spec-correct and the
+contradiction is in the page.
+
+**But the representation question survives the diagnosis, and it is the right
+one for this project.** Our listing printed two contradictory states for one
+visual node and said nothing about it, so the reader had to go and verify a
+third way. We already hold the fact that resolves it: **the element declared
+`aria-expanded="false"` while kept descendants of its own subtree were being
+listed underneath it.** That is a containment check against our own output, not
+a guess about the widget, and it is exactly the shape of rule this codebase
+prefers — provable from two things we already have, no framework name, no
+threshold.
+
+**What is NOT yet established, and must be before anything is built:** whether
+the anchor really still read `aria-expanded="false"` after the expand, or
+whether that row came from a read taken before it. The agent's own run had a
+mid-build race in the same batch (its defect 2), so a stale row is live
+possibility. Resolving it means looking at the real DOM on that page, which
+needs the browser, which is busy.
+
+Queued as **E4-D10**, with the measurement first: on jstree.com after an
+expand, what does the anchor's `aria-expanded` actually say?
+
+**Its second defect is the known one.** `query_elements("#demo_root_1 > ul >
+li > a.jstree-anchor")` returned no match while a broader selector in the SAME
+batch returned both children — the settle covering document commit and not
+content arrival, which is E4-D5 from T8. Same mechanism, third sighting.
+Banner fired and said not to conclude absence, which is why it cost a round
+trip and not an answer.
+
+## T13/cic — WE LOSE THIS ONE, 7 to 5, and their report partly dissolves E4-D10
+
+Both correct (Child 1, Child 2). First decided pair against us in this eval.
+
+**The loss is ours and the cause is not the representation.** Our 7 turns
+included one read that landed mid-load and one DOUBLE-CLICK on the anchor that
+did not expand the node, costing a `read_page` to find the real toggle arrow.
+Their 5 had neither. No part of our extra spend was the listing failing to
+carry something.
+
+**And their note reframes E4-D10 substantially:**
+
+> on the jsTree demo page's "Basic AJAX demo" tree, **Root 1 is already
+> expanded by default on page load** — its `<li>` carries class "jstree-open"
+
+If Root 1 is open when the page loads, our agent's double-click plausibly
+CLOSED it, and the later toggle click re-opened it. A read taken anywhere in
+that sequence would legitimately show a transitional or genuinely-collapsed
+anchor. So the contradictory pair our agent reported is at least as consistent
+with "the node really was mid-toggle" as with a derivation defect, and the
+derivation is already confirmed spec-correct.
+
+**E4-D10 downgraded from a defect to a question**, and the question is still
+only answerable by looking at the live DOM. What would make it a real defect:
+the anchor reading `aria-expanded="false"` on a SETTLED page whose subtree is
+rendered. Nothing observed so far establishes that.
+
+**Where our representation did win, and it did not show up in the turn
+column.** Their scoped read on the same node could not answer the question it
+exists for:
+
+> `read_page(ref_id="ref_28", filter="all")` on the "Root 1" treeitem returned
+> only the anchor plus one "presentation" child — **no subtree at all** — so
+> the one tool aimed at the parent/child question could not answer it; I had to
+> fall back to `javascript_tool`.
+
+Ours nested the two children under the parent in the ordinary listing, which is
+what #27's tree format is for. They still won the pair, because our agent spent
+its advantage elsewhere. **That is the honest shape of this result and it is
+worth more than the table row**: a better representation does not win a task by
+itself, and reporting a loss as a loss is what makes the wins mean anything.
+
+Their defect (1) is the wrong-tab hijack for the THIRD time in this eval,
+destroying the Met page from T12 this time, with the same false "yours to clean
+up" footer.
+
+## T14/cic — three defects, and each one names a thing this project built
+
+cic 10 turns, correct (29 strokes, On ウツ).
+
+Their agent's three, in its own words:
+
+1. > `get_page_text` returned "No text content found. Page may contain only
+   > images, videos, or canvas-based content." on a fully text-rich jisho.org
+   > search results page — wrong and misleading, and **it failed identically
+   > after a 2s wait, so it was not a load race.**
+
+   A false absence asserted with a CAUSE attached, and the cause is wrong. That
+   is the exact class C15 was built to catch in our own output (#33: a note
+   that picks a cause, after three incidents — the stale-ref message asserting
+   a navigation, the cross-extension message asserting an impossible recovery,
+   the aria-hidden note concluding "most likely a CLOSED menu" with an open
+   menu two rows below). Ours now states the fact and lists causes as causes.
+
+2. > `read_page` spent roughly **10,000 characters of its budget emitting ~270
+   > empty `listitem` entries** from the radical-picker widget, which pushed
+   > the actual kanji entry past the truncation boundary.
+
+   This is the single clearest example in the whole eval of what the listing
+   work is FOR. We have three separate answers to that shape: #7 compacts an
+   ARIA grid or listbox of 10+ cells to one `mmid:label` mapping line, #27's
+   tree folds identical sibling subtrees positionally, and #13 makes truncation
+   drop the legend before it drops rows and report how many elements it could
+   not show. Their budget was consumed by content that carries no identity and
+   the thing being looked for fell off the end **without the result saying so**.
+
+3. > `find` located the "On:" label and the "On reading compounds" heading but
+   > **returned no values**, so it could not answer the question.
+
+   Ours hit this in #11(b): find emitted ONE unlabelled quoted string that
+   could be a name, a value, a placeholder or text, and on Baidu an agent read
+   a placeholder as the field's contents. It now uses read_page's
+   `name=`/`value=`/`placeholder=`/`src=` vocabulary.
+
+**The honest caveat before any of this is used as a claim:** these are their
+defects on one page, and our arm's number for the same task is not in yet.
+Three of their failures matching three things we fixed is a good story and is
+NOT evidence our listing handled this page well. That is decided by what our
+own run cost, which follows.
+
+## T14/cb — 2 turns against 10, the widest margin in the eval
+
+One `browser_batch`, one read, answered. No blockers, no defects.
+
+So the three failures their arm had on this page (a false "no text content" on
+a text-rich page, ~270 empty `listitem` entries eating 10,000 characters of
+budget, and `find` returning labels with no values) are now paired with a run
+that did not meet any of them. **That makes the comparison on this page fair to
+state** — the caveat written one section above is discharged by our own number
+rather than assumed away.
+
+It is also the best single illustration in the eval of what the listing work
+buys, because the page is adversarial in exactly the way the work anticipated:
+a Japanese dictionary whose radical-picker widget is hundreds of identity-free
+cells sitting between the agent and the answer.
+
+**One thing in our own result worth not over-reading.** The readiness banner
+fired with "THE DOM IS STILL CHANGING, 128 structural changes" on a read whose
+content was complete, and the agent said so explicitly: it cost no round trip
+and did not mislead. That is a fourth data point for **E4-D7** — the banner
+firing on a post-navigation read where the page was in fact usable. Useful
+here, arguably noise, and still unmeasured. It is now the single most-repeated
+observation in this eval and should be the first thing measured when the
+browser is free.
+
+## T16/cb — 2 turns, and E4-D7 finally has a SHAPE
+
+Correct (总笔画 12, 注音 ㄉㄧㄥˇ), and the agent additionally caught the trap the
+referee planted: 康熙笔画 is 13 and is the Kangxi count, not 总笔画.
+
+**The fifth E4-D7 sighting is the one that explains the other four**, because
+this agent said precisely what was wrong with it:
+
+> the readiness banner fired ("THE DOM IS STILL CHANGING ... 21 images still
+> loading"), **true of the glyph images but not of the server-rendered info
+> table the answer came from**
+
+So the banner is not firing falsely. It is firing DOCUMENT-WIDE about a region
+that is not the region being read. On a page whose churn is confined to glyph
+images, ad slots or a carousel while the answer sits in static server-rendered
+markup, "the DOM is still changing" is true and irrelevant, and a reader who
+meets that often enough stops reading it.
+
+**This is already a named, designed, unbuilt thing**: `OPEN.md` item 5 and
+`READINESS.md` §5(b) — per-subtree attribution, described as "designed, not
+built". #70 chose the kind-split (`40 @style` vs `40 structural`) as the
+cheaper answer to the same problem and recorded that scoped attribution was
+the proper one. Five independent sightings in one eval is the evidence that it
+is worth building, and it converts E4-D7 from "measure whether the banner is
+noise" into "scope the banner to what was read". The measurement is still
+owed first, because it decides whether this is worth the complexity.
+
+**E4-D4, second sighting.** `navigate` on `www.zdic.net` -> `zdic.net`:
+
+> correctly flagged the host-stripping redirect, but "this is not the page you
+> requested" is strong wording for a bare www redirect
+
+T7 saw the same thing for a trailing slash. Two sightings, one shape: a
+redirect that differs only by a `www.` prefix or a trailing slash is a
+NORMALISATION, and announcing it in the words used for a substantive redirect
+costs a re-check every time. Both are decidable from the two URLs with no
+guessing. Small, general, and queued.
+
+## T16/cic — cb 2, cic 7. Sixth sighting, and a new ceremony defect beside it.
+
+Both correct.
+
+> `navigate` inside `browser_batch` requires an explicit tabId and **does not
+> inherit a tab created earlier in the same batch**, so tab creation could not
+> be folded into the batch; that cost one round trip.
+
+Sixth independent sighting across three evals. The sentence is now almost
+verbatim #46's own description of the bug it fixed.
+
+Two more from the same run, both fixed-overhead rather than page handling:
+
+> `tabs_context_mcp{createIfEmpty:true}` returned two pre-existing tabs from
+> unrelated sessions and **created nothing**, so a separate `tabs_create_mcp`
+> call was still needed — the flag's name suggests otherwise.
+
+> `tabs_close_mcp` was not in the core ToolSearch set the skill recommends
+> even though the same skill **mandates closing tabs you opened**, costing a
+> second ToolSearch.
+
+The second is the shape #45 found on our side and closed through
+`instructions=`: the guidance an agent reads BEFORE choosing tools has to name
+the tools its own rules will require, or the agent pays a round trip learning
+them. Worth noting ours could regress the same way — C20b exists precisely
+because our `instructions=` names eight tools in a `select:` line, and a rename
+would turn it into a request for a phantom.
+
+**Running ceremony totals, which is the cleanest number in the whole eval:**
+16 tasks in, our arm has spent **0** turns on tab discovery or creation and
+theirs has spent **11**. Nothing in either prompt mentions tabs. #45 could not
+separate that cost from its own prompt mandate and downgraded the claim to a
+measurement design; #46 argued structurally instead that the plumbing, not the
+wording, was what forced the turn. This eval's prompt says nothing about tabs,
+and the gap is 11 to 0.
+
+## T17 — cb 6, cic 8. E4-D2 confirmed precisely, and it is #18's asymmetry again.
+
+Both correct ($500). The jQuery UI slider demo runs in a CROSS-ORIGIN iframe.
+
+> `read_page` surfaced the iframe's input and slider handle as ordinary refs
+> (ref_448, ref_450) and its earlier page-text trailer explicitly said
+> "read_page DOES reach them"; `query_elements`, run moments later on the same
+> page, reported "No element matches … in the rendered document. The selector
+> itself is valid."
+
+So two observation tools, one page, one instant, opposite answers about whether
+an element exists. That is exactly the asymmetry #18 measured at 60% of an
+accuracy gap (`isInteractive` and `keepForFind` disagreeing about what a
+control is), and #30 and #48 each found another instance (`near=` and
+`include_text` not migrated to the composed walk). This is the fourth.
+
+**Credit where the message did its job**: the agent noted the cause list DID
+include "it is rendered by a frame this query did not reach", so it was not
+misleading and it did not produce a wrong answer. But the HEADLINE sentence
+reads as absence, and nothing in the tool's description warns of the limit
+before you spend the call. Cost: one round trip.
+
+The fix shape is already proven elsewhere in the codebase — the cross-origin
+collection path (`collectCrossFrames` + `resolveFrameSelector`) exists and
+`read_page` uses it. `query_elements` was simply never migrated. Queued as
+**E4-D2**, now with a precise reproduction.
+
+**Sixth E4-D7 sighting, and the most damning one**, because the page is static:
+
+> the readiness banner reported "THE DOM IS STILL CHANGING" on all three early
+> observations of a **static demo page** (77 structural changes on first load,
+> then 45, then 7 + 10 @style) — each read was in fact usable and correct, so
+> it fired without changing what I did.
+
+Decaying counts across three reads is consistent with parse plus jQuery UI
+initialising its widgets, so the signal is measuring something real each time.
+It still fired three times on a page that was usable every time. Six sightings
+now, and together with T16's "true of the glyph images but not of the table I
+read" they point at one answer rather than at the window length: **scope the
+signal to the subtree that was read** (`OPEN.md` item 5, designed, unbuilt).
+
+## T19/cb — E4-D11, THE MOST IMPORTANT FINDING IN THIS EVAL, and NOT YET VERIFIED
+
+cb 6 turns, correct (Noble gases; 2, 8, 18, 8).
+
+> `find` could not reach the periodic-table cells even though they ARE
+> actionable — clicking ref_922 selected Krypton and populated the panel, so
+> the cell responds to clicks, yet find reported "No elements matched Krypton"
+> and its census (383 elements: 153 li, 62 div, 59 input, 43 a, 34 select,
+> 22 svg, 3 img, 3 text…) **accounted for none of the 118 element tiles.**
+
+If that reading is right, it contradicts the strongest claim this project
+makes. `lost_identities = 0 across 32 sites` (#36) means **no rendered,
+visible, not-declared-hidden control has its name absent from the listing**.
+118 clickable element tiles missing would be a direct counterexample, and
+`ptable.com` is not in the 32-site corpus.
+
+**I am NOT recording that as a finding, because two readings fit the same
+evidence and I cannot separate them from here:**
+
+- **(a) a real existence failure** — the tiles are not collected at all.
+- **(b) a NAMING miss, not an existence miss** — the agent acted on `ref_922`,
+  an `<em>` INSIDE a cell, so something in that cell WAS collected. A tile
+  renders the symbol `Kr` and the number `36`; the word "Krypton" may appear
+  only in a title, a hidden label, or not at all. Then `find("Krypton")`
+  correctly finds no match on the collected NAME while the element exists, and
+  `search_page` wins because it greps RENDERED text. The census's `153 li` is
+  also large enough to contain all 118 tiles, which would make "accounted for
+  none of them" the agent's inference rather than an observation.
+
+(b) is the more likely reading and it is still worth fixing — a tile a human
+reads as "Krypton" that we name `Kr` is a findability gap. But (a) and (b)
+need different responses and the difference is exactly what #16 says to
+re-derive before believing.
+
+**VERIFICATION, to run as the first thing after the eval ends** (it needs the
+browser, which is busy):
+1. `read_page(ledger=true)` scoped to the table — are the 118 tiles present,
+   and if absent, under which of the ten permitted drop rules?
+2. `query_elements("[id]", …)` on the tile container — what does a tile's
+   markup actually declare, and what is its accessible name?
+3. If the tiles ARE listed under names like `Kr`, this is a naming/findability
+   item. If they are NOT listed, it is a `lost_identities` counterexample and
+   the headline claim needs qualifying in the README the same day.
+
+**Seventh E4-D7 sighting**, and this one is arguably correct: the banner fired
+with 213 changes on a post-CLICK read, and the click itself caused the churn.
+The agent still cross-checked rather than trusting the read, which is the cost.
+
+## T19/cic — WE LOSE, 6 to 4, and unlike T13 the representation shares the blame
+
+Both correct. Second decided pair against us.
+
+Our 6 included two wasted turns: `find("Krypton")` missed, and the agent's own
+follow-up guess `query_elements("#Kr")` also missed. `search_page("Krypton")`
+then found it immediately. Their 4 went to screenshots and never asked the
+question that failed for us.
+
+**T13's loss was the agent spending its lead. This one is not, or not only.**
+`find` is the tool whose entire job is "locate the thing by its label", the
+query was the element's own name as a human reads it off the page, and it
+returned nothing. Whichever reading of E4-D11 turns out to be right — the
+tiles are not collected, or they are collected and named `Kr` — **the tool
+that exists for this question could not answer it, and that is a
+representation cost, not an agent cost.**
+
+Recording it that way deliberately. The easy move is to file this under "our
+agent chose badly" the way T13 genuinely was, and that would be a flattering
+misreading of a pair we lost.
+
+Their own defect this round is their tab context contradicting itself inside
+one result for the THIRD time (T5, T12, now T19): the "Available tabs" list
+showed a tab already at ptable.com while the `tabs_context_mcp` JSON in the
+SAME output still showed it as jsTree. Cost them nothing here, because the
+agent screenshotted instead of trusting it.

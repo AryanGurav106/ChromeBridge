@@ -22,12 +22,7 @@
     "1000001",
     "〒100-0001"
    ],
-   "reject": [
-    "is_visible() == True",
-    "100-0000",
-    "100-0002",
-    "100-0000"
-   ],
+   "reject": [],
    "shape": "F",
    "host": "www.post.japanpost.jp"
   },
@@ -60,9 +55,7 @@
     "200"
    ],
    "accept": [],
-   "reject": [
-    "Sp. Atk"
-   ],
+   "reject": [],
    "shape": "L",
    "host": "pokemondb.net"
   },
@@ -103,9 +96,7 @@
    "accept": [
     "3.55"
    ],
-   "reject": [
-    "ForgeFlex Tools"
-   ],
+   "reject": [],
    "shape": "L",
    "host": "practicesoftwaretesting.com"
   },
@@ -136,9 +127,7 @@
    "accept": [
     "exact"
    ],
-   "reject": [
-    "6.626 070 15 x 10^-34"
-   ],
+   "reject": [],
    "shape": "D",
    "host": "physics.nist.gov"
   },
@@ -182,10 +171,7 @@
    "accept": [
     "dǐng"
    ],
-   "reject": [
-    "部外 0",
-    "总笔画 12"
-   ],
+   "reject": [],
    "shape": "N",
    "host": "www.zdic.net"
   },
@@ -198,9 +184,7 @@
     "500 dollars",
     "$500.00"
    ],
-   "reject": [
-    "$100"
-   ],
+   "reject": [],
    "shape": "W",
    "host": "jqueryui.com"
   },
@@ -268,15 +252,7 @@
    "accept": [
     "100.79"
    ],
-   "reject": [
-    "Start Order",
-    "6.626 070 15 x 10^-34",
-    "sits immediately before",
-    "654",
-    "100-0000",
-    "Please select the **Payment** Method.",
-    "Sp. Atk"
-   ],
+   "reject": [],
    "shape": "A",
    "host": "practicesoftwaretesting.com"
   }
