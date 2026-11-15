@@ -9930,10 +9930,22 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         // printed directly beneath, and find returns a ranked SUBSET where they may not
         // be. A fragment of a page-wide concatenation identifies nothing either, so the
         // row states what it is instead of quoting part of it.
-        e.line = e.subtreeName
+        // ...BUT A SOLE CARRIER MUST STILL SHOW ITS NAME, AND THE NOTE WOULD
+        // BE A LIE. "the text here belongs to the elements inside it" is true
+        // of an app shell, whose nav items and headings each have their own
+        // row. It is FALSE when no kept entry lives inside: on ptable.com a
+        // tile's four children declare nothing clickable and are correctly
+        // dropped, so there is nothing inside for the text to belong to, and
+        // blanking the row leaves `ref_919 | li section=main` identifying
+        // nothing at all. Measured live: with the scorer fixed but this not,
+        // find("Krypton") returned the right element with no indication of
+        // what it was or why it matched.
+        e.line = (e.subtreeName && !e.subtreeNameSole)
           ? _fmtLine(Object.assign({}, e, { name: '', label: '', text: '' }))
             + ' (container — the text here belongs to the elements inside it)'
-          : _fmtLine(e);
+          : e.subtreeName
+            ? _fmtLine(e) + ' (name assembled from its own contents)'
+            : _fmtLine(e);
       });
     } catch (e) {}
     return out;
