@@ -72,7 +72,31 @@ class _FB:
         return list(self.entries)
 
 
-async def one(browser, name, url, cap):
+
+async def _descendant_returned(page, mmid, out):
+    """Did find return an element INSIDE the one we asked for?
+
+    Acting on it does what acting on the target would -- that is the whole
+    reason the descendants are listed separately. Descendant only, never
+    ancestor: an ancestor claiming credit is how a page-sized container would
+    score a hit for everything it contains.
+    """
+    refs = set(re.findall(r"\bref_(\d+)\b", out or ""))
+    refs.discard(str(mmid))
+    if not refs:
+        return False
+    try:
+        return bool(await page.evaluate(
+            """([m, rs]) => {
+                const r = window.__mmidReg; if (!r) return false;
+                const t = r.get(String(m)); if (!t) return false;
+                return rs.some(x => { const n = r.get(String(x));
+                                      return n && n !== t && t.contains(n); });
+            }""", [str(mmid), list(refs)]))
+    except Exception:
+        return False
+
+async def one(browser, name, url, cap, extra_wait=None):
     ctx = await browser.new_context(viewport=VIEWPORT)
     try:
         har = FROZEN / f"{name}.har"
@@ -85,7 +109,7 @@ async def one(browser, name, url, cap):
             await page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
             pass
-        await page.wait_for_timeout(600)
+        await page.wait_for_timeout(min(4000, extra_wait or 600))
         entries = await page.evaluate(
             "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
         if not isinstance(entries, list) or not entries:
@@ -109,7 +133,7 @@ async def one(browser, name, url, cap):
             _ident_count[_q] = _ident_count.get(_q, 0) + 1
 
     ms.STATE["bridge"] = _FB(entries)
-    tried = hit = contested = 0
+    tried = hit = contested = desc_hit = 0
     misses = []
     for e in entries[:cap]:
         q = identity_of(e)
@@ -125,18 +149,40 @@ async def one(browser, name, url, cap):
             hit += 1
         elif _ident_count.get(q, 1) > 1:
             contested += 1
+        elif await _descendant_returned(page, e.get("mmid"), str(out)):
+            # DESCENDANT CREDIT, reported SEPARATELY and never folded into the
+            # strict number. Decided on the mechanism, not on the misses: an
+            # <a><span>Issues</span><span>5k+</span></a> has its name blanked
+            # because it is assembled, and its spans are kept because an anchor
+            # gives descendants cursor:pointer, which is an admitting signal.
+            # So find("Issues") returns the SPAN -- and clicking the span
+            # activates the link, which is exactly the reasoning #18 and #73
+            # use to credit a descendant on Mind2Web.
+            #
+            # BOUNDED the same way #73 bounds its ancestor path: only a
+            # descendant, never an ancestor, so a page-sized container cannot
+            # claim credit for everything inside it.
+            desc_hit += 1
         elif len(misses) < 4:
             misses.append({"mmid": e.get("mmid"), "tag": e.get("tag"),
                            "identity": q[:60], "shared_by": _ident_count.get(q, 1)})
-    return {"tried": tried, "hit": hit, "contested": contested, "misses": misses}
+    await ctx.close()
+    return {"tried": tried, "hit": hit, "contested": contested,
+            "desc_hit": desc_hit, "misses": misses}
 
 
 async def main(n, cap):
     rows = []
     async with async_playwright() as pw:
         b = await pw.chromium.launch()
-        for name, url in SITES[:n]:
-            r = await one(b, name, url, cap)
+        # 35 of the 106 SITES entries carry a third field (an extra settle
+        # time for heavy apps like jupyter and vscode_dev). Unpacking two
+        # killed a full-corpus run at site 51 -- the first 50 happen to be
+        # the 2-tuples, so a partial run looked like a complete one.
+        for _site in SITES[:n]:
+            name, url = _site[0], _site[1]
+            _wait = _site[2] if len(_site) > 2 else None
+            r = await one(b, name, url, cap, _wait)
             if r and r["tried"]:
                 _uniq = r["tried"] - r["contested"]
                 rate = r["hit"] / max(1, _uniq)
@@ -149,10 +195,23 @@ async def main(n, cap):
     T = sum(r["tried"] - r["contested"] for _n, r in rows)
     H = sum(r["hit"] for _n, r in rows)
     C = sum(r["contested"] for _n, r in rows)
+    D = sum(r.get("desc_hit", 0) for _n, r in rows)
     print(f"\nsites: {len(rows)}   reachable by own printed identity: "
           f"{H}/{T} = {H/T:.4f}   ({C} contested, excluded — an identity shared "
           f"with other entries can fall outside find's bounded result set)"
           if T else "no data")
+    if T:
+        # TWO NUMBERS, NEVER ONE. The strict figure asks for THIS element; the
+        # second credits a returned DESCENDANT, because acting on it does what
+        # acting on the target would. Folding them would hide which is which,
+        # and the gap between them IS the finding -- it is the size of the
+        # label-plus-badge population, not a defect.
+        print(f"                 …plus {D} reached via a returned DESCENDANT "
+              f"(strict {H/T:.4f} -> {(H+D)/T:.4f} with descendant credit). "
+              f"The gap is the label+badge shape: an <a> whose name is "
+              f"assembled is blanked, its spans are kept because an anchor "
+              f"gives them cursor:pointer, and clicking a span activates the "
+              f"link.")
     worst = sorted(rows, key=lambda x: x[1]["hit"]
                    / max(1, x[1]["tried"] - x[1]["contested"]))[:3]
     for nm, r in worst:
