@@ -86,6 +86,18 @@ async def probe(page):
     return await page.evaluate("(function(){ " + READY + "; return _readinessPage(); })()")
 
 
+async def probe_scoped(page, mmid):
+    """The same injection, with the scope the caller named.
+
+    PASSED AS AN ARGUMENT, exactly as runInTab does -- `executeScript({func, args})`.
+    Resolution happens INSIDE the injected function (registry first, selector as
+    fallback), so this helper must not resolve anything itself or it would test an
+    environment production does not have, which is the C14/#29 trap.
+    """
+    return await page.evaluate(
+        "(m) => { " + READY + "; return _readinessPage(m); }", mmid)
+
+
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -546,6 +558,171 @@ async def main():
               and hardened["viaAssign"] is False and hardened["viaDefine"] is False
               and hardened["replaced"] is False,
               str(hardened))
+        await pg.close()
+
+        # ------------------------------------------------------------------
+        # R24-R31  SCOPED READINESS
+        #
+        # `__abMut.query(scope, …)` shipped with five callers and every one of
+        # them passing null, so the composed-tree containment helper behind it
+        # was unreachable -- half a contract, the shape this project has had to
+        # delete four times (`origin`, `viewport`, `on_fail:"heal"`, `delta`).
+        # OPEN.md item 3 said wire it or delete it.
+        #
+        # WHAT DECIDED IT was a measurement, not the tidiness argument. On a page
+        # carrying a live ticker beside a table that finished painting, at the
+        # same instant:
+        #     doc-wide             since=48ms    110 structural  -> STILL CHANGING
+        #     scoped to the table  since=4013ms    0 structural  -> no banner
+        # A scoped read deliberately excludes the document (#11, #26 both had to
+        # stop page-level facts leaking into one), and then described the
+        # document's churn in the banner above it.
+        #
+        # AND IT COVERS A CASE THE #70 KIND-SPLIT DOES NOT. That split assumed ad
+        # churn is ATTRIBUTE churn (@style on a carousel). A ticker that updates
+        # via `textContent` arrives as childList -- Chrome records it as
+        # remove+add of a text node -- so it trips the STRONG banner. Measured at
+        # 25 `structural`, 0 `text`, for a clock doing nothing but `textContent=`.
+        #
+        # EVERY CHECK BELOW FAILS AGAINST THE PRE-FIX PROBE, which ignored its
+        # argument. The three controls (R24b, R24c, R26b) are what stop "always
+        # report quiet when scoped" from passing R24 -- the false-quiet direction
+        # is the worst this probe can fail in, and scoping is the change most
+        # able to introduce one.
+        MIXED = """<!doctype html><meta charset=utf-8><body>
+<div id=ad mmid="1"><span id=clock>00:00</span></div>
+<div id=content mmid="2"><table id=t></table></div>
+<div id=late mmid="3"></div>
+<div id=hosty mmid="4"></div>
+<script>
+const t = document.getElementById('t');
+for (let i=0;i<30;i++){const r=t.insertRow();r.insertCell().textContent='row '+i;}
+let k=0; setInterval(()=>{document.getElementById('clock').textContent='00:'+(k++);}, 120);
+let j=0;(function s(){for(let c=0;c<2&&j<400;c++,j++){
+  const d=document.createElement('div');d.textContent='late '+j;
+  document.getElementById('late').appendChild(d);}
+  if(j<400)setTimeout(s,100);})();
+const host=document.getElementById('hosty');
+const sr=host.attachShadow({mode:'open'});
+sr.innerHTML='<div id=sh>s</div>';
+let q=0; setInterval(()=>{sr.getElementById('sh').textContent='s'+(q++);}, 120);
+</script></body>"""
+        pg = await tagged_page(MIXED)
+        # Long enough that the table's own paint falls OUTSIDE the 3000ms window.
+        # At 2.5s it is still inside it and the check would read `33 structural,
+        # last change 2515ms ago` -- correct, and not the clean demonstration.
+        await pg.wait_for_timeout(4000)
+        r_doc = await probe(pg)
+        r_content = await probe_scoped(pg, "2")
+        r_ad = await probe_scoped(pg, "1")
+        r_late = await probe_scoped(pg, "3")
+        r_shadow = await probe_scoped(pg, "4")
+
+        check("R24 a scoped read describes the SUBTREE: a settled region reports "
+              "quiet at the same instant the document reports churn",
+              r_doc["mut"]["structural"] > 0 and r_doc["mut"]["since"] < 500
+              and r_content["mut"]["structural"] == 0
+              and r_content["mut"]["text"] == 0
+              and r_content["mut"]["since"] > 3000,
+              f"doc struct={r_doc['mut']['structural']} since={r_doc['mut']['since']} | "
+              f"scoped struct={r_content['mut']['structural']} since={r_content['mut']['since']}")
+        check("R24b CONTROL: scoping to the CHURNING region still reports churn "
+              "(without this, 'always quiet when scoped' would pass R24)",
+              r_ad["mut"]["structural"] > 0 and r_ad["mut"]["since"] < 500,
+              f"struct={r_ad['mut']['structural']} since={r_ad['mut']['since']}")
+        check("R24c CONTROL: a scoped region still BUILDING is never reported "
+              "quiet — a false quiet is the worst direction this probe can fail in",
+              r_late["mut"]["structural"] > 0 and r_late["mut"]["since"] < 500,
+              f"struct={r_late['mut']['structural']} since={r_late['mut']['since']}")
+        # BOUNDED ON BOTH SIDES, AND BY A MARGIN RATHER THAN BY `<`. Three
+        # versions of this check, two of them wrong, and only the ablation said so:
+        #   "reports churn"      passes in BOTH arms — the document-wide answer
+        #                        reports this churn too, so it proves nothing.
+        #   "strictly less than  passed the ABLATION at 108 vs 110. The page is
+        #    the document"       still painting between the two probe calls, so
+        #                        two doc-wide answers taken a few ms apart differ
+        #                        by a handful of records and the inequality holds
+        #                        by accident.
+        # The shadow subtree contributes ~25 of the document's ~110, so half is a
+        # wide margin for the real answer and unreachable for a doc-wide one.
+        # ZERO would mean the walk failed to cross the boundary; NEAR-EQUAL means
+        # the scope was ignored.
+        check("R25 scope containment crosses a SHADOW boundary, which "
+              "Node.contains() cannot — the scoped answer is the shadow "
+              "subtree's own churn, neither zero nor the whole document's",
+              0 < (r_shadow["mut"]["structural"] + r_shadow["mut"]["text"])
+              < (r_doc["mut"]["structural"] + r_doc["mut"]["text"]) / 2
+              and r_shadow["mut"]["since"] < 500,
+              f"scoped={r_shadow['mut']['structural']}+{r_shadow['mut']['text']} "
+              f"doc={r_doc['mut']['structural']}+{r_doc['mut']['text']} "
+              f"since={r_shadow['mut']['since']}")
+        native = await pg.evaluate("""() => {
+            const h = document.getElementById('hosty');
+            return h.contains(h.shadowRoot.getElementById('sh'));
+        }""")
+        check("R25b ...and contains() genuinely cannot see it, so the composed "
+              "walk is earning its keep rather than restating the easy answer",
+              native is False, f"host.contains(shadowChild)={native}")
+        check("R26 the probe reports WHICH question it answered",
+              r_doc.get("scoped") is False and r_content.get("scoped") is True
+              and r_doc.get("scopeMiss") is False and r_content.get("scopeMiss") is False,
+              f"doc={r_doc.get('scoped')}/{r_doc.get('scopeMiss')} "
+              f"scoped={r_content.get('scoped')}/{r_content.get('scopeMiss')}")
+        r_miss = await probe_scoped(pg, "999")
+        check("R26b CONTROL: a scope that does NOT resolve falls back to the "
+              "whole page and SAYS so — never to 'nothing to report'",
+              r_miss.get("scoped") is False and r_miss.get("scopeMiss") is True
+              and r_miss["mut"]["structural"] > 0,
+              f"scoped={r_miss.get('scoped')} miss={r_miss.get('scopeMiss')} "
+              f"struct={r_miss['mut']['structural']}")
+        await pg.close()
+
+        # The DECLARATIVE signals are scoped too, and each has an element, so
+        # containment decides it exactly. The network count deliberately is NOT
+        # -- a request is not attributable to a subtree -- which is why the
+        # banner marks it PAGE-WIDE rather than leaving the reader to assume the
+        # whole sentence describes their scope.
+        DECL = """<!doctype html><meta charset=utf-8><body>
+<div id=outside mmid="1">
+  <div role="progressbar" aria-valuenow="40" style="width:200px;height:12px"></div>
+  <div aria-busy="true" style="width:200px;height:40px">loading</div>
+</div>
+<div id=inside mmid="2"><p>all done</p></div>
+<div id=withbar mmid="3">
+  <div role="progressbar" aria-valuenow="10" style="width:200px;height:12px"></div>
+</div>
+<div id=selfbusy mmid="4" aria-busy="true" style="width:200px;height:40px">me</div>
+<div id=closedhost mmid="5"></div>
+<script>
+const ch = document.getElementById('closedhost');
+const cr = ch.attachShadow({mode:'closed'});
+cr.innerHTML = '<div role="progressbar" aria-valuenow="5" style="width:200px;height:12px"></div>';
+</script></body>"""
+        pg = await tagged_page(DECL)
+        await pg.wait_for_timeout(150)
+        d_doc = await probe(pg)
+        d_in = await probe_scoped(pg, "2")
+        d_bar = await probe_scoped(pg, "3")
+        d_self = await probe_scoped(pg, "4")
+        d_closed = await probe_scoped(pg, "5")
+        check("R27 a progressbar and an aria-busy region OUTSIDE the scope do "
+              "not fire for a read that excluded them",
+              d_doc["prog"] >= 1 and d_doc["busy"] >= 1
+              and d_in["prog"] == 0 and d_in["busy"] == 0,
+              f"doc prog={d_doc['prog']} busy={d_doc['busy']} | "
+              f"scoped prog={d_in['prog']} busy={d_in['busy']}")
+        check("R27b CONTROL: one INSIDE the scope still fires (without this, "
+              "'scoped means zero' would pass R27)",
+              d_bar["prog"] == 1, f"prog={d_bar['prog']}")
+        check("R28 the scope ELEMENT ITSELF counts — querySelectorAll(root) "
+              "returns descendants only, so a read scoped to the busy element "
+              "would otherwise report it settled",
+              d_self["busy"] == 1, f"busy={d_self['busy']}")
+        check("R29 a signal inside a CLOSED shadow root is seen (#31's "
+              "__abClosedRoot handle; nine traversal sites read it and this "
+              "probe was the one that did not)",
+              d_closed["prog"] == 1 and d_doc["prog"] >= 2,
+              f"scoped prog={d_closed['prog']} doc prog={d_doc['prog']}")
         await pg.close()
 
         await browser.close()

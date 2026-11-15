@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1253 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1264 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1253 checks, ~107s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1264 checks, ~122s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -7319,6 +7319,110 @@ granted in the side panel is refused with the same message the agent gets.
     **0** at 95 sites, which refuted the label-plus-badge theory I had formed
     from a 34-site sample — recorded because I would have reported it.
 
+76. **A SCOPED READ DESCRIBED THE WHOLE DOCUMENT — and the parameter that
+    fixes it had been sitting in the file, unreachable, since the day it
+    shipped.** `__abMut.query(scope, …)` had five callers and **every one passed
+    `null`**, so the composed-tree `inScope()` helper behind it was dead code.
+    `OPEN.md` item 3 said wire it or delete it; `READINESS.md` §5(b) described
+    per-scope attribution in present tense as part of "The design" and marked it
+    "Designed, not built" near the END of the file — the retraction-at-the-bottom
+    pattern #67 names, in the doc set that warns about it.
+
+    **THE TIDINESS ARGUMENT DID NOT DECIDE IT; A MEASUREMENT DID.** Four
+    half-contracts have been DELETED on this evidence (`origin` #54, `viewport`
+    #57, `on_fail:"heal"` #62, `delta` #30), so "it has no callers" is at least
+    as much an argument for removal. The probe is the shape `READINESS.md`
+    §5(b) itself names — *a clock in a header and a table rebuilding are the same
+    number and opposite facts* — a page carrying a live ticker beside a table
+    that finished painting, interrogated at one instant:
+
+    | | `since` | structural | banner |
+    |---|---|---|---|
+    | document-wide | 48ms | 110 | `*** THE DOM IS STILL CHANGING ***` |
+    | scoped to the table | **4013ms** | **0** | *(nothing at all)* |
+
+    A scoped read deliberately EXCLUDES the document — #11 and #26 both had to
+    stop page-level facts leaking into one — and then printed the document's
+    churn in the banner above it, telling the agent not to conclude absence from
+    a region that had not moved in four seconds.
+
+    **AND IT COVERS A CASE THE #70 KIND-SPLIT PROVABLY DOES NOT.** That split
+    assumed ad churn is ATTRIBUTE churn (`@style` on a carousel) and was measured
+    on exactly that. A ticker that updates via `textContent` arrives as
+    `childList` — Chrome records it as remove+add of a text node — so it trips
+    the STRONG banner and no amount of attribute damping sees it. Measured at
+    **25 `structural`, 0 `text`, for a clock doing nothing but `textContent=`**.
+    So #70's own motivating case, theguardian.com, was only half-covered, and
+    this is the half that was missing.
+
+    **SCOPE REACHES THE FOUR DOM SIGNALS AND DELIBERATELY NOT THE FIFTH.**
+    Mutation recency, loading images, `aria-busy` and `role=progressbar` each
+    have an ELEMENT, so containment decides them exactly. The network count does
+    not: `chrome.webRequest` reports per TAB and the node a response will land in
+    does not exist yet. It stays page-wide and **says so** (`N network request(s)
+    in flight PAGE-WIDE`), because scoping four signals and silently leaving the
+    fifth global is the worse half of both — a reader takes the whole sentence
+    for a statement about their subtree.
+
+    **THREE THINGS THE WIRING HAD TO GET RIGHT, each with the control that pins
+    it.** A scope that does not resolve falls back to the WHOLE PAGE and says so
+    (over-warn is the safe direction; silence about the fallback is not — the
+    reader would take the document's churn for their subtree's). The scope
+    ELEMENT ITSELF counts, because `querySelectorAll(root)` returns descendants
+    only, so a read scoped to the busy element would otherwise report it settled
+    (R28). And a same-origin FRAME counts only when its own `<iframe>` element is
+    inside the scope — merging every frame would reimport the churn the scope was
+    asked to exclude, while skipping frames entirely would report a scope whose
+    content lives in an iframe as quiet, which is the worse error.
+
+    **ONE FALSE-QUIET HOLE FIXED ON THE WAY, in the probe whose whole stated
+    principle is that a false quiet is the worst direction.** `_readinessPage`'s
+    `_deepAll` checked `e.shadowRoot` and not `|| e.__abClosedRoot` — #31's
+    handle, captured by `listener_tag.js` wrapping `attachShadow` at
+    document_start so nothing can create a CLOSED root without giving us a
+    reference. **Nine traversal sites in that file already read it and this probe
+    was the one that did not**, so a spinner or an `aria-busy` region inside a
+    closed root read as a settled page (R29; the document-wide `prog` count goes
+    2 → 3 on the fixture).
+
+    **I BUILT A HALF-CONTRACT WHILE DELETING ONE, AND CAUGHT IT BEFORE COMMIT.**
+    The `page_readiness` op got a `scopeMmid` parameter too — and its only caller
+    is `find`'s MISS path (#39), which searches the WHOLE page, so nothing would
+    ever have passed it. Reverted, with the reason recorded at the branch: add it
+    the day a scoped search exists, not before.
+
+    **THE COST WAS RE-EARNED RATHER THAN INHERITED.** #70 priced the UNSCOPED
+    query at under Chrome's 0.1ms timer granularity; a scoped one derefs a
+    WeakRef and walks UP to the scope for every ring slot, so it is strictly more
+    work and "free" is a different claim. Measured at ring SATURATION (4,059
+    records, buffer wrapped) against a deliberately 30-level-deep scope,
+    interleaved unscoped/scoped on the same page so the page's own churn rate
+    cannot align with the arm: **median below 0.1ms either way, p95 0.1ms
+    unscoped against 0.2ms scoped, max 0.2ms.** Against a ~24ms bridge hop and a
+    ~3,600ms model turn there is nothing here to optimise.
+
+    **THREE VERSIONS OF ONE FIXTURE, AND ONLY THE ABLATION SAID WHICH WAS REAL.**
+    R25 asserts the containment walk crosses a shadow boundary. Written as
+    "reports churn" it **passes in both arms** — the document-wide answer reports
+    that churn too, so it proves nothing. Tightened to "strictly less than the
+    document" it **passed the ablation at 108 vs 110**: the page is still painting
+    between the two probe calls, so two doc-wide answers taken milliseconds apart
+    differ by a handful of records and the inequality holds by accident. It is
+    bounded by a MARGIN now (the shadow subtree is ~25 of ~110), where zero would
+    mean the walk failed to cross and near-equal would mean the scope was ignored.
+    Ablation result: **8 of 11 new checks fail against the pre-fix probe**, and
+    R24b / R24c / R25b pass in both arms, which is what makes them controls.
+    `R25b` is the one that keeps the composed walk honest rather than restating
+    the easy answer: `host.contains(shadowChild)` is measured **false**.
+
+    Suites: 1,264 checks. New — R24 (the win), R24b/R24c (scoping to the churning
+    region still reports churn; a region still BUILDING is never reported quiet),
+    R25/R25b (the shadow boundary, and that `contains()` genuinely cannot see
+    it), R26/R26b (the probe says which question it answered, and an unresolved
+    scope falls back loudly), R27/R27b (declarative signals outside the scope do
+    not fire; one inside still does), R28 (the scope element itself), R29 (a
+    closed shadow root).
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -7420,6 +7524,8 @@ granted in the side panel is refused with the same message the agent gets.
 | Server-side edits seem to have no effect | `sw_info` answers this since #61: `server_code_changed_since_start` names every file whose mtime is later than this process's import. Empty means the running server IS the code on disk. The client must reconnect (`/mcp`); nothing else picks it up, and the stale process keeps answering normally, which is what made this cost six reconnects across #59 and #61 |
 | A flow says a step FAILED but the action plainly worked | Fixed in #60 — the postcondition window was a flat 6s and a real app's create -> table-refresh took longer, so the flow reported FAILED for a record that HAD been created. Each step now carries `settle_ms`, measured at record time from the timestamps the recorder already kept, and the replay allows the default PLUS that. A flow recorded before #60 carries 0 and is unchanged |
 | The banner says `THE DOM IS STILL CHANGING` | By design since #70 — the page is actively being rewritten, measured by mutation recency rather than by the network. Every other signal reads ZERO on this case (an SPA painting rows after its one fetch has resolved), which is why it was invisible for so long. The kinds are named because `40 @style` (an ad carousel) and `40 structural` (the table you are reading) are opposite facts |
+| A scoped read's banner says `INSIDE THE SUBTREE YOU SCOPED TO` | By design since #76 — a scoped read scopes the readiness answer to the same subtree, so it describes what you asked for rather than the document you excluded. Measured: a table a caller scoped to read `since=4013ms / 0 structural` at the instant the document read `since=48ms / 110 structural`. The network count stays PAGE-WIDE and says so — a request is not attributable to a subtree. If it says `ACROSS THE WHOLE PAGE — the ref you scoped to did not resolve`, the scope ref is stale and the answer fell back to doc-wide rather than to silence |
+| A readiness banner fires on a page whose only movement is a clock or a ticker | Expected, and #70's kind-split cannot help: a ticker updating via `textContent` is `childList`, not an attribute write — Chrome records it as remove+add of a text node — so it is genuinely structural. Measured at 25 structural / 0 text for a clock. Scope a read to the region you care about (#76) and the ticker drops out of the answer |
 | The banner says the DOM is unchanged but requests are in flight | By design since #70, and it is the HONEST answer rather than a hedge: what is rendered now is not being rewritten, and whether MORE arrives is what those requests decide. (This row said "stable and safe to read" until an audit caught it: the code deliberately refuses to recommend, and a debugging table that recommends on its behalf is the same defect one file over.) Measured — a page with a poll and a beacon keeps 3–6 requests pending for ever while its DOM finished in 300ms, and the old banner said "STILL SETTLING" to that page until you gave up on it. Network idle is the best wait rule published (0.46% stale) and it is reached within 3s on only 15% of booking/buying pages, so this is the commercial web rather than a defect |
 | `page_readiness` returns a sentence on a settled page where it used to return `""` | By design since #70. It exists only for `find`'s MISS path (#39), where the question is whether "no match" means ABSENT or NOT YET — and `""` answers neither, reading the same as a probe that failed. Only this op; `readinessNote` is unchanged, so no listing gained a banner |
 | Mutation recency reports `-1` / the probe says unknown | `listener_tag.js` did not run on that page — it is a manifest content script, so a page loaded before the extension was installed or reloaded has no recorder. Reload the page. Unknown is deliberately NOT reported as quiet (R17): a false quiet is the worst direction this probe can fail in |

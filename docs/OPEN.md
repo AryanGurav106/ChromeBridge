@@ -19,7 +19,11 @@ window is 50.7% false-quiet at a 2s commit interval; 3000ms is 0.0%). Closed thi
 the kana fold collision, silent truncation loss in the default format,
 `require` never firing, resume binding the wrong target, the handler-property
 blindness, and the locale hazard (which did NOT reproduce) — all in `CLAUDE.md`
-#71, #72 and #73.
+#71, #72 and #73; and **`query(scope,…)` as dead code** — WIRED rather than
+deleted, on a measurement (`CLAUDE.md` #76, `READINESS.md` §5b). Its residual is
+narrower and lives in `READINESS.md`'s own open list: landmark attribution for
+an UNSCOPED read is still unbuilt and is a different problem, needing a rule for
+which landmark owns a record and a way to print several at once.
 
 ---
 
@@ -98,17 +102,6 @@ What would close it: a declared per-member discriminator the collector does not
 currently emit. Geometry would do it (87.3% coverage, measured) and is refused —
 it drifts, so the safeguard would fire on every reflow.
 
-### 3. `query(scope, …)` is dead code `OPEN`
-`__abMut.query()` is called five times across the extension and the suites and
-**every caller passes `null`**. The whole composed-tree `inScope()` containment
-helper is unreachable — a half-contract shipped on the day the both-halves
-principle was indexed (PRINCIPLES §14).
-
-`READINESS.md` §5(b) presents per-scope attribution as part of "The design" in
-present tense and marks it "Designed, not built" near the END of the file, which
-is the retraction-at-the-bottom pattern the same doc set warns about. Either
-wire it or delete the parameter.
-
 ### 4. `no_effect` and the hollow/unproven classifier — CLOSED
 They now compose. The dead-click guard gated on `not step.expect`, and a
 hollow assertion is a TRUTHY dict, so the guard skipped exactly the population
@@ -131,10 +124,15 @@ count.
 ### 5. SPA readiness, the remaining half `OPEN`
 The mutation-recency signal (#70) separates "still building" from "ready but
 chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:
-- **scoped attribution.** theguardian.com shows ~7 ad-driven mutations per 2s,
-  so document-wide recency alone would misreport a readable page. Kind-splitting
-  (`40 @style` vs `40 structural`) covers the dominant case; per-subtree
-  attribution is designed (`READINESS.md` §5b) and not built.
+- ~~**scoped attribution.**~~ **BUILT (#76).** A scoped read now scopes the
+  readiness answer to the same subtree: measured at `since=4013ms / 0 structural`
+  for the table a caller scoped to, at the instant the document read
+  `since=48ms / 110 structural`. It also covers a case the kind-split provably
+  does NOT — a ticker updating via `textContent` arrives as `childList`, not as
+  an attribute write, so `@style` damping never saw it (measured: 25 structural,
+  0 text, for a clock). **Residual: landmark attribution for an UNSCOPED read**,
+  which is a different problem (which landmark owns a record, and how to print
+  several), tracked in `READINESS.md`'s own list.
 - **a per-ref primitive.** Playwright's actionability has one — *same bounding
   box for two consecutive animation frames* — and it is the cheapest readiness
   check anywhere. We have nothing equivalent.

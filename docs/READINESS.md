@@ -139,10 +139,60 @@ installed. A ring of `{timestamp, WeakRef(target)}`, bounded, with a 32-record
 prefix per callback so a burst costs 32 and not 10,000.
 
 **(b) Attribute at read time, not at record time.** For a scoped read, walk the
-ring, deref, and test composed-tree containment against the scope. For an
-unscoped read, attribute each to its nearest landmark. 512 derefs and
-`contains()` calls is microseconds, and it keeps the hot path (the observer
-callback) doing nothing but a timestamp.
+ring, deref, and test composed-tree containment against the scope. 512 derefs is
+microseconds, and it keeps the hot path (the observer callback) doing nothing
+but a timestamp.
+
+**SHIPPED, and it was dead code for its whole life until it was measured.**
+`query(scope, …)` existed from the first commit with five callers and every one
+passing `null`, so the containment helper was unreachable — a half-contract
+(PRINCIPLES §14). What decided it was a measurement, not the tidiness argument.
+On a page carrying a live ticker beside a table that had finished painting, at
+the same instant:
+
+| | `since` | structural | banner |
+|---|---|---|---|
+| document-wide | 48ms | 110 | `THE DOM IS STILL CHANGING` |
+| scoped to the table | 4013ms | 0 | *(nothing)* |
+
+with three controls holding: scoping to the **ticker** still reports churn,
+a region still **building** is never reported quiet, and a scope whose content
+lives in a **shadow root** is still seen (`host.contains(shadowChild)` is
+`false`, so the composed walk is load-bearing rather than restating
+`contains()`).
+
+**It covers a case §4's kind-split provably does not.** That split assumed ad
+churn is *attribute* churn (`@style` on a carousel). A ticker that updates via
+`textContent` arrives as `childList` — Chrome records it as remove+add of a text
+node — so it trips the **strong** banner. Measured at 25 `structural` and 0
+`text` for a clock doing nothing but `textContent=`.
+
+Scope reaches the four DOM signals (mutation recency, loading images,
+`aria-busy`, `role=progressbar`), each of which has an element so containment
+decides it exactly. **The network count is deliberately page-wide and says so**
+(`N network request(s) in flight PAGE-WIDE`): a request is not attributable to a
+subtree, since `chrome.webRequest` reports per tab and the node a response will
+land in does not exist yet. Scoping four signals and silently leaving the fifth
+global would be the worse half of both — a reader would take the whole sentence
+for a statement about their subtree.
+
+A scope that does not resolve **falls back to the whole page and says so**.
+Falling back is the safe direction (over-warn, never false-quiet), but silence
+about it would be worse than either: the reader would take the document's churn
+for their subtree's.
+
+**Cost, measured rather than inherited from the unscoped number** (§6 prices
+that at under Chrome's 0.1ms granularity). A scoped query derefs a WeakRef and
+walks up to the scope for every ring slot. At ring saturation — 4,059 records,
+buffer wrapped — against a 30-level-deep scope, interleaved on the same page so
+its churn rate cannot align with the arm: **median below 0.1ms either way, p95
+0.1ms unscoped against 0.2ms scoped, max 0.2ms.**
+
+**Not done: landmark attribution for an UNSCOPED read.** The original design
+said attribute each record to its nearest landmark. That is still unbuilt and is
+a different problem — it needs a rule for which landmark owns a record and a way
+to print several at once, where scope needs neither. `R24`–`R29` cover the
+scoped half only.
 
 **(c) Report the measurement, never a verdict** — and in **two tiers**, decided
 by the three `MutationRecord` types, which the spec declares so no list of
@@ -370,17 +420,20 @@ code (R11–R21 in `tools/test_readiness.py`):
   recur. And the throttling premise confirmed itself unasked: a paint that takes
   ~1.8s under Playwright had managed **72 of 400 rows after 4.5 seconds** in the
   agent's real (hidden, clamped) tab.
-- **Per-subtree attribution** (§5b). Designed, not built — and `query(scope,…)`
-  plus its `inScope()` helper are therefore **dead code**: all five callers pass
-  `null`. Either wire it or delete the parameter; a half-contract is what
-  PRINCIPLES §14 names.
+- ~~**Per-subtree attribution** (§5b). Designed, not built — `query(scope,…)`
+  and its `inScope()` helper are dead code; all five callers pass `null`.~~
+  **SHIPPED for the SCOPED half — see §5(b) for the measurement that decided
+  it.** What remains open is landmark attribution for an UNSCOPED read, which is
+  a different problem: it needs a rule for which landmark owns a record and a way
+  to print several at once.
 - **The observation window is 3000ms, and that number was measured** rather than
   chosen. A 1000ms window reports zero changes on **50.7%** of reads while a
   page committing every 2s is still building — a false quiet, the direction that
   makes an agent conclude absence. 3000ms is 0.0% at 1s, 2s and 3s commit
   intervals. The cost is the opposite error for up to 3s after a page settles,
-  which costs a re-check rather than a wrong answer (R23/R23b). The kind-split covers
-  the dominant case; scope would cover the rest.
+  which costs a re-check rather than a wrong answer (R23/R23b). The kind-split
+  covers the dominant case and scope now covers the ticker case it does not
+  (§5b) — a `textContent` clock is `childList`, not an attribute write.
 - **Cross-origin frames** are not reachable and are deliberately not counted as
   quiet, which is a stated limit rather than a fix.
 - **A per-ref readiness primitive.** Playwright's actionability has one — *the

@@ -2091,7 +2091,7 @@ function _topRectFor(el) {
            width: r.width, height: r.height };
 }
 
-function _readinessPage() {
+function _readinessPage(scopeMmid) {
   // PAGE-CONTEXT COPIES. THIS FUNCTION IS INJECTED ALONE. `runInTab` hands it to
   // `chrome.scripting.executeScript({func})`, which stringifies THIS FUNCTION AND
   // NOTHING ELSE — so a call to a top-level sibling like `_deepAll` or
@@ -2122,7 +2122,13 @@ function _readinessPage() {
     const visit = (r, d) => {
       if (d > 6) return;
       try { r.querySelectorAll(sel).forEach((e) => acc.push(e)); } catch (e) {}
-      try { r.querySelectorAll('*').forEach((e) => { if (e.shadowRoot) visit(e.shadowRoot, d + 1); }); }
+      // `|| e.__abClosedRoot` -- #31's handle, captured by listener_tag.js
+      // wrapping attachShadow at document_start, so nothing can create a CLOSED
+      // root without handing us a reference. Nine traversal sites in this file
+      // already read it; this probe was the one that did not, so an aria-busy
+      // region or a spinner inside a closed root read as a settled page. That is
+      // the false-quiet direction, which is the worst this probe can fail in.
+      try { r.querySelectorAll('*').forEach((e) => { const sr = e.shadowRoot || e.__abClosedRoot; if (sr) visit(sr, d + 1); }); }
       catch (e) {}
       try {
         r.querySelectorAll('iframe,frame').forEach((f) => {
@@ -2151,7 +2157,69 @@ function _readinessPage() {
     return { left: x, top: y, right: x + r.width, bottom: y + r.height,
              width: r.width, height: r.height };
   };
-  const o = { ready: document.readyState, imgs: 0, busy: 0, prog: 0, mut: null };
+  // COMPOSED + CROSS-FRAME CONTAINMENT. `Node.contains()` stops dead at a shadow
+  // boundary, and _deepAll below collects through BOTH shadow roots and
+  // same-origin frames -- so a containment test that cannot cross them would
+  // report a custom element's own contents, or its own iframe's contents, as
+  // external to it. MEASURED: on a host whose shadow child is mutating,
+  // `host.contains(shadowChild)` is FALSE.
+  //
+  // Three boundary kinds, each crossed by the thing that declares it:
+  //   shadow root (nodeType 11) -> .host
+  //   document    (nodeType 9)  -> defaultView.frameElement (same-origin only)
+  //   element                   -> .parentNode
+  // NOT tagged dup: against listener_tag.js's own inScope: that one runs INSIDE
+  // each frame's ring, where the document boundary is the end of its world, so
+  // it crosses shadow roots only. Two different scopes, deliberately.
+  const _inScope = (el, scope) => {
+    let cur = el;
+    for (let hops = 0; cur && hops < 400; hops++) {
+      if (cur === scope) return true;
+      if (cur.nodeType === 11) { cur = cur.host || null; continue; }
+      if (cur.nodeType === 9) {
+        let fe = null;
+        try { fe = cur.defaultView && cur.defaultView.frameElement; } catch (e) { fe = null; }
+        cur = fe || null; continue;
+      }
+      cur = cur.parentNode || null;
+    }
+    return false;
+  };
+  // A SCOPE THAT DOES NOT RESOLVE FALLS BACK TO THE WHOLE DOCUMENT, never to
+  // "nothing to report". Reporting a subtree we could not find as quiet is the
+  // false-quiet direction this entire probe exists to avoid (R17); over-warning
+  // costs a re-check. `scopeMiss` is carried out so the caller can say so.
+  let _scope = null, _scopeMiss = false;
+  if (scopeMmid !== null && scopeMmid !== undefined && scopeMmid !== '') {
+    const key = String(scopeMmid);
+    try {
+      const reg = window.__mmidReg;
+      if (reg) { const n = reg.get(key); if (n && n.isConnected) _scope = n; }
+    } catch (e) {}
+    // The registry is the authority because it reaches inside shadow roots,
+    // which document.querySelector cannot; the selector is the fallback for a
+    // worker that has been evicted since the stamp.
+    if (!_scope) { try { _scope = document.querySelector("[mmid='" + key + "']"); } catch (e) {} }
+    if (!_scope || !_scope.isConnected) { _scope = null; _scopeMiss = true; }
+  }
+  // _deepAll(sel, root) asks the ROOT for its DESCENDANTS, so the root itself is
+  // never in the answer and its own shadow root is never visited -- both wrong
+  // when the root IS the element the caller scoped to. A scoped read of an <img>
+  // ref, or of a custom element that renders its own spinner inside its own
+  // shadow root, are exactly the shapes that would otherwise come back falsely
+  // quiet. Unscoped this is _deepAll unchanged.
+  const _scan = (sel) => {
+    if (!_scope) return _deepAll(sel);
+    const acc = _deepAll(sel, _scope);
+    try { if (_scope.matches && _scope.matches(sel)) acc.push(_scope); } catch (e) {}
+    try {
+      const sr = _scope.shadowRoot || _scope.__abClosedRoot;
+      if (sr) _deepAll(sel, sr, 1).forEach((e) => acc.push(e));
+    } catch (e) {}
+    return acc;
+  };
+  const o = { ready: document.readyState, imgs: 0, busy: 0, prog: 0, mut: null,
+              scoped: !!_scope, scopeMiss: _scopeMiss };
   // DOM MUTATION RECENCY -- the signal that answers the question actually being
   // asked ("if I wait, will this change?") rather than the one the other four
   // answer ("is the network idle?"). Recorded by listener_tag.js at
@@ -2184,7 +2252,24 @@ function _readinessPage() {
     // and `since` is printed beside the count so the reader can tell "changed
     // 20ms ago" from "changed 2,900ms ago" without trusting the window at all.
     const MUT_WIN = 3000;
-    if (window.__abMut) o.mut = window.__abMut.query(null, MUT_WIN);
+    // SCOPED WHEN THE CALLER SCOPED THE READ. query(scope) was dead code for its
+    // whole life -- five callers, every one passing null -- and OPEN.md item 3
+    // said wire it or delete it. MEASURED on the shape READINESS.md 5(b) names
+    // ("a clock in a header and a table rebuilding are the same number and
+    // opposite facts"): a page with a live ticker beside a table that finished
+    // reports, at the same instant,
+    //     doc-wide            since=48ms    110 structural   -> STILL CHANGING
+    //     scoped to the table since=4013ms    0 structural   -> no banner at all
+    // with three controls holding: scoping to the TICKER still reports churn, a
+    // region still BUILDING is never reported quiet, and a scope whose content
+    // lives in a shadow root is still seen.
+    //
+    // This covers a case the #70 kind-split provably does not. That split assumed
+    // ad churn is ATTRIBUTE churn (@style on a carousel); a ticker that updates
+    // via textContent arrives as childList -- Chrome records it as remove+add of
+    // a text node -- so it trips the STRONG banner. Measured above at 25
+    // `structural` and 0 `text` for a clock doing nothing but `textContent=`.
+    if (window.__abMut) o.mut = window.__abMut.query(_scope, MUT_WIN);
     // SAME-ORIGIN FRAMES TOO, or this reports QUIET for a page whose content
     // lives in an iframe while that frame is actively painting -- a FALSE quiet,
     // which is the worst direction this probe can fail in and the thing R17 was
@@ -2206,6 +2291,17 @@ function _readinessPage() {
         for (let i = 0; i < w.length; i++) {
           let f = null;
           try { f = w[i]; if (!f || !f.document) continue; } catch (e) { continue; }  // cross-origin
+          // UNDER A SCOPE, a frame counts only if its own <iframe> element is
+          // inside that scope. Merging every frame into a scoped answer would
+          // reimport exactly the churn the scope was asked to exclude; skipping
+          // frames altogether would report a scope whose content lives in an
+          // iframe as quiet, which is the worse error. `frameElement` is the
+          // declaration, and _inScope walks out through it.
+          if (_scope) {
+            let fe = null;
+            try { fe = f.frameElement; } catch (e) { continue; }
+            if (!fe || !_inScope(fe, _scope)) continue;
+          }
           let q = null;
           try { q = f.__abMut ? f.__abMut.query(null, MUT_WIN) : null; } catch (e) {}
           if (q) {
@@ -2239,7 +2335,7 @@ function _readinessPage() {
     const vh = window.innerHeight || document.documentElement.clientHeight || 0;
     const vw = window.innerWidth || document.documentElement.clientWidth || 0;
     const M = 200;
-    for (const im of _deepAll('img')) {
+    for (const im of _scan('img')) {
       if (im.complete) continue;
       const r = _topRectFor(im);
       if (r.width <= 8 || r.height <= 8) continue;
@@ -2247,7 +2343,7 @@ function _readinessPage() {
       o.imgs++;
     }
   } catch (e) {}
-  try { o.busy = _deepAll('[aria-busy="true"]').length; } catch (e) {}
+  try { o.busy = _scan('[aria-busy="true"]').length; } catch (e) {}
   try {
     // Re-derived HERE on purpose: the image probe's vh/vw are const-scoped inside
     // its own try block, so referencing them from this one throws a ReferenceError
@@ -2255,7 +2351,7 @@ function _readinessPage() {
     // and silently deleting the signal. Caught by running it, not by node --check.
     const pvh = window.innerHeight || document.documentElement.clientHeight || 0;
     const pvw = window.innerWidth || document.documentElement.clientWidth || 0;
-    o.prog = _deepAll('[role="progressbar"],progress').filter((n) => {
+    o.prog = _scan('[role="progressbar"],progress').filter((n) => {
       try {
         const r = _topRectFor(n);
         if (r.width <= 1 || r.height <= 1) return false;
@@ -2304,9 +2400,15 @@ async function webmcpNote(tabId) {
          `Read them with page_tools, run one with call_page_tool. ***\n`;
 }
 
-async function readinessNote(tabId) {
+// scopeMmid: when the caller scoped the READ, scope the readiness answer to the
+// same subtree. Measured on the shape that motivated it (see _readinessPage):
+// doc-wide said "110 structural, 48ms ago" while the table the caller had
+// actually scoped to had not moved in 4s. Reporting the document's churn under a
+// listing that deliberately excludes the document is the same category error as
+// the page-level facts #11 and #26 had to stop leaking into a scoped read.
+async function readinessNote(tabId, scopeMmid) {
   let r = null;
-  try { r = await runInTab(tabId, _readinessPage); } catch (e) {}
+  try { r = await runInTab(tabId, _readinessPage, [scopeMmid === undefined ? null : scopeMmid]); } catch (e) {}
   const pend = _netPending.get(tabId);
   // Ignore long-lived streams: an open EventSource/WebSocket-ish fetch would
   // otherwise mark a finished page as permanently loading.
@@ -2332,7 +2434,14 @@ async function readinessNote(tabId) {
   if (net) {
     const parts = [...kinds.entries()].sort((a, b) => b[1] - a[1])
       .map(([k, n]) => (n > 1 ? `${n} ${k}` : k)).slice(0, 4);
-    bits.push(`${net} network request(s) in flight (${parts.join(', ')})`);
+    // PAGE-WIDE EVEN UNDER A SCOPE, and said so, because a request is not
+    // attributable to a subtree: `chrome.webRequest` reports per TAB, and the
+    // DOM node a response will land in does not exist yet. Scoping the four DOM
+    // signals and silently leaving this one global would be the worse half of
+    // both -- a reader would take the whole banner for a statement about their
+    // subtree. The other four ARE scoped, which is why this one has to say it
+    // is not.
+    bits.push(`${net} network request(s) in flight${r.scoped ? ' PAGE-WIDE' : ''} (${parts.join(', ')})`);
   }
   if (r.prog) bits.push(`${r.prog} progress indicator(s) visible`);
   if (r.busy) bits.push(`${r.busy} region(s) marked aria-busy`);
@@ -2385,7 +2494,16 @@ async function readinessNote(tabId) {
         kinds.push(`${c} @${k}`);
       }
       const sat = m.saturated ? '+' : '';
-      const where = m.frames ? ` across this page and ${m.frames} same-origin frame(s)` : '';
+      // A SCOPE THAT DID NOT RESOLVE FALLS BACK TO THE WHOLE PAGE AND SAYS SO.
+      // The fallback direction is the safe one (over-warn, never false-quiet),
+      // but silence about it would be worse than either: the reader would take
+      // the document's churn for their subtree's and re-observe a region that
+      // never moved.
+      const where = r.scopeMiss
+        ? ' ACROSS THE WHOLE PAGE — the ref you scoped to did not resolve here, so this is NOT scoped'
+        : (r.scoped
+            ? ` INSIDE THE SUBTREE YOU SCOPED TO${m.frames ? ` and ${m.frames} same-origin frame(s) within it` : ''}`
+            : (m.frames ? ` across this page and ${m.frames} same-origin frame(s)` : ''));
       // TWO TIERS, decided by the three MutationRecord TYPES — which are declared
       // by the spec, so this needs no list of "important" attributes (the thing
       // #24 and #27 removed from every path that decides something).
@@ -2428,7 +2546,9 @@ async function readinessNote(tabId) {
       // #33's class, in the banner being rewritten to fix #33's class. Whether
       // this read is good enough depends on what the caller is looking for, and
       // the caller knows that and we do not.
-      return `*** DOM STABLE, NETWORK BUSY. No DOM change for ${m.since}ms; separately ` +
+      return `*** DOM STABLE${r.scoped ? ' IN THE SUBTREE YOU SCOPED TO' : ''}` +
+             `${r.scopeMiss ? ' (page-wide: the ref you scoped to did not resolve)' : ''}` +
+             `, NETWORK BUSY. No DOM change for ${m.since}ms; separately ` +
              `${bits.join('; ')}. What is rendered now is not being rewritten — whether ` +
              `MORE will arrive is what those requests decide. ***\n`;
     }
@@ -13658,7 +13778,7 @@ async function handleOp({ id, op, params }) {
         // still rendering behind a spinner and the trailer read as reassurance.
         let _rn = "";
         if (typeof text === 'string' && !text.startsWith('__SCOPE_MISS__')) {
-          try { _rn = await readinessNote(t.id); } catch (e) {}
+          try { _rn = await readinessNote(t.id, params && params.scopeMmid ? String(params.scopeMmid) : null); } catch (e) {}
         }
         // NOT "complete", and NOT an instruction to stop looking. Two independent
         // live agents were misled by the old trailer: one received code from a
@@ -13694,6 +13814,12 @@ async function handleOp({ id, op, params }) {
       // reports page state, which is page content.
       case "page_readiness": {
         const t = await resolveTab(params);
+        // DELIBERATELY NOT SCOPED, though readinessNote now takes a scope. Its
+        // only caller is find's MISS path (#39), and find searches the WHOLE
+        // page -- so a scope parameter here would have no caller, which is the
+        // half-contract this very change was made to delete (`origin` #54,
+        // `viewport` #57, `on_fail:"heal"` #62, `delta` #30). Add it the day a
+        // scoped search exists, not before.
         result = await readinessNote(t.id);
         // SILENCE IS THE WRONG ANSWER FOR THIS CALLER, and it is the only caller
         // that wants the opposite of what the listing wants. The listing wants
@@ -13756,7 +13882,7 @@ async function handleOp({ id, op, params }) {
           // because it qualifies everything after it. Skipped for a __SCOPE_MISS__
           // sentinel, which is an error the server translates, not a listing.
           if (!result.startsWith('__SCOPE_MISS__')) {
-            try { result = (await readinessNote(t.id)) + result; } catch (e) {}
+            try { result = (await readinessNote(t.id, params && params.scopeMmid ? String(params.scopeMmid) : null)) + result; } catch (e) {}
             // WEBMCP DISCOVERABILITY. A page that declares its own tools has said
             // what it can do far better than we can infer it, and an agent that is
             // never told will re-derive it from markup instead. One line when
