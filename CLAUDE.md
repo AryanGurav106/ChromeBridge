@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1264 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1268 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1264 checks, ~122s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1268 checks, ~122s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -7391,6 +7391,50 @@ granted in the side panel is refused with the same message the agent gets.
     ever have passed it. Reverted, with the reason recorded at the branch: add it
     the day a scoped search exists, not before.
 
+    **AND THE LIVE PASS FOUND SOMETHING BIGGER THAN THE CHANGE THAT WENT
+    LOOKING FOR IT: the readiness banner has NEVER been visible on a scoped read
+    at any normal budget.** Verified on ptable.com, on the SHIPPED extension
+    (worker age 9,692s, so nothing from this entry was in it), with the signal
+    plainly firing — an unscoped read printed `*** THE DOM IS STILL CHANGING ***`
+    while a read scoped with `ref_id` printed no banner at `max_chars` 300, 420
+    or 700. At **50,000** the banner appeared — *below* the scope header.
+
+    `mcp_server.py` prepends `[scoped to the subtree of ref_N …]` to the listing,
+    and it was doing it in FRONT of the banner. `_split_banner` matches
+    **anchored**, and `_truncate` leans on it to peel the banner off before
+    slicing — so a line prepended ahead of a banner does not merely reorder the
+    output, **it makes the banner invisible to both** and leaves it to be cut as
+    ordinary body text. That is #13 ("truncation must never remove the payload")
+    with the banner as the payload, reached through #30's string-contract class.
+    A scoped read is the documented way to reach deep into a page, so the signal
+    was missing from exactly the reads that go deepest.
+
+    **The same read also printed the banner TWICE** at a budget large enough to
+    show it: `filter="all"` appends the region's text, `get_dom_text` prepends a
+    readiness banner of its own, and the two describe the same page at the same
+    instant. Both text-append paths strip it now.
+
+    **I FOUND IT BY REFUSING TO EXPLAIN AWAY A RESULT THAT DID NOT FIT.** The
+    live pre-fix scoped read showed NO banner where the pre-fix code must give
+    the same answer as the unscoped one, and the first three explanations
+    available were all about timing. The one that was true was visible only by
+    reading the server's assembly order. `_prepend_to_listing` is a module-level
+    helper so the invariant is drivable by a test at all — #30 found
+    `_content_rows` untestable for its whole life purely for being nested — and
+    C31* proves the rule fires on the concatenation that shipped.
+
+    **A SECOND LIVE FINDING, about the regime rather than the code.** The first
+    probe used a `setInterval` ticker and it **stopped dead** (`T45` → `T45`,
+    `since=19993ms`): the agent's tab is `hidden` BY DESIGN (#12) and Chrome
+    intensively throttles a hidden page's timers. So the ad-ticker case this
+    change is partly motivated by is RARER in our regime than on a visible page,
+    and a synthetic timer cannot drive a live test here. The fixture measurement
+    stands on its own, and the live demonstration had to be driven by a page
+    ACTION inside one `browser_batch` instead — which also kept it inside the
+    3000ms window, where a separate tool call would have spent most of it on the
+    model turn. Worth writing down: **a probe that silently stops looks exactly
+    like a settled page** (#15), and this one did.
+
     **THE COST WAS RE-EARNED RATHER THAN INHERITED.** #70 priced the UNSCOPED
     query at under Chrome's 0.1ms timer granularity; a scoped one derefs a
     WeakRef and walks UP to the scope for every ring slot, so it is strictly more
@@ -7415,7 +7459,10 @@ granted in the side panel is refused with the same message the agent gets.
     `R25b` is the one that keeps the composed walk honest rather than restating
     the easy answer: `host.contains(shadowChild)` is measured **false**.
 
-    Suites: 1,264 checks. New — R24 (the win), R24b/R24c (scoping to the churning
+    Suites: 1,268 checks. New — C31/C31b/C31* (a server-side header goes AFTER
+    the banner; the control that a bannerless listing is unchanged; and the rule
+    firing on the shipped concatenation), C32 (the duplicate banner is stripped),
+    R24 (the win), R24b/R24c (scoping to the churning
     region still reports churn; a region still BUILDING is never reported quiet),
     R25/R25b (the shadow boundary, and that `contains()` genuinely cannot see
     it), R26/R26b (the probe says which question it answered, and an unresolved
@@ -7524,6 +7571,9 @@ granted in the side panel is refused with the same message the agent gets.
 | Server-side edits seem to have no effect | `sw_info` answers this since #61: `server_code_changed_since_start` names every file whose mtime is later than this process's import. Empty means the running server IS the code on disk. The client must reconnect (`/mcp`); nothing else picks it up, and the stale process keeps answering normally, which is what made this cost six reconnects across #59 and #61 |
 | A flow says a step FAILED but the action plainly worked | Fixed in #60 — the postcondition window was a flat 6s and a real app's create -> table-refresh took longer, so the flow reported FAILED for a record that HAD been created. Each step now carries `settle_ms`, measured at record time from the timestamps the recorder already kept, and the replay allows the default PLUS that. A flow recorded before #60 carries 0 and is unchanged |
 | The banner says `THE DOM IS STILL CHANGING` | By design since #70 — the page is actively being rewritten, measured by mutation recency rather than by the network. Every other signal reads ZERO on this case (an SPA painting rows after its one fetch has resolved), which is why it was invisible for so long. The kinds are named because `40 @style` (an ad carousel) and `40 structural` (the table you are reading) are opposite facts |
+| A scoped read (`ref_id`) shows no readiness banner at all | Fixed in #76, and it had never worked: `mcp_server.py` prepended `[scoped to the subtree of ref_N …]` in FRONT of the banner, `_split_banner` matches anchored, and `_truncate` relies on it — so the banner became ordinary body text and was cut. Measured live: absent at max_chars 300/420/700, present at 50000 below the scope header. If it recurs, something is prepending to the listing without going through `_prepend_to_listing` (C31) |
+| A scoped read with `filter="all"` prints the same readiness banner twice | Fixed in #76 — the appended `--- TEXT INSIDE ref_N ---` block carries `get_dom_text`'s own banner, describing the same page at the same instant. Stripped on both text-append paths (C32) |
+| A `setInterval` on the agent's tab stops firing after a few minutes | Not ours. The agent's tab is hidden BY DESIGN (#12) and Chrome intensively throttles a hidden page's timers — measured live, a 120ms ticker ran 45 times and then stopped dead, with `since=19993ms`. Anything that needs recurring page activity must be driven by an ACTION, ideally inside one `browser_batch` so the model turn is not spent inside the window |
 | A scoped read's banner says `INSIDE THE SUBTREE YOU SCOPED TO` | By design since #76 — a scoped read scopes the readiness answer to the same subtree, so it describes what you asked for rather than the document you excluded. Measured: a table a caller scoped to read `since=4013ms / 0 structural` at the instant the document read `since=48ms / 110 structural`. The network count stays PAGE-WIDE and says so — a request is not attributable to a subtree. If it says `ACROSS THE WHOLE PAGE — the ref you scoped to did not resolve`, the scope ref is stale and the answer fell back to doc-wide rather than to silence |
 | A readiness banner fires on a page whose only movement is a clock or a ticker | Expected, and #70's kind-split cannot help: a ticker updating via `textContent` is `childList`, not an attribute write — Chrome records it as remove+add of a text node — so it is genuinely structural. Measured at 25 structural / 0 text for a clock. Scope a read to the region you care about (#76) and the ticker drops out of the answer |
 | The banner says the DOM is unchanged but requests are in flight | By design since #70, and it is the HONEST answer rather than a hedge: what is rendered now is not being rewritten, and whether MORE arrives is what those requests decide. (This row said "stable and safe to read" until an audit caught it: the code deliberately refuses to recommend, and a debugging table that recommends on its behalf is the same defect one file over.) Measured — a page with a poll and a beacon keeps 3–6 requests pending for ever while its DOM finished in 300ms, and the old banner said "STILL SETTLING" to that page until you gave up on it. Network idle is the best wait rule published (0.46% stale) and it is reached within 3s on only 15% of booking/buying pages, so this is the commercial web rather than a defect |

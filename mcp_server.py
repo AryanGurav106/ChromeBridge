@@ -722,6 +722,29 @@ def _split_banner(text: str) -> tuple[str, str]:
     return (m.group(1), text[m.end():]) if m else ("", text or "")
 
 
+def _prepend_to_listing(out: str, line: str) -> str:
+    """Insert a server-side header line, keeping any extension banner FIRST.
+
+    THE BANNER'S PROTECTION IS POSITIONAL AND NOTHING SAID SO. `_split_banner`
+    uses an ANCHORED match, and `_truncate` relies on it to peel the banner off
+    before slicing -- so anything prepended ahead of a banner does not merely
+    reorder the output, it makes the banner invisible to both and leaves it to be
+    truncated away as ordinary body text.
+
+    MEASURED LIVE on ptable.com with the readiness signal plainly firing: a read
+    scoped with `ref_id` emitted NO banner at max_chars=300, 420 or 700, and the
+    banner reappeared only at 50000 -- below the scope header, where every normal
+    budget had been cutting it off. A scoped read is the documented way to reach
+    deep into a page, so the readiness signal was absent from exactly the reads
+    that go deepest, in silence, since the scope header was added.
+
+    This is #13 ("truncation must never remove the payload") with the banner as
+    the payload, reached through #30's string-contract class.
+    """
+    bnr, body = _split_banner(out)
+    return bnr + line + body
+
+
 # What counts as an element ROW in a listing: an individual `mmid=` line, or a
 # folded group line (`26x a in section=main - shown as ref:"label" ...`), which
 # stands for its whole group.
@@ -1374,7 +1397,8 @@ async def read_page(
             "same listing may still be valid. Call read_page or find again for current refs."
         )
     if scope_mmid:
-        out = f"[scoped to the subtree of ref_{scope_mmid} — elements outside it are omitted]\n" + out
+        out = _prepend_to_listing(
+            out, f"[scoped to the subtree of ref_{scope_mmid} — elements outside it are omitted]\n")
     # DO NOT ADVISE THE PARAMETER THE CALLER JUST PASSED. The collector cannot
     # know `filter` — it only ever produces an element listing — so its
     # scoped-zero explanation offers `filter="all"` to reach the text. When the
@@ -1406,10 +1430,15 @@ async def read_page(
                 out += (f"\n\n[text for ref_{scope_mmid} unavailable — the element went "
                         "away between the two reads. Re-read for current refs.]")
             else:
-                out += f"\n\n--- TEXT INSIDE ref_{scope_mmid} ---\n" + rtext
+                # STRIP ITS BANNER. get_dom_text prepends a readiness banner of
+                # its own, and this response already carries one for the same page
+                # at the same instant -- so appending it unchanged printed the
+                # identical warning twice, once above the rows and once above the
+                # text, with nothing saying they were the same observation.
+                out += f"\n\n--- TEXT INSIDE ref_{scope_mmid} ---\n" + _split_banner(rtext)[1]
         else:
             text = await b.call("get_dom_text", tabId=tabId)
-            out = out + "\n\n--- PAGE TEXT ---\n" + str(text)
+            out = out + "\n\n--- PAGE TEXT ---\n" + _split_banner(str(text))[1]
     # DELTA. Line-based on purpose: diffing structured entries would mean a THIRD
     # formatter, and vocabulary drift between the two that already exist produced
     # five of the eleven defects a live-agent study found. Diffing the exact rows

@@ -1105,6 +1105,46 @@ def main() -> int:
           not _mc2, f"singletons={_mc2}" if _mc2
           else ", ".join(f"{k}x{len(v)}" for k, v in sorted(_dup.items())))
 
+    # ---------------------------------------------------------------- C31 ---
+    # THE BANNER'S PROTECTION IS POSITIONAL, AND NOTHING SAID SO UNTIL IT BROKE.
+    # `_split_banner` matches ANCHORED, and `_truncate` leans on it to peel the
+    # banner off before slicing. So any server-side line prepended AHEAD of a
+    # banner does not merely reorder the output -- it makes the banner invisible
+    # to both, and it is then truncated away as ordinary body text.
+    #
+    # MEASURED LIVE on ptable.com with the readiness signal plainly firing: a
+    # read scoped with ref_id emitted NO banner at max_chars=300, 420 or 700,
+    # and the banner reappeared only at 50000, sitting BELOW the scope header.
+    # A scoped read is the documented way to reach deep into a page, so the
+    # readiness signal was missing from exactly the reads that go deepest.
+    sys.path.insert(0, str(ROOT))
+    import importlib
+    _ms = importlib.import_module("mcp_server")
+    _BANNER = "*** THE DOM IS STILL CHANGING (last change 9ms ago) ***\n"
+    _LISTING = "ref_1 | a \"Home\"\n"
+    _hdr = "[scoped to the subtree of ref_5 — elements outside it are omitted]\n"
+    _joined = _ms._prepend_to_listing(_BANNER + _LISTING, _hdr)
+    check("C31 a server-side header line is inserted AFTER an extension banner, "
+          "so the banner stays at position 0 where _split_banner and _truncate "
+          "can both still find it",
+          _joined.startswith(_BANNER) and _hdr in _joined
+          and _ms._split_banner(_joined)[0] == _BANNER,
+          repr(_joined[:90]))
+    check("C31b CONTROL: with no banner present the header is simply first, so "
+          "this did not become 'always leave a gap'",
+          _ms._prepend_to_listing(_LISTING, _hdr) == _hdr + _LISTING)
+    check("C31* ...and the rule provably fires on the concatenation that shipped",
+          not _ms._split_banner(_hdr + _BANNER + _LISTING)[0],
+          "naive prepend hides the banner from _split_banner")
+    # The appended text block carries its own banner (get_dom_text prepends one),
+    # describing the same page at the same instant as the listing's. Printing it
+    # twice in one response leaves the reader asking which half each describes.
+    check("C32 the text appended to a scoped read has its duplicate readiness "
+          "banner stripped",
+          '_split_banner(rtext)[1]' in read("mcp_server.py")
+          and '_split_banner(str(text))[1]' in read("mcp_server.py"),
+          "both text-append paths strip")
+
     print(f"\n{passed} passed, {failed} failed, {passed + failed} total checks")
     if failures:
         print("failing: " + ", ".join(failures))
