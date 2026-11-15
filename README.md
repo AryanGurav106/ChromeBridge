@@ -312,7 +312,7 @@ not by convention.
 .venv/bin/python tools/run_tests.py                    # POSIX (run on macOS; CI runs it on Linux)
 ```
 
-**21 suites, 1,226 checks, about 107 seconds.** Ten are browser-free; the other
+**21 suites, 1,229 checks, about 107 seconds.** Ten are browser-free; the other
 eleven drive headless Chromium and need two packages that are deliberately not
 runtime dependencies:
 

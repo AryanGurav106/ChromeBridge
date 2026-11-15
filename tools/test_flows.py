@@ -1215,6 +1215,64 @@ async def record_and_replay():
               for u in (rep_t.get("unwitnessed_absence") or [])),
           f"unwitnessed={rep_t.get('unwitnessed_absence')}")
 
+    # FE1f/FE1g -- AN ABSENCE ALONE IS SATISFIED BY A BLANK PAGE. `absent: true`
+    # and `count: 0` are both true of an empty document, a crashed SPA, and a
+    # session that bounced the flow to a login screen -- so a step whose ONLY
+    # assertions are disappearances passes when the app is GONE, which is the
+    # opposite of what it was recorded to check. The settle window points the
+    # wrong way for it too: a presence check gets stronger as a page settles,
+    # an absence check gets weaker.
+    #
+    # No new signal is needed, because the recorder already observed one: the
+    # url at that moment is a positive co-assertion that a blank page fails
+    # while the recorded disappearance still has to happen.
+    rec_a = Recorder("anchor", FakeBridge(ents).entries_fn)
+    ai = {"ref": "ref_70", "tabId": 1}
+    at = await rec_a.before("computer", ai)
+    # The modal must be SEEN PRESENT first, or #64's unwitnessed-absence rule
+    # correctly drops it and there is no absence left to anchor. (My first
+    # version of this fixture omitted that and measured the wrong thing.)
+    rec_a.after("query_elements", {"selector": ".modal.show", "tabId": 1},
+                "1 element(s) match '.modal.show':\n  <div ref_9>", {})
+    rec_a.after("get_url", {"tabId": 1}, '{"url": "https://app.test/orders"}', {})
+    rec_a.after("computer", ai, "clicked", at)
+    rec_a.after("query_elements", {"selector": ".modal.show", "tabId": 1},
+                "No element matches '.modal.show' in the rendered document.", {})
+    fa, _ = rec_a.compile()
+    _exp = fa.steps[0].expect or {}
+    check("FE1f a step whose ONLY assertion is a disappearance gets the observed "
+          "url as a positive anchor (a blank page satisfies the absence alone)",
+          _exp.get("url") == "https://app.test/orders",
+          f"expect={_exp}")
+    check("FE1g ...and the anchoring is NAMED in review, so the reader can see "
+          "the recorder added it rather than the agent asserting it",
+          any("anchored" in r for r in (fa.steps[0].review or [])),
+          f"review={fa.steps[0].review}")
+
+    # FE1h CONTROL -- a step that ALREADY carries a positive check gets no
+    # anchor. Without this, "always add the url" would pass FE1f and would put
+    # a url assertion on every step in every flow, which is noise and would
+    # break any flow whose url legitimately changes mid-step.
+    rec_b = Recorder("noanchor", FakeBridge(ents).entries_fn)
+    bi = {"ref": "ref_70", "tabId": 1}
+    bt = await rec_b.before("computer", bi)
+    # The modal must be SEEN PRESENT first, or #64's unwitnessed-absence rule
+    # correctly drops it and there is no absence left to anchor. (My first
+    # version of this fixture omitted that and measured the wrong thing.)
+    rec_b.after("query_elements", {"selector": ".modal.show", "tabId": 1},
+                "1 element(s) match '.modal.show':\n  <div ref_9>", {})
+    rec_b.after("get_url", {"tabId": 1}, '{"url": "https://app.test/orders"}', {})
+    rec_b.after("computer", bi, "clicked", bt)
+    rec_b.after("query_elements", {"selector": ".modal.show", "tabId": 1},
+                "No element matches '.modal.show' in the rendered document.", {})
+    rec_b.after("query_elements", {"selector": "table tbody tr", "tabId": 1},
+                "5 element(s) match 'table tbody tr':\n  <tr ref_8>", {})
+    fb2, _ = rec_b.compile()
+    check("FE1h CONTROL: a step that already has a POSITIVE check gets no anchor "
+          "(or every step in every flow would acquire a url assertion)",
+          "url" not in (fb2.steps[0].expect or {}),
+          f"expect={fb2.steps[0].expect}")
+
     # FE2 -- the text that was read is kept, so a CONTENT check does not
     # degrade into an existence check.
     rec2 = Recorder("pick", FakeBridge(ents).entries_fn)

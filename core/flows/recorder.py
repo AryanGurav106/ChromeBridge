@@ -578,6 +578,48 @@ class Recorder:
                 f'observed AFTER this step'
                 + (' (inherent: nothing precedes the first step)' if _first else
                    ', so nothing here says it would have failed before'))
+        # AN ABSENCE ALONE IS SATISFIED BY A BLANK PAGE. `absent: true` and
+        # `count: 0` are both true of an empty document, of a crashed SPA, and
+        # of a session that bounced the flow to a login screen -- so a step
+        # whose ONLY assertions are disappearances passes when the app is
+        # gone, which is the opposite of what it was recorded to check.
+        #
+        # And the settle window points the wrong way for it: a presence check
+        # gets STRONGER as a page settles, an absence check gets weaker (#55's
+        # window helps one and not the other).
+        #
+        # The fix needs no new signal, because the recorder already observed
+        # one. The url at that moment is a POSITIVE co-assertion: a blank page
+        # or a bounce to /login fails it, while the recorded disappearance
+        # still has to happen. Added only when every check on the step is an
+        # absence -- a step that already carries a positive check needs
+        # nothing, and adding one there would be noise.
+        for _n, (_ix, _st) in enumerate(zip(action_ix, kept)):
+            _items = self._check_items(_st.expect or {})
+            if _items and all(self._is_empty(k, v) for k, v in _items.items()):
+                _url = (_st.expect or {}).get("url")
+                if not _url:
+                    # `_checks_before` returns an EXPECT-shaped dict, not the
+                    # keyed `_check_items` shape -- so a ("url",) tuple lookup
+                    # silently never matches. Same shape-confusion class as
+                    # #16's rule: it produced a plausible "no url observed"
+                    # rather than an error.
+                    _url = self._checks_before(live, _ix).get("url")
+                if _url:
+                    _st.expect["url"] = _url
+                    _st.review.append(
+                        'anchored: every assertion on this step was a '
+                        'disappearance, which a blank page also satisfies, so '
+                        'the url observed at that moment was added as a '
+                        'positive co-assertion')
+                else:
+                    _st.review.append(
+                        'UNANCHORED ABSENCE: every assertion on this step is a '
+                        'disappearance and no url was observed to anchor it, so '
+                        'a blank page or a bounce to a login screen would also '
+                        'pass. Re-record with an observation of something that '
+                        'must still be PRESENT.')
+
         for _n, _st in enumerate(kept):
             for _p, _t in (_st.targets or {}).items():
                 if unwitnessed_ordinal(_t):

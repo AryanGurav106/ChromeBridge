@@ -1,0 +1,3 @@
+order	task	arm	agent_report
+1	T1	cb	ANSWER: ¥30 | TOOL_CALLS: 7 | BROWSER_CALLS: 6 | FIRST_CONTENT_AT: 2 | BATCHED: yes, 5 times
+2	T1	cic	ANSWER: ¥30 | TOOL_CALLS: 19 | BROWSER_CALLS: 17 | FIRST_CONTENT_AT: 3 | BATCHED: yes, 11 times
