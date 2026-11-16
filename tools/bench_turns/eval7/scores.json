@@ -134,17 +134,13 @@
  {
   "track": "e7_cic_shop3",
   "units": 3,
-  "met": 0,
+  "met": 3,
   "reachable": 3,
-  "events": 0,
-  "passed": false,
-  "passed_reachable": false,
+  "events": 72,
+  "passed": true,
+  "passed_reachable": true,
   "unreachable": [],
-  "unmet": [
-   "basket_add",
-   "basket_add",
-   "basket_add"
-  ],
+  "unmet": [],
   "key": "shop3",
   "arm": "cic",
   "task_file": "ecommerce_basket_three_products.json"

@@ -141,4 +141,119 @@ the offending extension, explains the frame-tree rule and lists what still
 works. Worth stating carefully: this is a shared platform limitation, and the
 difference is only in what the message tells you.
 
-*(The ChromeBridge half of this pair is running.)*
+
+
+**The ChromeBridge half: 8/8 as well, in 28 browser calls.** A tie on the
+oracle, and the call gap is the whole difference on this pair.
+
+Its own event-log verification is worth quoting, because it is the kind of
+evidence a self-report cannot fake:
+
+```
+basket_add:     train 022 "ТВЕРСК", departure_date "2026-11-16",
+                seats [carriage 03 seat 1, carriage 03 seat 2],
+                passengers [Ярославцев Сергей Александрович, Мария Сидорова]
+submit_payment: result "success", amount 10000
+```
+
+It also hit limitation #12 on the card page and **named the degradation rather
+than failing**: *"trusted input is blocked on this tab by another extension's
+injected iframe; used the untrusted pointer-event path instead"*, and the
+payment went through. Same Chrome policy that stopped the other arm's CDP
+entirely; the difference is the fallback and the sentence.
+
+---
+
+## Pair 3 — hoteldxb (6 conditions): TIE, 6/6 each, 19 calls each
+
+**The most informative pair so far, because both arms struggled on the same
+page for OPPOSITE reasons.**
+
+**Theirs got the controls and not their identities.** Verbatim from its report:
+
+```
+textbox "Город, отель или аэропорт" [ref_10]
+button [ref_11]  button [ref_12]  button [ref_13]  button [ref_14]
+```
+
+> `ref_11`–`ref_14` are **Заезд**, **Выезд**, the guests selector, and
+> **Найти**. No name, no text, no value, on any of them … four buttons that
+> differ only in what they say, listed as four buttons that say nothing.
+
+Every interaction from that point ran on screenshot pixels, and it never used
+`form_input` at all.
+
+**Ours got the identities and not the controls.** The whole widget sits under
+`aria-hidden`, so the listing dropped it — and named the recovery, which worked
+and cost calls.
+
+### What it found in ours
+
+- **`4j` — our aria-hidden note promises refs `query_elements` cannot give.**
+  It says *"its refs act normally"*; mmids are stamped by the COLLECTOR, so
+  anything rendered since the last `read_page` carries none. The agent followed
+  our own advice, queried a suggestion button that had just appeared, and got a
+  row with no ref. **HALF FIXED**: both sibling renderers now say so, and both
+  fire on ANY ref-less row rather than only when every row lacks one — the mixed
+  case is the common shape and the all-or-nothing guard `search_page` has
+  carried since #32 was silent for it.
+- **`4b` REOPENED, by two agents on the same hint.** The page's only `<form>` is
+  the NEWSLETTER SIGNUP; both scoped to it expecting the search widget. #80's
+  fix is working as designed and its sources (aria-label, aria-labelledby, first
+  heading) are all absent there.
+
+## Pair 4 — hotel2rm (5 conditions): TIE, 5/5 each, 13 calls to 10
+
+Their most efficient run of the eval. Ours spent ~3 calls on the same
+aria-hidden recovery as pair 3.
+
+- **A banner of ours printed TWICE in one response**, differing only by a
+  counter ticking between two observations. #77 decided that duplicate by EXACT
+  STRING EQUALITY so that nothing would be a judgement; exact equality loses to
+  a counter. **FIXED** — decided by the banner's TIER, read off the marker
+  phrase this codebase emits (#39's rule: our own notation, not the page's).
+- Their agent compared its tool to **ours**, quoting our server instructions,
+  which is how Amendment 4 came to exist.
+
+## Pair 5 — shop3 (3 conditions): TIE, 3/3 each, 16 calls to 18
+
+### The joint finding: one widget that defeats BOTH representations
+
+The product card's quantity stepper is a custom `−  N  +`. Both arms failed on
+it, differently, and **both noted that the CART page lists the same concept
+perfectly**:
+
+| | on the product card | in the cart |
+|---|---|---|
+| **ChromeBridge** | `button "1"` and `button "1"` — the quantity VALUE adopted as the accessible name of BOTH buttons | `button "minus"` / `button "plus"`, correctly |
+| **Claude-in-Chrome** | `button [ref_62]`, `button [ref_63]` — anonymous, and the quantity invisible entirely | `textbox "3"`, readable |
+
+Ours is the worse failure of the two and it is recorded as such
+(`docs/OPEN.md` 4l): **a name that is confidently wrong is worse than
+`(unlabeled-icon)`**, because clicking the wrong one at quantity 1 removes the
+item, and the agent had to spend a call on an attribute query that could not
+settle it either before resorting to a screenshot. Theirs at least sends you
+straight to the screenshot.
+
+**No presence-based ruler can see this.** Both elements are present, listed,
+named and clickable; `measure_findability` would score them a hit. It is the
+"two rows that mean opposite things, printed identically" class named in eval 6,
+and it is the strongest argument in this eval for why live runs still find what
+corpora cannot.
+
+### Also from this pair
+
+- **`back` was skipped for a DOM change the batch itself caused** — 324 → 331
+  elements from a click swapping a button for a stepper, no navigation. **FIXED**:
+  history is moved by navigation, not by a re-render. The message was wrong too,
+  saying the step *"names a ref or coordinate"* when `navigate(url="back")`
+  names neither; there are four ways to address the old page and both the inline
+  message and the end-of-batch summary named two.
+- **`4m`**: a checkbox printing `value="true"` in the slot our legend defines as
+  CURRENT CONTENTS, while its actual state is unchecked.
+- **An app bug both arms met**: the catalogue reuses card state by list
+  POSITION, so after adding Felix ×3 an unrelated product's card showed a
+  stepper reading 3. Their agent caught it only by opening the cart; ours never
+  hit it because it navigated into each product page. Neither toolset can
+  distinguish "3 of these are in your cart" from "this card is showing another
+  product's leftover state" — the page declares nothing either way.
