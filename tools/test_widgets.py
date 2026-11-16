@@ -2191,6 +2191,57 @@ async def main():
               with_menu[with_menu.find("To REACH"):][:230] if "To REACH" in with_menu
               else "NO RECOVERY NAMED")
 
+        # ---- AH6/AH6b: THE SCOPED-EMPTY MESSAGE HAD ITS OWN COPY OF THE
+        # CAUSE, AND IT PICKED ONE.
+        # It said: aria-hidden is "usually a library marking the page inert
+        # behind an OPEN menu or dialog somewhere else; close that and
+        # re-read". MEASURED on a live hotel-booking SPA, reproduced in one
+        # call by this very diagnostic: div.blockWrapper carries
+        # aria-hidden="true" and holds the ENTIRE search widget, while the only
+        # role=dialog on the page is NOT RENDERED. Nothing was open, nothing
+        # could be closed, and three independent agents fell back to
+        # screenshots and coordinate clicks. #33's remedy, applied to the one
+        # message that fires when the page's own content has vanished.
+        ahs = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await ahs.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await ahs.goto("about:blank")
+
+        async def _scoped_empty(html, ref_of):
+            await ahs.set_content(html)
+            await ahs.wait_for_timeout(140)
+            rows = await ahs.evaluate(
+                "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+            m = next((e.get("mmid") for e in rows if e.get("tag") == ref_of), None)
+            if m is None:   # the host itself is aria-hidden, so stamp via a read first
+                m = await ahs.evaluate(
+                    "(function(){ " + COLLECT + "; _collectInteractivePage(true);"
+                    " var h=document.querySelector('#host');"
+                    " return h && h.getAttribute('mmid'); })()")
+            return str(await ahs.evaluate(
+                "(m) => { " + COLLECT + "; return _collectInteractivePage(false, m); }", m))
+
+        _NOPOP = ("<main><div id=host aria-hidden='true'>"
+                  "<input placeholder='Where to?'><button>Search</button></div>"
+                  "<div role=dialog style='display:none'>closed popover</div></main>")
+        _POP = ("<main><div id=host aria-hidden='true'>"
+                "<input placeholder='Where to?'><button>Search</button></div>"
+                "<div role=dialog style='position:fixed;top:0;left:0;width:300px;"
+                "height:200px;background:#fff'>I am open</div></main>")
+
+        _out = await _scoped_empty(_NOPOP, "input")
+        check("AH6 with NOTHING rendered as a dialog, the scoped-empty message "
+              "does not tell you to close one, and names the route that works",
+              "close that and re-read" not in _out
+              and "NOTHING that looks like an open" in _out
+              and "query_elements" in _out, _out[:260])
+
+        _out2 = await _scoped_empty(_POP, "input")
+        check("AH6b CONTROL: ...and when a dialog IS rendered it says so, so "
+              "this did not simply delete the useful half",
+              "IS rendered on this page" in _out2 and "dismiss that first" in _out2,
+              _out2[:260])
+        await ahs.close()
+
         # THE CONTROL. Same drops, no popup on the page: the note must still appear
         # and must NOT claim something is open.
         await ahp.set_content(

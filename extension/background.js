@@ -12444,8 +12444,47 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
               + `computer(action="scroll_to", ref="ref_${scopeMmid}") then read again`);
           }
           if (host.closest && host.closest('[aria-hidden="true"]')) {
-            why.push(`an ancestor is aria-hidden="true" — usually a library marking the `
-              + `page inert behind an OPEN menu or dialog somewhere else; close that and re-read`);
+            // LOOK FOR THE POPUP BEFORE BLAMING ONE. The old sentence asserted
+            // "usually a library marking the page inert behind an OPEN menu or
+            // dialog somewhere else; close that and re-read" -- a single named
+            // cause and a recovery, which is the #33 class that C15 exists to
+            // catch, and it was in the ONE message that fires when the page's
+            // own content has vanished.
+            //
+            // MEASURED on a live hotel-booking SPA, reproduced in one call by
+            // this very diagnostic: `div.blockWrapper` carries
+            // aria-hidden="true" and contains the ENTIRE search widget
+            // ("Направление / Заезд / Выезд / Найти"), while the only
+            // role=dialog on the page is NOT RENDERED. So nothing was open,
+            // nothing could be closed, and three independent agents fell back
+            // to screenshots and coordinate clicks. The app marks its own main
+            // content inert; that is the page's defect, and telling the reader
+            // to close a menu that does not exist is ours.
+            //
+            // Same remedy #33 applied to the page-level note: look for the
+            // popup surface in what is ACTUALLY RENDERED, name it when it is
+            // there, and otherwise state the fact and list causes as causes.
+            let _pop = null;
+            try {
+              for (const _c of document.querySelectorAll(
+                    '[role=dialog],[role=menu],[role=listbox],dialog[open],[aria-modal="true"]')) {
+                if (_c.checkVisibility
+                    ? _c.checkVisibility({ checkVisibilityCSS: true, opacityProperty: true,
+                                           visibilityProperty: true })
+                    : !!_c.offsetParent) { _pop = _c; break; }
+              }
+            } catch (e2) {}
+            why.push(_pop
+              ? `an ancestor is aria-hidden="true", and an OPEN `
+                + `${(_pop.getAttribute('role') || _pop.tagName.toLowerCase())} IS rendered on `
+                + `this page — a focus trap marks everything behind it inert, so dismiss that `
+                + `first and re-read`
+              : `an ancestor is aria-hidden="true", and NOTHING that looks like an open `
+                + `dialog/menu/listbox is rendered — so there is probably nothing to dismiss. `
+                + `Either the app marks this region inert deliberately, or it marks its own `
+                + `content hidden by mistake. The elements still EXIST and still take clicks: `
+                + `query_elements(selector) reaches them, because it queries the rendered `
+                + `document instead of applying this listing's visibility rule`);
           }
           if (host.hasAttribute && host.hasAttribute('inert')) {
             why.push(`it is inside an [inert] region`);

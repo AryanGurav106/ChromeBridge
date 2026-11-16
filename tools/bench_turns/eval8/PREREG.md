@@ -133,3 +133,67 @@ did and why.
   the image and the name div but not the «Добавить» button, which is named only
   "Добавить" with no product in it; and a default `filter="all"` read after a
   nav dumped a very long PAGE TEXT block it did not need.
+
+---
+
+## CLOSEOUT — void as a comparison, and the most productive run so far
+
+**Final tally. ChromeBridge 4/4 completed; claude-in-chrome 0/4.** All four of
+theirs failed before touching the app, identically. That is the falsifier, so
+**no comparison is reported** — see Amendment 2 for the verification that it is
+not the app.
+
+What the run was actually worth is the chromebridge arm's own feedback, because
+four agents drove four real multi-step flows and three of them independently
+hit the same wall.
+
+### THE FINDING: real controls absent from the listing, on four apps
+
+| arm | what was missing from `read_page` |
+|---|---|
+| `hoteldxb:cb` | the **entire search form** — destination, dates, guests, Найти |
+| `rail2p:cb` | calendar day cells, city suggestions, passenger `+`, seat-map seats |
+| `shop3:cb` | the add-to-cart button (text «Завтра», not «В корзину») |
+
+Each fell back to screenshots and coordinate clicks. One said it plainly: the
+form "was not in it ... I had to run `query_elements(...)` to get the refs."
+
+**DIAGNOSED IN ONE CALL, by the diagnostic built for exactly this.** Reproduced
+live, then `read_page(ref_id=…)` on the missing field answered:
+
+> *an ancestor is `aria-hidden="true"`*
+
+`query_elements('[aria-hidden="true"]')` names the culprit: `div.blockWrapper`,
+carrying the whole widget — *"Направление Заезд Выезд 1 номер для 1 гость
+Найти"*. **The app marks its own main content inert while displaying it.** The
+collector dropping it is #28's rule working: the page declared it absent.
+
+**What was OURS is the advice.** That message said aria-hidden is *"usually a
+library marking the page inert behind an OPEN menu or dialog somewhere else;
+close that and re-read"* — one named cause and a recovery. On this page the
+only `role=dialog` is **not rendered**: nothing was open and nothing could be
+closed. #33's class, in the one message that fires when the page's own content
+has vanished, and C15 could not see it because the sentence is declarative.
+
+Fixed the way #33 fixed the page-level note: look for the popup in what is
+ACTUALLY RENDERED, name it when present, and otherwise state the fact, refuse
+to pick a cause, and point at `query_elements` — which reaches these elements,
+because it queries the rendered document instead of applying the listing's
+visibility rule. AH6 fails pre-fix; AH6b covers the other branch.
+
+**NOT changed: whether to list aria-hidden content at all.** That is #28's
+delete rule and changing it needs its own measurement, not an anecdote. Recorded
+as the open question this run raises.
+
+### Also reported, unprompted, by the chromebridge agents
+
+- The readiness banner fired on pages that were already actionable — **three of
+  four said so**. Same complaint as eval rounds 1 and 2.
+- `find` missed the add-to-cart button for "Оливки … add to cart" (it is named
+  only «Добавить», with no product in it) and returned NO CONFIDENT MATCH for a
+  hotel card that `search_page` found at once.
+- Two ref clicks reported "landed" while the URL did not change and nothing
+  happened — **the dead-click guard this session made reachable would now mark
+  those**, and these runs predate that build.
+- The `(occluded/blocked)` flag and long runs of unnamed `div`/`svg` header rows
+  were called noise.
