@@ -9768,6 +9768,28 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       for (const e of out) {
         if (e.near && (shared.get(e.near) || 0) >= 2 && (e.name || e.text)) e.near = '';
       }
+      // ...AND A DECLARED PER-MEMBER DISCRIMINATOR BEATS A GUESS AT ADJACENCY.
+      //
+      // The rule above asks "does this hint distinguish this row from the
+      // others carrying it". There is a second way a hint fails to earn its
+      // place: the row ALREADY carries something the document declared that
+      // tells its members apart, and the hint then only competes with it.
+      //
+      // Measured live in eval 7, on a payment method group:
+      //   ref_2380 [input] [radio] value="yoomoney" near="Банковская карта"
+      // A yoomoney radio advertised as the CARD option -- and the radio that
+      // genuinely is Банковская карта was not returned by find at all, because
+      // `near=` counts as content coverage (#27) and this one matched the query.
+      // Acting on that ref selects the wrong payment method.
+      // `near=` is the nearest VISIBLE text, which in a radio group is routinely
+      // a neighbouring option's label; `submits=` is what the member posts, which
+      // the author wrote and which differs per member by construction. So when a
+      // checkbox/radio has a declared submit value, the adjacency guess is
+      // dropped. A member that declares nothing keeps the hint, because there it
+      // is the only thing the listing can say -- the same reasoning as above.
+      for (const e of out) {
+        if (e.near && e.submits) e.near = '';
+      }
     }
   }
   // CONTAINER-ENTRY SUPPRESSION: an "interactive" element taller than the

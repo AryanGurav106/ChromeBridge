@@ -2481,6 +2481,51 @@ async def main():
               f"submits= occurrences={cb.count('submits=')}")
         await cbp.close()
 
+        # ---- NRQ1/NRQ1b/NRQ1c: A DECLARED DISCRIMINATOR BEATS A GUESS -----
+        # Measured live in eval 7 on a payment-method group:
+        #   ref_2380 [input] [radio] value="yoomoney" near="Банковская карта"
+        # A yoomoney radio advertised as the CARD option, and the radio that
+        # genuinely IS that option was not returned by find at all -- `near=`
+        # counts as content coverage (#27) and this one matched the query.
+        # Acting on that ref selects the wrong payment method.
+        # `near=` is the nearest VISIBLE text, which in a radio group is
+        # routinely a neighbouring option's label; `submits=` is what the member
+        # posts, written by the author and different per member by construction.
+        nrp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await nrp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await nrp.goto("about:blank")
+        await nrp.set_content(
+            # NO `name` attribute: that becomes the row's (post-key) identity,
+            # and `near=` is only computed for identity-LESS fields -- so a
+            # fixture with one never reaches the branch. The live row had
+            # exactly this shape: `[radio] value="yoomoney" near="..."`, no name.
+            "<main><fieldset>"
+            "<input type=radio value='card'><span>Bank card</span>"
+            "<input type=radio value='yoomoney'><span>YooMoney</span>"
+            "</fieldset>"
+            # A member declaring NO value keeps whatever hint it can get.
+            "<fieldset><input type=radio><span>Courier</span></fieldset>"
+            "</main>")
+        await nrp.wait_for_timeout(150)
+        nr = str(await nrp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _radios = [l for l in nr.splitlines() if "[radio]" in l]
+        check("NRQ1 a radio that declares a submit value drops the adjacency "
+              "guess, which in a group names a NEIGHBOUR's option",
+              all("near=" not in l for l in _radios if "submits=" in l),
+              " // ".join(l.strip()[:72] for l in _radios))
+        check("NRQ1b ...and it keeps the declared value, which is the honest "
+              "per-member identity",
+              'submits="card"' in nr and 'submits="yoomoney"' in nr,
+              " // ".join(l.strip()[:72] for l in _radios))
+        # CONTROL: a member declaring nothing keeps the hint, because there it is
+        # the only thing the listing can say (#37's own reasoning).
+        check("NRQ1c CONTROL: a radio declaring NO value still gets its near= "
+              "hint — the drop is about a better signal existing, not about radios",
+              any("near=" in l and "submits=" not in l for l in _radios),
+              " // ".join(l.strip()[:72] for l in _radios))
+        await nrp.close()
+
         # ---- RC1/RC1b: THE RECORD THE CONTEXT CAME FROM, NAMED -------------
         # search_page reports the ATTRIBUTION unit (the element whose own text
         # first contains the match, #32) and quotes context from the nearest

@@ -446,7 +446,7 @@ meaningful fix means building each path's note before its slice, which is a
 restructure of the most heavily-tested function in the project and wants its own
 pass rather than a mid-eval edit.
 
-### 4h. `near=` named a DIFFERENT option than the row's own value `OPEN`
+### 4h. `near=` named a DIFFERENT option than the row's own value — CLOSED (collector half)
 Eval 7, on a payment-method radio group. `find("ОПЛАТИТЬ Банковская карта")`
 returned:
 
@@ -469,13 +469,25 @@ Two halves, and they live in different files:
   count as CONTENT coverage deliberately, and it fixed two failures pointing in
   opposite directions, so demoting it is not a free change.
 
-**Not fixed, and not guessed at.** The agent noted the data to catch it was
-present — `value="yoomoney"` sat in the same row — which is the "two rows that
-mean different things, printed alike" shape named in eval 6, here as ONE row
-that contradicts itself. A fix wants the collector half measured first (does
-suppressing `near=` when the row carries a wire-key `value=` lose anything?) and
-`find`'s half checked against F4/F15/F25/F29, which are the regressions #27 and
-#39 recorded when this scorer was last touched.
+**The collector half is CLOSED, and the measurement the entry asked for is the
+one that decided it.** `near=` is the nearest VISIBLE text, which in a radio
+group is routinely a NEIGHBOURING option's label. `submits=` (4m) is what the
+member posts — written by the author, different per member by construction. So
+when a checkbox/radio declares a submit value, the adjacency guess is dropped:
+a declared per-member discriminator beats a guess at adjacency, which is #37's
+own reasoning with a second way for a hint to fail to earn its place.
+A member declaring NOTHING keeps the hint, because there it is the only thing
+the listing can say (NRQ1c, and it passes in both arms).
+**Priced across 30 frozen sites, both arms on the same page load: +0.000% —
+byte-identical, so the shape does not occur there at all.** Free where it is
+absent, proven on the fixture that has it: NRQ1 fails pre-fix and reproduces the
+live row in English — `input[radio] submits="yoomoney" near="Bank card"`.
+
+**`find`'s half is deliberately NOT touched.** #27 made `near=` count as CONTENT
+coverage and that fixed two failures pointing in opposite directions; changing
+it needs checking against F4/F15/F25/F29, which are the regressions #27 and #39
+recorded when this scorer was last touched. With the collector half fixed, the
+contradictory row no longer exists for the scorer to rank.
 
 ### 4i. A `(disabled)` submit names no blocker `OPEN`
 Eval 7: «ОФОРМИТЬ ЗАКАЗ» stayed `(disabled)` with every visible field filled.
