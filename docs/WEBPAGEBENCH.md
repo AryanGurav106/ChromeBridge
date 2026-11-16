@@ -310,3 +310,64 @@ That is what makes WebPageBench worth the setup cost: not the task count, but
 the event log and the control-swap axis — one gives a judge-free outcome the
 representation cannot influence, and the other gives a controlled experiment on
 the exact claim this project leads with.
+
+---
+
+## Verified by standing the site up — 2026-11-16
+
+The assessment above was made from the released code without running it, and
+left two things explicitly unverified. Both were checked. One confirms, one
+corrects the assessment, and the correction changes what this benchmark can
+measure.
+
+**How it was stood up.** `docker compose -f site/docker-compose.local.yml build`
+then `up -d`; the site serves on :8080. A runnable track is NOT a task file — it
+is `tests/bench/config.json` **merged with** one of the 152 task files (the merge
+is in their `tests.py`), POSTed to `/track/create` as a form plus file upload.
+A track created from a task file alone renders `State Not Found — не найден шаг
+state_id в конфиге`. The merge was done in plain stdlib rather than by running
+their code; nothing was pip-installed outside the container.
+
+**CONFIRMED: the oracle fires end to end.** Server log, unprompted, on a plain
+page load: `Added event: track_id=cb2 event_name=state_changed`, `POST
+/event/add 200`. So the "no judge model" claim is not only true of `check()`'s
+imports — the event pipeline it reads really does run.
+
+**CONFIRMED: the task prompts are Russian.** `"На %HOST% в «Книги» найди самую
+дорогую книгу Полины Шустовой и добавь в избранное."` The `%HOST%` placeholder
+is the benchmark's own, substituted per track.
+
+**CORRECTED: "a Vue router app will have real href and roles" is half right, and
+the half that is wrong matters.** Measured across four of the six domains on one
+track, after the app had fully rendered:
+
+| domain | `<a href>` | buttons | inputs | aria-labelled | distinct roles |
+|---|---|---|---|---|---|
+| books | **0** | 78 | 1 | 37 | 4 |
+| shop | **0** | 65 | 1 | 43 | 3 |
+| hotels | **12** | 24 | 6 | 3 | 2 |
+| rail | **18** | 11 | 2 | 1 | 0 |
+
+Mind2Web's failure (0 `href` across 40 samples, so 14 of 20 AX pages had no
+`link` role at all) does NOT reproduce — hrefs exist. But they are
+**heterogeneous by domain and distributed INVERSELY to aria**: the domains that
+navigate by link carry almost no `aria-label`, and the domains that carry
+`aria-label` navigate by `<button>`.
+
+**Three consequences, and the first is a scope reduction.**
+1. **The `detail` ladder is measurable on at most 2 of 6 domains.** `brief` and
+   `full` differ from `compact` by `href=`/`src=`; with zero anchors there is
+   nothing for them to add. This is #73's Mind2Web finding ("no `detail`
+   comparison taken on Mind2Web means anything") reappearing in the benchmark
+   chosen to escape it — narrower here, since it is 2 of 6 rather than 0 of 16,
+   but **M-A must report `detail` on hotels/rail only and say so.**
+2. **`format` (tree vs flat) is unaffected** and remains fully measurable, which
+   matters because #27 shipped the tree on an explicitly NULL A/B.
+3. **Per-domain reporting is not optional.** A number pooled across these six
+   would blend two structurally different page families, and which family a task
+   lands in is decided by the benchmark rather than by us. This is on top of the
+   leave-one-site-out requirement the sampling already imposes.
+
+**Still not established:** the full `create_track → agent acts → check()` loop
+has not been run against a real agent, and no arm has been run. There is still
+no number anywhere in this work.
