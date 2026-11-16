@@ -118,3 +118,85 @@ print them as if they were different.
   … this step read the settled page`. Two true statements that read as
   contradictory, ~6 × 500 characters of caveat already paid for in wall clock.
   Worth a look: the batch knows it waited and the banner does not.
+
+## Pair 2 complete — books
+
+| arm | calls | oracle |
+|---|---|---|
+| tree | **7** | **PASS** |
+| flat | **7** | **PASS** |
+
+Dead level. **Both agents independently hit the decoy and both resolved it the
+same way** — the site's own `Формат → Аудио` facet — which is corroboration no
+single report could give.
+
+### The sharpest finding of the eval, and it is a DECIDED trade-off, not a bug
+
+The flat agent noticed something the tree agent did not: on the product page the
+`Текст` / `Аудио` toggle carried **no selected marker of any kind** in the
+listing, so nothing said which edition the «Добавить в корзину» button was bound
+to. They inferred `Аудио` from four other facts (the breadcrumb, a duration
+field, a narrator field, and the price matching the filtered result) and said
+so plainly:
+
+> had the toggle defaulted to Текст I would have had no row-level signal and
+> would have added the wrong item **while reporting success**.
+
+**MEASURED on the live page rather than assumed.** The two buttons declare
+nothing — no `role`, no `aria-selected`, no `aria-pressed`, no `aria-current`,
+no `aria-controls`, no `tabindex`, no inline style, no distinguishing `data-*`.
+They share six class tokens and differ by exactly one:
+
+    Текст : (no extra token)
+    Аудио : "active"
+
+So the ONLY signal on the page is a class name.
+
+**And a rule that would have caught it existed and was DELETED on evidence.**
+#29 kept an exact `active|selected|current` class token as an instrumented last
+resort "until measured dead", and it was then measured dead: ablated across 99
+live pages with a per-page drift floor, **its total effect on the `active` field
+was ZERO**, because the two declared signals — the selected tab's
+`aria-controls` panel being the rendered one, and ARIA's roving tabindex —
+always decided first. That corpus includes shadcn, chakra, antd, **vuetify**,
+ng_material, bootstrap, headlessui, openui5 and react_aria.
+
+This page is Vuetify and declares neither signal. So the deletion was correct
+about its corpus and the corpus did not contain this shape — **#25's rule
+exactly: an ablation measures the code against the sample, it cannot measure the
+sample.**
+
+**NOT REINSTATED, and the decision is the owner's rather than mine.**
+Reinstating a class-name wordlist is precisely what the brief forbids ("dont
+hardcode, add regex, pattern matching stuff that may break") and what #27/#28
+removed from every path that decides something. The measured cost of keeping it
+out is now concrete and is recorded here rather than argued: **on a page whose
+only state signal is a class token, an agent can add the wrong item and report
+success.** That is the silent-WRONG-answer shape, which no presence metric in
+this project can catch — the second instance of it in one pair.
+
+### Also reported by BOTH books agents, unprompted
+
+**The readiness banner fired on every single read, including reads the batch had
+already declared settled.** One of them: *"the full `*** THE DOM IS STILL
+CHANGING ***` paragraph printed on reads where the batch had ALREADY reported
+`waited 256ms … this step read the settled page`"*; the other: *"I ignored it
+each time and was right to, which is the failure mode where an always-on warning
+trains you to skip it."*
+
+Two true statements that read as contradictory, and it is the exact failure #15
+priced and #43 deleted `readyState` for. **It is also plausibly caused by my own
+#70/#77 work**, so it needs measuring rather than defending: how often does the
+banner fire on a read the batch has just settled, and is the DOM genuinely still
+changing at that instant? Recorded as a thing to measure.
+
+### Two smaller ones
+
+- **An unprinted ref was accepted** (`ref_1713`, inferred as "parent of 1714"
+  from the numbering). It resolved. Refs are additive per document so a
+  neighbouring integer often IS real; nothing warns that it was never shown.
+- **The cap is spent on duplicates of one record.** One book card consumed
+  ~8 entries — the clickable card, then its title div, author div, rating div
+  TWICE (two refs carrying the same `"4.8 365"`), plus two spans splitting the
+  rating into `4.8` and `365`. 168 on screen, capped at 150. The cap is being
+  paid for repetition of one record rather than for distinct books.
