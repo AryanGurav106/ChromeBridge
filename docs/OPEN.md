@@ -44,7 +44,7 @@ which landmark owns a record and a way to print several at once.
 
 ## Tier 1 — a wrong answer reaches the user
 
-### 0. Reachability by name — MEASURED, residual is one shape `OPEN`
+### 0. Reachability by name — MEASURED at 0.9996, residual is ONE element — CLOSED
 Every ruler here measures PRESENCE — presence, `lost_identities`, Mind2Web
 recall, and item 12's own DS. CLAUDE.md #74 found 118 elements that were
 present in all of them and unreachable by `find`, on a page the readiness probe
@@ -75,6 +75,27 @@ span, and clicking it does what clicking the link would, which is the same
 reasoning #18/#73 use to credit a descendant on Mind2Web. Deciding whether to
 credit a descendant here should be taken on its own merits, NOT while looking
 at the misses it would erase.
+
+**#75 THEN REPORTED THAT A DESCENDANT-CREDIT ARM ADDED 0 AT 95 SITES, AND THAT
+IS RETRACTED — it had measured a closed browser.** `one()` closed its Playwright
+context in a `finally` BEFORE the probe loop ran, and `_descendant_returned`
+ended `except Exception: return False` — so every call evaluated against a dead
+page, swallowed the error, and answered "no descendant". The arm was 0 BY
+CONSTRUCTION, and the refutation it was taken to be was an artefact. The helper
+no longer catches: a question that could not be ASKED is not an answer of no.
+
+**Re-measured with the arm alive, 84 frozen sites, 2,661 unique identities:
+0.9797 strict -> 0.9996 with descendant credit. 53 of the 54 misses are the
+label+badge shape**, so the explanation above was right all along and is now a
+number rather than a theory.
+
+**The single element reachable by NEITHER is `carbon`'s `div "All about Carbon
+What's happening Designing Dev…"`** — a container whose accessible name is a
+page section's worth of concatenated text, with its contributors all kept as
+their own entries. That is precisely what the blanking rule exists for (#34,
+#35, #74): `find` declining to confidently return a div wrapping half the page
+is the rule working, not a defect. **This item is closed as measured; what is
+left is one element, and it is the intended behaviour.**
 
 
 

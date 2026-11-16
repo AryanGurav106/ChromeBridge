@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1334 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1338 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1334 checks, ~127s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1338 checks, ~127s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -8102,9 +8102,55 @@ granted in the side panel is refused with the same message the agent gets.
     mechanism now reaches the taught opening and the 20 files already in
     `flows/` acquire one only when re-recorded.**
 
-    Suites: 1,334 checks. New — AH5/AH5b, F37/F37a2 (rewritten), RG2b/RG2c,
+    **A RETRACTION OF MY OWN, AND IT MOVES A NUMBER THE GOOD WAY FOR ONCE.**
+    #75 recorded that a descendant-credit arm on `measure_findability.py`
+    "added **0** at 95 sites, which refuted the label-plus-badge theory I had
+    formed from a 34-site sample". **It measured a closed browser.** `one()`
+    closed its Playwright context in a `finally` BEFORE the probe loop ran, and
+    `_descendant_returned` ended `except Exception: return False` — so every
+    call evaluated against a dead page, swallowed the error and answered "no
+    descendant". The arm was 0 by construction. The helper no longer catches:
+    **a question that could not be ASKED is not an answer of no**, which is the
+    same rule #77 applied to the readiness probe's own UNKNOWN.
+    Re-measured with the arm alive, 84 frozen sites, 2,661 unique identities:
+    **0.9797 strict -> 0.9996 with descendant credit, and 53 of the 54 misses
+    are the label+badge shape** — so `OPEN.md` item 0's original explanation was
+    right and #75's refutation of it was the artefact. The ONE element reachable
+    by neither is carbon's `div "All about Carbon What's happening Designing
+    Dev…"`, a container whose name is a page section's worth of concatenated
+    text with every contributor kept as its own entry: `find` declining to
+    return it confidently is the blanking rule working (#34, #35, #74), not a
+    defect. Item 0 closed.
+    **The probe's SUMMARY LINE also asserted the refuted theory in the same
+    breath as the figure that contradicted it** ("The gap is the label+badge
+    shape…", printed beside a 0). It states the two numbers now and leaves what
+    the residue IS to a classification of the misses — #33's rule, in a probe
+    rather than in a message.
+
+    **AND MY OWN #77 NOTE RECOMMENDED A WASTED CALL, THREE TIMES IN ONE RUN.**
+    The scoped-UNKNOWN banner ended "Re-read unscoped to get a definite answer
+    for the page" — a call that answers a DIFFERENT question than the one the
+    caller asked, and that on the Vue app a live agent hit would have come back
+    STILL CHANGING every time. #33's class, inside the note I wrote to fix #33's
+    class. The fix is entailment rather than a threshold: **nothing inside a
+    page can have changed more recently than the page did.** `sinceAny` is the
+    most recent record regardless of scope, eviction removes the OLDEST, and the
+    per-batch bound keeps the first 32 OF EACH batch, so every batch is
+    represented — therefore `sinceAny` bounds the subtree's own activity from
+    above, and "nothing attributed to your subtree AND the page last moved
+    16906ms ago" ENTAILS the subtree has been quiet for at least 16906ms. The
+    genuine unknown is only the case where that number is small, and the number
+    is printed, so no threshold is chosen. **That branch had no render check at
+    all** — R32 drives the data and nothing drove the sentence, #19/#30's
+    untested link in the one note every scoped read gets (R-BOUND–R-BOUND4).
+    One pre-existing check had to be rewritten to its INVARIANT rather than its
+    phrasing (#30's TR8d case), and **my first rewrite of it carried a negative
+    clause that was itself wrong**, failing on a sentence that says exactly what
+    it is for.
+
+    Suites: 1,338 checks. New — AH5/AH5b, F37/F37a2 (rewritten), RG2b/RG2c,
     R-TENSE/R-TENSE2, C35/C35b, NB2/NB2b, CT1c, CT2/CT2b, FP11–FP11d,
-    FR24–FR24c.
+    FR24–FR24c, R-BOUND–R-BOUND4.
 
 ## Debugging starting points
 

@@ -85,16 +85,19 @@ async def _descendant_returned(page, mmid, out):
     refs.discard(str(mmid))
     if not refs:
         return False
-    try:
-        return bool(await page.evaluate(
-            """([m, rs]) => {
-                const r = window.__mmidReg; if (!r) return false;
-                const t = r.get(String(m)); if (!t) return false;
-                return rs.some(x => { const n = r.get(String(x));
-                                      return n && n !== t && t.contains(n); });
-            }""", [str(mmid), list(refs)]))
-    except Exception:
-        return False
+    # NOT `except: return False`. That is how this arm came to report 0 on
+    # every site: `one()` closed the context in a `finally` BEFORE the probe
+    # loop ran, so every evaluate raised on a dead page, every call swallowed it
+    # and answered "no descendant", and #75 recorded the resulting 0 as having
+    # REFUTED the label-plus-badge theory. It had measured a closed browser.
+    # A question that could not be ASKED is not an answer of no, so it raises.
+    return bool(await page.evaluate(
+        """([m, rs]) => {
+            const r = window.__mmidReg; if (!r) return false;
+            const t = r.get(String(m)); if (!t) return false;
+            return rs.some(x => { const n = r.get(String(x));
+                                  return n && n !== t && t.contains(n); });
+        }""", [str(mmid), list(refs)]))
 
 async def one(browser, name, url, cap, extra_wait=None):
     ctx = await browser.new_context(viewport=VIEWPORT)
@@ -113,11 +116,11 @@ async def one(browser, name, url, cap, extra_wait=None):
         entries = await page.evaluate(
             "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
         if not isinstance(entries, list) or not entries:
+            await ctx.close()
             return None
     except Exception:
-        return None
-    finally:
         await ctx.close()
+        return None
 
     # CONTESTED vs GENUINE. `find` returns a bounded set, so on a page with 30
     # identical "upvote" links the one being probed can legitimately fall
@@ -206,12 +209,17 @@ async def main(n, cap):
         # acting on the target would. Folding them would hide which is which,
         # and the gap between them IS the finding -- it is the size of the
         # label-plus-badge population, not a defect.
+        # STATE THE NUMBER, NOT A THEORY ABOUT IT. This line used to assert
+        # that the gap IS the label+badge shape, in the same breath as a figure
+        # that could contradict it -- and did, while the arm was broken. What
+        # the two numbers mean is mechanical; what the residue IS belongs to a
+        # classification of the misses, not to a sentence printed beside them.
         print(f"                 …plus {D} reached via a returned DESCENDANT "
               f"(strict {H/T:.4f} -> {(H+D)/T:.4f} with descendant credit). "
-              f"The gap is the label+badge shape: an <a> whose name is "
-              f"assembled is blanked, its spans are kept because an anchor "
-              f"gives them cursor:pointer, and clicking a span activates the "
-              f"link.")
+              f"A descendant is credited because acting on it does what acting "
+              f"on the target would (#18, #73); it is reported separately and "
+              f"never folded in. {T - H - D} miss(es) are reachable by neither "
+              f"— see --dump to classify them.")
     worst = sorted(rows, key=lambda x: x[1]["hit"]
                    / max(1, x[1]["tried"] - x[1]["contested"]))[:3]
     for nm, r in worst:

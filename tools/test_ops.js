@@ -1790,6 +1790,45 @@ const FIELDS3 = () => ([
       /do NOT conclude something is absent/i.test(String(r.result)),
       String(r.result).slice(0, 160));
 
+    // R-BOUND — THE SCOPED-UNKNOWN BRANCH HAD NO RENDER CHECK AT ALL. R32
+    // drives the DATA (since=-1, sinceAny set, saturated) and nothing drove the
+    // SENTENCE, which is #19/#30's untested link in the one note a scoped read
+    // always gets. A live agent on a Vue app got it on every scoped read, and
+    // its closing advice -- "re-read unscoped to get a definite answer" -- is a
+    // call that answers a DIFFERENT question and on that app would have come
+    // back STILL CHANGING every time. Three wasted recommendations in one run.
+    //
+    // The fix is entailment, not a threshold: nothing inside a page can have
+    // changed more recently than the page did, `sinceAny` is the most recent
+    // record regardless of scope, eviction removes the OLDEST, and the
+    // per-batch bound keeps the first 32 OF EACH batch -- so every batch is
+    // represented and `sinceAny` bounds the subtree's own activity from above.
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0,
+      mut: _mut({ since: -1, sinceAny: 16906, saturated: false }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("R-BOUND a scoped read with no attributable record states the page-wide "
+          + "recency as a LOWER BOUND on the subtree's quiet, instead of a bare unknown",
+      String(r.result).includes("16906ms")
+        && /AT LEAST that long/.test(String(r.result)),
+      String(r.result).slice(0, 220));
+    check("R-BOUND2 ...and it no longer recommends an unscoped re-read, which "
+          + "answers a different question than the one that was asked",
+      !/re-read unscoped/i.test(String(r.result)), String(r.result).slice(0, 220));
+    check("R-BOUND3 CONTROL: the three attribution causes are still named, so "
+          + "this did not soften an honest unknown into a false all-clear",
+      /per-batch store bound/.test(String(r.result))
+        && /UNKNOWN rather than quiet/.test(String(r.result)),
+      String(r.result).slice(0, 240));
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0,
+      mut: _mut({ since: -1, sinceAny: 40, saturated: true }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("R-BOUND4 CONTROL: a WRAPPED ring still says absence here is not "
+          + "evidence — the bound is weakest exactly when the ring evicted",
+      /WRAPPED/.test(String(r.result)) && String(r.result).includes("40ms"),
+      String(r.result).slice(0, 200));
+
     currentStubs["_readinessPage"] = () => ({
       ready: "complete", imgs: 0, prog: 0, busy: 0,
       mut: _mut({ attrs: { style: 25 } }) });
@@ -1824,10 +1863,23 @@ const FIELDS3 = () => ([
       ready: "complete", imgs: 0, prog: 0, busy: 0, scoped: true, scopeMiss: false,
       mut: _mut({ since: -1, sinceAny: 12, scoped: true, saturated: true }) });
     r = await callOp("page_readiness", { tabId: 1 });
+    // REWRITTEN to its INVARIANT rather than its phrasing (#30's TR8d case).
+    // It asserted the literal clause "NOT the same as it being settled", which
+    // encoded one wording of the idea; when the note was rewritten to lead with
+    // the entailment (`sinceAny` bounds the subtree's activity from above) the
+    // check failed over a sentence that still says exactly what it is for. What
+    // it is really pinning is that this branch names the page-wide recency and
+    // does not report quiet -- both still true, and both checkable without
+    // freezing a sentence.
     check("page_readiness SCOPED UNKNOWN: a scope with no attributable record is "
           + "reported as UNKNOWN, never as quiet, and names the page-wide recency",
-      String(r.result).includes("NOT the same as it being settled")
-        && String(r.result).includes("12ms"), JSON.stringify(r).slice(0, 260));
+      // The negative clause this check first carried (`!/is settled/`) was
+      // itself wrong: the new wording legitimately contains "the subtree is
+      // settled" inside a CONDITIONAL on the number. "Reports UNKNOWN rather
+      // than quiet" is the whole invariant and needs no second half.
+      /UNKNOWN rather than quiet/.test(String(r.result))
+        && String(r.result).includes("12ms"),
+      JSON.stringify(r).slice(0, 260));
     check("page_readiness SCOPED UNKNOWN: a WRAPPED ring is stated, since that is "
           + "the one case where we KNOW absence is not evidence",
       /WRAPPED/.test(String(r.result)), String(r.result).slice(0, 200));

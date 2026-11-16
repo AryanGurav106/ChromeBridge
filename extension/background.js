@@ -2554,13 +2554,31 @@ async function readinessNote(tabId, scopeMmid) {
     const sat = m.saturated
       ? ' Its ring has WRAPPED, so older records were evicted and absence here is not evidence.'
       : '';
-    return `*** NO DOM CHANGE COULD BE ATTRIBUTED TO THE SUBTREE YOU SCOPED TO, and that is ` +
-           `NOT the same as it being settled. The page as a whole last changed ${m.sinceAny}ms ago.` +
-           `${sat} A scoped read can lose a change three ways — the record fell past the ` +
-           `per-batch store bound, the ring wrapped, or the element sits deeper than the ` +
-           `containment walk reaches — so treat this as UNKNOWN rather than quiet` +
-           (bits.length ? `; also ${bits.join('; ')}` : '') + `. Re-read unscoped to get a ` +
-           `definite answer for the page. ***\n`;
+    // AND `sinceAny` IS AN UPPER BOUND ON THE SUBTREE'S OWN ACTIVITY, which the
+    // first version of this note printed and then failed to use. No subtree can
+    // have changed more recently than the page it is part of: `sinceAny` is the
+    // most recent record in the ring regardless of scope, eviction removes the
+    // OLDEST, and the per-batch store bound keeps the first 32 OF EACH BATCH, so
+    // every batch that happened is represented by a record of its own moment.
+    // Therefore "nothing attributed to your subtree AND the page last moved
+    // 16906ms ago" is not unknown at all -- it ENTAILS that your subtree has
+    // been quiet for at least 16906ms. The genuine unknown is only the case
+    // where that number is SMALL, and the number is right there, so the reader
+    // decides and no threshold is chosen here.
+    // The old wording told a live agent to "re-read unscoped to get a definite
+    // answer" on every scoped read of a Vue app: it fired three times in one
+    // run, each time recommending a call that answers a DIFFERENT question
+    // (the page's, not the subtree's) and that on that app would have come back
+    // STILL CHANGING every time. #33's class -- a note asserting a recovery
+    // nobody verified -- in a note I wrote to fix #33's class.
+    return `*** No DOM change could be attributed to the SUBTREE YOU SCOPED TO. The page ` +
+           `as a whole last changed ${m.sinceAny}ms ago, and nothing inside a page can have ` +
+           `changed more recently than the page did — so your subtree has been quiet for AT ` +
+           `LEAST that long.${sat} Attribution can be lost three ways (a record past the ` +
+           `per-batch store bound, a wrapped ring, or an element deeper than the containment ` +
+           `walk reaches), so if that number is small this is UNKNOWN rather than quiet; if it ` +
+           `is large, the subtree is settled` +
+           (bits.length ? `; also ${bits.join('; ')}` : '') + `. ***\n`;
   }
   if (m && m.since >= 0) {
     const moved = m.structural + m.text +
