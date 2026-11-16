@@ -339,7 +339,7 @@ the corpus cost of both halves (#41, #44), and that `_searchTextPage` is
 injected standalone, so it needs a forced byte-identical copy with an OC7-style
 tripwire rather than a sibling call (#30's C11 class).
 
-### 4e. A hit on a SIBLING reads as "you missed", and the click works `OPEN`
+### 4e. A hit on a SIBLING reads as "you missed", and the click works — CLOSED
 The hit-test echo distinguishes "you hit the inside of your own target" (silent,
 the normal case for any control with inner markup) from "something else is in
 the way" (MISMATCH). It has no third case, and eval 7 found one.
@@ -372,6 +372,22 @@ declared signal that could narrow it.
 the identical coordinate, because acting by ref centres the target. Two
 different seats, two identical coordinates, two MISMATCH warnings reads exactly
 like clicking the same thing twice.
+
+**CLOSED, and ADDITIVELY — the first version of the fix was wrong.** It replaced
+MISMATCH with "a SIBLING, not something on top of you", which is FALSE for a
+transparent veil — and a veil is also a sibling sharing a listed ancestor. Both
+candidates overlap the click point or neither would have been hit, so geometry
+cannot separate "a label painted inside the widget" from "a layer covering your
+target"; telling them apart by relative AREA would be a threshold in a path that
+reports facts. So the shared ancestor is STATED, both readings are named, and
+neither is chosen (#33).
+`_hitTestPage` now takes the named selector, resolves it and intersects the two
+ancestor chains — the nearest ref on both is where the event bubbles either way.
+X10c/X10d fail pre-fix; **X10e is the control that a hit with NO listed ancestor
+in common gains no sibling clause**, which is the veil, still on the plain
+MISMATCH branch. The fixture needed a new shape — two overlapping children of
+one listed container — because the existing veil page has no common listed
+ancestor and could not reach the branch.
 
 ### 4f. A run of identical siblings whose meaning is in undeclared text `MEASURED, NOT FIXABLE WITHOUT A GUESS`
 Eval 7, a three-month calendar. `read_page` listed ~236 day cells; the three

@@ -1522,7 +1522,7 @@ async function _computerPoint(tabId, params) {
 //
 // SELF-CONTAINED: injected via runInTab, so it must not call a top-level sibling.
 // C11 in tools/test_contracts.py enforces that mechanically.
-function _hitTestPage(x, y) {
+function _hitTestPage(x, y, wantSel) {
   // dup:markcut -- surrogate-safe bound. Injected/worker scope, so the closure
   // is lost and the copy is FORCED; MC1 asserts every tagged copy carries the
   // guard. A raw slice() splits a surrogate pair and emits a LONE SURROGATE
@@ -1532,7 +1532,8 @@ function _hitTestPage(x, y) {
     const cut = t.slice(0, (c >= 0xD800 && c <= 0xDBFF) ? n - 1 : n);
     return cut + '\u2026(+' + (t.length - cut.length) + ')'; };
   const out = { ref: null, tag: '', role: '', label: '', deep: 0, listed: false,
-                oob: false, substituted: false, chain: [] };
+                oob: false, substituted: false, chain: [], shared: null,
+                sharedTag: '' };
   try {
     const vw = window.innerWidth || document.documentElement.clientWidth || 0;
     const vh = window.innerHeight || document.documentElement.clientHeight || 0;
@@ -1570,6 +1571,44 @@ function _hitTestPage(x, y) {
         const m2 = w.getAttribute && w.getAttribute('mmid');
         if (m2) out.chain.push(String(m2));
         w = w.parentElement || (w.getRootNode && w.getRootNode().host) || null;
+      }
+    } catch (e) {}
+    // A HIT ON A SIBLING IS NOT A MISS, AND THE ECHO HAD NO WAY TO SAY SO.
+    //
+    // The echo distinguishes two cases: the named ref is on the hit element's
+    // ancestor chain ("you hit the inside of your own target", silent) or it is
+    // not ("something is on top", MISMATCH). There is a THIRD, and eval 6 and
+    // eval 7 both hit it: the hit node is a SIBLING of the named one, painted
+    // over it, and the event still bubbles to a common ancestor where the
+    // handler is delegated. On a rail seat map both seat clicks LANDED and both
+    // reported `MISMATCH … something not in the current listing is on top`.
+    // The agent nearly spent a verification call; what saved it was an
+    // unrelated badge count.
+    // The echo also asserted exactly two causes ("something is on top, or the
+    // layout moved") and this is a third — #33's class, inside the echo.
+    //
+    // So: resolve the NAMED element too and intersect the two ancestor chains.
+    // The nearest ref on both is a FACT, not a guess — the event starts at the
+    // hit node and bubbles through it, so a handler there receives this click
+    // whichever of the two was painted on top. It does NOT claim the click
+    // worked: whether a handler sits on that ancestor is not knowable from
+    // geometry, and the echo says only what it can see.
+    try {
+      if (wantSel) {
+        const want = document.querySelector(wantSel);
+        if (want && !want.contains(el) && !el.contains(want)) {
+          const mine = new Set(out.chain);
+          let w2 = want;
+          for (let i = 0; i < 40 && w2; i++) {
+            const m3 = w2.getAttribute && w2.getAttribute('mmid');
+            if (m3 && mine.has(String(m3))) {
+              out.shared = String(m3);
+              try { out.sharedTag = (w2.tagName || '').toLowerCase(); } catch (e) {}
+              break;
+            }
+            w2 = w2.parentElement || (w2.getRootNode && w2.getRootNode().host) || null;
+          }
+        }
       }
     } catch (e) {}
     // Walk up to the nearest element the agent has a handle for. An mmid on an
@@ -1639,8 +1678,37 @@ function _hitEcho(h, sel) {
     const _inChain = !!(want && Array.isArray(h.chain)
                         && h.chain.indexOf(String(want)) !== -1);
     if (want && h.ref && String(want) !== String(h.ref) && !_inChain) {
+      // A SIBLING PAINTED OVER YOUR TARGET IS A THIRD CASE, and this used to
+      // name only two causes. When the hit node and the named one share a
+      // LISTED ancestor, the event starts at the hit node and bubbles through
+      // it, so a handler there receives this click whichever was on top. That
+      // is a fact about the DOM, not a claim that the click worked -- whether a
+      // handler sits on that ancestor is not knowable from geometry, and this
+      // says only what it can see.
+      // Measured in eval 6 and again in eval 7: both seat clicks on an SVG map
+      // LANDED and both reported MISMATCH, because the hit node was a <text>
+      // label painted over the seat <g> rather than inside it. The agent nearly
+      // spent a verification call; an unrelated badge count is what saved it.
+      // ADDITIVE, NOT A VERDICT. The first version of this replaced MISMATCH
+      // with "a SIBLING, not something on top of you" -- which is false for a
+      // transparent veil, and a veil is ALSO a sibling sharing a listed
+      // ancestor. Geometry cannot separate "a label painted within the same
+      // widget" from "an overlay covering your target": both overlap the point,
+      // or they would not both be candidates. Telling them apart by relative
+      // AREA would be a threshold in a path that is supposed to report facts.
+      // So the shared ancestor is stated as the fact it is, both readings are
+      // named, and neither is chosen (#33).
+      const _sh = h.shared
+        ? ` The two are SIBLINGS sharing ref_${h.shared}`
+          + `${h.sharedTag ? ' <' + h.sharedTag + '>' : ''}, so the event bubbles through`
+          + ` that either way: this may be a label painted inside the same widget (a`
+          + ` delegated handler still receives the click) or a layer covering your`
+          + ` target (it intercepts). Geometry cannot tell those apart — confirm from`
+          + ` the page's own state.`
+        : '';
       return ` MISMATCH: you named ref_${want}, but the renderer hit-tests ${what}${deep} at that point`
-        + ` — something is on top, or the layout moved since the coordinate was produced.`;
+        + ` — something is on top, the layout moved since the coordinate was produced,`
+        + ` or the two are siblings.${_sh}`;
     }
     if (_inChain) return '';   // hit inside your own target: silent, like any agreement
     if (want && !h.ref) {
@@ -1804,7 +1872,7 @@ async function computerOp(t, params) {
     // turns that into "screenshot -> hover -> act on the ref", where the action
     // re-measures itself and survives the drift the coordinate cannot.
     let _hh = null;
-    try { _hh = await runInTab(t.id, _hitTestPage, [pt.x, pt.y]); } catch (e) {}
+    try { _hh = await runInTab(t.id, _hitTestPage, [pt.x, pt.y, params.selector || null]); } catch (e) {}
     return `Hovering at (${Math.round(pt.x)},${Math.round(pt.y)}).`
       + `${_hitEcho(_hh, params.selector)}${_shiftWarn}${pt.note || ""}`;
   }
@@ -1938,7 +2006,7 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
     await cdpSend(t.id, "Input.dispatchMouseEvent",
       { type: "mouseMoved", x: pt.x, y: pt.y, button: "none", modifiers: bits });
     let _hh = null;
-    try { _hh = await runInTab(t.id, _hitTestPage, [pt.x, pt.y]); } catch (e) {}
+    try { _hh = await runInTab(t.id, _hitTestPage, [pt.x, pt.y, params.selector || null]); } catch (e) {}
     let _armed = false;
     try { _armed = !!(await runInTab(t.id, _inputProbePage, [true])); } catch (e) {}
     for (let c = 1; c <= count; c++) {

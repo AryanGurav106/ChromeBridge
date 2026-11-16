@@ -74,11 +74,22 @@ _HIT_PAGE = """<!doctype html><meta charset=utf-8><body style="margin:0">
      <body>. Without a listed ancestor the walk finds nothing and takes the
      "no ref at all" branch instead, which is X17's case, not X16's. -->
 <div id=wrap mmid="31" style="position:absolute;left:400px;top:100px;width:200px;height:60px"></div>
+<!-- THE SIBLING SHAPE, which the veil above is NOT: two overlapping children of
+     one LISTED container. This is the SVG seat map eval 6 and eval 7 both hit --
+     a <text> label painted over the seat it belongs to, handler delegated to the
+     <svg> above both. The veil case has no listed ancestor in common, so it
+     exercises the other branch and stays the control for it. -->
+<div id=widget mmid="41" style="position:absolute;left:400px;top:300px;width:160px;height:40px">
+  <div id=seat mmid="43" style="position:absolute;left:0;top:0;width:160px;height:40px"></div>
+  <div id=lbl  mmid="45" style="position:absolute;left:0;top:0;width:160px;height:40px"></div>
+</div>
 <script>
 window.__mmidReg = new Map([["7",document.getElementById('want')],
   ["9",document.getElementById('veil')],["11",document.getElementById('clear')],
   ["13",document.getElementById('host')],["21",document.getElementById('outer')],
-  ["23",document.getElementById('inner')],["31",document.getElementById('wrap')]]);
+  ["23",document.getElementById('inner')],["31",document.getElementById('wrap')],
+  ["41",document.getElementById('widget')],["43",document.getElementById('seat')],
+  ["45",document.getElementById('lbl')]]);
 document.getElementById('host').attachShadow({mode:'open'}).innerHTML =
   '<button style="width:120px;height:30px">Inside shadow</button>';
 </script></body>"""
@@ -151,10 +162,15 @@ async def _hit_echo_checks(browser, check):
                                  + str(x) + "," + str(y) + "); })()")
 
     async def echo(x, y, sel):
+        # The selector goes to _hitTestPage TOO, as production does: it resolves
+        # the named element to intersect the two ancestor chains, which is what
+        # lets the echo say the two are siblings rather than only that they
+        # disagree. Passing it only to _hitEcho left `shared` permanently null
+        # and the new branch untestable.
         arg = '"' + sel + '"' if sel else "null"
         return await pg.evaluate("(function(){ " + HIT + ";" + ECHO
                                  + "; return _hitEcho(_hitTestPage(" + str(x) + ","
-                                 + str(y) + "), " + arg + "); })()")
+                                 + str(y) + ", " + arg + "), " + arg + "); })()")
 
     h = await hit(100, 55)
     check("X10 a TRANSPARENT overlay is reported as the hit target, which pixels cannot see",
@@ -162,6 +178,33 @@ async def _hit_echo_checks(browser, check):
     m = await echo(100, 55, "[mmid='7']")
     check("X10b ...and naming the covered ref produces an explicit MISMATCH",
           "MISMATCH" in m and "ref_7" in m and "ref_9" in m, m.strip()[:130])
+
+    # X10c/X10d — A SIBLING PAINTED OVER YOUR TARGET IS A THIRD CASE, and the
+    # echo named only two ("something is on top, or the layout moved"). Measured
+    # in eval 6 and again in eval 7: both seat clicks on an SVG map LANDED and
+    # both reported MISMATCH, because the hit node was a <text> label painted
+    # over the seat <g> rather than inside it, with the handler delegated to the
+    # <svg> above both. The agent nearly spent a verification call.
+    # ADDITIVE, not a verdict: a transparent veil is ALSO a sibling sharing a
+    # listed ancestor, and geometry cannot separate "a label inside the widget"
+    # from "a layer covering you" -- both overlap the point or neither would be
+    # a candidate. So the shared ancestor is stated and both readings named.
+    _sib = await echo(480, 320, "[mmid='43']")   # label painted over the seat
+    check("X10c a hit that is a SIBLING of the named ref names the listed "
+          "ancestor they share, which is where the event bubbles either way",
+          "SIBLINGS sharing" in _sib and "ref_" in _sib, _sib.strip()[:200])
+    check("X10d ...and it does NOT choose between the two readings, because "
+          "geometry cannot tell a painted label from a covering layer",
+          "may be a label" in _sib and "or a layer covering" in _sib
+          and "cannot tell those apart" in _sib, _sib.strip()[-190:])
+    # CONTROL: the veil shares NO listed ancestor with the button, so it keeps
+    # the plain MISMATCH and gains no sibling clause. Without this the new
+    # branch could fire on everything and the distinction would mean nothing.
+    _veil = await echo(100, 55, "[mmid='7']")
+    check("X10e CONTROL: a hit with no listed ancestor in common says nothing "
+          "about siblings",
+          "MISMATCH" in _veil and "SIBLINGS sharing" not in _veil,
+          _veil.strip()[:150])
 
     h = await hit(100, 315)
     check("X11 an unobstructed control resolves to its own ref, with its label",
