@@ -267,3 +267,55 @@ reads, because this agent worked it out and the previous four did not face it.
   href. The DOM declares no destinations here, so clicking the title is the only
   route — which is the same per-domain anchor split the first WebPageBench pass
   measured (books and shop: 0 anchors).
+
+## Pair 3 complete — shop
+
+| arm | calls | oracle |
+|---|---|---|
+| tree | **6** | **PASS** (`add_favorites`, `basket_add`) |
+| flat | **6** | **PASS** (`add_favorites`, `basket_add`) |
+
+Dead level, second pair running. Running total: **8/9, 7/7, 6/6 — tree ahead by
+one call across three pairs, which is well inside the 12–14% rerun noise floor
+the pre-registration names.**
+
+### Both shop agents, independently: the capped half failed and the uncapped half worked
+
+> *"the capped/viewport-scoped half of the output failed and the uncapped half
+> succeeded, in the same call"*
+
+The catalogue read returned `171 on screen`, `capped at 150`, `21 OMITTED BUT
+ACTIONABLE`, `485 more below the viewport` — and the target product was in none
+of the rows. The `--- PAGE TEXT ---` block appended to that SAME response
+contained the whole catalogue including it. The cap notice recommends `find()`
+and a scoped read, **each another round trip**, and said nothing about the text
+it was about to print underneath.
+
+Fixed: when the cap has fired and `filter="all"` (the default), the response now
+says the full page text follows and is neither capped nor viewport-scoped. The
+collector cannot say this — it does not know whether the server will append
+anything — so it is said where it is known. C35 pins it, C35b is the control
+that an untruncated listing pays nothing.
+
+### A second instance of the invisible-selected-state shape
+
+The flat agent found the product page's pack-size selector (8 / 12 / 24) comes
+through as six unrelated rows — `"Выгода 10%"`, `"8"/"12"/"24"`, `"151 ₽/шт"` —
+with **no indication which variant is selected**, and the three actual option
+containers demoted into `PROBABLY DECORATION` as `container-suppression
+(ref_1058 ref_1062 ref_1066)`. Their words: *"If the task had required switching
+to 24 rolls, the thing to click is in the decoration bucket and the
+selected-state is invisible."*
+
+They were not required to switch, so it cost nothing — but this is the SAME
+shape as the Текст/Аудио toggle in pair 2, on a different page and a different
+widget. **Two independent instances now.** The demotion is working as designed
+(#28: demoted, never deleted, and still actionable by ref); the missing piece is
+the same one — a page that declares its selected state only in a class.
+
+### Recorded as the page's fault, so nobody chases it
+
+Both shop agents hit the product spec table reading `Бренд: Белый`, `Аромат:
+Белый`, `Цвет: Белый`. Scent is not a colour and the brand is Zewa. An agent
+confirming «без аромата» from the spec block rather than the title would
+conclude it had the wrong product. Both used the title and the article number.

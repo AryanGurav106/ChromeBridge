@@ -1260,6 +1260,23 @@ def main() -> int:
           and '"target_not_in_dom"' in _bm.split("SCORED = ")[1].split("\n")[0],
           "one denominator, all 186 actions")
 
+    # C35 — THE CAP NOTICE NAMES THE RECOVERY THAT IS ALREADY IN THE RESPONSE.
+    # Measured in eval 6: BOTH agents on a dense catalogue reported the capped
+    # listing not containing the target while the `--- PAGE TEXT ---` block in
+    # the SAME call did, and both said so unprompted. The notice offered find()
+    # and a scoped read -- each another round trip -- and said nothing about the
+    # text about to be appended below it.
+    _srv3 = read("mcp_server.py")
+    check("C35 a capped listing under filter=\"all\" points at the page text in "
+          "the same response, before recommending another round trip",
+          'OMITTED BUT ACTIONABLE" in out or "listing capped at" in out' in _srv3
+          and "look there before spending a call" in _srv3,
+          "cap notice names the appended text")
+    check("C35b CONTROL: it is gated on the cap having FIRED, so an untruncated "
+          "listing pays nothing for a notice it does not need",
+          'if "OMITTED BUT ACTIONABLE" in out or "listing capped at" in out:' in _srv3,
+          "gated on the cap")
+
     print(f"\n{passed} passed, {failed} failed, {passed + failed} total checks")
     if failures:
         print("failing: " + ", ".join(failures))

@@ -1473,6 +1473,25 @@ async def read_page(
         else:
             text = await b.call("get_dom_text", tabId=tabId)
             out, _pt = _merge_text_banner(out, str(text))
+            # POINT AT THE CHEAPEST RECOVERY, WHICH IS ALREADY IN THIS RESPONSE.
+            # The cap notice offers find() and scoped reads -- both another round
+            # trip -- and says nothing about the page TEXT that `filter="all"`
+            # is about to append below it. Measured in eval 6: BOTH agents on a
+            # dense catalogue reported that the capped listing did not contain
+            # the target while the text block in the SAME call did, and both
+            # said so unprompted. One put it as "the capped/viewport-scoped half
+            # of the output failed and the uncapped half succeeded, in the same
+            # call".
+            #
+            # The collector cannot say this because it does not know whether the
+            # server will append anything; only this branch knows. Added only
+            # when the cap actually fired, so a listing that was not truncated
+            # pays nothing.
+            if "OMITTED BUT ACTIONABLE" in out or "listing capped at" in out:
+                out += ("\n\n[The listing above was CAPPED. The full page text follows "
+                        "below in this same response and is NOT capped or "
+                        "viewport-scoped — if your target is missing from the rows, "
+                        "look there before spending a call on find() or a scoped read.]")
             out = out + "\n\n--- PAGE TEXT ---\n" + _pt
     # DELTA. Line-based on purpose: diffing structured entries would mean a THIRD
     # formatter, and vocabulary drift between the two that already exist produced

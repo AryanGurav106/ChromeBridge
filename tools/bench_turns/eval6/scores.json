@@ -32,5 +32,39 @@
    }
   ],
   "passed": true
+ },
+ {
+  "track": "e6_flat_shop",
+  "conditions": 2,
+  "events": 12,
+  "names": [
+   "add_favorites",
+   "basket_add",
+   "click",
+   "scroll",
+   "state_changed",
+   "visibility"
+  ],
+  "per": [
+   {
+    "cond": {
+     "event_name": "basket_add",
+     "parameters": {
+      "item_id": "item_1160040708"
+     }
+    },
+    "pass": true
+   },
+   {
+    "cond": {
+     "event_name": "add_favorites",
+     "parameters": {
+      "item_id": "item_1160040708"
+     }
+    },
+    "pass": true
+   }
+  ],
+  "passed": true
  }
 ]
