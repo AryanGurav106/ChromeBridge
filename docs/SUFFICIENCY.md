@@ -17,12 +17,16 @@ rules applied.
 > At a step where a human had to act on a specific element, does the listing we
 > hand the agent **determine which element that is**?
 
-Two independent ways to fail, and only the first is measured today:
+Two independent ways to fail:
 
 | failure | ruler | status |
 |---|---|---|
 | the element has no row at all | `bench_mind2web` (structured), `bench_trajectory` (listing) | measured — ~96% / 51.4% |
-| the element has a row, and so do N look-alikes that print **identically** | — | **this file** |
+| the element has a row, and so do N look-alikes that print **identically** | `measure_sufficiency.py` | **§1–§9 of this file** |
+
+And a third that neither of those can see, because it is not about an element
+at all: the answer is a sentence or a table cell, and nothing in a listing of
+*controls* carries it. That is **§10**, `measure_text_flows.py`.
 
 The second is a sufficiency failure that presence cannot see. The listing is
 complete, nothing was lost, every identity survived — and the agent still cannot
@@ -80,8 +84,8 @@ success rate is worse than no metric.
   dominates the MFS (30.5 / 59.5 coverage drop). Our listing is a listing of
   *controls*; prose and table data live behind `get_page_text`, `search_page`
   and `query_elements`. DS says nothing about whether those tools carry what a
-  task needs. That is a separate, unbuilt measurement, and it is the larger of
-  the two halves.
+  task needs. **That half is now measured separately — §10, through the flow
+  recorder — and this bullet stands: DS itself still prices only controls.**
 - **It is an upper bound on decidability, in three places.** The identity is
   built from the tree's printed row **plus its printed ancestors**, i.e. we
   credit the agent with reading the whole path. Folded members are credited with
@@ -364,3 +368,178 @@ In increasing order of cost:
 3. **An agent in the loop.** The paper's actual MFS. Out of scope for this
    repo's architecture, and the reason the policy-independent part is what is
    measured instead.
+
+---
+
+## 10. The TEXT half — `measure_text_flows.py`
+
+§3 says DS "cannot price prose" and calls that the larger of the two halves.
+This is that half. What made it buildable is `run_flow(stop_after=N)`.
+
+### 10.1 Why a static probe cannot answer it
+
+`measure_text_sufficiency.py` is kept as a documented negative result. It takes
+eval 4's blind (page, required value) labels — an author told only to write
+varied two-hop tasks, every answer re-derived by an independent referee — and
+loads the urls the agents visited. It reports 2/5 values carried and **both
+misses are a validation message and a search result**: values that do not EXIST
+until the page is interacted with. The confound is checkable in one line —
+`tasks.md` records `Interactions needed` per task and **0 of 22 need zero** — so
+that probe measures how many eval tasks are two-hop, which is 100%.
+
+`stop_after=N` is the separation it lacks. It replays a recorded flow to step N
+and stops with the page as that step left it, so "the text surface failed to
+carry it" and "the value did not exist yet" stop being the same observation.
+
+### 10.2 The ablation is a parameter, not new code
+
+The source paper ablates an element type from the representation and measures
+the coverage drop. Ours needs no new path: **`read_page(filter="interactive")`
+IS `read_page` with its text removed.**
+
+    text-dependence = values the controls-only listing does NOT carry / scored
+    TS              = carried by any text surface / text-dependent
+
+Every arm is scored separately, so the answer names a TOOL rather than
+asserting that "the text surface" carries things: `read_page(filter="all")`
+(the default), `get_page_text` at its default budget **and at `max_chars=250k`**
+(the budget and the capability are different claims), `search_page`,
+`query_elements`, and — for tables — `read_page(ref_id=<table>, filter="all")`,
+the aligned renderer #26 built and that `OPEN.md` item 12 records as never
+priced.
+
+### 10.3 Where the labels come from
+
+**(a) Playwright reads them, not us.** Every required value, every table
+association and the vacuity gate are computed by `page.evaluate` through
+Playwright's own CDP session. No collector, no `_domTextPage`, no op router. If
+our surface and Chrome's rendering disagree, the probe sides with Chrome.
+
+**(b) The questions are generated, not authored.** Every visible leaf text block
+that contains no control, and every table data row with its cells in order.
+Nobody writes a task, so nobody gets to choose which values count — which is
+what would otherwise let the author pick the values the tools handle well.
+
+**(c) The recorded assertions are never read.** A flow's `expect` blocks were
+written by whoever recorded it USING THESE TOOLS, so scoring against them would
+ask whether `search_page` finds what `search_page` found. The flows are used
+only to reach a state.
+
+What (a)–(c) do not remove: the fixture states were chosen by whoever wrote the
+recipes. The `ev-*` corpus is the answer to that — eight recordings made by
+eight agents in #63/#64's rounds against eight real third-party apps, by agents
+told nothing about any text measurement, and it is the only corpus here with
+real page SIZE, which is the thing that makes a budget bite.
+
+### 10.4 Two item kinds, no thresholds
+
+| kind | the item | scored by |
+|---|---|---|
+| **block** | a visible leaf text block holding no control and inside none | its whole text appears in the arm's output |
+| **row** | a table data row: the row key, then its cells in document order | COVERAGE — every value appears. Association is reported **separately** |
+
+A per-cell test was tried first and is wrong: a `Requests` cell reading `1` is a
+substring of almost any page, and it scored as carried by the CONTROLS listing,
+which prints no table rows at all. An ordered multi-field match has no such
+accident.
+
+**Association is three numbers, not one**, because a single rule cannot be
+honest about every table: `ordered` (the values appear in order somewhere),
+`one line` (reported only over rows whose every cell is itself single-line),
+and the scoped renderer. The first version required one line for ALL rows —
+see §10.6.
+
+### 10.5 Controls
+
+| control | expectation |
+|---|---|
+| a random nonce | found by NO arm |
+| the text-ablated listing | a SUBSET of the full one |
+| vacuity gate | an item whose value is absent from Chrome's own `body.innerText` is EXCLUDED and counted, never scored |
+| a state with no items | named, never scored 1.000 |
+| two replicates, identical code | item-for-item agreement |
+
+**The vacuity gate currently excludes 0 items on both corpora**, which by §15's
+rule is a detector that has not been shown to fire. It fires on the item the
+PRE-FIX sweep admitted — jawiki's `出典: フリー百科事典…`, measured absent from
+`document.body.innerText` — so the gate works and the `innerText`-only fix
+removed its cause upstream. Reported rather than quietly dropped, because a
+guard reporting zero is worth nothing until it has been seen to catch
+something.
+
+### 10.6 Four probe bugs of mine, three of them in the damning direction
+
+R1 says a result that flatters **or damns** the system gets re-derived before it
+is believed, and damning results get believed too readily. All four of these
+were caught that way, none by reading the code, and three of them would have
+published a worse number than the truth.
+
+| bug | what it did | how it surfaced |
+|---|---|---|
+| `search_page` miss detected with `startswith("No match")` | the miss path PREPENDS the readiness note (#39), so the sentence is never at the front and **every miss read as a hit** — the random-nonce control scored FOUND on 8 states of 8 | the control, on its first run. Inflating, so it would have raised TS |
+| a table row had to be recovered **on one line** | 44 of the 54 rows it scored LOST have a cell whose own text spans lines (an APG keyboard table with a `<ul>` in a cell, a Wikipedia broadcast table) — unrecoverable by construction. The ruler manufactured a third of its own damning result | reading the lost list: `lost rows whose own cell text spans lines: 44` |
+| the data-table hint parsed with `data table\(s\) on this page:` | the hint has two shapes, and past a few tables it reads `44 data table(s) on this page, first 6 by document order: ref_…`. The regex matched the short form only, so **jawiki's 44 tables produced an EMPTY scoped arm** and the aligned renderer scored 0 on the only state with real tables | the saved arm dump: `scoped_tables  1 chars` |
+| `innerText \|\| textContent` as the sweep's text | HTML makes the `innerText` getter fall back to `textContent` when the element is **not being rendered** (#37 priced that at a quarter of eBay's listing), so the sweep admitted a jawiki string absent from `document.body.innerText` and scored it LOST against tools that were right not to have it | the saved arm dump: absent from the GROUND TRUTH too |
+
+Every arm's raw output is written to `temp/text_flows*/states/<sig>.txt`
+alongside Chrome's own `innerText`, which is why three of the four were
+findable at all.
+
+### 10.7 The flows, and why each answer is genuinely text-only
+
+Seven recorded against `tools/saas_playground.py` (`flows/txt-pg-*.flow.json`),
+plus the nine live ones. "Text-only" is not asserted — it is **measured per
+item**, as absence from `read_page(filter="interactive")`, and an item the
+controls listing does carry is reported and excluded from the TS denominator.
+
+| flow | the state it stops in | why a fresh navigate cannot reproduce it |
+|---|---|---|
+| `txt-pg-validation` | the 400 page after submitting a project with no plan | the `.flash` sentence exists only in the response to that POST |
+| `txt-pg-login-error` | the 401 login page | same — `GET /login` has no `.err` |
+| `txt-pg-new-project` | the table one row longer, `5 project(s) in this workspace` | the row is created BY the flow; the fixture is reset before every replay |
+| `txt-pg-modal` | the New-project dialog open | the modal lives in a `[hidden]` backdrop until clicked |
+| `txt-pg-report` | the colspan table with a `<br>` in its last header | reachable by url — included as a TABLE case and marked as such |
+| `txt-pg-members` | a second table | same |
+| `txt-pg-detail` | one project's detail page | same |
+
+**Stopping happens at EVERY step index, not at one someone picked** — choosing
+the stop point is choosing the sample. States that repeat (the login landing is
+reached by six flows) are deduped by a content hash of the sweep, so the
+denominator counts DISTINCT states.
+
+**A fixture reset runs before every replay, not before every flow.**
+`run_flows.py` moved from per-run to per-flow because one mutating flow
+poisoned every flow after it (#54, one level up); a `stop_after` sweep runs the
+same mutating flow many times, so the level goes up again. Without it
+`txt-pg-new-project` left a fifth project behind and `txt-pg-validation` failed
+its own recorded `4 rows` at every stop point — 0 of its states scored, in
+silence except for one REPLAY FAILURES line.
+
+### 10.9 What this sample cannot support
+
+Stated before the number, as §3 is.
+
+- **It is not task-weighted.** The items are everything the page renders as
+  text, which is a SUPERSET of what any one task needs. That is what makes it
+  policy-independent — the same argument §2 makes for DS — and it means a loss
+  in a footer counts like a loss in the answer. A real MFS weights by what a
+  task asked for; this does not, and #44's lesson applies one axis over.
+- **One page dominates the live corpus.** The jawiki article alone contributes
+  roughly a fifth of all items, the way exploretock is 17% of Mind2Web's
+  sample (#73). Do not put a confidence interval on the live figure.
+- **The live corpus is what survived five weeks of drift.** **10 of the 51 live
+  stop points (19.6%) failed to replay** — arxiv's Search button, python-docs'
+  `Go` input, httpbin's `form_input` refusing, jawiki's history page, and
+  todomvc accumulating localStorage across replays because nothing isolates one
+  replay from the next (`OPEN.md` 2c). Those states were never scored, so the
+  number describes the states that still reproduce. The flows were recorded
+  2026-10-11 and replayed 2026-11-16.
+- **The block sweep is light-DOM only.** `document.body.querySelectorAll('*')`
+  does not enter a shadow root, so a site built on web components contributes
+  few prose items. Our own text path DOES cross that boundary (#29), so this
+  under-samples the case we handle and cannot flatter us there.
+- **The fixture corpus is saturated and says so.** Every arm carries everything
+  on pages that fit the budget. That is a true statement about small
+  server-rendered pages and no evidence at all about large ones — R2 exactly:
+  an ablation measures the code against the sample.
+

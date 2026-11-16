@@ -56,8 +56,8 @@ probe has three defences, in the same shape `measure_sufficiency.py` uses:
     text surface and Chrome's rendering disagree, the probe sides with Chrome.
 
 (b) THE QUESTIONS ARE GENERATED, NOT AUTHORED. Nobody writes a task. Every
-    visible leaf text block that contains no control, and every (row key,
-    column key) -> cell triple of every visible table, becomes an item. I do
+    visible leaf text block that contains no control, and every data row of
+    every visible table (its key, then its cells in order), becomes an item. I do
     not get to choose which values count, which is what would otherwise let me
     pick the ones we handle well.
 
@@ -74,12 +74,21 @@ WHAT THIS CANNOT ANSWER -- before the number, not after it
   * CARRIED means the value is in the output. It does not mean a model finds
     it, reads it correctly, or asks the right tool. This is necessary, not
     sufficient -- the same bound `SUFFICIENCY.md` puts on DS.
+  * IT IS NOT TASK-WEIGHTED, and that is the gap between this and a real MFS.
+    The items are everything the page renders as text, which is a SUPERSET of
+    what any one task needs. That makes it policy-independent (the same
+    argument §2 makes for DS) and it means a loss in a page's footer counts
+    like a loss in its answer. #44's lesson, one axis over: a rate without its
+    task weighting cannot tell the two apart.
   * `query_elements` is scored with a GENERATED selector (the element's own tag
     path), which is an UPPER bound: an agent has to guess the selector, and
     #39's census exists because agents often cannot.
-  * The association test for a table is "can a reader recover the value from
-    the row key and the column key". A line carrying both is scored paired.
-    That is weaker than a human reading a grid and stronger than presence.
+  * A ROW is scored on COVERAGE (every cell value present), and association is
+    reported SEPARATELY in three forms -- ordered, one-line over rows whose
+    cells are themselves single-line, and the scoped renderer. One association
+    rule cannot be honest about every table: a same-line test is impossible for
+    a cell holding a <ul>, and requiring it scored 44 rows LOST that no tool
+    could ever have passed. See SUFFICIENCY.md §10.6.
   * The fixture corpus is `tools/saas_playground.py`, which I did not write but
     did select states from. The `ev-*` corpus is real third-party pages
     recorded by agents who had no idea this measurement would exist; it is the
@@ -171,7 +180,13 @@ SWEEP_JS = r"""
     try { return el.checkVisibility({opacityProperty:true, visibilityProperty:true}); }
     catch (_) { return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length); }
   };
-  const txt = el => (el.innerText || el.textContent || '');
+  // innerText ONLY, with no textContent fallback. HTML defines the innerText
+  // GETTER to fall back to textContent when the element is NOT BEING RENDERED
+  // (#37 measured that costing eBay a quarter of its listing), so a fallback
+  // here manufactures required values the page does not paint: it admitted
+  // jawiki's `出典: フリー百科事典…`, a string absent from document.body.innerText,
+  // and scored it LOST against tools that were right not to have it.
+  const txt = el => (el.innerText || '');
   // A STRUCTURAL selector for one element, so the `query_elements` arm can be
   // asked without anyone authoring a selector. It is an UPPER bound on that
   // tool by construction -- a real agent has to guess this one.
@@ -470,7 +485,15 @@ async def record_fixture_flows(S, only=None):
         await asyncio.sleep(1.2)
         await S.B["get_url"](tabId=S.tab)
         await S.B["query_elements"](selector=".flash", tabId=S.tab)           # 1 now
-        await S.B["query_elements"](selector="table tbody tr", tabId=S.tab)   # still 4
+        # THE ONE ASSERTION ON THIS STEP THAT CAN FAIL. An element APPEARING
+        # can never be witnessed: the before-observation is a count of 0, #64's
+        # rule drops an absence that was never seen present, and #68 then marks
+        # the after-observation `unproven` for lack of a prior value. Both
+        # rules are right and together they make `.flash` 0->1 unprovable. A
+        # DISAPPEARANCE of something seen present at step 2 is the shape that
+        # does carry evidence -- the failed submit re-renders the page with the
+        # modal shut -- so this check is the flow's falsifier.
+        await S.B["query_elements"](selector=OPEN_MODAL, tabId=S.tab)         # 1 -> 0
 
     async def login_error(S):
         await S.B["navigate"](url=PG + "/logout", tabId=S.tab)
@@ -598,19 +621,37 @@ async def read_arms(S):
         "read_page_all": await S.B["read_page"](tabId=t, filter="all"),
         "get_page_text": await S.B["get_page_text"](tabId=t),
     }
+    # The budget and the capability are different claims. `get_page_text`
+    # defaults to 30,000 chars and SAYS when it cuts
+    # ("body truncated at 27225 of 62148 ... YOUR max_chars=30000 was spent
+    # as: ..."), so a value past the cut is not silently lost -- it is a budget
+    # the caller chose and can raise. Measuring only the default would report
+    # that as a capability failure.
+    arms["get_page_text_big"] = await S.B["get_page_text"](tabId=t, max_chars=250000)
     # The data-table hint names each table's ref and tells the caller to read
     # it scoped. Following that advice IS the arm; the refs come from the
     # listing itself, so nothing here authors a selector.
+    #
+    # THE REGEX HERE WAS WRONG AND IT ZEROED THIS ARM ON THE ONE PAGE THAT
+    # NEEDED IT. The hint has two shapes -- "2 data table(s) on this page:
+    # ref_21 (4x4)" and, past a few, "44 data table(s) on this page, first 6 by
+    # document order: ref_1074 (21x2) ... (+38 more)". Anchoring on `page:`
+    # matched the first and not the second, so jawiki's 44 tables produced an
+    # EMPTY scoped arm and the aligned renderer scored 0 on the only state with
+    # real tables. Read the whole LINE instead; the hint's own shape decides
+    # nothing about the parse.
     refs, scoped = [], []
-    m = re.search(r"data table\(s\) on this page:(.*)", li)
-    if m:
-        refs = re.findall(r"ref_(\d+)", m.group(1))
+    for line in li.split("\n"):
+        if "data table(s) on this page" in line:
+            refs = re.findall(r"ref_(\d+)", line)
+            break
     for r in refs[:12]:
         try:
             scoped.append(await S.B["read_page"](tabId=t, ref_id=r, filter="all"))
         except Exception as exc:
             scoped.append(f"__ERROR__ {type(exc).__name__}: {exc}")
     arms["scoped_tables"] = "\n".join(scoped)
+    arms["_hint_tables"] = str(len(refs))
     arms["_table_refs"] = ",".join(refs)
     return arms
 
@@ -647,6 +688,12 @@ def row_present(values, out: str) -> bool:
     third of its own damning result. Association is a real and separate
     question and is measured separately below, over the rows where it is
     decidable.
+
+    THE RISK THIS CARRIES, stated rather than hidden: presence is
+    order-independent, so a row whose cells are all short common strings can
+    pass by accident. `row_ordered` and `row_oneline` bound that from the other
+    side -- a row that is PRESENT but not ORDERED anywhere is the shape to
+    distrust -- and the per-kind table in the summary prints both.
     """
     vals = [norm_flat(v) for v in values if norm_flat(v)]
     if not vals:
@@ -743,9 +790,19 @@ async def score_state(S, sweep, arms, state_id, flow, stop_after):
                       "values": r["values"], "row_key": r["row_key"],
                       "tag": "tr", "sel": r["sel"], "cols": r["cols"]})
 
-    out = []
+    # THE VACUITY GATE. An item whose value Chrome does not render is not a
+    # required value, it is a ruler artefact, and scoring it can only ever
+    # produce a LOSS against tools that were right not to carry it
+    # (PRINCIPLES §11: prove presence first, or the check passes -- or here
+    # FAILS -- vacuously). The reference is document.body.innerText from the
+    # same evaluate call, so it is Chrome's answer rather than ours.
+    screen = norm_flat(sweep.get("innerText") or "")
+    out, excluded = [], 0
     for it in items:
         if not [v for v in it["values"] if norm_flat(v)]:
+            continue
+        if not all(norm_flat(v) in screen for v in it["values"] if norm_flat(v)):
+            excluded += 1
             continue
         rec = dict(it)
         rec.update(state=state_id, flow=flow, stop_after=stop_after,
@@ -759,6 +816,7 @@ async def score_state(S, sweep, arms, state_id, flow, stop_after):
         rec["in_listing"] = has(arms["listing_interactive"])
         rec["in_read_all"] = has(arms["read_page_all"])
         rec["in_text"] = has(arms["get_page_text"])
+        rec["in_text_big"] = has(arms["get_page_text_big"])
         if it["kind"] == "row":
             for nm, blob in (("text", arms["get_page_text"]),
                              ("read_all", arms["read_page_all"]),
@@ -793,6 +851,9 @@ async def score_state(S, sweep, arms, state_id, flow, stop_after):
                               or rec["in_search"] or rec["in_query"]
                               or rec.get("in_scoped"))
         out.append(rec)
+    if excluded:
+        print(f"      ({excluded} item(s) excluded: not in Chrome's own "
+              f"body.innerText for this state)")
     return out
 
 
@@ -817,6 +878,7 @@ def summarise(items, label):
         print(f"  LOST                     {len(lost)}")
         for arm, nm in (("in_read_all", "read_page(all)"),
                         ("in_text", "get_page_text"),
+                        ("in_text_big", "  ..max_chars=250k"),
                         ("in_search", "search_page"),
                         ("in_query", "query_elements")):
             n = sum(1 for i in dep if i.get(arm))

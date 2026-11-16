@@ -179,3 +179,94 @@ fact matching the substring inside "drops from 17 to", in an unrelated task. A
 value must be checked against ITS OWN task's section, with word boundaries. The
 global substring version reported 5 leaks where there are 2, which is the
 flattering-or-damning-result rule landing on a safety check.
+
+---
+
+## AMENDMENT 2 — the referee pass. Written BEFORE any run.
+
+An independent referee walked all ten scenarios on the live sites without the
+author's answers (blinded by whitelist; see Amendment 1) and reported no
+contamination. **10/10 completed. 3 dropped or reworded, and one of them was
+found by the referee and by nobody else.**
+
+**T1 — DROPPED. Its step 7 is factually wrong and yields TWO defensible
+answers.** The step says "click the OCCUPATION header once to sort A→Z". The
+referee checked the live table and it is **already** sorted A→Z on a pristine
+load (`aria-sort="ascending"`, `order [[0,"asc"]]`, rows begin Accountants /
+Actors / Actuaries), and the column's `asSorting` is `["asc","desc"]` — so one
+real click toggles to DESCENDING. Verified by clicking it. Page 3 row 1 is
+therefore `Law teachers, postsecondary` under the step's stated INTENT and
+`Healthcare diagnosing or treating practitioners, all other` under what the step
+literally instructs. The count `96` is unambiguous either way. **Author and
+referee agree on the answer and the task is still unusable**, which is a drop
+condition the protocol did not previously have words for: not "the two
+disagree", but "the instruction admits two readings". Recorded as a drop rather
+than quietly reworded, because I have read the answer key and can no longer act
+as this task's author.
+
+**T4 — DROPPED, confirming Amendment 1(a) by a different route.** Every token in
+the PyTorch download box is determined by selections the instructions already
+state (`libtorch`, `cu132` ⇔ CUDA 13.2, `shared-with-deps` ⇔ Linux, and the only
+ABI offered). **The one fact that must be read off the page is the version
+`2.15.0`** — and that is the most perishable value in the set, since PyTorch
+ships minor releases quarterly and the CUDA labels churn with them. Ungradeable
+as written AND severely time-sensitive.
+
+**T5 — KEPT, with the grader restricted.** Amendment 1(b) is confirmed: both
+institution names are handed over by steps 4 and 8, so "which had the higher"
+is a coin flip between two strings the agent was just given. **Only `$19,058`
+and `$11,952` come from the live page**, and `require_all` for T5 is restricted
+to those. The referee also found a second ambiguity no mechanical check would
+catch: **"In-state" appears twice** in that expenses block — once under *Tuition
+and fees* and once as a band heading over *Total Expenses* ($36,802 / $33,274).
+Only the first is single-valued, so it resolves; the step should say "In-state
+**tuition and fees**".
+
+**T10 — KEPT, graded on the code alone and EXACTLY.** Amendment 1(b)'s flag is
+technically right and does not bite: the instructions give the town and its
+reading, but **`927-1441` is not in them and is only obtainable live**.
+Critical grader note: `狼煙新町` = **927-1442** sits directly above `狼煙町` =
+**927-1441** in the same list, differing in the last digit, so **prefix matching
+on `927-144` credits the wrong row.** Exact match only.
+
+**T7 — KEPT and FLAGGED.** The top event (M8.2 at 600.0 km) is safe. The count
+`17` is fragile: two of the seventeen sit exactly at M7.0 and USGS still revises
+these, so one downward revision makes it 16. Re-verify immediately before the
+run. Cross-checked against the USGS FDSNWS API, which agreed with the UI.
+
+**Time sensitivity, now named per task**: T4 severe, T1 and T7 moderate, T5
+mild. Stable: T2, T3, T6, T8, T9, T10. **No visitor or geography dependence
+found on any of the ten.**
+
+**THE BAR RECALCULATES WITH n, MECHANICALLY, AND IS NOT RE-CHOSEN.** The RULE
+fixed before any data was a two-tailed sign test at p<0.05 on decided pairs.
+Dropping T1 and T4 leaves **n=8**, where the achievable values are 0.0078 (8/8)
+and 0.070 (7/8) — **so the bar becomes 8 of 8.** That is harsher than the 8/9 in
+the original design, and it stands: the threshold follows from the test and the
+sample size, and adjusting it after seeing the sample shrink is exactly the move
+a pre-registration exists to prevent.
+
+**TWO INCIDENTAL CORRECTIONS**, neither load-bearing: T2 step 3 says the
+Programme dropdown drops "from 184 options"; at Autumn Semester 2024 it is
+**186** (the "to 31" and "17 → 15" figures are exactly right). And T6 step 3's
+"Too many documents" banner could not be reproduced from a plain fetch — it
+appears to be client-side rendered. Narrative only; the substantive chain
+reproduces.
+
+**A DEFECT IN MY OWN BLINDING TOOL, found by the referee noticing something
+missing.** T10's question line is `**Question (English):**` and the whitelist
+matched `**Question:**` literally, so that line fell through to the skip branch:
+**9 of 10 questions survived when 10 should have.** The referee inferred the
+question from step 7 and still answered correctly, which is luck rather than
+design. Amendment 1 rebuilt this tool as a whitelist precisely because a
+blacklist leaked — and a whitelist that is too literal silently DROPS instead,
+which is the same class of error pointing the other way. Fixed to match any
+`**Question` prefix.
+
+**AN OPERATIONAL FINDING FOR THE RUN ITSELF, and it is a product observation.**
+The referee reported that **ChromeBridge's permission gate refused `bls.gov`**
+— default-deny working exactly as designed — and that **as a subagent it had no
+way to ask for a grant**, so it completed that task with the other toolset
+instead. That is the consent model behaving correctly and a real friction: a
+subagent cannot reach the side panel. It is also why this eval needs its grant
+decision settled BEFORE the run rather than discovered during it.

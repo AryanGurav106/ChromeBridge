@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "txt-pg-validation",
   "origin": "http://127.0.0.1:8787",
-  "recorded_at": "2026-11-16T00:32:14",
+  "recorded_at": "2026-11-16T11:41:36",
   "viewport": {
     "width": 1280,
     "height": 900
@@ -159,14 +159,13 @@
             "text": "Project not created: a name and a plan are required."
           },
           {
-            "selector": "table tbody tr",
-            "count": 4
+            "selector": ".backdrop:not([hidden]) [role=dialog]",
+            "count": 0
           }
         ]
       },
       "on_fail": "ask",
       "review": [
-        "hollow: query had this value BEFORE this step ran, so the step could do nothing and still pass",
         "unproven: query '.flash' was first observed AFTER this step, so nothing here says it would have failed before",
         "unproven: url was first observed AFTER this step, so nothing here says it would have failed before",
         "unevidenced: every check on this step is hollow or unproven, so none of them is known to be able to fail"
