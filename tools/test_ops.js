@@ -1780,6 +1780,43 @@ const FIELDS3 = () => ([
       String(r.result).includes("THE DOM IS STILL CHANGING")
         && String(r.result).includes("40 structural"), JSON.stringify(r).slice(0, 200));
 
+    // R-FADE — THE SENTENCE THAT MUST SURVIVE A QUIET PAGE.
+    // R33/R33b in the browser suite assert the PROBE counts a frozen entry
+    // transition. The sentence is here, and its whole point is that it appends
+    // to whatever the note otherwise says INCLUDING the empty string: the usual
+    // case is a completely settled page with the fade frozen, so a quiet note
+    // that swallowed it would hide the one thing worth saying. That is #19's
+    // untested link and #30's string contract in one.
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0, frozenFade: 2,
+      mut: _mut({ since: 9000, sinceAny: 9000 }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("R-FADE a frozen entry transition is reported even when the page is "
+      + "otherwise SETTLED and the note would have been empty",
+      String(r.result).includes("2 element(s) are held at opacity 0")
+        && String(r.result).includes("query_elements"), JSON.stringify(r).slice(0, 260));
+
+    // CONTROL: the sentence must not fire on a page with none, or it becomes
+    // the always-on warning #15 priced and this project has deleted twice.
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0, frozenFade: 0,
+      mut: _mut({ since: 9000, sinceAny: 9000 }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("R-FADE2 CONTROL: a page with no frozen transition says nothing "
+      + "about one",
+      !String(r.result).includes("opacity 0"), JSON.stringify(r).slice(0, 200));
+
+    // CONTROL: and it must COMPOSE rather than replace -- a page that is both
+    // churning and holding a frozen fade needs both facts.
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0, frozenFade: 1,
+      mut: _mut({ structural: 40 }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("R-FADE3 CONTROL: it composes with a churn banner instead of "
+      + "replacing it",
+      String(r.result).includes("THE DOM IS STILL CHANGING")
+        && String(r.result).includes("held at opacity 0"), JSON.stringify(r).slice(0, 260));
+
     // R-TENSE — THE BANNER MUST NOT ASSERT A PRESENT TENSE ITS OWN NUMBER
     // CONTRADICTS. Two live agents, unprompted and in one pair, reported the
     // full "*** THE DOM IS STILL CHANGING ***" paragraph printing on reads the

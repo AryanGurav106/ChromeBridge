@@ -2609,14 +2609,20 @@ async function webmcpNote(tabId) {
 async function readinessNote(tabId, scopeMmid) {
   const _fadeSentence = (r) => {
     if (!r || !r.frozenFade) return '';
-    return _withFade(`*** ${r.frozenFade} element(s) are held at opacity 0 by an entry `
+    // NOT wrapped in _withFade: this IS the fade sentence, and wrapping it made
+    // _fadeSentence -> _withFade -> _fadeSentence, blowing the stack on the
+    // first page that had one. The mechanical rewrite that wrapped the other
+    // returns caught this one too, and the RENDERER check (#19's untested link)
+    // found it on its first run -- the probe's own fixtures could not, because
+    // they never reach this function.
+    return (`*** ${r.frozenFade} element(s) are held at opacity 0 by an entry `
       + `transition that CANNOT START while this tab is in the background, which `
       + `it is by design. This is not a race that waiting fixes -- measured, the `
       + `transition makes zero progress -- so those elements will not appear in `
       + `a listing however long you wait. They ARE present and still take `
       + `pointer events: reach them with query_elements(selector), which queries `
       + `the rendered document rather than applying this listing's visibility `
-      + `rule. A dialog, toast or dropdown that fades in is the usual case. ***`, r);
+      + `rule. A dialog, toast or dropdown that fades in is the usual case. ***`);
   };
   const _withFade = (note, r) => {
     const f = _fadeSentence(r);
