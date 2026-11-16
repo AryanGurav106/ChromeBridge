@@ -319,3 +319,48 @@ Both shop agents hit the product spec table reading `Бренд: Белый`, `�
 Белый`, `Цвет: Белый`. Scent is not a colour and the brand is Zewa. An agent
 confirming «без аромата» from the spec block rather than the title would
 conclude it had the wrong product. Both used the title and the article number.
+
+## The selected-state decision, with a number instead of two anecdotes
+
+Two instances in two pairs — the Текст/Аудио edition toggle and the 8/12/24
+pack-size selector — where the page declares its selected state ONLY in a class
+token, and a wrong guess means acting on the wrong thing and reporting success.
+#29 deleted exactly the rule that would catch that, on a measurement: ablated
+across 99 live pages, total effect ZERO, because the two declared signals always
+decided first. That corpus included Vuetify.
+
+So: is this rare, or did that corpus lack the shape (#25)? Counted across the
+six apps — sibling groups where exactly ONE member carries an
+`active|selected|current|checked` class token, and what the group declares:
+
+| domain | groups | declaring nothing readable |
+|---|---|---|
+| grocery | 29 | 29 |
+| books | 7 | 7 |
+| rail | 4 | 3 |
+| shop / files / hotels | 1 each | 1 each |
+| **total** | **43** | **42 (98%)** |
+
+"Declaring nothing readable" means no `aria-selected`, `aria-pressed`,
+`aria-current`, `aria-checked`, `aria-controls`, no roving tabindex, and not a
+native `input:checked` — i.e. nothing the current rules can see.
+
+**CAVEATS, because this number should not be quoted as precise.** The token test
+is loose enough to match Vuetify's `--active` modifier generally, so some of the
+43 are components where "active" means hover or focus rather than selection. The
+examples are dominated by one repeated structure (the top-level nav, where the
+current section carries the class). And it is six apps by one team. **What the
+number supports is a direction, not a rate: on this app family, selected state
+is essentially never declared in ARIA.**
+
+**So #29's deletion was right about its corpus and leaves this family
+unserved** — the same shape as #25's own lesson, applied to a deletion rather
+than an addition.
+
+**NOT REINSTATED. This is the owner's call and the evidence is now on the
+table.** A class-name wordlist is what the brief forbids in as many words and
+what #27/#28 removed from every path that decides something. The cost of keeping
+it out is two measured instances where an agent can act on the wrong thing and
+report success, on a family where 98% of such groups declare nothing. The cost
+of putting it back is a rule keyed on an author's class name, which is the
+failure mode this project has spent eight entries removing.
