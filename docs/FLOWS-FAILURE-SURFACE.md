@@ -207,11 +207,13 @@ deleting the distinction the change exists to make.
    fixture-and-local set, and **no variable extraction beyond typed values**, so
    a flow asserting on a generated id or a timestamp is brittle by construction
    (6.8).
-5. **Starting state (6.5–6.7).** The precondition mechanism is sound and now
-   reaches the opening every agent is taught — `read_page`'s first line became
-   a `path` check (OPEN.md 2c) — but the 20 files already in `flows/` acquire
-   one only when re-recorded. And nothing isolates one replay from the next
-   within a session or within a `run_flows.py` batch.
+5. **Starting state (6.5–6.7) — CLOSED, except for the files already on
+   disk.** The precondition now reaches the opening every agent is taught
+   (`read_page`'s first line became a `path` check), and `run_flows.py` gives
+   each flow its own tab, so one replay cannot inherit the previous one's page.
+   Demonstrated with a flow whose leading `navigate` was stripped: it stops
+   before step 0 naming both paths. What remains is that the 20 files recorded
+   before this acquire a precondition only when re-recorded.
 6. **The language the app is rendered in (3.8).** The one environment variable
    that invalidates every descriptor at once, and the only one with no cause
    note.

@@ -2048,6 +2048,33 @@ async def record_and_replay():
           "which a precondition that always fires is indistinguishable from one "
           "that works", rokb["status"] == PASSED, str(rokb["reason"])[:140])
 
+    # ---- FO8: EVERY KIND THE RECORDER CAN WRITE MUST SURVIVE A LOAD --------
+    # `path` shipped with the recorder writing it and the validator rejecting
+    # it: `url` was special-cased as a bare string and `path` fell through to
+    # the mapping branch, so a flow carrying one could not be loaded at all
+    # ("require.path must be a mapping (or a list of them), not str"). FP11
+    # drives the RECORDER, FO7 drives the VALIDATOR, and nothing drove one
+    # through the other -- #19/#30's untested link, at the load boundary.
+    # This closes the loop generically: for EVERY kind the schema declares,
+    # round-trip a recorder-shaped value through from_json. A new kind that is
+    # not taught to the validator fails here rather than on someone's first
+    # real flow.
+    _SAMPLE = {"url": "https://app.test/x", "path": "/x",
+               "search": {"pattern": "hello"}, "query": {"selector": "tr", "count": 1}}
+    for _kind in FM.EXPECT_KINDS:
+        assert _kind in _SAMPLE, f"FO8 has no sample for new kind {_kind!r}"
+        _raw = {"schema": 1, "name": "k", "origin": "https://app.test",
+                "require": {_kind: _SAMPLE[_kind]},
+                "steps": [{"name": "computer", "input": {"action": "left_click"},
+                           "targets": {}, "expect": {_kind: _SAMPLE[_kind]}}]}
+        try:
+            _f = Flow.from_json(_raw)
+            _ok, _why = True, ""
+        except Exception as e:                                    # noqa: BLE001
+            _ok, _why = False, f"{type(e).__name__}: {e}"
+        check(f"FO8[{_kind}] a recorder-shaped {_kind!r} check survives a load, "
+              f"in both `require` and a step's `expect`", _ok, _why[:140])
+
     # ---- FP11: THE ONE OBSERVATION EVERY AGENT MAKES, AND IT SAID NOTHING --
     # FP8 works because its agent happened to call `get_url`. The opening both
     # `instructions=` (#45) and browser_batch's description (#46) teach is
@@ -2122,6 +2149,19 @@ async def record_and_replay():
     # argument #61 used for preferring a same-origin href as a bare path.
     pb3 = _T2([E(80, "button", name="New project")])
     pb3.url = "http://127.0.0.1:8899/projects?team=ops"
+    # FR24d — A URL WITH NO AUTHORITY IS NOT A PAGE WITH A PATH. `about:blank`
+    # splits to scheme="about", path="blank", so the mismatch read
+    # `path is 'blank'` -- correct and unreadable as what it means. Observed on
+    # the exact failure this check exists for: a flow with no leading navigate,
+    # replayed into a tab nobody had taken anywhere, which is now the normal
+    # case because run_flows.py gives each flow its own fresh tab.
+    pb4 = _T2([E(80, "button", name="New project")])
+    pb4.url = "about:blank"
+    _r4 = await start(ftaught, 1, pb4.call, pb4.entries_fn)
+    check("FR24d a tab nobody navigated says 'about:blank', not 'blank'",
+          _r4["status"] == FAILED and "about:blank" in str(_r4["reason"]),
+          str(_r4["reason"])[:140])
+
     check("FR24c a host or port change does NOT fail a path check — that is why "
           "it is a path and not a reconstructed absolute url",
           (await start(ftaught, 1, pb3.call, pb3.entries_fn))["status"] == PASSED)

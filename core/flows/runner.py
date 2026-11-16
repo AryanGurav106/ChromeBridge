@@ -837,10 +837,17 @@ class Run:
             m = re.search(r'"url"\s*:\s*"([^"]+)"', str(res))
             if not m:
                 self._unparsed("get_url", "a url", res)
-            _u = urlsplit(m.group(1) if m else str(res))
+            _raw = m.group(1) if m else str(res)
+            _u = urlsplit(_raw)
             got = _u.path + (f"?{_u.query}" if _u.query else "")
+            # `about:blank` splits to scheme="about", path="blank", so a bare
+            # path comparison reported `path is 'blank'` -- true, and unreadable
+            # as the thing it means. A url with no authority is not a page with
+            # a path; print it whole. Observed on the one failure this check
+            # exists for: a flow replayed into a tab nobody had navigated.
+            _shown = _raw if not _u.netloc else got
             if got != exp["path"]:
-                return f'path is {got!r}, recorded {exp["path"]!r}'
+                return f'path is {_shown!r}, recorded {exp["path"]!r}'
         for s in _as_list(exp.get("search")):
             _call = {"tabId": self.cur_tab, "pattern": s["pattern"]}
             for _k in ("regex", "css_scope", "case_sensitive"):

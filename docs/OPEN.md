@@ -150,7 +150,7 @@ What would close it: a declared per-member discriminator the collector does not
 currently emit. Geometry would do it (87.3% coverage, measured) and is refused —
 it drifts, so the safeguard would fire on every reflow.
 
-### 2c. Starting state: the precondition reaches 1 flow in 20 — HALF CLOSED
+### 2c. Starting state: the precondition reaches 1 flow in 20 — CLOSED
 `require` is derived from the observations between the landing navigation and
 the first action, and `_checks` understands exactly three tools: `get_url`,
 `search_page`, `query_elements`. The opening every agent is taught (#45's
@@ -189,6 +189,37 @@ ONE tab for a whole batch, and `_pg_reset` runs only under `--playground` — so
 the `ev-*` flows replay back-to-back in one tab with no isolation. Every flow on
 disk happens to begin with a `navigate`, which is what has hidden it.
 `FLOWS-FAILURE-SURFACE.md` 6.5–6.7.
+
+**THE SECOND HALF IS CLOSED TOO, and the two halves are complementary rather
+than redundant.** `run_flows.py` now creates a tab PER FLOW and closes it after
+(best effort — a flow that navigated itself into a tab of its own, #58, leaves
+the outer one closable, and a tab already gone is not worth failing a suite
+over). That PREVENTS the coupling; the `path` precondition above CATCHES it when
+it happens anyway.
+
+**Demonstrated rather than asserted**, by building the shape no flow on disk
+has — a real recorded flow with its leading `navigate` stripped, so it can only
+work on state someone else left:
+
+```
+FAIL  zz-no-navigate-probe   0/2 step(s) in 6.09s
+      the app is not in the state this flow starts from: path is 'about:blank',
+      recorded '/logout'. Stopped before step 0 (fill_form). Nothing was run.
+```
+
+Both halves visible in one line: the tab was fresh, and the precondition named
+the mismatch instead of filling a login form on whatever page was there.
+
+**Building that probe found a defect in the `path` work itself**, two hours
+old: `validate_expect` special-cased `url` as a bare string and let `path` fall
+through to the mapping branch, so **a flow whose recorder had written a path
+check could not be loaded at all**. FP11 drives the recorder, FO7 drives the
+validator, and nothing drove one through the other — #19/#30's untested link, at
+the load boundary. **FO8 closes it generically**: for every kind the schema
+declares, round-trip a recorder-shaped value through `from_json`, so a new kind
+that is not taught to the validator fails there rather than on someone's first
+real flow. It fails against the pre-fix validator with the live error, and
+`FO8[url]` passes in both arms as the control.
 
 ### 4. `no_effect` and the hollow/unproven classifier — CLOSED
 They now compose. The dead-click guard gated on `not step.expect`, and a

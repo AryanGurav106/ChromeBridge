@@ -169,10 +169,21 @@ def validate_expect(where: str, exp: Optional[dict]) -> None:
                 f"{where} declares a check of kind {kind!r}, which this build "
                 f"does not implement, so it would assert NOTHING and say so to "
                 f"nobody. Valid: {', '.join(EXPECT_KINDS)}.")
-        if kind == "url":
+        # `url` and `path` are both bare STRINGS, so they share this branch
+        # rather than `url` being special-cased and `path` falling through to
+        # the mapping check. It did fall through, and a flow whose recorder had
+        # written a path check could not be loaded at all:
+        #   ValueError: require.path must be a mapping (or a list of them),
+        #              not str
+        # Found by building a flow that depends on inherited page state, not by
+        # reading -- FP11 drives the RECORDER and FO7 drives the VALIDATOR and
+        # nothing drove one through the other, which is #19/#30's untested link
+        # at the load boundary. Adding a kind now means adding it HERE too, and
+        # FO8 is the check that fails if it is not.
+        if kind in ("url", "path"):
             if not isinstance(val, str):
                 raise ValueError(
-                    f"{where}.url must be the url string that was observed, "
+                    f"{where}.{kind} must be the string that was observed, "
                     f"not {type(val).__name__}")
             continue
         for item in (val if isinstance(val, list) else [val]):

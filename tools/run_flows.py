@@ -369,11 +369,26 @@ async def main() -> int:
                       "and open the side panel to see which.")
                 return 1
 
-            tab = await ms.tabs_create_mcp()
-            tab_id = int(json.loads(tab)["tabId"]) if tab.strip().startswith("{") \
-                else int(re.search(r'"tabId":\s*(\d+)', tab).group(1))
+            async def _fresh_tab():
+                t = await ms.tabs_create_mcp()
+                return (int(json.loads(t)["tabId"]) if t.strip().startswith("{")
+                        else int(re.search(r'"tabId":\s*(\d+)', t).group(1)))
 
             for flow, path in zip(flows, paths):
+                # A TAB PER FLOW, for the same reason as the reset above: this
+                # created ONE tab before the loop and reused it, so flow N+1
+                # began on whatever page flow N left. `run_flow(stop_after=N)`
+                # ends mid-flow by design and a failed flow stops wherever it
+                # broke, so the leftover state is not even predictable. What has
+                # hidden it is that every flow on disk happens to open with a
+                # `navigate`, which establishes its own state -- a flow that
+                # does not would silently act on the previous flow's page.
+                # The two halves of this are deliberate and complementary: this
+                # PREVENTS it, and the `path` precondition (OPEN.md 2c) CATCHES
+                # it, because a flow whose opening read_page recorded a path now
+                # fails before step 1 naming both paths rather than acting on
+                # the wrong screen.
+                tab_id = await _fresh_tab()
                 # A FIXTURE RESET PER FLOW, not per run. Resetting once meant
                 # the first mutating flow poisoned every flow after it:
                 # acme-create-project adds a project, so acme-nav-badge's
@@ -406,6 +421,13 @@ async def main() -> int:
                            "log": [], "patches": [], "candidates": [],
                            "seconds": round(time.time() - t0, 2)}
                 results.append(res)
+                # Best effort, never fatal: a flow that navigated itself into a
+                # tab of its own (#58) leaves this one closable, and a tab that
+                # has already gone is not an error worth failing a suite over.
+                try:
+                    await ms.tabs_close_mcp(tabId=tab_id)
+                except Exception:
+                    pass
                 mark = "PASS" if res["status"] == PASSED else "FAIL"
                 print(f"  {mark}  {flow.name:<28} {res['at']}/{res['of']} step(s) "
                       f"in {res['seconds']}s")
