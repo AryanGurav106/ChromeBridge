@@ -4,7 +4,7 @@ The brief was to post REGULARLY so people get the idea, "not just numbers".
 One draft is not a cadence, so this is the pipeline: each post below is already
 backed by an artefact in this repo, so writing it is an hour, not a project.
 
-**Eight are drafted now (001, 002, 003, 004, 006, 009, 010, 013).** At one a week that is over a
+**Nine are drafted now (001, 002, 003, 004, 006, 009, 010, 013, 014).** At one a week that is over a
 month of cadence already sitting in the repo, which was the point of building a
 queue rather than writing one post well.
 
@@ -39,6 +39,7 @@ thing being shown, which is why 001 leaves the head-to-head out entirely.
 | 011 | We called our benchmark number "a structural lower bound" for three months. Here is what that was worth. | CLAUDE.md #79, `tools/measure_static_floor.py` — 59.7% | material complete |
 | 012 | The same task, re-rendered through a different date picker, 65 times | CLAUDE.md #79, `tools/measure_wpb_variants.py` | material complete |
 | 013 | A drawer you cannot see took the whole page, and two agents found it independently | CLAUDE.md #80, commit `b01478a`, `tools/bench_turns/eval6/`, CT2/CT2b | **DRAFTED**, needs sending |
+| 014 | We ran 16 head-to-head tasks and tied. Here is why it was worth it. | `tools/bench_turns/eval7/` — prereg + 5 amendments, score.py, CLOSEOUT.md | **DRAFTED**, needs sending |
 
 ## What each post must NOT do
 
