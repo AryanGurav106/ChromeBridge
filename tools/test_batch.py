@@ -811,6 +811,61 @@ async def main():
           "sentences in one response stop reading as a contradiction",
           "looks back further" in _txt, _txt.strip()[:200])
 
+    # ---- B17: HISTORY IS MOVED BY NAVIGATION, NOT BY A RE-RENDER -----------
+    # `back`/`forward` sit in the addresses-the-old-page set because they
+    # resolve against the tab's HISTORY. True -- and a DOM change does not touch
+    # history. Measured live in eval 7: a click that swapped an "add to cart"
+    # button for a quantity stepper moved the element count 324 -> 331, and the
+    # `back` behind it in the same batch was skipped; the agent reissued the
+    # identical call and it worked. Its sharper observation was that the message
+    # said the step "names a ref or coordinate", and `navigate(url="back")`
+    # names neither -- the justification did not describe the step refused.
+    # SAME url, different element count -- the live shape exactly: a click
+    # swapped a button for a stepper on a Vue SPA with no navigation at all.
+    # The first version of this fixture also changed the url, so Layer 2
+    # correctly saw a NAVIGATION and the check measured the wrong thing.
+    _rerender = {"url": SAME["url"], "elements": 331, "refs": {}}
+    install([SAME, _rerender] + [SAME] * 6)
+    out = await ms.browser_batch([
+        {"name": "fake_act", "input": {"tabId": 1, "ref": 9}},
+        {"name": "navigate", "input": {"tabId": 1, "url": "back"}},
+    ])
+    _txt = text_of(out)
+    check("B17 a DOM change does not skip a back/forward — only a navigation "
+          "moves the history they resolve against",
+          "navigate SKIPPED" not in _txt
+          and any(r[0] == "navigate" for r in RAN),
+          f"ran={RAN!r} :: {_txt.strip()[:200]}")
+    # CONTROL 1: a real NAVIGATION still stops it, or this would have deleted
+    # the guard rather than narrowed it.
+    install([SAME] * 6)
+    out = await ms.browser_batch([
+        {"name": "navigate", "input": {"tabId": 1, "url": "https://a.test/"}},
+        {"name": "navigate", "input": {"tabId": 1, "url": "back"}},
+    ])
+    _txt = text_of(out)
+    check("B17b CONTROL: after a real navigation, back IS skipped — and says "
+          "history, not 'names a ref or coordinate'",
+          "navigate SKIPPED" in _txt and "HISTORY" in _txt
+          and "names a ref or coordinate" not in _txt, _txt.strip()[:200])
+    # CONTROL 2: a step that genuinely names a ref is still stopped by the same
+    # DOM change B17 lets `back` through.
+    install([SAME, {"url": SAME["url"], "elements": 331, "refs": {}}] + [SAME] * 6)
+    out = await ms.browser_batch([
+        {"name": "fake_act", "input": {"tabId": 1, "ref": 9}},
+        {"name": "fake_act", "input": {"tabId": 1, "ref": 12}},
+    ])
+    _txt = text_of(out)
+    check("B17d the end-of-batch summary names all four ways a step can address "
+          "the old page, not only the two the inline message used to list",
+          "a ref, a coordinate, the focus, or the history" in _txt
+          or "SKIPPED" not in _txt, _txt.strip()[-200:])
+
+    check("B17c CONTROL: a ref-naming step is still stale on that same DOM "
+          "change, so this narrowed the rule rather than removing it",
+          "SKIPPED" in _txt and "names a ref or coordinate" in _txt,
+          _txt.strip()[:170])
+
     # ---- B16: A REFUSAL THAT NAMES THE REPAIR THE SERVER ALREADY KNOWS -----
     # The documented opener is `[tabs_create_mcp, navigate, read_page]` with
     # tabId omitted after the create -- which is exactly what teaches the habit.

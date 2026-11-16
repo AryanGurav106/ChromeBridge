@@ -507,6 +507,54 @@ collector to run without rendering a listing.
 Related to 4j and probably resolved by the same decision: if `query_elements`
 stamped, neither this nor 4j's extra call would exist.
 
+### 4l. A stepper's +/- both took the quantity as their name `OPEN`
+Eval 7, on a product page. After adding to the cart:
+
+```
+ref_1151 | button "1" (just appeared)
+ref_1154 | button "1" (just appeared)
+```
+
+Minus and plus, both named `"1"` — the stepper's quantity VALUE adopted as the
+accessible name of both buttons. **Clicking the wrong one at quantity 1 removes
+the item**, so this cannot be guessed. The agent spent a call on
+`query_elements(attributes=["class","aria-label","title"])`, which did not
+settle it either (`class="qty-btn"` on both, no aria-label), and resolved it
+only with a screenshot.
+
+**The same control on the CART page lists perfectly**, which is what makes this
+a defect rather than a limit:
+
+```
+ref_3687 | button "minus"  (name read off an icon-library class name, not an accessible name)
+ref_3693 | button "plus"
+```
+
+So the collector names these when an icon-library class is present, and on the
+product page it instead ADOPTED A SIBLING'S TEXT. **A name that is confidently
+wrong is worse than `(unlabeled-icon)`** — the latter sends the reader straight
+to a screenshot with no detour through a dead-end attribute query.
+
+This is the "two rows that mean opposite things, printed identically" class
+named in eval 6, and **no presence-based ruler can see it**: both elements are
+present, listed, named and clickable. `measure_findability` would score them a
+hit. In `background.js`, held under eval 7's Amendment 2.
+
+### 4m. A checkbox's `value=` reads as its state `OPEN`
+Same run: `ref_3566 | input[checkbox] name="Выбрать все" value="true"` while
+`query_elements(attributes=["checked"])` says `checked="false"` on all four.
+
+The legend defines `value=` as CURRENT CONTENTS, so `value="true"` on a checkbox
+reads exactly like "this is ticked". It is the literal HTML `value` attribute —
+what the box POSTS when checked, which is the wire-key class #41 marks
+`(post-key)` for, not its state. The row's state is carried correctly by the
+presence or absence of `(checked)`; the `value=` beside it contradicts that.
+
+#23 fixed the sibling case (`value="on"`, the DOM default never written by the
+page). This is a page that genuinely writes `value="true"`, so suppressing it
+outright would drop authored content — the fix is to put it in a slot that does
+not mean state. `background.js`, held under Amendment 2.
+
 ### 5. SPA readiness, the remaining half `OPEN`
 The mutation-recency signal (#70) separates "still building" from "ready but
 chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:

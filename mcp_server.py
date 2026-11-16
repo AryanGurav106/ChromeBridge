@@ -3837,6 +3837,20 @@ async def browser_batch(
     # at all (screenshot, wait, zoom).
     _FOCUS_ACTIONS = {"type", "key"}
 
+    def _is_history_step(item):
+        """Does this step resolve against the tab's HISTORY rather than its DOM?
+
+        `navigate(url="back"/"forward")` and nothing else. Split out because the
+        two facts that stop a step are different: a ref dies when the DOCUMENT is
+        replaced, history moves only when the tab actually NAVIGATES, and a Vue
+        re-render does the first without the second.
+        """
+        it = item or {}
+        if str(it.get("name") or "") != "navigate":
+            return False
+        return str((it.get("input") or {}).get("url") or "").strip().lower() \
+            in ("back", "forward")
+
     def _is_focus_step(item):
         """Does this step address whatever currently has FOCUS?
 
@@ -3997,6 +4011,8 @@ async def browser_batch(
     _seen_tabs: dict = {}
     _made_tab = None       # a tab THIS batch created; later tabId-less steps inherit it
     _stale_why = None      # the page moved under the plan; set once, never cleared
+    _stale_nav = False     # ...and whether that was a NAVIGATION, which is the only
+                           # thing that moves history. A DOM change is not one.
     _acted = False         # an earlier step of THIS batch named a ref/coordinate and ran,
                            # so any focus it set is the focus later steps meant
     _dropped: list = []    # ref-naming steps skipped after that, named once at the end
@@ -4041,13 +4057,27 @@ async def browser_batch(
         # to reissue a call the batch was already holding.
         if _stale_why:
             _focus = _is_focus_step(item)
+            # HISTORY IS MOVED BY NAVIGATION, NOT BY A RE-RENDER. `back`/`forward`
+            # are in the addresses-the-old-page set because they resolve against
+            # the tab's history -- true, and a DOM change does not touch it.
+            # Measured live in eval 7: a click that swapped an "add to cart"
+            # button for a quantity stepper moved the count 324 -> 331, and the
+            # `back` behind it in the SAME batch was skipped. The agent reissued
+            # the identical call and it worked. Its second observation is the
+            # sharper one: the message said the step "names a ref or coordinate
+            # planned against the PREVIOUS page", and `navigate(url="back")`
+            # names neither -- so the justification did not describe the step it
+            # was refusing.
+            _hist = _is_history_step(item)
             # A focus step survives when the batch itself set the focus. Anything
             # naming a ref or coordinate does not, because refs are per-document.
-            if _ref_at[i] and not (_focus and _acted):
+            if _ref_at[i] and not (_focus and _acted) and not (_hist and not _stale_nav):
                 _dropped.append(name)
                 _why = ("targets whatever has FOCUS, and nothing earlier in this batch "
                         "set it, so the focus belongs to the PREVIOUS page"
                         if _focus else
+                        "resolves against the tab's HISTORY, which that navigation moved"
+                        if _hist else
                         "names a ref or coordinate planned against the PREVIOUS page")
                 out.append(TextContent(type="text", text=(
                     f"[{i}] {name} SKIPPED: {_stale_why}, and this step {_why}, so it "
@@ -4184,6 +4214,7 @@ async def browser_batch(
         # of the loop is what refuses those.
         if name in _terminates:
             _stale_why = f"{name} always changes the page"
+            _stale_nav = True
             continue
         if _stale_why or _tab is None:
             continue
@@ -4211,6 +4242,7 @@ async def browser_batch(
             _nofrag = lambda u: str(u or "").split("#", 1)[0]
             if _nofrag(_after.get("url")) != _nofrag(_before.get("url")):
                 _stale_why = f"the page navigated to {_after.get('url')}"
+                _stale_nav = True
             else:
                 # ASK WHETHER THE NEXT STEP'S REFS STILL RESOLVE, rather than
                 # whether the element count moved. The count was only ever a
@@ -4248,8 +4280,14 @@ async def browser_batch(
     if _dropped:
         out.append(TextContent(type="text", text=(
             f"BATCH FINISHED WITH {len(_dropped)} STEP(S) SKIPPED: "
-            f"{', '.join(_dropped)}. Each named a ref or coordinate planned against "
-            f"the page as it was when the batch started, and {_stale_why}. Every "
+            # THE SAME WRONG JUSTIFICATION THE INLINE MESSAGE CARRIED. A step can
+            # address the old page four ways -- a ref, a coordinate, the focus, or
+            # the history -- and this summary named only the first two, so a
+            # skipped `navigate(url="back")` was explained as naming a ref it does
+            # not name. One concept, and it was spelled two ways (#21).
+            f"{', '.join(_dropped)}. Each addressed the page as it was when the "
+            f"batch started (a ref, a coordinate, the focus, or the history), "
+            f"and {_stale_why}. Every "
             f"other step ran and its result above is good. Re-read the page and "
             f"reissue whichever of the skipped steps still apply.")))
     return out
