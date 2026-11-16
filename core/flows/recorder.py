@@ -873,6 +873,27 @@ class Recorder:
                 m = re.search(r'"url"\s*:\s*"([^"]+)"', res)
                 if m:
                     _put(exp, "url", m.group(1))
+            elif name == "read_page":
+                # THE ONE OBSERVATION EVERY AGENT MAKES, AND IT CONTRIBUTED
+                # NOTHING. `require` is derived from the records between the
+                # landing navigation and the first action, and the opening both
+                # `instructions=` (#45) and browser_batch's description (#46)
+                # teach is `tabs_create_mcp -> navigate -> read_page`. Measured
+                # across flows/*.flow.json: 1 of 20 carried a `require`, and
+                # that one was recorded to demonstrate the feature.
+                # ONLY the first line, which is `location.pathname +
+                # location.search`. The rest of a listing is prose that changes
+                # for a hundred innocent reasons, and the docstring above is
+                # explicit that prose must never become a check.
+                # A readiness banner can precede it, so this does not anchor on
+                # line 0 -- it finds the line, within a short head so a page
+                # whose TEXT happens to contain the phrase cannot supply one.
+                for _ln in res.split("\n", 6)[:6]:
+                    if _ln.startswith("Current URL: "):
+                        _pv = _ln[len("Current URL: "):].strip()
+                        if _pv.startswith("/"):
+                            _put(exp, "path", _pv)
+                        break
             elif name == "search_page":
                 hits = search_hits(res)
                 inp = r["input"] or {}
@@ -932,6 +953,13 @@ class Recorder:
             exp["search"] = list(_s.values()) if len(_s) > 1 else next(iter(_s.values()))
         if _q:
             exp["query"] = list(_q.values()) if len(_q) > 1 else next(iter(_q.values()))
+        # ONE FACT, ONE SPELLING (rule 17). `url` is strictly stronger -- it
+        # carries the origin and any fragment -- so when the agent actually read
+        # it, the weaker restatement of the same fact is dropped rather than
+        # checked twice. `path` is the fallback for the common case where it
+        # never asked.
+        if "url" in exp:
+            exp.pop("path", None)
         return exp
 
     @classmethod

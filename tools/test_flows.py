@@ -2048,6 +2048,84 @@ async def record_and_replay():
           "which a precondition that always fires is indistinguishable from one "
           "that works", rokb["status"] == PASSED, str(rokb["reason"])[:140])
 
+    # ---- FP11: THE ONE OBSERVATION EVERY AGENT MAKES, AND IT SAID NOTHING --
+    # FP8 works because its agent happened to call `get_url`. The opening both
+    # `instructions=` (#45) and browser_batch's description (#46) teach is
+    # `tabs_create_mcp -> navigate -> read_page`, and `read_page` contributed
+    # NOTHING to `_checks` -- so `require` reached 1 flow in 20, and the one
+    # was recorded to demonstrate the feature. The fix takes the FIRST LINE
+    # only, which is `location.pathname + location.search`, and compares it to
+    # a path at replay rather than reconstructing an absolute url from the
+    # flow's origin (that would drop a #fragment the live get_url carries, and
+    # a page with a hash is indistinguishable from one without by then).
+    _rp = ("*** THE DOM IS STILL CHANGING (last change 2ms ago) ***\n"
+           "Current URL: /projects?team=ops\n"
+           "Main heading: \"Projects\"\n"
+           "ref_80 | button \"New project\"\n")
+    taught = [
+        ("tabs_create_mcp", {}, '{"tabId": 7}'),
+        ("navigate", {"url": "https://app.test/projects?team=ops", "tabId": 7}, "ok"),
+        ("read_page", {"tabId": 7}, _rp),
+        ("computer", {"action": "left_click", "tabId": 7}, "clicked"),
+    ]
+    ftaught, _ = _record(taught, fbp)
+    check("FP11 the opening the docs teach — create, navigate, read_page — now "
+          "records a precondition, from the one line of a listing that is a "
+          "FACT rather than prose",
+          ftaught.require.get("path") == "/projects?team=ops", str(ftaught.require))
+    check("FP11b ...and a readiness banner in front of it does not hide that "
+          "line, which is exactly when a flow is most likely to be recorded",
+          "STILL CHANGING" in _rp and ftaught.require.get("path"),
+          str(ftaught.require))
+    # ONE FACT, ONE SPELLING. `url` is strictly stronger, so when the agent
+    # really asked for it the weaker restatement is dropped rather than
+    # asserted twice.
+    both = list(taught)
+    both.insert(3, ("get_url", {"tabId": 7},
+                    '{"url": "https://app.test/projects?team=ops"}'))
+    fboth, _ = _record(both, fbp)
+    check("FP11c CONTROL: when get_url was also called, `url` wins and `path` "
+          "is not recorded alongside it",
+          fboth.require.get("url") == "https://app.test/projects?team=ops"
+          and "path" not in fboth.require, str(fboth.require))
+    # A listing whose first line is NOT a path contributes nothing. Without
+    # this, any prose beginning with the phrase could become an assertion.
+    nopath = [("navigate", {"url": "https://app.test/x"}, "ok"),
+              ("read_page", {}, "Visible interactive elements (3 on screen).\n"),
+              ("computer", {"action": "left_click"}, "ok")]
+    check("FP11d CONTROL: a listing with no Current URL line records nothing",
+          _recorded_require(nopath, fbp) == {})
+
+    # ---- FR24: the path check VERIFIES, in both directions ----------------
+    class _T2(FakeBridge):
+        async def call(self, tool, inp):
+            if tool == "tabs_create_mcp":
+                self.calls.append((tool, dict(inp)))
+                return '{"tabId": 7}'
+            return await FakeBridge.call(self, tool, inp)
+
+    pb = _T2([E(80, "button", name="New project")])
+    pb.url = "https://app.test/login"
+    rp_wrong = await start(ftaught, 1, pb.call, pb.entries_fn)
+    check("FR24 a path precondition catches the wrong landing screen and names "
+          "both paths",
+          rp_wrong["status"] == FAILED and "/login" in str(rp_wrong["reason"])
+          and "/projects?team=ops" in str(rp_wrong["reason"]),
+          str(rp_wrong["reason"])[:150])
+    pb2 = _T2([E(80, "button", name="New project")])
+    pb2.url = "https://app.test/projects?team=ops"
+    check("FR24b CONTROL: the right screen runs through — without this, a check "
+          "that always fires is indistinguishable from one that works",
+          (await start(ftaught, 1, pb2.call, pb2.entries_fn))["status"] == PASSED)
+    # The REASON path is preferred over a reconstructed url: a flow recorded
+    # against one host must not fail because the host or port moved. Same
+    # argument #61 used for preferring a same-origin href as a bare path.
+    pb3 = _T2([E(80, "button", name="New project")])
+    pb3.url = "http://127.0.0.1:8899/projects?team=ops"
+    check("FR24c a host or port change does NOT fail a path check — that is why "
+          "it is a path and not a reconstructed absolute url",
+          (await start(ftaught, 1, pb3.call, pb3.entries_fn))["status"] == PASSED)
+
     # ---- FR17: a resume answered the question it was never asked ----------
     # `_bind` walked the targets in order and gave the agent's binding to the
     # FIRST one. On a fill_form whose Email resolved and whose Password was

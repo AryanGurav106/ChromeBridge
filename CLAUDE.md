@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1327 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1334 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1327 checks, ~126s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1334 checks, ~127s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -8079,8 +8079,32 @@ granted in the side panel is refused with the same message the agent gets.
     argument — that flat misleads on grouped records — because no task here has
     that shape. Closeout and per-pair detail in `tools/bench_turns/eval6/`.
 
-    Suites: 1,327 checks. New — AH5/AH5b, F37/F37a2 (rewritten), RG2b/RG2c,
-    R-TENSE/R-TENSE2, C35/C35b, NB2/NB2b, CT1c, CT2/CT2b.
+    **AND THE PRECONDITION REACHED 1 FLOW IN 20, because of what the docs
+    teach.** `require` is derived from the observations between the landing
+    navigation and the first action, and the opening both `instructions=` (#45)
+    and `browser_batch`'s description (#46) teach is `tabs_create_mcp ->
+    navigate -> read_page` — so the one observation that is ALWAYS there
+    contributed nothing, and #50's headline capability had a reader and almost
+    no writer. `path` is now a check kind: the recorder takes `read_page`'s
+    FIRST LINE and nothing else from a listing (the rest is prose, which
+    `_checks`'s own docstring says must never become a check), and the runner
+    reduces the live `get_url` the same way, so both halves of the comparison
+    are one spelling of one fact. **The obvious alternative — reconstruct an
+    absolute url from the flow's `origin` — is the wrong one of the two:** it
+    drops a `#fragment` the live `get_url` carries, and by the time a path
+    reaches us a page with a hash is indistinguishable from one without. A path
+    is the better check for the job anyway, since a flow recorded against
+    `localhost:8787` must not fail because the port moved — the argument #61
+    used for the bare-path href rung (FR24c). When `get_url` WAS called, `url`
+    wins and `path` is dropped rather than asserted twice (FP11c). FP11/FP11b/
+    FR24 fail against the pre-fix recorder with `require` coming back `{}`,
+    which is the exact symptom. **Half closed, deliberately stated: the
+    mechanism now reaches the taught opening and the 20 files already in
+    `flows/` acquire one only when re-recorded.**
+
+    Suites: 1,334 checks. New — AH5/AH5b, F37/F37a2 (rewritten), RG2b/RG2c,
+    R-TENSE/R-TENSE2, C35/C35b, NB2/NB2b, CT1c, CT2/CT2b, FP11–FP11d,
+    FR24–FR24c.
 
 ## Debugging starting points
 

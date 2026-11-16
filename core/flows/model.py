@@ -132,7 +132,19 @@ ON_FAIL = ("ask", "fail")
 # fourth is the same hole wearing an unreadable error. A flow file is meant to
 # be edited by people, so the answer is the one #62 used: refuse at load,
 # name the valid set, and let --check-only find it with no browser.
-EXPECT_KINDS = ("url", "search", "query")
+# `path` is "url" reduced to pathname+search, and it exists because of what the
+# agents are TAUGHT to open with. `require` is derived from the observations
+# between the landing navigation and the first action, and the opening in both
+# `instructions=` (#45) and `browser_batch`'s description (#46) is
+# `tabs_create_mcp -> navigate -> read_page` -- so the one observation that is
+# always there contributed NOTHING, and `require` reached 1 flow in 20.
+# NOT reconstructed into an absolute url from the flow's `origin`: that drops a
+# `#fragment` the live `get_url` would carry, and a page with a hash is
+# indistinguishable from one without by the time it reaches us. Comparing the
+# PATH to the PATH is one fact in one spelling (rule 17), and it is the more
+# robust check anyway -- the same argument #61 used for preferring a same-origin
+# href as a bare path, since a host or port change should not fail a step.
+EXPECT_KINDS = ("url", "path", "search", "query")
 EXPECT_FIELDS = {
     "search": ("pattern", "absent", "min", "observed",
                "regex", "css_scope", "case_sensitive"),

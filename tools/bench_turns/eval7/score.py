@@ -39,7 +39,24 @@ def _post(path: str, data: dict) -> dict:
         return json.loads(r.read().decode("utf-8"))
 
 
-def score(track_id: str, conds: list) -> dict:
+# Frozen in PREREG Amendment 1 after run 1 found it, and READ rather than
+# restated, so the prose and the arithmetic cannot drift (rule 17). Three of the
+# eight tasks hard-code a date two months in the app's past, and the app's
+# calendar has exactly one navigation control -- forward -- and no date input.
+# Both arms meet the identical wall, so these are uninformative rather than
+# unfair; the eval reports BOTH denominators and never one alone.
+_UNREACH = json.loads((HERE / "unreachable.json").read_text(encoding="utf-8"))
+
+
+def _is_unreachable(key: str, c: dict) -> bool:
+    for u in _UNREACH["conditions"]:
+        if (u["key"] == key and u["event_name"] == c.get("event_name")
+                and u["parameters"] == (c.get("parameters") or {})):
+            return True
+    return False
+
+
+def score(track_id: str, conds: list, key: str = "") -> dict:
     events = _post("/event/get", {"track_id": track_id}).get("events", []) or []
     for e in events:
         if isinstance(e.get("event_data"), str):
@@ -62,17 +79,26 @@ def score(track_id: str, conds: list) -> dict:
     for c in conds:
         g = c.get("group")
         (groups.setdefault(g, []).append(c) if g else loose.append(c))
-    units = [(f"g{g}", any(holds(c) for c in cs)) for g, cs in groups.items()]
-    units += [(c.get("event_name", "?"), holds(c)) for c in loose]
+    units = [(f"g{g}", any(holds(c) for c in cs), False) for g, cs in groups.items()]
+    units += [(c.get("event_name", "?"), holds(c), _is_unreachable(key, c))
+              for c in loose]
     # `sum(1 for _, ok in units)` counts the UNITS, not the satisfied ones. The
     # first run of this scorer reported 39/39 and 8/8 PASS against a benchmark
     # nobody had touched -- impossible, and visible only because the `unmet`
     # list printed underneath disagreed with it. #16: a result that flatters the
     # system gets re-derived before it is believed.
-    met = sum(1 for _, ok in units if ok)
+    met = sum(1 for _, ok, _u in units if ok)
+    # Amendment 1 point 3: an arm that DOES satisfy one of the four is believed,
+    # and the exclusion is withdrawn for it. The claim is that we measured it
+    # unreachable, not that it must be.
+    unreach = [n for n, ok, u in units if u and not ok]
+    reach = len(units) - len(unreach)
     return {"track": track_id, "units": len(units), "met": met,
-            "events": len(events), "passed": bool(units) and met == len(units),
-            "unmet": [n for n, ok in units if not ok]}
+            "reachable": reach, "events": len(events),
+            "passed": bool(units) and met == len(units),
+            "passed_reachable": bool(units) and met == reach,
+            "unreachable": unreach,
+            "unmet": [n for n, ok, _u in units if not ok]}
 
 
 def _sign_p(wins: int, losses: int) -> float:
@@ -94,10 +120,12 @@ def main() -> int:
     out = []
     for r in rows:
         try:
-            s = score(r["track"], r["conditions"])
+            s = score(r["track"], r["conditions"], r["key"])
         except Exception as e:                                   # noqa: BLE001
             s = {"track": r["track"], "units": len(r["conditions"]), "met": None,
-                 "events": 0, "passed": None, "unmet": [], "error": str(e)[:60]}
+                 "reachable": None, "events": 0, "passed": None,
+                 "passed_reachable": None, "unreachable": [], "unmet": [],
+                 "error": str(e)[:60]}
         s.update(key=r["key"], arm=r["arm"], task_file=r["task_file"])
         out.append(s)
         by_key.setdefault(r["key"], {})[r["arm"]] = s
@@ -123,7 +151,7 @@ def main() -> int:
         for arm, s, t in (("cb", c, ct), ("cic", i, it)):
             if s.get("met") is not None:
                 tot[arm] += s["met"]
-                pas[arm] += 1 if s.get("passed") else 0
+                pas[arm] += 1 if s.get("passed_reachable") else 0
             if t:
                 trn[arm] += t
         win = ""
@@ -135,9 +163,14 @@ def main() -> int:
               f"| {str(im):>8} {'Y' if i.get('passed') else '.':>5} "
               f"{str(it or '-'):>6} | {win}")
     n = len(rows) // 2
-    print(f"\n{'TOTAL conditions met':28} CB {tot['cb']:>3} / 39      "
-          f"CIC {tot['cic']:>3} / 39")
-    print(f"{'tasks fully passed':28} CB {pas['cb']:>3} / {n}       "
+    all_c = sum(len(r["conditions"]) for r in rows if r["arm"] == "cb")
+    n_unr = len(_UNREACH["conditions"])
+    print(f"\n{'TOTAL conditions met':28} CB {tot['cb']:>3} / {all_c}      "
+          f"CIC {tot['cic']:>3} / {all_c}   (as pre-registered)")
+    print(f"{'  ...of the REACHABLE ones':28} CB {tot['cb']:>3} / {all_c - n_unr}      "
+          f"CIC {tot['cic']:>3} / {all_c - n_unr}   "
+          f"({n_unr} excluded, PREREG Amendment 1)")
+    print(f"{'tasks passed (reachable)':28} CB {pas['cb']:>3} / {n}       "
           f"CIC {pas['cic']:>3} / {n}")
     if any(trn.values()):
         print(f"{'browser tool calls':28} CB {trn['cb']:>3}          CIC {trn['cic']:>3}")
@@ -147,6 +180,10 @@ def main() -> int:
           f"p={_sign_p(w, l):.4f}   best achievable at n={n}: {best:.4f}")
     if dec < 6:
         print("   fewer than 6 decided -> DESCRIPTIVE ONLY, per the pre-registration.")
+    for s in out:
+        if s.get("unreachable"):
+            print(f"   {s['track']:22} UNREACHABLE (excluded): "
+                  f"{', '.join(s['unreachable'])}")
     for s in out:
         if s.get("unmet"):
             print(f"   {s['track']:22} unmet: {', '.join(s['unmet'])[:80]}")

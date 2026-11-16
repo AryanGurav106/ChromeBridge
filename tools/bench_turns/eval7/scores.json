@@ -2,20 +2,16 @@
  {
   "track": "e7_cb_rail2p",
   "units": 10,
-  "met": 0,
-  "events": 0,
+  "met": 9,
+  "reachable": 9,
+  "events": 55,
   "passed": false,
+  "passed_reachable": true,
+  "unreachable": [
+   "select_date"
+  ],
   "unmet": [
-   "select_city",
-   "select_city",
-   "select_date",
-   "submit_search",
-   "select_train",
-   "select_tariff",
-   "select_seat",
-   "select_passenger",
-   "select_passenger",
-   "basket_add"
+   "select_date"
   ],
   "key": "rail2p",
   "arm": "cb",
@@ -25,8 +21,13 @@
   "track": "e7_cic_rail2p",
   "units": 10,
   "met": 0,
-  "events": 0,
+  "reachable": 9,
+  "events": 6,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [
+   "select_date"
+  ],
   "unmet": [
    "select_city",
    "select_city",
@@ -47,8 +48,13 @@
   "track": "e7_cb_railpay",
   "units": 8,
   "met": 0,
+  "reachable": 7,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [
+   "select_date"
+  ],
   "unmet": [
    "select_city",
    "select_city",
@@ -67,8 +73,13 @@
   "track": "e7_cic_railpay",
   "units": 8,
   "met": 0,
+  "reachable": 7,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [
+   "select_date"
+  ],
   "unmet": [
    "select_city",
    "select_city",
@@ -87,8 +98,11 @@
   "track": "e7_cb_hoteldxb",
   "units": 6,
   "met": 0,
+  "reachable": 6,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [],
   "unmet": [
    "bench_hotel_select_city",
    "bench_hotel_select_start_date",
@@ -105,8 +119,11 @@
   "track": "e7_cic_hoteldxb",
   "units": 6,
   "met": 0,
+  "reachable": 6,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [],
   "unmet": [
    "bench_hotel_select_city",
    "bench_hotel_select_start_date",
@@ -123,8 +140,14 @@
   "track": "e7_cb_hotel2rm",
   "units": 5,
   "met": 0,
+  "reachable": 3,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [
+   "bench_hotel_select_start_date",
+   "bench_hotel_select_end_date"
+  ],
   "unmet": [
    "bench_hotel_select_city",
    "bench_hotel_select_start_date",
@@ -140,8 +163,14 @@
   "track": "e7_cic_hotel2rm",
   "units": 5,
   "met": 0,
+  "reachable": 3,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [
+   "bench_hotel_select_start_date",
+   "bench_hotel_select_end_date"
+  ],
   "unmet": [
    "bench_hotel_select_city",
    "bench_hotel_select_start_date",
@@ -157,8 +186,11 @@
   "track": "e7_cb_shop3",
   "units": 3,
   "met": 0,
+  "reachable": 3,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [],
   "unmet": [
    "basket_add",
    "basket_add",
@@ -172,8 +204,11 @@
   "track": "e7_cic_shop3",
   "units": 3,
   "met": 0,
+  "reachable": 3,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [],
   "unmet": [
    "basket_add",
    "basket_add",
@@ -187,8 +222,11 @@
   "track": "e7_cb_filespdf",
   "units": 3,
   "met": 0,
+  "reachable": 3,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [],
   "unmet": [
    "bench_files_select_collection",
    "bench_files_select_year",
@@ -202,8 +240,11 @@
   "track": "e7_cic_filespdf",
   "units": 3,
   "met": 0,
+  "reachable": 3,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [],
   "unmet": [
    "bench_files_select_collection",
    "bench_files_select_year",
@@ -217,8 +258,11 @@
   "track": "e7_cb_booksexp",
   "units": 2,
   "met": 0,
+  "reachable": 2,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [],
   "unmet": [
    "state_changed",
    "basket_add"
@@ -231,8 +275,11 @@
   "track": "e7_cic_booksexp",
   "units": 2,
   "met": 0,
+  "reachable": 2,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [],
   "unmet": [
    "state_changed",
    "basket_add"
@@ -245,8 +292,11 @@
   "track": "e7_cb_grocat",
   "units": 2,
   "met": 0,
+  "reachable": 2,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [],
   "unmet": [
    "state_changed",
    "basket_add"
@@ -259,8 +309,11 @@
   "track": "e7_cic_grocat",
   "units": 2,
   "met": 0,
+  "reachable": 2,
   "events": 0,
   "passed": false,
+  "passed_reachable": false,
+  "unreachable": [],
   "unmet": [
    "state_changed",
    "basket_add"

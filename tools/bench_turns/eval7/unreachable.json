@@ -1,0 +1,33 @@
+{
+ "why": "Dates two months in the app's PAST; its calendar has one nav control (mdi-arrow-right, forward only) and no date input. Measured 2026-11-16 on e7_cic_rail2p. PREREG Amendment 1 freezes this list.",
+ "conditions": [
+  {
+   "key": "rail2p",
+   "event_name": "select_date",
+   "parameters": {
+    "date": "2026-09-04"
+   }
+  },
+  {
+   "key": "railpay",
+   "event_name": "select_date",
+   "parameters": {
+    "date": "2026-09-04"
+   }
+  },
+  {
+   "key": "hotel2rm",
+   "event_name": "bench_hotel_select_start_date",
+   "parameters": {
+    "date": "2026-09-12"
+   }
+  },
+  {
+   "key": "hotel2rm",
+   "event_name": "bench_hotel_select_end_date",
+   "parameters": {
+    "date": "2026-09-16"
+   }
+  }
+ ]
+}

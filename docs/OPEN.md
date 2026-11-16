@@ -129,7 +129,7 @@ What would close it: a declared per-member discriminator the collector does not
 currently emit. Geometry would do it (87.3% coverage, measured) and is refused —
 it drifts, so the safeguard would fire on every reflow.
 
-### 2c. Starting state: the precondition reaches 1 flow in 20 `OPEN`
+### 2c. Starting state: the precondition reaches 1 flow in 20 — HALF CLOSED
 `require` is derived from the observations between the landing navigation and
 the first action, and `_checks` understands exactly three tools: `get_url`,
 `search_page`, `query_elements`. The opening every agent is taught (#45's
@@ -143,6 +143,24 @@ Not a one-liner: `read_page`'s first line is
 `get_url`'s ABSOLUTE url, so deriving one from the other would put two
 spellings of one fact into the file (rule 17). Either a path-shaped check kind
 or a reconstruction from the flow's origin, and both are schema-level.
+
+**CLOSED, with the first of those two.** `path` is now a check kind: the
+recorder takes `read_page`'s first line and nothing else from a listing (the
+rest is prose, which the `_checks` docstring is explicit must never become a
+check), and the runner reduces the live `get_url` the same way
+(`urlsplit` -> `path + '?' + query`) so both halves of the comparison are one
+spelling of one fact. **The reconstruction was the wrong one of the two
+options**: it drops a `#fragment` the live `get_url` carries, and by the time a
+path reaches us a page with a hash is indistinguishable from one without.
+`path` is also the better check for the job — a flow recorded against
+`localhost:8787` must not fail because the port moved, which is the argument #61
+used for preferring a same-origin href as a bare path (FR24c).
+When `get_url` WAS called, `url` wins and `path` is dropped rather than asserted
+twice (FP11c). FP11/FP11b/FR24 fail against the pre-fix recorder with `require`
+coming back `{}` — the exact symptom. Flows already on disk are unchanged; they
+acquire a precondition only when re-recorded, which is why this is HALF closed:
+**the mechanism now reaches the opening every agent is taught, and the 20 files
+in `flows/` still carry what they carried.**
 
 Compounding it, and unlisted until now: nothing isolates one replay from the
 next. `run_flow(stop_after=N)` ends mid-flow by design, `run_flows.py` creates

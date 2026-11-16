@@ -107,3 +107,69 @@ page at all, which is not a representation result.
 **39 conditions in total.** Task 7 is in deliberately: "the most expensive book
 by this author" cannot be answered by locating a named string, so it is the one
 task where reading the page beats finding a control.
+
+---
+
+## AMENDMENT 1 — 2026-11-16, after run 1 of 16, before any other run
+
+**Three of the eight tasks carry a date the app cannot reach, and that is a
+defect in this pre-registration.** #48's eval had a referee drop two tasks
+before any run for exactly this; eval 7 had no feasibility pass, and run 1 found
+it instead.
+
+**Measured, independently of the agent that reported it**, through a browser on
+`e7_cic_rail2p` (the OTHER arm's track, untouched, so nothing in the measurement
+spends a run):
+
+```
+app clock / system date:        2026-11-16
+calendar opens on:              Ноябрь 2026
+visible .nav-btn count:         1     innerHTML: <i class="mdi-arrow-right ...">
+visible text inputs on page:    ["Откуда", "Куда"]        <- no date field
+```
+
+One navigation control, forward only, and nothing to type into. `04.09.2026` is
+two months in the app's past and is unreachable through the UI by any means.
+
+| task | dates in the prompt | status |
+|---|---|---|
+| rail2p | 2026-09-04 | **PAST** |
+| railpay | 2026-09-04 | **PAST** |
+| hotel2rm | 2026-09-12, 2026-09-16 | **PAST** |
+| hoteldxb | 2027-03-05, 2027-03-09 | future, fine |
+| the other four | — | no date |
+
+This is also a decay property of the benchmark itself, worth reporting upstream:
+WebPageBench's task files hard-code dates that were future when they were
+authored and are past now, against an app that reads the system clock.
+
+**THE EXACT CONDITIONS THIS MAKES UNREACHABLE — four of 39:**
+
+```
+rail2p   [2]  select_date                   {"date": "2026-09-04"}
+railpay  [2]  select_date                   {"date": "2026-09-04"}
+hotel2rm [1]  bench_hotel_select_start_date {"date": "2026-09-12"}
+hotel2rm [2]  bench_hotel_select_end_date   {"date": "2026-09-16"}
+```
+
+**THE DECISION, fixed now, before the remaining 15 runs.**
+
+1. **Nothing is dropped and no task is replaced.** Both arms meet the identical
+   wall, so these four conditions are UNINFORMATIVE, not unfair, and the other
+   35 are reachable and genuinely hard. Replacing the tasks would discard a run
+   and buy nothing the exclusion does not.
+2. **The primary metric is reported against BOTH denominators, always
+   together**: `/39` as pre-registered and unrevised, and `/35` excluding the
+   four above. The sign test is unaffected either way, because an unreachable
+   condition subtracts the same 1 from both arms of every affected pair.
+3. **An arm that somehow DOES satisfy one of the four is believed**, and the
+   exclusion is withdrawn for that condition. The claim is "we measured it to be
+   unreachable", not "it must be".
+4. The four condition identities above are frozen here, in the pre-registration,
+   so the exclusion cannot be widened after seeing more data.
+
+**What this costs, said plainly:** the honest headline for rail2p and railpay is
+now "9 of 10 conditions, and the tenth is impossible", which is a weaker
+sentence than "10 of 10" and the right one. Run 1 scored exactly that — 9/10,
+with `select_date` the sole unmet condition, which is what the agent predicted
+from the UI before the oracle was consulted.

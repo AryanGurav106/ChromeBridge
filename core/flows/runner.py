@@ -29,11 +29,12 @@ THREE RULES THAT ARE NOT NEGOTIABLE, each paid for by someone else's bug:
 """
 from __future__ import annotations
 
-import re
 import asyncio
 import json
+import re
 import time
 import uuid
+from urllib.parse import urlsplit
 from typing import Any, Callable, Optional
 
 from . import secrets
@@ -825,6 +826,21 @@ class Run:
             got = m.group(1) if m else str(res)
             if got != exp["url"]:
                 return f'url is {got!r}, recorded {exp["url"]!r}'
+        if "path" in exp:
+            # The PATH, compared to the PATH. `read_page` prints
+            # `location.pathname + location.search`; this reduces get_url's
+            # absolute url the same way, in one place, so the two halves of the
+            # comparison cannot drift into two spellings of one fact. Weaker
+            # than `url` on purpose: a host or port change must not fail a step
+            # that is really asking "is the app on the right screen".
+            res = await self._ask("get_url", {"tabId": self.cur_tab})
+            m = re.search(r'"url"\s*:\s*"([^"]+)"', str(res))
+            if not m:
+                self._unparsed("get_url", "a url", res)
+            _u = urlsplit(m.group(1) if m else str(res))
+            got = _u.path + (f"?{_u.query}" if _u.query else "")
+            if got != exp["path"]:
+                return f'path is {got!r}, recorded {exp["path"]!r}'
         for s in _as_list(exp.get("search")):
             _call = {"tabId": self.cur_tab, "pattern": s["pattern"]}
             for _k in ("regex", "css_scope", "case_sensitive"):
