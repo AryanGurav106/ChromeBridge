@@ -1132,6 +1132,47 @@ def main() -> int:
     # is that later steps run in the tab a create made.
     check("C39b CONTROL: ...and a tool that DOES take one still receives it",
           _seen.get("with_tab") == 7, f"seen={_seen}")
+
+    # C40: EVERY BANNER MUST END `***\n`, OR _split_banner CANNOT PEEL IT.
+    # `_BANNER_RE` is `\A((?:\*\*\*.*?\*\*\*\n)+)`, and a banner that does not
+    # match is left as BODY text -- which means `_truncate` cuts it like any
+    # other row and it gets glued onto the first listing line. #76/#77 fixed
+    # exactly that for the scoped-read header, and the frozenFade sentence
+    # reintroduced it hours later: an uninformed review demonstrated it by
+    # running `_split_banner` on the real output. A grep for the newline would
+    # pin the symptom; this drives the function that consumes it.
+    # SCOPED TO `readinessNote`, because that is the function whose output is
+    # fed to `_split_banner`. My first version scanned every `*** … ***`
+    # literal in the file and flagged two false positives: `*** NOT DELIVERED
+    # ***` is a deliberate INLINE suffix on a click result (note its leading
+    # space) that never goes through the splitter, and a comment mentioning it.
+    # A check that fires on correct code is worse than none.
+    _bgt = read("extension/background.js")
+    _rn_start = _bgt.index("async function readinessNote(")
+    _rn_end = _bgt.index("\n}", _rn_start)
+    _rn = _bgt[_rn_start:_rn_end]
+    _opens = re.findall(r"`\*\*\* ", _rn)
+    _closes = re.findall(r"\*\*\*(\\n)?`", _rn)
+    _bad = sum(1 for c in _closes if not c)
+    check("C40 every banner readinessNote returns ends with a newline, which is "
+          "what _split_banner's regex requires in order to peel it",
+          bool(_opens) and _closes and _bad == 0,
+          f"{len(_opens)} opener(s), {len(_closes)} closer(s), "
+          f"{_bad} missing the trailing newline")
+
+    # ...and the consumer really does peel one, so C40 is pinned to behaviour
+    # rather than to a character.
+    _sb = getattr(_msm, "_split_banner", None)
+    if _sb:
+        _one = "*** A TEST BANNER ***\n"
+        _two = "*** FIRST ***\n*** SECOND ***\n"
+        _b1, _r1 = _sb(_one + "Current URL: /x")
+        _b2, _r2 = _sb(_two + "Current URL: /x")
+        check("C40b _split_banner peels a single banner AND two stacked ones, "
+              "which is the shape a composed note has",
+              _b1 == _one and _r1.startswith("Current URL")
+              and _b2 == _two and _r2.startswith("Current URL"),
+              f"one={_b1!r} two={_b2!r}")
     # OC6: `toLocaleLowerCase()` is SPECIFIED to use the host default locale, so
     # the same page and the same request can give different answers on different
     # machines. MEASURED AND THE SCARY VERSION DID NOT REPRODUCE: the audit

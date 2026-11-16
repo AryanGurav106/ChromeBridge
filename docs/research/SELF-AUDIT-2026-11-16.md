@@ -159,7 +159,75 @@ name the record) and FW10c (the target is unique) pass in both arms.
 before this rule existed, and re-recording needs the MCP server to reload. It
 is left in place deliberately, as the artefact the rule was derived from.
 
-## 5. What I did NOT audit
+## 5. THE AGENTS CAME BACK, AND THEY CORRECTED ME
+
+All three resumed once the weekly limit lifted. Their files:
+`AUDIT-PATTERNS-2026-11.md`, `FLOW-FRAGILITY-2026-11.md`, and an uninformed
+review of the diff delivered in-session.
+
+**THE CORRECTION THAT MATTERS, and it is to section 3 above.** The pattern
+auditor checked every sub-claim I made and found each one TRUE —
+`classList.contains` really is 0 sites, the `.includes('<english>')` hits really
+are ARIA values and attribute names, the Python `in` hits really are dict keys
+and our own strings. **And the conclusion I drew from them is still wrong**,
+because the sweep's SHAPE was wrong rather than its execution: it looks for a
+method call taking an English literal, and the three things it demonstrated now
+deciding behaviour have none of that shape — a class string used as an identity
+key, an ASCII PUNCTUATION class used as an "is this prose?" test, and a UTF-16
+character count used as an "is this a label?" test. *The hazard class moved and
+the detector did not.* That is precisely what an uninformed reader is for, and
+it is not something I could have produced.
+
+**THREE DEFECTS OF MINE, FROM TODAY, FIXED IN RESPONSE:**
+
+1. **The `frozenFade` banner had no trailing newline** (demonstrated). Every
+   banner must end `***\n` or `_BANNER_RE` cannot peel it, which means
+   `_truncate` cuts it as body text and it is glued onto the first listing line
+   — the #76/#77 defect reintroduced hours after I fixed it. `C40` scopes to
+   `readinessNote` and fails pre-fix with `1 missing the trailing newline`;
+   `C40b` drives `_split_banner` itself. My first version of C40 scanned the
+   whole file and produced two FALSE POSITIVES (`*** NOT DELIVERED ***` is a
+   deliberate inline suffix, and a comment), which is a check firing on correct
+   code and is worse than none.
+
+2. **It asserted a cause it had not checked.** The sentence says the transition
+   "CANNOT START while this tab is in the background" with no
+   `visibilityState` test — so in a VISIBLE tab it fires on a genuine ~16ms
+   race and tells you waiting will not help, which is false. #33's defect and
+   the one C15 exists to catch. Gated; `R33c` is the control, and the fixture
+   now has to SIMULATE the hidden regime rather than assert into the wrong one.
+
+3. **A state class defeated the new record climb** (demonstrated with a
+   control). `_kind` compared class lists by EQUALITY, and every UI kit marks
+   the current item by ADDING a token — so `search_page` returned
+   `'Basket 7 items'` for a plain `div.menu-btn` and bare `'Basket'` for the
+   identical element carrying `menu-btn active`. **#30 recorded and fixed this
+   exact defect in `shapeOf` and I rebuilt it in a new function afterwards.**
+   Now compared by INTERSECTION: a token only one sibling carries cannot be
+   what makes them the same kind. `Q1ab3`/`Q1ab4`.
+
+**AND THREE LANDED ON THE `unscoped:` RULE I SHIPPED AN HOUR EARLIER:**
+it read `full`, which `build()` ALWAYS stores, so the gate asked "does this
+page have a heading above the control" rather than "did the ladder reach for
+one" — measured on the 28 real flows at **47 of 76 targets (62%), including 42
+of 69 that resolved at level 1**, the exact population the gate exists to
+spare. Reading `desc` gives **7%** and the case the rule was derived from still
+fires. **`FW10c` was vacuous** for the same reason — its fixture had no
+heading, so it passed because the page offered nothing rather than because the
+target was unique. Both fixed; FW10c now fails pre-fix.
+
+**NOT YET ACTED ON, and these are the big ones.** Recorded here so they are not
+lost: the dead-click guard may be unreachable for every op a flow actually uses
+(11 of 110 recorded steps are the population it exists for); a list CHURN
+mutation — a recency list gaining one row and dropping its oldest — measured
+**100% WRONG with 0% refusals** on the unwitnessed half, and needs no user
+action to occur; `search` presence is page-wide `min: 1`, which an ERROR
+message satisfies, demonstrated on a real recorded flow; and `keepForFind`
+still admits a strict subset of `isInteractive`, so a labelled `<canvas>` or
+`<video controls>` below the fold is unreachable by `find`. Each is in the
+agents' own files with its demonstration.
+
+## 6. What I did NOT audit
 
 Named so the resumed agents do not assume it was covered:
 

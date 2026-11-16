@@ -1412,6 +1412,44 @@ async def main():
               "record -- the collection is never the context",
               "Capers" not in ctx and "189" not in ctx, f"context={ctx!r}")
 
+        # Q1ab3/Q1ab4: A STATE CLASS MUST NOT MAKE THE SELECTED ITEM A
+        # DIFFERENT KIND FROM ITS OWN SIBLINGS.
+        # Every UI kit marks the current item by ADDING a token, so class-list
+        # EQUALITY calls it a different kind and the climb falls back to one
+        # hop -- for exactly the element a user asks about most. DEMONSTRATED
+        # by an uninformed audit on the Vuetify rail shape: 'Basket 7 items'
+        # for a plain div.menu-btn, bare 'Basket' for the identical element
+        # carrying `menu-btn active`. #30 fixed this same defect in `shapeOf`
+        # ("the chosen option's extra state class split three siblings into
+        # runs of 2 and 1") and it was rebuilt here afterwards.
+        _rail = ("<header><div class=menu-btn><div class=v-badge>"
+                 "<div class=v-badge__wrapper><button class=v-btn>"
+                 "<span class=v-btn__content><div class=label>Orders</div>"
+                 "</span></button><span class=v-badge__badge>12 pending</span>"
+                 "</div></div></div>"
+                 "<div class='menu-btn {S}'><div class=v-badge>"
+                 "<div class=v-badge__wrapper><button class=v-btn>"
+                 "<span class=v-btn__content><div class=label>Basket</div>"
+                 "</span></button><span class=v-badge__badge>7 items</span>"
+                 "</div></div></div></header>")
+        await rec.set_content(_rail.replace("{S}", "active"))
+        await rec.wait_for_timeout(120)
+        r = await rsearch("Basket")
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1ab3 the SELECTED sibling, which carries an extra state class, "
+              "still reaches its own record",
+              "7 items" in ctx, f"context={ctx!r}")
+
+        # THE CONTROL that this is about the state token and not about the
+        # markup: delete the one word and the plain sibling behaves the same.
+        await rec.set_content(_rail.replace("{S}", ""))
+        await rec.wait_for_timeout(120)
+        r = await rsearch("Basket")
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1ab4 CONTROL: ...and so does the plain sibling, so the fix is "
+              "about the added token rather than the shape",
+              "7 items" in ctx, f"context={ctx!r}")
+
         # #43's defect, which this must not re-open: peer records in a list.
         # Here the records declare NO class at all, so only subtree equality can
         # separate them -- the branch Q1ab's classes never exercise.

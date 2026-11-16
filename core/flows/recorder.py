@@ -703,7 +703,19 @@ class Recorder:
             for _path, _t in st.targets.items():
                 if not isinstance(_t, dict):
                     continue
-                _d = _t.get("full") or _t.get("desc") or {}
+                # THE DESCRIPTOR THAT RESOLVED IT, not the full one.
+                # `build()` ALWAYS stores a `full` carrying under/near, so
+                # reading it asks "does this page have a heading above the
+                # control" rather than "did the ladder have to reach for one".
+                # An uninformed audit measured the difference on the 28 real
+                # recorded flows: reading `full` fires on 47 of 76 targets
+                # (62%), including 42 of 69 targets that resolved at LEVEL 1 --
+                # unique on their own name, the exact population the gate's own
+                # comment says it exists to spare. Reading `desc` fires on 7%,
+                # and the Добавить case this rule was derived from still fires,
+                # because there `under` is in `desc`. One field, measured both
+                # ways before changing it.
+                _d = _t.get("desc") or {}
                 _needed = _t.get("of") is not None or bool(
                     (_d.get("under") or "").strip() or (_d.get("near") or "").strip())
                 if not _needed:

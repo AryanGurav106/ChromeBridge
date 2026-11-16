@@ -2710,11 +2710,20 @@ async def record_and_replay():
         return [rv for st in f.steps for rv in (st.review or [])]
 
     _amb = {"level": 6, "of": 3, "nth": 2,
+            "desc": {"tag": "button", "role": "", "type": "button",
+                     "name": "Add", "section": "main", "under": "Canned goods"},
             "full": {"tag": "button", "role": "", "type": "button",
                      "name": "Add", "section": "main", "under": "Canned goods"}}
+    # `desc` is what the ladder RESOLVED on; `full` is always stored alongside.
+    # FW10c was vacuous until `under` was added here: its fixture had no
+    # heading, so it passed because the PAGE offered nothing rather than
+    # because the target was unique. An uninformed audit caught that.
     _uniq = {"level": 2,
+             "desc": {"tag": "button", "role": "", "type": "button",
+                      "name": "Place the order", "section": "main"},
              "full": {"tag": "button", "role": "", "type": "button",
-                      "name": "Place the order", "section": "main"}}
+                      "name": "Place the order", "section": "main",
+                      "under": "Checkout", "near": "Total $42"}}
 
     _r1 = _reviews(_amb, "[aria-label='Remove']")
     check("FW10 a step that had to be disambiguated, asserting nothing that "

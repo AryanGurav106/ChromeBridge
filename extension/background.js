@@ -2367,7 +2367,17 @@ function _readinessPage(scopeMmid) {
   // fields are filtered first and only the survivors cost a style resolve, so
   // there is no bound to choose: an animation pending at time zero is rare, and
   // a page with thousands of them is paying for its own pathology.
+  // GATED ON THE TAB ACTUALLY BEING HIDDEN. The sentence says the transition
+  // "CANNOT START while this tab is in the background", and without this test
+  // that claim is false in the one regime where it would fire wrongly: in a
+  // VISIBLE tab any opacity-0 element inside its first-frame pending window
+  // trips the same filter -- a `browser_batch` click followed by a read within
+  // ~16ms -- and there waiting genuinely does fix it. Asserting a cause we have
+  // not checked is #33's defect and the one C15 exists to catch; an uninformed
+  // review of this very diff caught it. `visibilityState` is the browser's own
+  // statement, so this is a fact rather than an inference.
   try {
+    if (document.visibilityState !== 'hidden') throw 0;
     for (const _a of document.getAnimations()) {
       if (!_a.pending || _a.currentTime) continue;
       if (_a.transitionProperty && _a.transitionProperty !== 'opacity') continue;
@@ -2622,11 +2632,20 @@ async function readinessNote(tabId, scopeMmid) {
       + `a listing however long you wait. They ARE present and still take `
       + `pointer events: reach them with query_elements(selector), which queries `
       + `the rendered document rather than applying this listing's visibility `
-      + `rule. A dialog, toast or dropdown that fades in is the usual case. ***`);
+      + `rule. A dialog, toast or dropdown that fades in is the usual case. ***\n`);
   };
   const _withFade = (note, r) => {
     const f = _fadeSentence(r);
-    return f ? (note ? note + '\n' + f : f) : note;
+    // THE TRAILING NEWLINE IS THE CONTRACT, not punctuation. `_BANNER_RE` in
+    // mcp_server.py is `\A((?:\*\*\*.*?\*\*\*\n)+)`, so a banner that does not end
+    // `***\n` is invisible to `_split_banner` -- which means `_truncate` cuts it
+    // as body text and it gets glued onto the first listing line. That is
+    // exactly the defect #76/#77 fixed for the scoped-read header, and I
+    // reintroduced it here; an uninformed review demonstrated it by running
+    // `_split_banner` on the output. And the join must NOT add a second
+    // newline: the existing notes already end in one, so `note + '\n' + f`
+    // leaves a blank line and the regex stops there, peeling only the first.
+    return f ? (note ? note + f : f) : note;
   };
   let r = null;
   try { r = await runInTab(tabId, _readinessPage, [scopeMmid === undefined ? null : scopeMmid]); } catch (e) {}
@@ -13357,10 +13376,41 @@ function _searchTextPage(pattern, opts) {
     for (const c of e.children) k.push(_sig(c, d - 1));
     return s + '(' + k.join(',') + ')';
   };
-  const _kind = (e) => {
-    const c = (typeof e.className === 'string'
-      ? e.className.trim().replace(/\s+/g, ' ') : '');
-    return c ? e.tagName + '.' + c : _sig(e, 3);
+  // CLASS SETS ARE COMPARED BY INTERSECTION, NOT EQUALITY, and that is the
+  // whole of this. Every UI kit marks the CURRENT item by ADDING a token --
+  // `class="menu-btn"` on each and `class="menu-btn active"` on the selected
+  // one -- so equality calls the selected item a different kind from its own
+  // siblings, and the climb falls back to one hop for exactly the element a
+  // user asks about most. DEMONSTRATED by an uninformed audit on the Vuetify
+  // rail shape this file's own `_RECORD` note describes: `search_page` returned
+  // 'Basket 7 items' for a plain `div.menu-btn` and bare 'Basket' for the
+  // identical element carrying `menu-btn active`, with deleting the single word
+  // `active` as the control. #30 recorded and fixed this same defect in
+  // `shapeOf` -- "the chosen option's extra state class split three siblings
+  // into runs of 2 and 1" -- and I rebuilt it in a new function afterwards.
+  //
+  // A token carried by only ONE sibling cannot be what makes them the same
+  // kind, so it is not evidence either way. That is why the test is a non-empty
+  // INTERSECTION rather than a tolerance for N extra tokens: no threshold, and
+  // it still early-exits per pair, so the cost measured below is unchanged.
+  //
+  // CLASSLESS siblings keep the subtree test, and that branch is load-bearing:
+  // a card's inner wrapper and its price are BOTH bare `<div>`, so tag alone
+  // makes them look like peer records and stops the climb one level short of
+  // the card -- the eval-7 grocery shape.
+  const _cls = (e) => {
+    try {
+      return (typeof e.className === 'string'
+        ? e.className.trim().split(/\s+/).filter(Boolean) : []);
+    } catch (err) { return []; }
+  };
+  const _sameKind = (a, b) => {
+    if (a.tagName !== b.tagName) return false;
+    const ca = _cls(a), cb = _cls(b);
+    if (!ca.length && !cb.length) return _sig(a, 3) === _sig(b, 3);
+    if (!ca.length || !cb.length) return false;
+    for (const t of ca) if (cb.indexOf(t) !== -1) return true;
+    return false;
   };
   // COST, MEASURED RATHER THAN ASSUMED. This computes a depth-3 signature for
   // every sibling until it finds a SECOND of the same kind, so the shape that
@@ -13380,9 +13430,8 @@ function _searchTextPage(pattern, opts) {
     try {
       const p = n.parentElement;
       if (!p || p.children.length < 2) return false;
-      const s = _kind(n);
       let k = 0;
-      for (const c of p.children) { if (_kind(c) === s && ++k > 1) return true; }
+      for (const c of p.children) { if (_sameKind(n, c) && ++k > 1) return true; }
       return false;
     } catch (e) { return false; }
   };

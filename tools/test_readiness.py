@@ -499,7 +499,15 @@ async def main():
         # frame can run -- which is exactly the state the hidden tab stays in.
         pg = await tagged_page("<!doctype html><meta charset=utf-8><body>"
                                "<button id=keep>Keep</button>")
-        r = await pg.evaluate("(function(){ " + READY + ";"
+        # THE PROBE IS GATED ON THE TAB BEING HIDDEN, because the sentence it
+        # feeds says the transition cannot start "while this tab is in the
+        # background" -- and in a VISIBLE tab that claim is false, since the
+        # same filter catches any opacity-0 element inside its first-frame
+        # pending window. Headless Playwright renders VISIBLE, so the fixture
+        # has to simulate the regime rather than assert into the wrong one.
+        _HIDE = ("Object.defineProperty(document,'visibilityState',"
+                 "{configurable:true,get:function(){return 'hidden';}});")
+        r = await pg.evaluate("(function(){ " + _HIDE + READY + ";"
             " var d=document.createElement('div');"
             " d.style.cssText='position:fixed;left:40px;top:40px;width:200px;"
             "height:60px;opacity:0;transition:opacity 300ms linear';"
@@ -519,7 +527,7 @@ async def main():
         # R33's fixture and fail for a reason that is not the code's.
         pg = await tagged_page("<!doctype html><meta charset=utf-8><body>"
                                "<button id=keep>Keep</button>")
-        r2 = await pg.evaluate("(function(){ " + READY + ";"
+        r2 = await pg.evaluate("(function(){ " + _HIDE + READY + ";"
             " var d=document.createElement('div');"
             " d.style.cssText='position:fixed;left:40px;top:120px;width:200px;"
             "height:60px;opacity:1';"
@@ -528,6 +536,30 @@ async def main():
         check("R33b CONTROL: an element with no pending entry transition counts "
               "nothing",
               (r2.get("frozenFade") or 0) == 0, f"frozenFade={r2.get('frozenFade')}")
+
+        # R33c CONTROL: THE GATE ITSELF. In a VISIBLE tab the same pending
+        # transition is a genuine ~16ms race that waiting DOES fix, so counting
+        # it there would make the sentence assert a cause it had not checked --
+        # #33's defect, and the one C15 exists to catch. An uninformed review of
+        # this diff caught it before it shipped.
+        await pg.close()
+        # A CLEAN PAGE: `_HIDE` redefines document.visibilityState for the life
+        # of the document, so reusing the page would measure the override
+        # rather than the gate.
+        pg = await tagged_page("<!doctype html><meta charset=utf-8><body>"
+                               "<button id=keep>Keep</button>")
+        r3 = await pg.evaluate("(function(){ " + READY + ";"
+            " var d=document.createElement('div');"
+            " d.style.cssText='position:fixed;left:40px;top:200px;width:200px;"
+            "height:60px;opacity:0;transition:opacity 300ms linear';"
+            " document.body.appendChild(d); d.getBoundingClientRect();"
+            " d.style.opacity='1';"
+            " return {fade:_readinessPage().frozenFade,"
+            " vis:document.visibilityState}; })()")
+        check("R33c CONTROL: a VISIBLE tab counts nothing — there the pending "
+              "transition is a real race and waiting fixes it",
+              r3.get("vis") == "visible" and (r3.get("fade") or 0) == 0,
+              f"vis={r3.get('vis')} fade={r3.get('fade')}")
         await pg.close()
 
         # R19 A SAME-ORIGIN FRAME'S CHURN IS NOT QUIET. listener_tag.js runs in
