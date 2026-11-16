@@ -7534,6 +7534,37 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
             if (!_offRegions[k]) {
               let _lb = (_host.tagName || '').toLowerCase();
               try { _lb = _host.getAttribute('role') || _lb; } catch (e2) {}
+              // NAME THE REGION, NOT JUST ITS TAG. Measured live in eval 6:
+              // the hint read `form(ref_212): 8, section(ref_274): 36, …` and
+              // TWO independent agents, in both arms, scoped to the only
+              // `<form>` because the task said "fill in a search form". It was
+              // the newsletter signup at the bottom of the page; the actual
+              // search widget is not a `<form>` at all. One wasted call each.
+              // One of them said the hint "would have been decisive if it
+              // carried the region's accessible name or its first heading".
+              //
+              // Taken from what the DOCUMENT declares, in the order AccName
+              // uses and then #30's declared-heading rule: aria-label, the text
+              // of aria-labelledby, else the region's first heading. No
+              // wordlist and no guess -- and for `<form>`/`<section>` a name is
+              // what makes them landmarks at all (HTML-AAM), so a region that
+              // earns a place in this hint usually has one.
+              let _rn = '';
+              try {
+                _rn = (_host.getAttribute('aria-label') || '').trim();
+                if (!_rn) {
+                  const _lbid = _host.getAttribute('aria-labelledby');
+                  if (_lbid) {
+                    const _lbe = _host.ownerDocument.getElementById(_lbid.split(/\s+/)[0]);
+                    if (_lbe) _rn = (_lbe.textContent || '').trim();
+                  }
+                }
+                if (!_rn) {
+                  const _h = _host.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
+                  if (_h) _rn = (_h.textContent || '').trim();
+                }
+              } catch (e2) {}
+              if (_rn) _lb += ' ' + JSON.stringify(markCut(_rn, 40));
               _offRegions[k] = { n: 0, mmid: String(_hm), label: _lb };
             }
             _offRegions[k].n++;

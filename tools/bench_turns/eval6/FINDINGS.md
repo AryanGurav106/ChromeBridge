@@ -64,3 +64,57 @@ is still named. This is #33's class inside the note written to end #33's class.
   in general (#56: `insertText` targets the editing context, not
   `activeElement`) and wrong in tone here, and the batch has the information to
   know better.
+
+## Pair 2 — books, «найди аудиокнигу … и добавь в корзину» (tree arm in)
+
+| arm | calls | oracle |
+|---|---|---|
+| tree | **7** | **PASS** (`apply_filter`, `basket_add`, …) |
+
+### The most serious finding of the eval so far, and it is not about turns
+
+**A decoy pair that the listing cannot resolve.** The search returned two cards
+with the SAME title, author, rating and cover text, differing only by price:
+
+    ref_1714 | div "ТОНКИЙ ФАРФОР У ЗАКРЫТОЙ СТАНЦИИ ЭШВУД Г. … 4.8 544 599 ₽" role=button
+    ref_1735 | div "ТОНКИЙ ФАРФОР У ЗАКРЫТОЙ СТАНЦИИ ЭШВУД Г. … 4.8 544 569 ₽" role=button
+
+The TASK WORD is «аудиокнигу» — audiobook — and format is the one thing not
+surfaced at any detail level. The agent resolved it by using the site's own
+Формат → Аудио facet, which cost an extra round trip and was the right move.
+
+**This is the silent-WRONG-answer shape, not the silent-missing-element shape**,
+and it is worth separating from everything else in this log. An agent that
+trusted the listing alone has a **coin flip here and would never know it had
+lost**. Every guardrail this project has built — `lost_identities`, presence,
+recall, findability, the sufficiency DS — scores PRESENCE, and both cards are
+present. The agent said so unprompted, and it is right.
+
+It is also not obviously OUR defect: if the cards declare their format only in a
+class name or a URL, then the page does not state it and a declaration-only rule
+cannot surface it. `detail="brief"` might have given differing hrefs, which the
+agent explicitly declined to guess at. **What to measure before changing
+anything:** whether the two cards differ in any DECLARED attribute at all. If
+they do, that is a real gap in what we surface. If they do not, the honest
+answer is that the page is ambiguous and the facet is the only route — and the
+listing should arguably say that two rows are indistinguishable rather than
+print them as if they were different.
+
+### Three smaller ones
+
+- **An unprinted ref was accepted.** The agent passed `ref_id="ref_1713"`,
+  inferred as "parent of ref_1714" from the numbering. It resolved. It was
+  never in any listing. Their own words: *"that was luck … an agent doing this
+  systematically would be building on sand."* Refs are additive per document so
+  a neighbouring integer often IS a real element; nothing warns that it was
+  never shown.
+- **The entry cap fired on the Books landing page** — 168 on screen, capped at
+  150, `18 OMITTED BUT ACTIONABLE` plus `123 BELOW the current viewport`. Cost
+  nothing here because the target was high in the listing, and the agent noted
+  the OMITTED-BUT-ACTIONABLE tail is what made it harmless (#27).
+- **The readiness banner fired on all six reads and was right every time** — and
+  the agent still flagged it: the full `*** THE DOM IS STILL CHANGING ***`
+  paragraph printed on reads where the batch had ALREADY reported `waited 256ms
+  … this step read the settled page`. Two true statements that read as
+  contradictory, ~6 × 500 characters of caveat already paid for in wall clock.
+  Worth a look: the batch knows it waited and the banner does not.

@@ -1358,6 +1358,47 @@ async def main():
         m = re.search(r"main\(ref_(\d+)\): (\d+)", note)
         check("RG2 ...with a per-region count", bool(m) and m.group(2) == "3",
               m.group(0) if m else "NO MATCH")
+        # RG2b — AND BY WHAT THE REGION IS, not only by its tag.
+        # MEASURED LIVE in eval 6: the hint read `form(ref_212): 8, …` and TWO
+        # independent agents, in both arms, scoped to the only `<form>` because
+        # the task said "fill in a search form". It was the newsletter signup;
+        # the real search widget was not a `<form>` at all. One wasted call each.
+        # A tag is not an identity on a page with one of each landmark.
+        #
+        # Taken from what the document DECLARES, in AccName's order and then
+        # #30's declared-heading rule: aria-label, aria-labelledby's text, else
+        # the region's first heading. For `<form>`/`<section>` a name is what
+        # makes them landmarks at all (HTML-AAM), so a region that earns a place
+        # in this hint usually has one.
+        # ON ITS OWN PAGE. The first version called `rg.set_content` and
+        # replaced the document RG3/RG4/RG13 go on to scope into, so three
+        # later checks failed on an empty region. A fixture that mutates shared
+        # state is the vacuous-fixture problem pointing forwards instead of
+        # backwards.
+        rgn = await browser.new_page(viewport={"width": 900, "height": 420})
+        await rgn.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await rgn.goto("about:blank")
+        await rgn.set_content(
+            "<body style='margin:0'><main><button>Visible</button></main>"
+            "<form aria-label='Newsletter signup' style='margin-top:3000px'>"
+            "<input placeholder='email'><button>Subscribe</button></form>"
+            "<section aria-labelledby='sh' style='margin-top:800px'>"
+            "<h2 id='sh'>Flight search</h2>"
+            "<input placeholder='from'><input placeholder='to'>"
+            "<button>Search</button></section></body>")
+        await rgn.wait_for_timeout(140)
+        named = await rgn.evaluate("(function(){ " + COLLECT
+                                  + "; return _collectInteractivePage(false,null,'compact',false,false); })()")
+        nnote = next((l for l in named.splitlines() if l.startswith("[")), "")
+        check("RG2b the hint names each region by what it IS, so two landmarks "
+              "of different purpose are not both just their tag",
+              '"Newsletter signup"' in nnote and '"Flight search"' in nnote,
+              nnote[:190])
+        check("RG2c CONTROL: a region that declares NO name is still listed by "
+              "tag and ref — naming is additive, never a filter",
+              "main(ref_" in note and '"' not in note.split("main(ref_")[1][:14],
+              note[:120])
+        await rgn.close()
         # The advice has to be PERFORMABLE. The first version named the regions and
         # said to use read_page(ref_id=<that region's ref>) while giving no way to
         # learn the ref, because a landmark container is not interactive and has no

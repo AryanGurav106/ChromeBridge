@@ -1,51 +1,33 @@
 [
  {
-  "track": "e6_tree_hotels",
-  "conditions": 1,
-  "events": 11,
+  "track": "e6_tree_books",
+  "conditions": 2,
+  "events": 15,
   "names": [
-   "bench_hotel_select_city",
+   "apply_filter",
+   "basket_add",
    "click",
    "scroll",
    "state_changed",
+   "submit_search",
    "visibility"
   ],
   "per": [
    {
     "cond": {
-     "event_name": "bench_hotel_select_city",
+     "event_name": "state_changed",
      "parameters": {
-      "cityId": "jp-tyo",
-      "label": "Токио, Япония",
-      "cityName": "Токио",
-      "countryName": "Япония"
+      "new_state": "bench_books_item",
+      "state_id": "item_51565901"
      }
     },
     "pass": true
-   }
-  ],
-  "passed": true
- },
- {
-  "track": "e6_flat_hotels",
-  "conditions": 1,
-  "events": 8,
-  "names": [
-   "bench_hotel_select_city",
-   "click",
-   "scroll",
-   "state_changed",
-   "visibility"
-  ],
-  "per": [
+   },
    {
     "cond": {
-     "event_name": "bench_hotel_select_city",
+     "event_name": "basket_add",
      "parameters": {
-      "cityId": "jp-tyo",
-      "label": "Токио, Япония",
-      "cityName": "Токио",
-      "countryName": "Япония"
+      "item_id": "item_51565901"
      }
     },
     "pass": true
