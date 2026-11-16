@@ -67,7 +67,11 @@ _REF = re.compile(r"\b(?:ref_|mmid=['\"]?)\d+['\"]?")
 # lines against a floor of 0, deterministic, which reads exactly like a real
 # finding. It was the harness. Caught by printing the diff instead of trusting
 # the count (#16), which is the rule this repo keeps paying for.
-_TRACK = re.compile(r"/inv_[ld]_[A-Za-z0-9_]+/")
+# BOTH probes' prefixes. Scoped to `inv_` alone, the variant probe's
+# `mb_c_`/`mb_v_` tracks never normalised, so its URL line always differed
+# and its inert-pair detector reported 0 INERT on a set that provably
+# contains some -- a detector that cannot fire (#30, #39).
+_TRACK = re.compile(r"/(?:inv_[ld]|mb_[cv])_[A-Za-z0-9_]+/")
 
 
 def _norm(listing: str) -> list[str]:

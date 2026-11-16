@@ -419,3 +419,73 @@ which is #16's rule, and the normaliser now strips it. A probe that damns the
 system gets re-derived before it is believed, and this one would have been
 reported as "the representation reads presentation" by anyone who stopped at
 the summary line.
+
+---
+
+## M-B RESULT — generality under control swap, 2026-11-16
+
+`tools/measure_wpb_variants.py`. 75 pairs where the SAME task, with
+byte-identical success conditions, is re-rendered through a different
+implementation of one control. The probe verifies that identity itself and
+refuses to run if any pair differs in task or conditions.
+
+**Byte-invariance is the wrong test here and the right one for the theme.** A
+colour change must not move the listing at all (12/12 at 0, above). A genuine
+widget swap SHOULD move it — different markup is different markup. The question
+is whether what is left still describes something an agent can act on.
+
+**The metric is three counts the formatter already produces** — rows, rows with
+a resolved identity, and rows our own formatter marked `(unlabeled)`. A
+per-widget expectation ("a date swap should yield a row matching
+/date|calendar/") was rejected: it is the hardcoded pattern matching this
+project removes from every deciding path, and it would be English on a Russian
+site.
+
+| control key | n | rows c→v | named c→v | unlabeled c→v | inert |
+|---|---|---|---|---|---|
+| buttons, collections, years | 5 | 5 → 5 | 5 → 5 | 0 → 0 | **5** |
+| counter_guests | 15 | 32 → 32 | 10 → 10 | 0 → 0 | 0 |
+| date | 25 | 32 → 32 | 10 → 10 | 0 → 0 | 0 |
+| select_city | 5 | 32 → 32 | 10 → 10 | 0 → 0 | 0 |
+| select_station | 5 | 39 → 35 | 35 → 35 | 0 → 0 | 0 |
+| text_search | 20 | 116 → 116 | 89 → 89 | 36 → 36 | **5** |
+
+**10 of 75 pairs are INERT** — the variant's listing is identical to its
+canonical twin, because that variant IS the component's own default
+(`text_search_outlined` is Vuetify's default outlined field). Those pairs could
+not have failed whatever the representation does, so counting them as evidence
+would be counting a check that cannot fail. **65 pairs genuinely vary the
+markup.**
+
+**Zero unexplained differences across those 65.** Both apparent failures were
+read by hand and both are the page, not us:
+
+- **`hotels_date_inline`, named −7.** The variant renders an OPEN inline
+  calendar, and an open overlay marks the rest of the document
+  `aria-hidden="true"` — measured, **55 hidden elements in the canonical
+  against 829 in the variant**. The 7 "lost" rows are blog links the PAGE
+  declared absent from the accessibility tree. The collector drops them on
+  purpose (#23) and the listing states the count. The probe now reads that
+  number and separates these out, which is declarative rather than a judgement.
+- **`rail_date_native`, named −2.** The canonical renders each date as a custom
+  `div "Туда"` plus a nested `span "Туда"` — two rows per date. The native
+  variant renders one `input[date]`. **Same affordance, fewer rows**, and the
+  variant carries MORE: `format=YYYY-MM-DD`, HTML's wire format for that input
+  type, which is exactly what is needed to fill it.
+
+**`unlabeled` is 0 → 0 on every key.** No swap produced a control the
+representation could see and could not describe — which is the half-failure a
+presence metric would score as a pass.
+
+**THE PROBE PRINTED A PASS/FAIL VERDICT AND GOT IT WRONG TWICE ON THIS DATA**,
+once in each direction, before either case was read. It now prints the counts
+and the explanations and leaves the call to the reader, because a count cannot
+distinguish an affordance that left from one the variant renders with fewer
+elements. Two further defects of its own: the inert detector reported **0 inert
+on a set that provably contains 10**, because its normaliser was scoped to the
+other probe's track-id prefix — a detector that cannot fire (#30, #39); and the
+aria-hidden explanation did not exist until `hotels_date_inline` forced it.
+
+**Scope, stated narrowly.** This is 6 control keys on 6 synthetic
+Russian-language apps. It is not a statement about the web, and it does not
+establish anything about the other two measurements in this document.
