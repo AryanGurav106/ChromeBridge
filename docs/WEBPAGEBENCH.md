@@ -489,3 +489,61 @@ aria-hidden explanation did not exist until `hotels_date_inline` forced it.
 **Scope, stated narrowly.** This is 6 control keys on 6 synthetic
 Russian-language apps. It is not a statement about the web, and it does not
 establish anything about the other two measurements in this document.
+
+---
+
+## THE STATIC FLOOR, MEASURED — 2026-11-16
+
+`tools/measure_static_floor.py`. Not one of the three designed measurements;
+this one settles a claim the project has asserted three times and never checked.
+
+**The claim.** Our headline out-of-sample figure is Mind2Web target recall,
+177/186 = 95.2% with nine misses. #73 characterises every miss as an element
+that declares nothing in static markup, and explains it structurally: the
+snapshots carry no scripts and no CSS, so two of the collector's eight admitting
+signals measure **0/186** and cannot fire — a registered listener
+(`__abClickBound`) and `cursor:pointer`. #73 therefore calls the figure "a
+structural lower bound" and `README.md` repeats it.
+
+**That was an argument, not a measurement.** It says those signals would have
+fired on a live page. It never said what they are worth.
+
+**Method.** Take the shipped collector, ablate exactly those two admissions at
+all four of their sites, run both arms over the same live track. The probe
+ASSERTS every ablation applied and exits if one did not — a transformation that
+silently matches nothing is an ablation that measures nothing. One task per
+domain, so this is six readings of six apps rather than six of one. The arms are
+two loads of one track, which is sound here only because
+`measure_wpb_invariance.py` measured the same-arm drift floor at **0** on these
+pages first.
+
+| domain | live rows | static-equivalent | lost | lost % |
+|---|---|---|---|---|
+| shop | 66 | 17 | 49 | **74.2%** |
+| books | 86 | 29 | 57 | **66.3%** |
+| hotels | 14 | 6 | 8 | 57.1% |
+| grocery | 41 | 19 | 22 | 53.7% |
+| rail | 36 | 24 | 12 | 33.3% |
+| **files** | 5 | 5 | **0** | **0.0%** |
+| **total** | **248** | **100** | **148** | **59.7%** |
+
+**59.7% of the listing depends on signals a scripts-and-CSS-free snapshot cannot
+carry.** `files` at 0% is the control: a domain built from declared controls
+loses nothing, so the ablation is not simply deleting the listing.
+
+What is lost is exactly the shape of the Mind2Web misses — `div "Корзина"`,
+`div "Бонусы"`, `div "1 089 ₽"`: divs that are clickable because a script bound
+a handler or CSS set a cursor, and that declare nothing otherwise.
+
+**WHAT THIS DOES AND DOES NOT LICENSE.** It does NOT say our Mind2Web number
+would be ~60% higher on live pages — 59.7% is the share of ROWS needing those
+signals, not the share of labelled TARGETS, and a human's click target is more
+often a declared control than an average row is. The claim it does license is
+narrower and was the one actually in dispute: **on a live page the two signals
+are load-bearing for the majority of the listing, and on Mind2Web they measure
+0/186 — so that benchmark scores a collector with most of its reach switched
+off.** "Structural lower bound" is now a measured statement rather than a
+hopeful one.
+
+**Scope.** Six synthetic apps; the PERCENTAGE does not transfer to the web. The
+mechanism and its direction do.

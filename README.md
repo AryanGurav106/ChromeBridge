@@ -101,7 +101,11 @@ Mind2Web's stripped HTML snapshots — no scripts, no CSS — so two of the
 collector's eight admitting signals (a registered listener, `cursor:pointer`)
 **cannot fire at all**: measured 0/186 each. It is therefore a structural lower
 bound, and all nine misses are elements that declare nothing clickable in static
-markup. The actions come from only **22 trajectories**, so leave-one-site-out
+markup. **That "lower bound" is now measured rather than argued:** ablating
+exactly those two signals on a live app removes **59.7% of the listing** (248
+rows to 100, across six domains; one domain built from declared controls loses
+0, as the control). So this benchmark scores a collector with most of its reach
+switched off — see `docs/WEBPAGEBENCH.md`. The actions come from only **22 trajectories**, so leave-one-site-out
 moves the figure by several points — quote it as ~95%, never as a point estimate
 with a confidence interval.
 
