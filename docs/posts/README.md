@@ -4,7 +4,7 @@ The brief was to post REGULARLY so people get the idea, "not just numbers".
 One draft is not a cadence, so this is the pipeline: each post below is already
 backed by an artefact in this repo, so writing it is an hour, not a project.
 
-**Seven are drafted now (001, 002, 003, 004, 009, 010, 013).** At one a week that is over a
+**Eight are drafted now (001, 002, 003, 004, 006, 009, 010, 013).** At one a week that is over a
 month of cadence already sitting in the repo, which was the point of building a
 queue rather than writing one post well.
 
@@ -31,7 +31,7 @@ thing being shown, which is why 001 leaves the head-to-head out entirely.
 | 003 | Four defects in one session, and none of them were in the product | eval 4 Amendments 5, 6, 7 and 7-addendum | **DRAFTED**, needs sending |
 | 004 | Your agent is reading a page that is still being built, and nothing tells it | CLAUDE.md #70 and #76, `docs/READINESS.md`, R11–R29 | **DRAFTED**, needs sending |
 | 005 | A table with a hidden column handed back the wrong number, silently | this session's TB15, `tools/audit_table_hidden_cells.py` | material complete |
-| 006 | Every way record-and-replay can break, by stage | `docs/FLOWS-FAILURE-SURFACE.md` | material complete |
+| 006 | Every way record-and-replay can break, by stage | `docs/FLOWS-FAILURE-SURFACE.md` | **DRAFTED**, needs sending |
 | 007 | "Nothing went missing" is not "what is left is enough" | `docs/SUFFICIENCY.md`, DS 0.933 | material complete |
 | 008 | A feature can be dead in production behind a green suite, and only a live run will say so | CLAUDE.md #30 (two such), #76 (the scoped banner), `delta` dead for its whole life | material complete |
 | 009 | We audited our headline number and it went down | CLAUDE.md #73 and #78, `tools/_m2w_ruler.py` | **DRAFTED**, needs sending |
