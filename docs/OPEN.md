@@ -312,7 +312,7 @@ is designed for exactly this (a HINT for unnamed fields) and did not appear.
 firing where it distinguished nothing, and loosening it back is the move that
 needs a number, not an anecdote.
 
-### 4d. `search_page`'s climb is a no-op against same-text wrappers `MEASURE FIRST`
+### 4d. `search_page`'s climb is a no-op against same-text wrappers — CLOSED
 #42 states the rule as a condition about SUFFICIENCY — climb whenever the
 element's own text cannot supply the `context_chars` the caller asked for — and
 the implementation applies it ONCE, because #43 measured multi-hop climbing
@@ -347,6 +347,43 @@ aozora siblings are separate records. Two things to settle before it ships:
 the corpus cost of both halves (#41, #44), and that `_searchTextPage` is
 injected standalone, so it needs a forced byte-identical copy with an OC7-style
 tripwire rather than a sibling call (#30's C11 class).
+
+**CLOSED, and the candidate above was MEASURED AND REJECTED — it is the one
+that counts CONTROLS.** Across 40 frozen sites it improved 19 of 269 unmet
+matches, and one of them climbed adminlte's message list into FOUR messages
+(max gain 244 chars). The reason is #18's defect exactly: a `<div>` row with a
+handler is in nobody's control SELECTOR, so `_ctlCount` undercounts and the
+container reads as "still one widget". A second, narrower opinion about what a
+control is was measured at 60% of a whole accuracy gap once already.
+
+**WHAT SHIPPED reads the repetition instead, which is the tree's own rule for
+the same question (#27): a record is one of SEVERAL SIBLINGS OF THE SAME
+KIND.** "Same kind" is tag+class where the author DECLARES a class — a class is
+a statement that these elements are the same sort of thing — and exact subtree
+shape where none is declared. Both branches are load-bearing and each is pinned
+by a fixture the other cannot satisfy:
+- the Vuetify twins hold DIFFERENT contents (a cart and a profile link), so
+  subtree equality calls them different and misses the case entirely (Q1aa);
+- a card's inner wrapper and its price are BOTH bare `<div>`, so tag alone makes
+  them look like peer records and stops one level short of the card — the eval-7
+  grocery shape (Q1ab).
+
+**MEASURED, 40 frozen sites, 326 matches taken from each page's own controls:
+25 improve, median +57 chars, max gain 147 — and max context UNCHANGED at 314
+with ZERO contexts over 1200, i.e. no whole-list leak.** Strictly better than
+the control-count candidate on every axis including the one that matters most:
+more gains, larger median, SMALLER maximum. The gains are what the item asked
+for — `'Market Cap'` → `'Market Cap | $2.21T | 0.13%'`, and a flight row that
+was a bare `'Mumbai | New Delhi'` now carries its date, stops and price.
+**Timing, interleaved on one page load: 0.27ms median against 0.31ms for the
+old climb — FASTER**, because a record list now stops at hop 1 instead of
+scanning four hops for a tag that is not there.
+
+#47's declared-record rule is UNCHANGED and still wins outright within 4 hops,
+so Q1n/Q1n2/Q1o/Q1o2/Q1p/Q1q are untouched. The stop set is the forced copy the
+item predicted: `dup:fieldstop`, with C38 pinning it equal to `_FIELD_STOP` —
+and **MC2 failed on the first version because I tagged only one of the two
+sites**, which is the tripwire working on its author.
 
 ### 4e. A hit on a SIBLING reads as "you missed", and the click works — CLOSED
 The hit-test echo distinguishes "you hit the inside of your own target" (silent,

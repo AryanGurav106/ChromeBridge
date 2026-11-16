@@ -6494,6 +6494,11 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
   // fallback inside its widget (#14/W10). Defined once because #21's lesson was
   // that one concept spelled twice drifts into two behaviours — and these two had
   // already drifted apart in every other respect.
+  // dup:fieldstop -- the containers that are never ONE thing's wrapper. The
+  // same set answers the climb's "is this ever one RECORD?" in
+  // `_searchTextPage`, which is injected standalone and so cannot call this
+  // one. C38 pins the two equal; MC2 caught the first version of this tag with
+  // no partner, which is the tripwire doing its job on its own author.
   const _FIELD_STOP = {
     MAIN: 1, NAV: 1, HEADER: 1, FOOTER: 1, ASIDE: 1, SECTION: 1,
     FORM: 1, FIELDSET: 1, TABLE: 1, UL: 1, OL: 1, BODY: 1, HTML: 1,
@@ -13186,13 +13191,86 @@ function _searchTextPage(pattern, opts) {
   // and stops there; it is the COLLECTION above it that was the defect, and no
   // record rule ever climbs into one.
   const _RECORD = { TR: 1, LI: 1, DL: 1, FIGURE: 1, ARTICLE: 1 };
+  // ...AND WHEN NO TAG DECLARES THE RECORD, THE REPETITION DOES.
+  //
+  // The rule above is a TAG lookup, so against a chain of wrappers that declare
+  // nothing it finds no record and falls back to one hop -- which on a widget
+  // built from same-text wrappers is a NO-OP. Measured live in eval 6 on a
+  // Vuetify cart button, six levels from the matched node:
+  //     div.label  span.v-btn__content  button.v-btn  div.v-badge__wrapper
+  //     div.v-badge  div.menu-btn   <- the count badge lives here
+  // Every one of them has innerText "Корзина". The caller asked for 120 context
+  // characters and got 7; the agent reported the answer as "one DOM hop away"
+  // and it is six, which is why the climb firing correctly still helped nobody.
+  //
+  // "Keep climbing while the ancestor adds no new text" re-opens #43 -- it walks
+  // a link through its sole-child wrapper straight into the LIST. What separates
+  // the two cases is the thing the TREE already uses to decide repetition (#27):
+  // a record is one of SEVERAL SIBLINGS OF THE SAME KIND. The badge wrapper has
+  // no twin; a list item has five.
+  //
+  // "Same kind" is read from what the author DECLARED. A class is a statement
+  // that these elements are the same sort of thing, so two siblings sharing
+  // tag+class are peer records even when their contents differ -- which is the
+  // Vuetify case, where `div.menu-btn` holds a cart on one side and a profile
+  // link on the other. When no class is declared, fall back to the structural
+  // answer: exact equality of subtree shape. That branch is load-bearing rather
+  // than tidy -- a card's inner wrapper and its price are BOTH bare `<div>`, so
+  // tag alone makes them look like peer records and stops the climb one level
+  // short of the card, which is exactly the grocery shape eval 7 ran into.
+  //
+  // MEASURED, 40 frozen sites, 326 matches taken from each page's OWN controls:
+  // 25 improve (median +57 chars), max context UNCHANGED at 314, and zero
+  // contexts over 1200 -- i.e. no whole-list leak. Two earlier candidates are
+  // recorded in docs/OPEN.md 4d with why each was worse; the one that counted
+  // CONTROLS climbed adminlte's message list into four messages, because a
+  // `<div>` row is not in anybody's control selector and a second opinion about
+  // what a control is was #18's 60%-of-the-gap defect. Timing, interleaved on
+  // one page load: 0.27ms median against 0.31ms for the old climb -- FASTER,
+  // because a record list now stops at hop 1 instead of scanning four for a tag.
+  //
+  // dup:fieldstop -- the same containers `_inFieldWrapper` refuses to treat as
+  // one field's wrapper are the ones that are never ONE record. This function is
+  // injected standalone, so the duplication is forced; C38 pins the two sets
+  // equal, because two passes answering one question with two lists is #21.
+  const _CLIMB_STOP = {
+    MAIN: 1, NAV: 1, HEADER: 1, FOOTER: 1, ASIDE: 1, SECTION: 1,
+    FORM: 1, FIELDSET: 1, TABLE: 1, UL: 1, OL: 1, BODY: 1, HTML: 1,
+  };
+  const _sig = (e, d) => {
+    const s = e.tagName + '.' + (typeof e.className === 'string'
+      ? e.className.trim().replace(/\s+/g, ' ') : '');
+    if (d <= 0) return s;
+    const k = [];
+    for (const c of e.children) k.push(_sig(c, d - 1));
+    return s + '(' + k.join(',') + ')';
+  };
+  const _kind = (e) => {
+    const c = (typeof e.className === 'string'
+      ? e.className.trim().replace(/\s+/g, ' ') : '');
+    return c ? e.tagName + '.' + c : _sig(e, 3);
+  };
+  const _isRecord = (n) => {
+    try {
+      const p = n.parentElement;
+      if (!p || p.children.length < 2) return false;
+      const s = _kind(n);
+      let k = 0;
+      for (const c of p.children) { if (_kind(c) === s && ++k > 1) return true; }
+      return false;
+    } catch (e) { return false; }
+  };
   const _climbTo = (node) => {
     try {
       let n = node, d = 0;
-      while (n && d < 4) {
+      while (n && d < 8) {
         n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null;
+        if (!n) break;
         d++;
-        if (n && _RECORD[n.tagName]) return d;
+        // #47, UNCHANGED: a DECLARED record within 4 hops wins outright.
+        if (d <= 4 && _RECORD[n.tagName]) return d;
+        if (_CLIMB_STOP[n.tagName]) break;
+        if (_isRecord(n)) return d;
       }
     } catch (e) {}
     return 1;

@@ -1356,6 +1356,105 @@ async def main():
               not bad, "; ".join(bad))
         await meta.close()
 
+        # ---- Q1aa-Q1ae: WHEN NO TAG DECLARES THE RECORD, THE REPETITION DOES.
+        # #47 targets the nearest DECLARED record (tr/li/dl/figure/article) and
+        # falls back to ONE hop when none is in range. Against a chain of
+        # wrappers that all carry the same string that hop is a no-op. Measured
+        # live in eval 6 on a Vuetify cart button: six levels of wrapper, every
+        # one reading "Korzina", the count badge at the top of them, the caller
+        # asking for 120 context chars and getting 7.
+        # A record is one of SEVERAL SIBLINGS OF THE SAME KIND -- the tree's own
+        # repetition rule (#27). "Same kind" is tag+class when the author
+        # declares a class, else exact subtree-shape equality.
+        rec = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await rec.goto("about:blank")
+
+        async def rsearch(pat, **kw):
+            o = dict(regex=False, caseSensitive=False, contextChars=120,
+                     maxResults=5, cssScope=None); o.update(kw)
+            return await rec.evaluate(
+                "(function(){ " + SEARCH + "; return _searchTextPage(" +
+                json.dumps(pat) + ", " + json.dumps(o) + "); })()")
+
+        # The eval-6 chain, verbatim in SHAPE. Note the two div.menu-btn siblings
+        # hold DIFFERENT contents -- a cart widget and a profile link -- which is
+        # why the kind test has to read the declared class rather than compare
+        # subtrees: subtree equality calls these two different and misses it.
+        await rec.set_content(
+            "<header><div class=menu-btn>"
+            "<div class=v-badge><div class=v-badge__wrapper>"
+            "<button class=v-btn><span class=v-btn__content>"
+            "<div class=label>Korzina</div></span></button>"
+            "<span class=v-badge__badge>3 items, 1240 RUB</span>"
+            "</div></div></div>"
+            "<div class=menu-btn><a href=/x><span>Profile</span></a></div></header>")
+        r = await rsearch("Korzina")
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1aa a match buried in same-text wrappers reaches the widget that "
+              "holds its badge, six levels up",
+              "1240" in ctx, f"context={ctx!r}")
+
+        # The class branch is not decoration: strip the classes and the same
+        # markup must fall back to subtree shape, which here correctly refuses
+        # (the two wrappers are genuinely different shapes) -- so this pins that
+        # the DECLARED class is what carries the Vuetify case.
+        await rec.set_content(
+            "<main><div class=cards>"
+            "<div class=card><div><a href=/a><span>Olives</span></a></div><div>229 RUB</div></div>"
+            "<div class=card><div><a href=/b><span>Capers</span></a></div><div>189 RUB</div></div>"
+            "</div></main>")
+        r = await rsearch("Olives")
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1ab a card that NO tag declares is found by its repeated class, "
+              "so the price beside the name comes back",
+              "229" in ctx, f"context={ctx!r}")
+        check("Q1ab2 CONTROL: ...and NOT the sibling card, which is a different "
+              "record -- the collection is never the context",
+              "Capers" not in ctx and "189" not in ctx, f"context={ctx!r}")
+
+        # #43's defect, which this must not re-open: peer records in a list.
+        # Here the records declare NO class at all, so only subtree equality can
+        # separate them -- the branch Q1ab's classes never exercise.
+        await rec.set_content(
+            "<main><div><div><a href=/1>First book</a></div>"
+            "<div><a href=/2>Second book</a></div>"
+            "<div><a href=/3>Third book</a></div></div></main>")
+        r = await rsearch("Second", contextChars=300)
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1ac CONTROL: unclassed peer records are separated by subtree "
+              "shape, so a link does not quote the whole list (#43)",
+              "First" not in ctx and "Third" not in ctx, f"context={ctx!r}")
+
+        # The candidate that counted CONTROLS instead climbed this into four
+        # messages, because a <div> row is in nobody's control selector -- #18's
+        # second-opinion defect. Recorded in OPEN.md 4d as the rejected variant.
+        await rec.set_content(
+            "<main><div class=box>"
+            "<div class=msg><div class=who>Alexander Pierce</div>"
+            "<div class=txt>Is this really free?</div></div>"
+            "<div class=msg><div class=who>Sarah Bullock</div>"
+            "<div class=txt>You better believe it</div></div>"
+            "<div class=msg><div class=who>Alexander Pierce</div>"
+            "<div class=txt>Wanna join?</div></div></div></main>")
+        r = await rsearch("Sarah", contextChars=300)
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1ad CONTROL: a message row is the record, so the thread above and "
+              "below it is not quoted",
+              "You better believe it" in ctx and "Wanna join" not in ctx
+              and "really free" not in ctx, f"context={ctx!r}")
+
+        # A landmark is never ONE record, however the page nests it. Without the
+        # stop set a lone control inside nested bare divs climbs to <main>.
+        await rec.set_content(
+            "<main><div><div><div><a href=/only>Solo</a></div></div></div>"
+            "<p>Unrelated paragraph that must not become the context.</p></main>")
+        r = await rsearch("Solo", contextChars=300)
+        ctx = (r["hits"][0]["context"] if r.get("hits") else "")
+        check("Q1ae CONTROL: with nothing repeated anywhere, the climb stops at "
+              "the landmark rather than quoting the page",
+              "Unrelated paragraph" not in ctx, f"context={ctx!r}")
+        await rec.close()
+
         # ---- Q1r-Q1w: A FORCED LINE BREAK IS TEXT (#48's last open item).
         #
         # <br> has no children, so the walk built '' for it and add() dropped it --

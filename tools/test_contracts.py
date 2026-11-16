@@ -1069,6 +1069,23 @@ def main() -> int:
           f"only in background.js: {sorted(_have_props - _want_props)}; "
           f"only in listener_tag.js: {sorted(_want_props - _have_props)}"
           if _have_props != _want_props else f"{len(_want_props)} events, agreed")
+
+    # C38: _CLIMB_STOP and _FIELD_STOP answer ONE question -- "is this container
+    # ever one thing's wrapper?" -- in two places, because `_searchTextPage` is
+    # injected standalone and loses its closure. The duplication is forced; the
+    # drift is not, and #21 records what it costs: the destructive wordlist
+    # existed twice in one function, multilingual in one tier and English-only
+    # in the other, so "Abbrechen" was rejected by one and accepted by the other.
+    def _stopset(name):
+        m = re.search(r"const " + name + r" = \{(.*?)\};", _bg, re.S)
+        return set(re.findall(r"([A-Z]+)\s*:", m.group(1))) if m else set()
+    _fs, _cs = _stopset("_FIELD_STOP"), _stopset("_CLIMB_STOP")
+    check("C38 the climb's stop set and the field wrapper's are the same set "
+          "(one concept, forced duplication, enforced equality)",
+          bool(_fs) and _fs == _cs,
+          f"only in _FIELD_STOP: {sorted(_fs - _cs)}; "
+          f"only in _CLIMB_STOP: {sorted(_cs - _fs)}"
+          if _fs != _cs else f"{len(_fs)} tags, agreed")
     # OC6: `toLocaleLowerCase()` is SPECIFIED to use the host default locale, so
     # the same page and the same request can give different answers on different
     # machines. MEASURED AND THE SCARY VERSION DID NOT REPRODUCE: the audit
