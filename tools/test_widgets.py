@@ -1493,6 +1493,49 @@ async def main():
               "Unrelated paragraph" not in ctx, f"context={ctx!r}")
         await rec.close()
 
+        # ---- KFF1/KFF1b: NO SECOND OPINION ABOUT WHAT A CONTROL IS.
+        # `isInteractive` runs at the top of the walk, so everything reaching
+        # `keepForFind` is ALREADY a control -- and that gate re-decided it with
+        # a NARROWER list, under a comment saying in capitals that two
+        # predicates disagreeing cost 60% of a measured accuracy gap (#18). It
+        # omitted summary, contenteditable, canvas, audio|video[controls] and
+        # editor hosts, so a page that supplied a NAME still lost the element.
+        # Demonstrated by an uninformed audit; no ruler here could see it,
+        # because Mind2Web's targets are all a/button/form tags.
+        kff = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await kff.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await kff.goto("about:blank")
+        await kff.set_content(
+            "<main style='height:4000px'>"
+            + "".join(f"<button style='display:block;margin:200px 0'>Btn {i}</button>"
+                      for i in range(12))
+            + "<canvas aria-label='Sales chart' width=300 height=200></canvas>"
+            + "<video controls aria-label='Intro video' width=200></video>"
+            + "<details><summary>More</summary>body</details></main>")
+        await kff.wait_for_timeout(150)
+        _rows = await kff.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        _tags = {e.get("tag"): (e.get("name") or e.get("label") or "")
+                 for e in _rows if e.get("tag") in ("canvas", "video", "summary")}
+        check("KFF1 a NAMED canvas, video and summary below the fold survive "
+              "into find's search space -- isInteractive admitted them and "
+              "nothing narrower may drop them again",
+              _tags.get("canvas") == "Sales chart"
+              and _tags.get("video") == "Intro video"
+              and "summary" in _tags, f"found={_tags}")
+
+        # THE CONTROL that this widened the STRUCTURED path only. #26 measured
+        # listing every offscreen row in the UNSCOPED STRING listing at +51%
+        # tokens and rejected it; that path short-circuits before this gate, and
+        # the claim is checked rather than reasoned.
+        _str = str(await kff.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        check("KFF1b CONTROL: the unscoped STRING listing is still "
+              "viewport-scoped, so #26's +51% trade is not re-opened",
+              "Sales chart" not in _str and "Intro video" not in _str,
+              _str[:160].replace(chr(10), " "))
+        await kff.close()
+
         # ---- Q1r-Q1w: A FORCED LINE BREAK IS TEXT (#48's last open item).
         #
         # <br> has no children, so the walk built '' for it and add() dropped it --

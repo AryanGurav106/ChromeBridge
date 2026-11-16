@@ -7682,36 +7682,51 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // the region index useless — the agent would be told where its target was and
     // then be unable to read it without scrolling anyway. Measured cost of the
     // blind scroll it replaces: 76 of 173 gold-path steps, at a full re-read each.
-    const keepForFind = (structured || !!scopeMmid) && visible && !inViewport && (() => {
-      const rr = el.getAttribute('role');
-      if (['a', 'button'].includes(tagL) || formyTags.has(tagL) ||
-          _roleHit(rr)) return true;
-      // AN ELEMENT THAT PASSED isInteractive IS A CONTROL. This predicate used to
-      // be NARROWER than the interactivity test: a handler-bound <div>/<span>/
-      // <label> qualified as interactive, then was dropped for being below the
-      // fold, while a <button> in the same position was kept. The two rules
-      // disagreed about what counts as a control.
-      //
-      // MEASURED: of 10 out-of-sample Mind2Web targets we missed, SIX were
-      // dropped by `outside-viewport` immediately after handler tagging made them
-      // interactive — 60% of the entire accuracy gap, from this one asymmetry.
-      // Only 2 were recovered by handler tagging alone, which killed the standing
-      // "our recall is only a static-HTML floor" explanation.
-      //
-      // Gated on a real activation signal rather than on tag names, so this
-      // widens reach without admitting inert text: an explicit handler, a
-      // pointer cursor, or focusability.
-      try {
-        if (el.__abClickBound) return true;
-        // Both spellings, same as isInteractive — #18's asymmetry is exactly two
-        // predicates disagreeing about what a control is, so this one must not
-        // acquire a third opinion by reading only the attribute.
-        if (el.hasAttribute('onclick') || _hasHandlerProp(el)
-            || el.hasAttribute('tabindex')) return true;
-        if (getComputedStyle(el).cursor === 'pointer') return true;
-      } catch (e) {}
-      return false;
-    })();
+    // ...AND THE INNER PREDICATE IS GONE, because it was #18'S DEFECT ITSELF.
+    //
+    // `isInteractive` is checked at the top of this walk, so EVERYTHING that
+    // reaches this line is already a control. What stood here re-decided that
+    // question with a NARROWER list, and the comment below -- which says in
+    // capitals that two predicates disagreeing about what a control is cost 60%
+    // of a measured accuracy gap -- was written directly above a second
+    // predicate still doing it. It omitted five of the eight admitting signals:
+    // `summary`, `contenteditable`, `canvas`, `audio|video[controls]`, and
+    // measured-monospace editor hosts.
+    //
+    // DEMONSTRATED by an uninformed audit and reproduced here: on a tall page a
+    // `<canvas aria-label="Sales chart">` and a `<video controls
+    // aria-label="Intro video">` below the fold are admitted by isInteractive,
+    // kept by the walk, and then dropped by `outside-viewport` -- so `find`
+    // cannot reach them. The page supplied a NAME and the element still
+    // vanished. No ruler here can see it: Mind2Web's targets are all
+    // `<a>`/`<button>`/form tags, so every metric scores a population the gap
+    // does not touch.
+    //
+    // MEASURED, both arms on the same page load, 30 frozen sites:
+    //   structured entries (find's search space)  7715 -> 7735   +0.26%
+    //   unscoped string listing                   UNCHANGED
+    // The string column is unchanged BY CONSTRUCTION and that was verified by
+    // counting rather than by reading: the gate `(structured || !!scopeMmid)`
+    // short-circuits, and the predicate ran 0 times in an unscoped string
+    // collection against 11 in a structured one. (A first A/B showed the string
+    // moving 15x the drift floor, which that reading forbids -- it was the
+    // probe's own structured call forcing layout via getComputedStyle, which
+    // the wide arm skipped. The counter settled it.)
+    //
+    // So this does NOT re-open #26, whose +51% was the UNSCOPED STRING listing:
+    // that path never reaches here. It widens exactly two things, and #26 is
+    // explicit that both should be wide -- `find`'s search space, and a scoped
+    // read, which "is NOT viewport-limited" by that entry's own decision.
+    const keepForFind = (structured || !!scopeMmid) && visible && !inViewport;
+    // The history the deleted predicate carried, kept because it is the record
+    // of why #18 matters: of 10 out-of-sample Mind2Web targets we missed, SIX
+    // were dropped by `outside-viewport` immediately after handler tagging made
+    // them interactive -- 60% of the entire accuracy gap from one asymmetry --
+    // and only 2 were recovered by handler tagging alone, which killed the
+    // standing "our recall is only a static-HTML floor" explanation. That fix
+    // widened this predicate from a tag list to an activation signal. This
+    // deletes it outright, which is the same move one step further: there is no
+    // list left to disagree with `isInteractive`, because there is no list.
     // COUNT ONLY WHAT IS ACTUALLY ABSENT. This tally drives the "N more elements
     // are BELOW the current viewport — scroll down" hint, and it used to run
     // BEFORE the keep decision, predicting the drop rather than following it.
