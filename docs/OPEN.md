@@ -965,7 +965,7 @@ a click that had worked. A fixed transition duration would be a chosen number;
 the mutation signal from #70 may answer it properly, and that has not been
 tried.
 
-### 6b. A flow replayed against a LOCALISED app names no cause `OPEN`
+### 6b. A flow replayed against a LOCALISED app names no cause — CLOSED
 The descriptor's identity rung IS the accessible name, so changing the app's
 language invalidates every step at once. The playground already ships a `ja`
 chaos flag whose own comment says "the whole descriptor design rests on the
@@ -979,6 +979,23 @@ The page declares the fact (`<html lang>`); the recorded half is missing, and
 `Flow` has no `lang` field. `viewport` is populated by `mcp_server` at stop
 time, so closing this needs a writer there as well as a reader in the runner —
 both halves or neither (rule 14).
+
+**CLOSED, both halves.** `<html lang>` rides `page_fingerprint`, the round trip
+the caller was already taking — the same justification `vw`/`vh` shipped on —
+so the writer costs nothing, and the runner's two notes now share ONE fetch
+between them rather than one each (#38). The note follows `_viewport_note`'s
+three rules exactly: no threshold, only on a resolve FAILURE where the reader
+is already looking for causes, and a CAUSE rather than a diagnosis, because a
+page can be translated without every name moving and a name can move for other
+reasons (#33).
+
+**Compared on the PRIMARY SUBTAG only.** BCP 47 makes `en-GB` and `en-US` both
+English and a region switch does not retranslate a UI, so the full tag would
+fire on a page that merely changed locale — the noise #15 priced, and the same
+mistake the viewport note's HEIGHT half made until #59 corrected it. Caught
+here before it could ship rather than after. FLG4 is that control.
+
+A flow recorded before this existed carries `""` and makes no claim (FLG5).
 
 ### 7. Page-level scans and the iframe boundary `MEASURE FIRST`
 **HALF THIS ITEM WAS WRONG and is corrected (#78).** Same-origin frames ARE

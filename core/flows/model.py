@@ -291,6 +291,12 @@ class Flow:
     steps: list = field(default_factory=list)
     recorded_at: str = ""
     viewport: Optional[dict] = None
+    # The document's declared language AT RECORD TIME. Read, like `viewport`,
+    # only to name a CAUSE when a target cannot be resolved -- the descriptor's
+    # identity rung is the accessible name, so a localised render invalidates
+    # every step at once and "no element matches" is then true and useless.
+    # A flow recorded before this existed carries "" and makes no claim.
+    lang: str = ""
     schema: int = SCHEMA
 
     def to_json(self) -> dict:
@@ -298,6 +304,8 @@ class Flow:
             "schema": self.schema, "name": self.name, "origin": self.origin,
             "recorded_at": self.recorded_at, "viewport": self.viewport,
         }
+        if self.lang:
+            d["lang"] = self.lang
         if self.vars:
             d["vars"] = self.vars
         if self.require:
@@ -318,7 +326,7 @@ class Flow:
         validate_expect(f"flow {d.get('name')!r} require", d.get("require"))
         return Flow(name=d.get("name") or "", origin=d.get("origin") or "",
                     recorded_at=d.get("recorded_at") or "",
-                    viewport=d.get("viewport"),
+                    viewport=d.get("viewport"), lang=d.get("lang") or "",
                     vars=d.get("vars") or {}, require=d.get("require") or {},
                     steps=[Step.from_json(s) for s in d.get("steps") or []])
 

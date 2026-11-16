@@ -4433,7 +4433,10 @@ async def _flow_viewport(tabId: Optional[int]) -> Optional[dict]:
     b = await _bridge()
     fp = await b.call("page_fingerprint", tabId=tabId)
     if isinstance(fp, dict) and fp.get("vw") and fp.get("vh"):
-        return {"width": int(fp["vw"]), "height": int(fp["vh"])}
+        # `lang` rides the same answer, so the runner's two notes cost ONE round
+        # trip between them rather than one each (#38).
+        return {"width": int(fp["vw"]), "height": int(fp["vh"]),
+                "lang": str(fp.get("lang") or "")}
     return None
 
 
@@ -4799,6 +4802,10 @@ async def record_flow(
                 fp = await b.call("page_fingerprint", tabId=_vt)
                 if isinstance(fp, dict) and fp.get("vw") and fp.get("vh"):
                     rec.viewport = {"width": int(fp["vw"]), "height": int(fp["vh"])}
+                # Same fetch, so no extra round trip (#38). An app that declares
+                # no <html lang> records "" and the runner makes no claim.
+                if isinstance(fp, dict) and fp.get("lang"):
+                    rec.lang = str(fp["lang"])
         except Exception:
             pass
         flow, report = rec.compile()

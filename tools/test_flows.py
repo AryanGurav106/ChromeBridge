@@ -1828,6 +1828,59 @@ async def record_and_replay():
           r_vp3["status"] == NEEDS and "different size" not in r_vp3["reason"],
           str(r_vp3["reason"])[:160])
 
+    # ---- FLG: A LOCALISED RENDER INVALIDATES EVERY STEP AT ONCE ----------
+    # The descriptor's identity rung IS the accessible name, so changing the
+    # app's language breaks every target simultaneously -- the playground's own
+    # `ja` chaos flag comments that "the whole descriptor design rests on the
+    # accessible name" -- and the failure surface had no entry for it. Measured:
+    # a target recorded as name='Sign in', replayed against a Japanese render,
+    # reported "no element on the page matches this step's target" and nothing
+    # else, while the SAME failure at a different window width appended a cause.
+    # The page declares it in <html lang>; only the recorded half was missing.
+    flg = FM.Flow.from_json({**fvp.to_json(), "lang": "en"})
+    check("FLG1 a recorded flow carries the language it was recorded in, and it "
+          "survives a round trip through the file format",
+          FM.Flow.from_json(flg.to_json()).lang == "en",
+          repr(FM.Flow.from_json(flg.to_json()).lang))
+
+    async def _env_ja(tab_id):
+        return {"width": 1280, "height": 900, "lang": "ja"}
+    gone_l = FakeBridge([E(9, "button", name="\u30b5\u30a4\u30f3\u30a4\u30f3")])
+    r_lg = await start(flg, 1, gone_l.call, gone_l.entries_fn, viewport_fn=_env_ja)
+    check("FLG2 a failed resolve names the language difference as a cause",
+          r_lg["status"] == NEEDS and "LANGUAGE" in r_lg["reason"]
+          and 'lang="ja"' in r_lg["reason"], str(r_lg["reason"])[:220])
+
+    # THE CONTROL that keeps it readable: same language, nothing said. Without
+    # it "always warn" would satisfy FLG2 and the note would mean nothing.
+    async def _env_en(tab_id):
+        return {"width": 1280, "height": 900, "lang": "en"}
+    gone_l2 = FakeBridge([E(9, "button", name="Something else")])
+    r_lg2 = await start(flg, 1, gone_l2.call, gone_l2.entries_fn, viewport_fn=_env_en)
+    check("FLG3 CONTROL: the same language is not mentioned",
+          r_lg2["status"] == NEEDS and "LANGUAGE" not in r_lg2["reason"],
+          str(r_lg2["reason"])[:160])
+
+    # BCP 47 says en-GB and en-US are both English, and a region change does not
+    # retranslate a UI -- so comparing the FULL tag would fire on a page that
+    # merely switched locale. Same correction #59 made to the viewport note's
+    # height half, applied before it could be shipped wrong.
+    async def _env_engb(tab_id):
+        return {"width": 1280, "height": 900, "lang": "en-GB"}
+    gone_l3 = FakeBridge([E(9, "button", name="Something else")])
+    r_lg3 = await start(flg, 1, gone_l3.call, gone_l3.entries_fn, viewport_fn=_env_engb)
+    check("FLG4 CONTROL: a REGION-only change says nothing — en-GB and en-US are "
+          "both English and a locale switch does not retranslate a UI",
+          r_lg3["status"] == NEEDS and "LANGUAGE" not in r_lg3["reason"],
+          str(r_lg3["reason"])[:160])
+
+    # And a flow recorded before this existed carries no language at all.
+    gone_l4 = FakeBridge([E(9, "button", name="Something else")])
+    r_lg4 = await start(fvp, 1, gone_l4.call, gone_l4.entries_fn, viewport_fn=_env_ja)
+    check("FLG5 CONTROL: an older flow with no recorded language makes no claim",
+          r_lg4["status"] == NEEDS and "LANGUAGE" not in r_lg4["reason"],
+          str(r_lg4["reason"])[:160])
+
     # ---- FW: AN ASSERTION THAT WAS ALREADY TRUE WITNESSES NOTHING ---------
     #
     # The most dangerous thing this feature can produce is a flow that cannot

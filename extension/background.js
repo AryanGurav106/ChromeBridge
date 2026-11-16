@@ -14066,6 +14066,17 @@ function _pageFingerprintPage(mmids) {
     // resolved rather than asserting anything about it (#57).
     vw: window.innerWidth || 0,
     vh: window.innerHeight || 0,
+    // ...AND THE DOCUMENT'S DECLARED LANGUAGE, for the same reason and on the
+    // same round trip. A flow descriptor's identity rung IS the accessible
+    // name, so changing the app's language invalidates every step at once --
+    // the playground's own `ja` chaos flag comments that "the whole descriptor
+    // design rests on the accessible name" -- and the failure surface had no
+    // entry for it: a target recorded as name='Sign in' replayed against a
+    // Japanese render said only "no element on the page matches", while the
+    // SAME failure at a different window width appended a cause. `<html lang>`
+    // is the page's own declaration, so this is a fact rather than a guess,
+    // and an empty one makes no claim.
+    lang: (document.documentElement && document.documentElement.lang) || '',
   };
   // DO THE REFS STILL RESOLVE? The element COUNT is only ever a proxy for that
   // question, and a bad one: a <datalist> opening under its own input adds

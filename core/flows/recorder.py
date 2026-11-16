@@ -241,12 +241,13 @@ class Recorder:
     """
 
     def __init__(self, name: str, entries_fn: Callable, origin: str = "",
-                 viewport: Optional[dict] = None):
+                 viewport: Optional[dict] = None, lang: str = ""):
         self.name = name
         self.origin = origin
         # Set by the caller at stop time: a page call, and the only
         # moment the answer is both known and cheap.
         self.viewport = viewport
+        self.lang = lang
         self.entries_fn = entries_fn
         self.raw: list = []
         self.started = time.time()
@@ -791,6 +792,7 @@ class Recorder:
             name=self.name, origin=self.origin,
             recorded_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
             viewport=self.viewport,
+            lang=self.lang,
             vars=variables, require=_require,
             steps=kept,
         )

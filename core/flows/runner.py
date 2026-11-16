@@ -149,6 +149,7 @@ class Run:
         self.cur_tab = tab_id
         self.call = call
         self.viewport_fn = viewport_fn
+        self._env = None
         self.entries_fn = entries_fn
         self.i = 0
         self.stop_after = None    # replay to this step index, then stop (see go())
@@ -365,7 +366,7 @@ class Run:
                 # answer went to whichever target happened to come first.
                 self.pending_path = unresolved.path
                 why = unresolved.reason + self._surface_note() \
-                    + await self._viewport_note()
+                    + await self._viewport_note() + await self._lang_note()
                 if len(step.targets) > 1 and unresolved.path:
                     why += (f" (this step names {len(step.targets)} targets; the "
                             f"one that could not be resolved is {unresolved.path!r}, "
@@ -513,6 +514,64 @@ class Run:
                 f'Nothing was guessed, and the ordinal in the file is now stale — '
                 f'the proposed patch below updates it.')
 
+    async def _live_env(self) -> Optional[dict]:
+        """The live page's viewport AND declared language, fetched ONCE.
+
+        Both notes below read it, so a failing step pays one round trip between
+        them rather than one each (#38). Cached for the run: a flow that fails
+        twice is failing on the same page.
+        """
+        if self._env is not None:
+            return self._env or None
+        if not self.viewport_fn:
+            self._env = {}
+            return None
+        try:
+            self._env = await self.viewport_fn(self.cur_tab) or {}
+        except Exception:
+            self._env = {}
+        return self._env or None
+
+    async def _lang_note(self) -> str:
+        """Name a LANGUAGE difference, on the same terms as the size one.
+
+        The descriptor's identity rung IS the accessible name, so a localised
+        render invalidates every step at once -- the playground's `ja` chaos
+        flag comments that "the whole descriptor design rests on the accessible
+        name". Measured: a target recorded as name='Sign in', replayed against
+        a Japanese render, reported "no element on the page matches this step's
+        target" and nothing else, while the SAME failure at a different window
+        width appended a cause. The page DECLARES the fact in <html lang>; the
+        recorded half simply did not exist.
+
+        Same three rules as `_viewport_note`: no threshold (any difference is
+        reported, because "material" would be a chosen number), only on a
+        resolve FAILURE where the reader is already looking for causes, and
+        a CAUSE rather than a diagnosis -- a page can be translated without
+        every name moving, and a name can move for other reasons (#33).
+
+        Compared on the PRIMARY SUBTAG only. BCP 47 says `en-GB` and `en-US`
+        are both English, and a region change does not retranslate a UI, so
+        comparing the full tag would fire on a page that merely switched
+        locale -- the noise #15 priced, and the same mistake the HEIGHT half of
+        the viewport note made before #59 corrected it.
+        """
+        rec = (self.flow.lang or "").strip()
+        if not rec:
+            return ""
+        live = await self._live_env()
+        now = str((live or {}).get("lang") or "").strip()
+        if not now:
+            return ""
+        base = lambda t: t.lower().replace("_", "-").split("-")[0]
+        if base(now) == base(rec):
+            return ""
+        return (f" The page also declares a different LANGUAGE than when this was "
+                f"recorded: <html lang=\"{now}\"> now against \"{rec}\" then. A "
+                f"target is matched on its accessible NAME, so a translated render "
+                f"invalidates every step at once; re-record against this language, "
+                f"or switch the app back.")
+
     async def _viewport_note(self) -> str:
         """Name a size difference, but only while explaining a failure.
 
@@ -533,12 +592,9 @@ class Run:
         happens next.
         """
         rec = self.flow.viewport or {}
-        if not rec.get("width") or not self.viewport_fn:
+        if not rec.get("width"):
             return ""
-        try:
-            live = await self.viewport_fn(self.cur_tab)
-        except Exception:
-            return ""
+        live = await self._live_env()
         if not live or not live.get("width"):
             return ""
         # WIDTH ONLY, and that is the whole correction. Comparing both fired on a
