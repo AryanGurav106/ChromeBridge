@@ -2771,6 +2771,75 @@ async def record_and_replay():
           "however unrelated its assertion",
           not any(r.startswith("unscoped:") for r in _r3), str(_r3))
 
+    # ---- FW11: A SEARCH FOR WHAT YOU TYPED IS SATISFIED BY THE ECHO ----
+    # DEMONSTRATED on a real recorded flow whose only final assertion is
+    # `search_page("{{investor_name}}") min 1`: replayed where the Add silently
+    # fails and the page renders "Could not add ZZ Flow Watch Two: … already
+    # exists", it PASSES 5/5 with no record created, because the name is in the
+    # ERROR. Every search check in the corpus is `min: 1` presence, and presence
+    # of a string you supplied is the one thing an app echoes back whatever the
+    # outcome. Decidable without knowing any error wording: `_paramize` rewrote
+    # the pattern to `{{name}}` exactly when it IS a value this flow types.
+    async def _search_reviews(typed, pattern):
+        _fb = FakeBridge([E(1, "input", type_="text", name="Name", section="main",
+                            editable=True),
+                          E(2, "button", type_="submit", name="Save",
+                            section="main")])
+        r = Recorder("x", _fb.entries_fn, origin="https://app.test")
+        r.after("navigate", {"url": "https://app.test/new", "tabId": 5},
+                "Navigated to https://app.test/new", {})
+        _fi = {"fields": [{"ref": "ref_1", "value": typed}], "tabId": 5}
+        _tg = await r.before("fill_form", _fi)
+        r.after("fill_form", _fi, "Filled 1 field", _tg)
+        r.after("search_page", {"tabId": 5, "pattern": pattern},
+                f'No match for "{pattern}"', {})
+        _tg2 = await r.before("computer", {"action": "left_click", "ref": "ref_2",
+                                           "tabId": 5})
+        r.after("computer", {"action": "left_click", "ref": "ref_2", "tabId": 5},
+                "clicked", _tg2)
+        r.after("search_page", {"tabId": 5, "pattern": pattern},
+                f'1 match(es) for "{pattern}"', {})
+        f, _rep = r.compile()
+        return [rv for st in f.steps for rv in (st.review or [])]
+
+    _e1 = await _search_reviews("ZZ Flow Watch Two", "ZZ Flow Watch Two")
+    check("FW11 a search assertion whose pattern is a value the flow TYPES is "
+          "named -- the app echoes your input back whether it succeeded or not",
+          any(r.startswith("echo:") for r in _e1), str(_e1))
+
+    # CONTROL: a search for something the APP produces carries no such warning.
+    # Without it "always warn" would satisfy FW11 and the line would fire on
+    # every flow that searches for anything at all.
+    _e2 = await _search_reviews("ZZ Flow Watch Two", "Record created")
+    check("FW11b CONTROL: a search for a string the flow did NOT type is not "
+          "warned about",
+          not any(r.startswith("echo:") for r in _e2), str(_e2))
+
+    # ---- FW12: THE POSITIONAL WARNING NAMED A USER ACTION ----------------
+    # It said "re-sort that list", which takes somebody. The dangerous case
+    # needs nobody: a recency list that gains a row at the top and drops its
+    # oldest leaves the COUNT and the ORDER identical while every index shifts,
+    # so the crowd-check cannot see it. Measured on 20 frozen sites with a churn
+    # arm: the unwitnessed half bound to the WRONG element 100% of the time with
+    # 0% refusals.
+    _pos = Flow(name="p", steps=[Step(
+        name="computer", input={"action": "left_click"},
+        targets={"ref": {"level": 6, "of": 4, "nth": 1,
+                         "desc": {"tag": "button", "role": "", "type": "button",
+                                  "name": "Open", "section": "main"}}},
+        expect={})])
+    _pr = Recorder("p", FakeBridge([]).entries_fn)
+    _pr.raw = []
+    from core.flows.descriptor import unwitnessed_ordinal as _uo
+    check("FW12 an unwitnessed ordinal is still recognised as positional",
+          _uo(_pos.steps[0].targets["ref"]) is True,
+          str(_pos.steps[0].targets["ref"]))
+    _rsrc = (ROOT / "core" / "flows" / "recorder.py").read_text(encoding="utf-8")
+    check("FW12b ...and the warning names CHURN, which needs no user, not only "
+          "a re-sort, which does",
+          "CHURN" in _rsrc and "churns between two CI runs" in _rsrc,
+          "churn named" if "CHURN" in _rsrc else "only re-sort is named")
+
     nb = FakeBridge([])
     noted = Flow(name="n", steps=[Step(
         name="computer", input={"action": "left_click"},

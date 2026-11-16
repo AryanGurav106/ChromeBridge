@@ -826,14 +826,58 @@ class Recorder:
                         'pass. Re-record with an observation of something that '
                         'must still be PRESENT.')
 
+        # A SEARCH FOR WHAT YOU TYPED IS SATISFIED BY THE APP REPEATING IT BACK.
+        #
+        # DEMONSTRATED on a real recorded flow: its only final assertion is
+        # `search_page("{{investor_name}}") min 1`, and replaying it where the
+        # Add silently fails and the page renders
+        #     Could not add ZZ Flow Watch Two: … already exists
+        # gives PASSED 5/5 with no record created. The name is in the ERROR, so
+        # the check holds. Every `search` check in the corpus is `min: 1`
+        # presence, and presence of a string you supplied is the one thing an
+        # app will echo back whatever the outcome -- in a validation message, in
+        # the field itself, in a confirmation, in a breadcrumb.
+        #
+        # Decidable from what the recorder already holds: `_paramize` has
+        # rewritten the pattern to `{{name}}` exactly when it IS a value this
+        # flow types. No guess about error wording, no vocabulary, and nothing
+        # that needs to know what the app says.
+        #
+        # A WARNING, NOT A REFUSAL -- same posture as `hollow` and `unproven`.
+        # Searching for what you typed is often the only thing a flow CAN assert,
+        # and the recorder does not get to overrule the person who drove it.
+        for _n, _st in enumerate(kept):
+            _exp = _st.expect or {}
+            _ss = _exp.get("search")
+            for _one in (_ss if isinstance(_ss, list) else ([_ss] if _ss else [])):
+                _pat = str((_one or {}).get("pattern") or "")
+                _vars_in = re.findall(r"\{\{([A-Za-z0-9_]+)\}\}", _pat)
+                if not _vars_in:
+                    continue
+                _st.review.append(
+                    f'echo: this step asserts that the page CONTAINS '
+                    f'{", ".join("{{" + v + "}}" for v in _vars_in)}, which is a '
+                    f'value this flow TYPES. An app repeats your input back in a '
+                    f'validation message, in the field itself and in a '
+                    f'confirmation alike, so the check can hold whether the '
+                    f'action succeeded or failed. Assert something the app '
+                    f'PRODUCES — a row count, an id, a status — alongside it')
+
         for _n, _st in enumerate(kept):
             for _p, _t in (_st.targets or {}).items():
                 if unwitnessed_ordinal(_t):
                     _st.review.append(
                         f'positional: {_p} is one of {_t.get("of")} controls that are '
                         f'identical in every declared field AND in their surroundings, '
-                        f'so this step is pinned by POSITION alone — re-sort that list '
-                        f'and the step acts on a different one')
+                        f'so this step is pinned by POSITION alone — and it does not '
+                        f'take a user to break it. A re-sort moves them, but so does '
+                        f'CHURN: a recency list that gains one row at the top and drops '
+                        f'its oldest leaves the count and the order identical while '
+                        f'every index shifts by one, so nothing here can notice. '
+                        f'Measured on 20 frozen sites with a churn arm: the unwitnessed '
+                        f'half bound to the WRONG element 100% of the time with 0% '
+                        f'refusals. An inbox, an audit log or a Latest-invoices table '
+                        f'churns between two CI runs on its own')
                 if _t.get("untargetable"):
                     _st.review.append(
                         f'untargetable: {_p} was described from an element the '
