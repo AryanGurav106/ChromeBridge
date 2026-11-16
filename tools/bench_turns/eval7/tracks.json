@@ -4,7 +4,7 @@
   "arm": "cb",
   "track": "e7_cb_rail2p",
   "task_file": "rail_book_to_cart_2_passengers.json",
-  "task": "На %HOST% в «Поездах» найди билеты Москва — Санкт-Петербург на 04.09.2026, 2 пассажира, добавь в корзину.",
+  "task": "На %HOST% в «Поездах» найди билеты Москва — Санкт-Петербург на 16.11.2026, 2 пассажира, добавь в корзину.",
   "n_conditions": 10,
   "conditions": [
    {
@@ -24,7 +24,7 @@
    {
     "event_name": "select_date",
     "parameters": {
-     "date": "2026-09-04"
+     "date": "2026-11-16"
     }
    },
    {
@@ -70,7 +70,7 @@
   "arm": "cic",
   "track": "e7_cic_rail2p",
   "task_file": "rail_book_to_cart_2_passengers.json",
-  "task": "На %HOST% в «Поездах» найди билеты Москва — Санкт-Петербург на 04.09.2026, 2 пассажира, добавь в корзину.",
+  "task": "На %HOST% в «Поездах» найди билеты Москва — Санкт-Петербург на 16.11.2026, 2 пассажира, добавь в корзину.",
   "n_conditions": 10,
   "conditions": [
    {
@@ -90,7 +90,7 @@
    {
     "event_name": "select_date",
     "parameters": {
-     "date": "2026-09-04"
+     "date": "2026-11-16"
     }
    },
    {
@@ -136,7 +136,7 @@
   "arm": "cb",
   "track": "e7_cb_railpay",
   "task_file": "rail_book_and_pay_2_passengers.json",
-  "task": "На %HOST% в «Поездах» оформи и оплати билет Москва — Санкт-Петербург на 04.09.2026 для 2 пассажиров.",
+  "task": "На %HOST% в «Поездах» оформи и оплати билет Москва — Санкт-Петербург на 16.11.2026 для 2 пассажиров.",
   "n_conditions": 8,
   "conditions": [
    {
@@ -156,7 +156,7 @@
    {
     "event_name": "select_date",
     "parameters": {
-     "date": "2026-09-04"
+     "date": "2026-11-16"
     }
    },
    {
@@ -196,7 +196,7 @@
   "arm": "cic",
   "track": "e7_cic_railpay",
   "task_file": "rail_book_and_pay_2_passengers.json",
-  "task": "На %HOST% в «Поездах» оформи и оплати билет Москва — Санкт-Петербург на 04.09.2026 для 2 пассажиров.",
+  "task": "На %HOST% в «Поездах» оформи и оплати билет Москва — Санкт-Петербург на 16.11.2026 для 2 пассажиров.",
   "n_conditions": 8,
   "conditions": [
    {
@@ -216,7 +216,7 @@
    {
     "event_name": "select_date",
     "parameters": {
-     "date": "2026-09-04"
+     "date": "2026-11-16"
     }
    },
    {
@@ -376,7 +376,7 @@
   "arm": "cb",
   "track": "e7_cb_hotel2rm",
   "task_file": "hotel_search_scenario_two_rooms.json",
-  "task": "На %HOST% в «Отели» подбери жильё в Милане, Италия на 12–16.09.2026: два номера по 2 взрослых в каждом.",
+  "task": "На %HOST% в «Отели» подбери жильё в Милане, Италия на 16–20.11.2026: два номера по 2 взрослых в каждом.",
   "n_conditions": 5,
   "conditions": [
    {
@@ -391,13 +391,13 @@
    {
     "event_name": "bench_hotel_select_start_date",
     "parameters": {
-     "date": "2026-09-12"
+     "date": "2026-11-16"
     }
    },
    {
     "event_name": "bench_hotel_select_end_date",
     "parameters": {
-     "date": "2026-09-16"
+     "date": "2026-11-20"
     }
    },
    {
@@ -432,7 +432,7 @@
   "arm": "cic",
   "track": "e7_cic_hotel2rm",
   "task_file": "hotel_search_scenario_two_rooms.json",
-  "task": "На %HOST% в «Отели» подбери жильё в Милане, Италия на 12–16.09.2026: два номера по 2 взрослых в каждом.",
+  "task": "На %HOST% в «Отели» подбери жильё в Милане, Италия на 16–20.11.2026: два номера по 2 взрослых в каждом.",
   "n_conditions": 5,
   "conditions": [
    {
@@ -447,13 +447,13 @@
    {
     "event_name": "bench_hotel_select_start_date",
     "parameters": {
-     "date": "2026-09-12"
+     "date": "2026-11-16"
     }
    },
    {
     "event_name": "bench_hotel_select_end_date",
     "parameters": {
-     "date": "2026-09-16"
+     "date": "2026-11-20"
     }
    },
    {

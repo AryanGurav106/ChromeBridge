@@ -1,6 +1,6 @@
 {
- "why": "Dates two months in the app's PAST; its calendar has one nav control (mdi-arrow-right, forward only) and no date input. Measured 2026-11-16 on e7_cic_rail2p. PREREG Amendment 1 freezes this list.",
- "conditions": [
+ "why": "WITHDRAWN by PREREG Amendment 3. Amendment 1 excluded four date conditions as unreachable, which was true of the tracks AS I HAD GENERATED THEM and not of the benchmark: bench_eval/task_dates.py rolls a task's booking dates (and its prompt text) forward when the earliest would be in the past, because hotel and rail calendars disable past days. make_tracks.py now calls it, every task is reachable, and nothing is excluded. Kept non-empty-shaped so the reader can see what was withdrawn and the scorer's exclusion path stays exercised by its own tests rather than deleted.",
+ "withdrawn": [
   {
    "key": "rail2p",
    "event_name": "select_date",
@@ -29,5 +29,6 @@
     "date": "2026-09-16"
    }
   }
- ]
+ ],
+ "conditions": []
 }

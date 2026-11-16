@@ -173,3 +173,126 @@ now "9 of 10 conditions, and the tenth is impossible", which is a weaker
 sentence than "10 of 10" and the right one. Run 1 scored exactly that — 9/10,
 with `select_date` the sole unmet condition, which is what the agent predicted
 from the UI before the oracle was consulted.
+
+---
+
+## AMENDMENT 2 — 2026-11-16, after runs 1–2, before run 1 is re-run
+
+**One build per arm, for the whole eval.** Three changes to
+`extension/background.js` landed during eval 6's write-up and were not live
+when run 1 executed: the entry cap no longer gives `section=dialog` priority
+unless a dialog is actually open, the cap notice names `query_elements` for rows
+that share one label, and the scoped readiness note states the page-wide
+recency as a bound instead of recommending an unscoped re-read.
+
+**Two of eval 7's eight apps carry the off-canvas drawers the first of those
+fixes is about**, so leaving run 1 on the old build would put a build change
+inside our own arm, between tasks, in the direction that flatters later runs.
+
+**Decision: the extension was reloaded (worker `g25h9p` age 16,015s ->
+`p5fcai` age 7s, and `bridge_ms_total` reset to 6.0, which is what distinguishes
+a respawned stdio process from a client that merely re-handshook), the
+`e7_cb_rail2p` track was recreated from zero, and run 1 is re-run on the new
+build.** Its old result (9/9 reachable conditions, 28 browser calls) is
+superseded and is NOT carried forward; it survives only in this amendment, as
+the thing that found the impossible date in Amendment 1.
+
+**No further `background.js` change until the eval finishes.** Eval-7 findings
+are recorded in `docs/OPEN.md` as they are found and fixed afterwards, so that
+every ChromeBridge run in this eval is the same build. The Claude-in-Chrome arm
+is unaffected either way, which is also what makes it the drift control (#35,
+#41): its code has not changed at all.
+
+**What this costs:** one run, about seven minutes, and it is cheaper than a
+split build nobody can explain later.
+
+---
+
+## AMENDMENT 3 — 2026-11-16, after runs 1–3, which are all DISCARDED
+
+**AMENDMENT 1 WAS WRONG ABOUT WHOSE DEFECT IT WAS, and the correction came from
+the benchmark's own published leaderboard rather than from reading my code.**
+
+Amendment 1 recorded that three tasks ask for a date the app's calendar cannot
+reach, measured it carefully, and called it "a decay property of the benchmark
+itself, worth reporting upstream". The measurement was right. The attribution
+was not.
+
+`liderboard/results/raw/*/results.json` ships per-condition results for 24
+published model×harness runs. A run started **2026-09-16** carries
+
+```
+{"event_name": "select_date", "parameters": {"date": "2026-09-17"}, "success": true}
+```
+
+for the task whose file says `2026-09-04`. **Their harness rewrites the date.**
+`bench_eval/task_dates.py` says so in its own docstring: *"Task JSON keeps
+authored ISO dates as templates; this module shifts a task's booking dates (and
+matching prompt text) forward by one shared delta when the earliest date would
+otherwise be in the past."* Hotel and rail calendars disable past days, which is
+exactly the wall both arms hit.
+
+`make_tracks.py` merged the task file verbatim and never called it. **The
+impossible task was mine.**
+
+**THE FIX, and it is better than the workaround it replaces.**
+`make_tracks.py` now imports the benchmark's own `apply_booking_dates` and
+REFUSES to generate tracks if it cannot — generating with authored template
+dates is precisely what produced Amendment 1. All 16 tracks are recreated.
+
+| task | prompt was | prompt now | conditions |
+|---|---|---|---|
+| rail2p | 04.09.2026 | **16.11.2026** | `2026-11-16` |
+| railpay | 04.09.2026 | **16.11.2026** | `2026-11-16` |
+| hotel2rm | 12–16.09.2026 | **16–20.11.2026** | `2026-11-16`, `2026-11-20` |
+| hoteldxb | 05–09.03.2027 | unchanged | already future |
+
+The gap is preserved and the prompt text is rewritten with the conditions, so
+the task an agent reads and the oracle it is scored against agree.
+
+**AMENDMENT 1's EXCLUSION IS WITHDRAWN IN FULL.** All 39 conditions are
+reachable; both denominators are now 39 and will print identically.
+`unreachable.json` keeps the four under a `withdrawn` key rather than being
+deleted, so what was excluded stays visible and the scorer's exclusion path
+stays exercised.
+
+**RUNS 1, 2 AND 3 ARE DISCARDED** and their tracks recreated from zero. They ran
+against a task that asked for an impossible date, and the two arms handled that
+differently in a way that makes them incomparable: run 2 (CIC) declined to edit
+the URL, writing *"the task required completing through the page's own UI"*, and
+run 3 (CIC) did edit it, writing *"reaching the requested date required the URL
+parameter"*. Scoring those against each other, or against a ChromeBridge run
+that picked a different date again, would be comparing three different tasks.
+Nothing from them is carried forward. What they bought is this amendment, and
+two findings already recorded in `docs/OPEN.md` (4e, 4f).
+
+**WHAT I WOULD DO DIFFERENTLY, stated because it is the reusable part:** #48's
+eval had a referee validate every task before any run, and it dropped two.
+Eval 7 had no such pass, and the thing that found this was a run. A generator
+that merges a task file should be read against the harness that normally
+consumes it — the answer was in a file called `task_dates.py` the whole time.
+
+**AN EXTERNAL BASELINE, recorded now rather than after seeing our numbers.**
+The same leaderboard gives published pass rates for all 24 runs on these exact
+eight tasks:
+
+| task | published |
+|---|---|
+| rail_book_to_cart_2_passengers | **0/24** |
+| rail_book_and_pay_2_passengers | 1/24 |
+| ecommerce_basket_three_products | 9/24 |
+| hotel_search_scenario_dubai | 10/24 |
+| hotel_search_scenario_two_rooms | 10/24 |
+| grocery_basket_category_named_product | 10/24 |
+| digital_books_author_expensive_basket | 15/24 |
+| files_download_pdf | 19/24 |
+| **the eight together** | **74/192 = 38.5%** |
+
+against a best published whole-benchmark run of **125/152 = 82.2%**. So this is
+a HARD subset, chosen for condition count and not for difficulty, and the
+metric has room to move rather than saturating the way every previous
+head-to-head here did. **Two caveats, before anyone quotes a comparison:** those
+runs are scored all-conditions-or-fail while this eval's primary metric is
+conditions satisfied, so the numbers are not directly comparable; and they ran
+in September 2026 against their own rolled-forward dates, which is a different
+task text from ours. They bound difficulty, not performance.

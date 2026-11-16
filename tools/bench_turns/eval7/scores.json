@@ -2,16 +2,23 @@
  {
   "track": "e7_cb_rail2p",
   "units": 10,
-  "met": 9,
-  "reachable": 9,
-  "events": 55,
+  "met": 0,
+  "reachable": 10,
+  "events": 0,
   "passed": false,
-  "passed_reachable": true,
-  "unreachable": [
-   "select_date"
-  ],
+  "passed_reachable": false,
+  "unreachable": [],
   "unmet": [
-   "select_date"
+   "select_city",
+   "select_city",
+   "select_date",
+   "submit_search",
+   "select_train",
+   "select_tariff",
+   "select_seat",
+   "select_passenger",
+   "select_passenger",
+   "basket_add"
   ],
   "key": "rail2p",
   "arm": "cb",
@@ -20,16 +27,20 @@
  {
   "track": "e7_cic_rail2p",
   "units": 10,
-  "met": 6,
-  "reachable": 9,
-  "events": 59,
+  "met": 0,
+  "reachable": 10,
+  "events": 0,
   "passed": false,
   "passed_reachable": false,
-  "unreachable": [
-   "select_date"
-  ],
+  "unreachable": [],
   "unmet": [
+   "select_city",
+   "select_city",
    "select_date",
+   "submit_search",
+   "select_train",
+   "select_tariff",
+   "select_seat",
    "select_passenger",
    "select_passenger",
    "basket_add"
@@ -42,13 +53,11 @@
   "track": "e7_cb_railpay",
   "units": 8,
   "met": 0,
-  "reachable": 7,
+  "reachable": 8,
   "events": 0,
   "passed": false,
   "passed_reachable": false,
-  "unreachable": [
-   "select_date"
-  ],
+  "unreachable": [],
   "unmet": [
    "select_city",
    "select_city",
@@ -67,13 +76,11 @@
   "track": "e7_cic_railpay",
   "units": 8,
   "met": 0,
-  "reachable": 7,
+  "reachable": 8,
   "events": 0,
   "passed": false,
   "passed_reachable": false,
-  "unreachable": [
-   "select_date"
-  ],
+  "unreachable": [],
   "unmet": [
    "select_city",
    "select_city",
@@ -134,14 +141,11 @@
   "track": "e7_cb_hotel2rm",
   "units": 5,
   "met": 0,
-  "reachable": 3,
+  "reachable": 5,
   "events": 0,
   "passed": false,
   "passed_reachable": false,
-  "unreachable": [
-   "bench_hotel_select_start_date",
-   "bench_hotel_select_end_date"
-  ],
+  "unreachable": [],
   "unmet": [
    "bench_hotel_select_city",
    "bench_hotel_select_start_date",
@@ -157,14 +161,11 @@
   "track": "e7_cic_hotel2rm",
   "units": 5,
   "met": 0,
-  "reachable": 3,
+  "reachable": 5,
   "events": 0,
   "passed": false,
   "passed_reachable": false,
-  "unreachable": [
-   "bench_hotel_select_start_date",
-   "bench_hotel_select_end_date"
-  ],
+  "unreachable": [],
   "unmet": [
    "bench_hotel_select_city",
    "bench_hotel_select_start_date",

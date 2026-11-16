@@ -22,6 +22,7 @@ import json
 import sys
 import urllib.request
 import uuid
+from datetime import date
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -71,10 +72,30 @@ def main() -> int:
         print(f"not a WebPageBench checkout: {repo}", file=sys.stderr)
         return 2
 
+    # THE BENCHMARK'S OWN ROLL-FORWARD, WHICH THIS GENERATOR SKIPPED.
+    # `bench_eval/task_dates.py`: "Task JSON keeps authored ISO dates as
+    # TEMPLATES; this module shifts a task's booking dates (and matching prompt
+    # text) forward by one shared delta when the earliest date would otherwise
+    # be in the past." Hotel and rail calendars disable past days, so without it
+    # three of the eight tasks ask for a date their own picker cannot reach.
+    # Found from the published leaderboard, not from reading: a run started
+    # 2026-09-16 carries `select_date {"date": "2026-09-17"}` where the task
+    # file says 2026-09-04. See PREREG Amendment 3.
+    sys.path.insert(0, str(repo))
+    try:
+        from bench_eval.task_dates import apply_booking_dates
+    except Exception as e:                                        # noqa: BLE001
+        print(f"cannot import the benchmark's own apply_booking_dates: {e}\n"
+              f"Refusing to generate tracks with authored template dates -- "
+              f"that is what produced eval 7's Amendment 1.", file=sys.stderr)
+        return 2
+
     base = json.loads(base_p.read_text(encoding="utf-8"))
     rows = []
+    today = date.today()
     for key, fname in TASKS:
         task = json.loads((tdir / fname).read_text(encoding="utf-8"))
+        apply_booking_dates(task, today=today)
         conds = task["test_data"].get("conditions", []) or []
         for arm in ARMS:
             tid = f"e7_{arm}_{key}"
