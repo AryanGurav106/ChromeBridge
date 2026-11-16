@@ -257,3 +257,88 @@ corpora cannot.
   hit it because it navigated into each product page. Neither toolset can
   distinguish "3 of these are in your cart" from "this card is showing another
   product's leftover state" — the page declares nothing either way.
+
+## Pair 6 — filespdf (3 conditions): TIE, 3/3 each, **6 calls to 11**
+
+Our cheapest run of the eval. Theirs spent four calls on a tool that could not
+distinguish its own two meanings (see below); ours spent one on resolving which
+of two identically-named download links was the PDF.
+
+- **`4n` — a FILTERED miss reads exactly like a silent page. Found on THEIR
+  arm, and ours has it in two tools.** Their agent filtered its network reader
+  for `lab-reports`, got `No requests matching`, concluded nothing had fired —
+  while four `POST /event/add` requests confirming the action sat in the same
+  buffer. It then **clicked the download a second time to make it fire**, on an
+  app whose entire purpose is recording what you do. Ours says
+  `"No network requests recorded for this tab matching \"X\"."` and
+  `"No console messages matched."` — neither states the unfiltered total, which
+  is already computed one line above. **Worth noting the mechanism: the eval's
+  value is not only the comparison. An agent on the other toolset described a
+  defect, and checking ours against the description found the same shape.**
+- **`4o` — a navigate gets the COMMIT wait, not the CONTENT wait.** `click ->
+  read_page` settles inside a batch and `navigate -> read_page` does not,
+  because `_quiet` is gated on a step having ACTED. On a Vue app the opening
+  batch returned a listing holding only the 7 nav buttons. The agent:
+  *"the machinery exists and works well; it just doesn't fire after navigate …
+  For an SPA the first paint happens strictly after the point navigate returns."*
+- **`4p` — a download click has no page-side consequence**, so re-reading the
+  page is structurally incapable of confirming it. Both arms hit it.
+- **Two download links with byte-identical accessible names**, separable only by
+  `href`. Our `detail="brief"` recovered it in one call and the legend named the
+  exact parameter. The agent's observation is the general one:
+  *"the gate appears to ask 'does this row have a name'; the question that
+  decides whether I can act is 'does this name distinguish it from its
+  siblings'."* #37 already drops a `near=` that is shared across rows; the
+  inverse — ADD one when the NAME is shared — is the missing half.
+
+## Pair 7 — booksexp (2 conditions): TIE, 2/2 each, 14 calls to 15
+
+The hardest task conceptually: "the most expensive book by this author" cannot
+be answered by locating a string, and #20 measured `find` at 0% on goal→element
+precisely because there is no lexical overlap between a goal and the control
+that achieves it. Both arms solved it the same way — search, paginate, read the
+prices as TEXT, then act.
+
+Both also hit the same trap and both avoided it: two cards with identical title,
+author, rating and review count, differing only in price (689 / 639 ₽). The
+distinguishing fact — audio versus text edition — **is not on the card at all**.
+Ours resolved it with one `search_page` returning both refs and both prices;
+theirs with two scoped reads in one batch. Neither was fooled, and the app's own
+cart line proves the data exists upstream of the card.
+
+### THE SHARPEST ARCHITECTURAL CONTRAST IN THE EVAL, stated fairly
+
+Their `find` returned, verbatim:
+
+> `ref_377: button "Добавить в корзину" (button) - Add-to-cart button for
+> "Медный вензель над тихой рекой" book card (first occurrence)`
+
+A quoted accessible name and a confident role description. A scoped read of the
+same card at the same instant returned `button [ref_377] type="button"` — **no
+accessible name at all.** It was the favourites heart. The agent clicked it,
+**wrote to the user's favourites list**, and spent 3 of its 15 calls
+discovering and undoing that.
+
+Its own diagnosis is the useful part: *"a miss would have made me look harder,
+whereas a confident wrong answer made me click … if find is deriving labels from
+an LLM reading the page rather than from the DOM, the quoted-string format is
+actively misleading — a quoted `"…"` reads as an accessible name and should only
+ever be one."*
+
+**Ours cannot do that, and the reason is structural rather than clever.** #20
+established `find` is a LEXICAL matcher over what the collector emitted; it
+ranks entries and cannot invent a name that is not in the listing. A name it
+prints is a name the collector derived, from something the page declared.
+
+**And that is not immunity, which this eval also demonstrated.** `OPEN.md` 4h,
+from pair 2 of this same run: our `find` returned a payment radio advertised as
+`near="Банковская карта"` whose own `value` read `yoomoney`, and the radio that
+genuinely is that option was not returned at all. Acting on it selects the wrong
+payment method.
+
+So: **two different failure modes, neither immune.** Theirs can surface a label
+that exists nowhere; ours can only surface something the collector derived —
+which means our wrong answers trace back to a derivation that can be measured,
+ablated and fixed, and 4h names exactly which one. That is the whole argument
+for deciding from declarations rather than from inference, and it is worth
+making with our own failure attached to it.
