@@ -6798,6 +6798,34 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         const er = el.getBoundingClientRect();
         let p = el.parentElement;
         for (let d = 0; d < 2 && p; d++, p = p.parentElement) {
+          // A PARENT HOLDING A SECOND CONTROL IS A GROUP, AND ITS TEXT LABELS
+          // THE GROUP, NOT THIS CONTROL. This branch exists for a card whose
+          // caption sits OUTSIDE its one anchor; a card holds one link. Without
+          // the guard, every control in a small container adopts the SAME
+          // string, which is the worst shape a name can have.
+          // Measured live in eval 7 on a quantity stepper
+          // `<div><button −/><span>1</span><button +/></div>`: both buttons
+          // came back `button "1"` -- the QUANTITY as the accessible name of
+          // minus AND plus. Clicking the wrong one at quantity 1 removes the
+          // item, so it cannot be guessed; the agent spent a call on an
+          // attribute query that could not settle it either and resolved it
+          // only with a screenshot. Its words: "a name that is confidently
+          // wrong is worse than (unlabeled-icon)".
+          // The rule is #29's `_inFieldWrapper` one layer over -- a wrapper
+          // holding a SECOND control belongs to a group -- and it is decided
+          // from DECLARATIONS (the control set), not from size or class names.
+          // No presence-based ruler can see this defect: both buttons were
+          // present, listed, named and clickable.
+          let _peers = 0;
+          try {
+            for (const _c of p.querySelectorAll(
+                'a[href],button,input,select,textarea,summary,[role="button"],'
+                + '[role="link"],[role="checkbox"],[role="radio"],[role="tab"],'
+                + '[role="menuitem"],[role="option"],[role="switch"],[tabindex],[onclick]')) {
+              if (_c !== el && !el.contains(_c)) { _peers++; break; }
+            }
+          } catch (e) {}
+          if (_peers) break;          // a group, at this level and every level above
           const pr = p.getBoundingClientRect();
           // 0.3 not 0.5: tile cards put the caption BELOW the icon-anchor, so
           // the anchor covers well under half the card (archive.org tiles).
@@ -15483,6 +15511,7 @@ async function handleOp({ id, op, params }) {
           const store = window.__abConsole;
           if (!store) return { available: false, total: 0, messages: [] };
           let out = store.buf.slice();
+          const _held0 = out.length;       // before onlyErrors and before pattern
           if (onlyErrors) out = out.filter(m => m.level === "error");
           if (pattern) {
             try { const re = new RegExp(pattern, "i"); out = out.filter(m => re.test(m.text)); }
@@ -15491,14 +15520,35 @@ async function handleOp({ id, op, params }) {
           const total = out.length;
           out = out.slice(-Math.min(Math.max(+limit || 100, 1), 1000));
           if (clear) store.buf.length = 0;
-          return { available: true, total, messages: out };
+          // The size BEFORE the pattern, so an empty result can say whether the
+          // filter emptied it or the page was silent. Computed here because the
+          // worker cannot see the page's buffer.
+          return { available: true, total, heldTotal: _held0, messages: out };
         }, [params?.pattern || "", !!params?.onlyErrors, params?.limit || 100, !!params?.clear]);
         if (!r || !r.available) {
           result = "Console capture not active on this page (it starts at document_start — reload the page once after installing/updating the extension).";
         } else if (r.badPattern) {
           result = `Invalid regex pattern: ${r.badPattern}`;
         } else if (!r.messages.length) {
-          result = "No console messages matched.";
+          // AN ABSENCE IS ONLY EVIDENCE WHEN THE THING LOOKING SAYS WHAT IT
+          // LOOKED AT. "No console messages matched" is the same sentence
+          // whether a pattern excluded everything or the page logged nothing,
+          // and the second is a far stronger claim than this buffer can make.
+          // Found on the OTHER toolset in eval 7 and checked against ours: its
+          // agent filtered a network reader, got a flat negative, concluded the
+          // action had not fired, and clicked a download a SECOND time -- on an
+          // app whose purpose is recording what you do. Ours says the same kind
+          // of thing in two places; this is one. `_held` is free, since the
+          // unfiltered buffer is right there.
+          const _held = r.heldTotal;
+          result = (pattern
+            ? `No console messages matched "${pattern}"`
+            : "No console messages recorded for this page")
+            + (typeof _held === "number"
+                 ? ` (${_held} message(s) held for this page${pattern
+                     ? " — the pattern excluded them, it is not that the page was silent" : ""}).`
+                 : ".")
+            + (pattern ? " Re-run without `pattern` to see them." : "");
         } else {
           const lines = r.messages.map(m => `[${new Date(m.ts).toISOString().slice(11, 23)}] ${m.level.toUpperCase()}: ${m.text}`);
           result = `${r.total} message(s) matched, showing last ${r.messages.length}:\n` + lines.join("\n");
@@ -15508,13 +15558,24 @@ async function handleOp({ id, op, params }) {
       case "read_network_requests": {
         const t = await resolveTab(params);
         let arr = (_netBuf.get(t.id) || []).slice();
+        const _held = arr.length;          // before the filter, for the empty case
         const pat = params?.urlPattern ? String(params.urlPattern) : "";
         if (pat) arr = arr.filter(e => e.url && e.url.includes(pat));
         const total = arr.length;
         arr = arr.slice(-Math.min(Math.max(+params?.limit || 100, 1), 1000));
         if (params?.clear) _netBuf.delete(t.id);
         if (!arr.length) {
-          result = "No network requests recorded for this tab" + (pat ? ` matching "${pat}"` : "") + ".";
+          // Same rule as the console branch above, same reason (#21: one
+          // concept, one spelling). `_held` is the buffer size BEFORE the
+          // filter, which is two lines up and was being thrown away.
+          result = (pat
+            ? `No network requests matching "${pat}" for this tab`
+            : "No network requests recorded for this tab")
+            + (_held
+                 ? ` (${_held} request(s) recorded${pat
+                     ? " — the pattern excluded them, it is not that the tab was quiet" : ""}).`
+                     + (pat ? " Re-run without `urlPattern` to see them." : "")
+                 : ".");
         } else {
           const lines = arr.map(e => e.error
             ? `[${new Date(e.ts).toISOString().slice(11, 23)}] ${e.method} ${e.url} -> ERROR ${e.error} (${e.type})`

@@ -1664,10 +1664,29 @@ const FIELDS3 = () => ([
     check("network: urlPattern filters the listing",
       rf.ok && String(rf.result).includes("cdn.example") && !String(rf.result).includes("api.example") &&
       /1 request\(s\)/.test(String(rf.result)), String(rf.result).slice(0, 200));
+    // NF1/NF2 — AN ABSENCE IS ONLY EVIDENCE WHEN THE THING LOOKING SAYS WHAT IT
+    // LOOKED AT. A filtered miss and a quiet tab used to render the same
+    // sentence, and the second is a far stronger claim than this buffer can
+    // make. Found on the OTHER toolset in eval 7: its agent filtered a network
+    // reader, got a flat negative, concluded the action had not fired, and
+    // clicked a download a SECOND time -- on an app whose purpose is recording
+    // what you do. The unfiltered size was already computed two lines above the
+    // message in both of ours.
+    const rm = await callOp("read_network_requests", { tabId: 1, urlPattern: "nothing-here" });
+    check("NF1 a FILTERED miss states the unfiltered total and says the pattern "
+      + "excluded them, so it cannot be read as 'the tab was quiet'",
+      rm.ok && /2 request\(s\) recorded/.test(String(rm.result))
+        && /pattern excluded them/.test(String(rm.result))
+        && /Re-run without/.test(String(rm.result)), String(rm.result).slice(0, 220));
     fire(listeners.navCommitted, { frameId: 0, tabId: 1, url: "https://elsewhere.example/" });
     const r2 = await callOp("read_network_requests", { tabId: 1 });
     check("network: cross-origin main-frame commit clears the tab's buffer",
       r2.ok && /No network requests recorded/.test(String(r2.result)), String(r2.result).slice(0, 120));
+    // CONTROL: a genuinely empty buffer must NOT claim a filter hid anything,
+    // or the note would fire everywhere and mean nothing (#15).
+    check("NF2 CONTROL: a genuinely empty buffer makes no claim about a filter",
+      r2.ok && !/pattern excluded/.test(String(r2.result))
+        && !/Re-run without/.test(String(r2.result)), String(r2.result).slice(0, 160));
   });
 
   // ---- read_console_messages formatting

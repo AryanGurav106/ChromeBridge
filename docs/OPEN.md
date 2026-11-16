@@ -507,7 +507,7 @@ collector to run without rendering a listing.
 Related to 4j and probably resolved by the same decision: if `query_elements`
 stamped, neither this nor 4j's extra call would exist.
 
-### 4l. A stepper's +/- both took the quantity as their name `OPEN`
+### 4l. A stepper's +/- both took the quantity as their name — CLOSED
 Eval 7, on a product page. After adding to the cart:
 
 ```
@@ -538,7 +538,22 @@ to a screenshot with no detour through a dead-end attribute query.
 This is the "two rows that mean opposite things, printed identically" class
 named in eval 6, and **no presence-based ruler can see it**: both elements are
 present, listed, named and clickable. `measure_findability` would score them a
-hit. In `background.js`, held under eval 7's Amendment 2.
+hit.
+
+**CLOSED.** The cause is `synthLabel`'s CARD-PATTERN branch, written for a card
+whose caption sits OUTSIDE its one anchor — it adopts a PARENT's text for a
+label-less control that covers >=30% of it. A stepper is three controls in one
+tight parent, so both buttons took the same string. The guard is #29's
+`_inFieldWrapper` rule one layer over: **a parent holding a SECOND control is a
+GROUP, and its text labels the group**. Decided from the declared control set,
+not from size or class names.
+Priced on 30 frozen sites, both arms on the same page load: **0 names lost,
++0.00% chars**, 1 listing differing and that one a replay #16 names as
+non-deterministic. Measured-harmless, with the value evidence in QS1 and the
+live run. QS1 fails pre-fix with the live symptom exactly (`button "1"` twice);
+**QS1b is the control that the card pattern still works where it was written
+for**, and my first fixture missed the branch entirely at 23% area coverage —
+the vacuous-fixture problem, eighth instance.
 
 ### 4m. A checkbox's `value=` reads as its state `OPEN`
 Same run: `ref_3566 | input[checkbox] name="Выбрать все" value="true"` while
@@ -555,7 +570,7 @@ page). This is a page that genuinely writes `value="true"`, so suppressing it
 outright would drop authored content — the fix is to put it in a slot that does
 not mean state. `background.js`, held under Amendment 2.
 
-### 4n. A FILTERED miss reads exactly like a silent page `OPEN`
+### 4n. A FILTERED miss reads exactly like a silent page — CLOSED
 **Found on the OTHER arm in eval 7, and ours has it in two tools.** Worth
 recording how it arrived: the eval's value is not only the comparison. An agent
 driving the competing toolset reported a defect in its network reader, and
@@ -588,7 +603,12 @@ in play.
 This is #16's rule as an OUTPUT contract rather than a measurement one: an
 absence is only evidence when the thing doing the looking says what it looked
 at. `search_page` already carries that discipline (#39's settled-state note);
-these two do not. `background.js`, held under eval 7's Amendment 2.
+these two did not.
+
+**CLOSED.** Both now name the unfiltered total and say the pattern excluded
+them, and point at re-running without it. NF1 fails pre-fix; **NF2 is the
+control that a genuinely empty buffer claims nothing about a filter**, without
+which the note would fire everywhere and mean nothing (#15).
 
 ### 4o. A navigate gets the COMMIT wait, not the CONTENT wait `OPEN`
 `browser_batch` waits twice and for different things: `_settle` after a

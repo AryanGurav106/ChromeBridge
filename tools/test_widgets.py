@@ -2424,6 +2424,52 @@ async def main():
               and "share ONE label" in _cap,
               (_cap[:120] or "(no cap notice on this fixture)"))
 
+        # ---- QS1/QS1b/QS1c: A STEPPER'S +/- MUST NOT BOTH TAKE THE QUANTITY
+        # The worst-shaped defect eval 7 found. synthLabel's card-pattern branch
+        # adopts a PARENT's text for a label-less control -- written for a card
+        # whose caption sits outside its one anchor. A quantity stepper is three
+        # controls in one small parent, so BOTH buttons came back `button "1"`:
+        # the quantity as the accessible name of minus AND plus. Clicking the
+        # wrong one at quantity 1 removes the item, so it cannot be guessed.
+        # The agent spent a call on an attribute query that could not settle it
+        # either and resolved it only with a screenshot.
+        # NO PRESENCE-BASED RULER CAN SEE THIS: both buttons are present,
+        # listed, named and clickable, so measure_findability scores them a hit.
+        qsp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await qsp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await qsp.goto("about:blank")
+        # GEOMETRY MATTERS AND MY FIRST VERSION MISSED THE BRANCH ENTIRELY.
+        # The card pattern only fires when the control covers >=30% of the
+        # parent's area; 28px buttons in a 120px row is 23%, so the fixture
+        # passed in BOTH arms and proved nothing -- the vacuous-fixture problem
+        # this project has now found eight times. A real price pill is tight
+        # around its stepper, so the buttons DO dominate.
+        await qsp.set_content(
+            "<main><div style='display:flex;width:64px;height:24px'>"
+            "<button style='width:24px;height:24px'><svg width=8 height=8></svg></button>"
+            "<span style='width:16px'>1</span>"
+            "<button style='width:24px;height:24px'><svg width=8 height=8></svg></button>"
+            "</div>"
+            # THE CONTROL CASE this branch exists for, on the same page: ONE
+            # label-less link dominating a card whose caption sits outside it.
+            "<div style='width:200px'>"
+            "<a href=/x style='display:block;width:200px;height:120px'>"
+            "<svg width=10 height=10></svg></a>"
+            "<span>Hero caption</span></div></main>")
+        await qsp.wait_for_timeout(200)
+        qs = str(await qsp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _btn = [l for l in qs.splitlines() if "button" in l and "svg" not in l.split("|")[0]]
+        check("QS1 a stepper's two buttons do NOT both take the quantity between "
+              "them as their accessible name",
+              '"1"' not in qs or qs.count('"1"') < 2,
+              " // ".join(l.strip()[:60] for l in _btn[:3]) or qs[:150])
+        check("QS1b CONTROL: the card pattern still works where it was written "
+              "for — ONE label-less link, caption outside it",
+              '"Hero caption"' in qs,
+              " // ".join(l.strip()[:70] for l in qs.splitlines() if "a " in l)[:160])
+        await qsp.close()
+
         # ---- CT2/CT2b: A CLOSED OFF-CANVAS DRAWER MUST NOT OUTRANK THE PAGE.
         # The cap's priority set exists for "what is in front of the user", and
         # `section=dialog` was in it unconditionally. Measured live in eval 6 by
