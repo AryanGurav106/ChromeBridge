@@ -15,7 +15,7 @@ extensions already there.
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%20–%203.13-blue.svg)](pyproject.toml)
 [![Tools](https://img.shields.io/badge/MCP-31%20tools-FF6B35.svg)](#what-claude-gets)
-[![Checks](https://img.shields.io/badge/tests-1%2C407%20checks-success.svg)](#running-the-tests)
+[![Checks](https://img.shields.io/badge/tests-1%2C408%20checks-success.svg)](#running-the-tests)
 
 </div>
 
@@ -332,7 +332,7 @@ not by convention.
 .venv/bin/python tools/run_tests.py                    # POSIX (run on macOS; CI runs it on Linux)
 ```
 
-**21 suites, 1,407 checks, about 127 seconds.** Ten are browser-free; the other
+**21 suites, 1,408 checks, about 127 seconds.** Ten are browser-free; the other
 eleven drive headless Chromium and need two packages that are deliberately not
 runtime dependencies:
 

@@ -423,6 +423,24 @@ def main():
           not _orphan, f"NOT EMITTED ANYWHERE: {_orphan}" if _orphan
           else f"{len(FR_REFUSALS)} marker(s) all present")
 
+    # FD19g -- THE SEVENTH MARKER, found by auditing rather than by a failure.
+    # `recorder.py` watches `get_url`'s result for "IN FLIGHT" to avoid
+    # compiling a read taken mid-navigation into a flow (#63's stale-url
+    # defect). That is the same class as the NOT DONE / NO EFFECT tokens above
+    # and was pinned by nothing: the only other occurrence is a FIXTURE that
+    # supplies its own copy of the string, so rewording the emitter in
+    # mcp_server.py would leave every test green while the recorder silently
+    # stopped detecting an in-flight read -- exactly what FD19 exists to stop,
+    # one marker over.
+    _srv_src = (ROOT / "mcp_server.py").read_text(encoding="utf-8")
+    _rec_src = (ROOT / "core" / "flows" / "recorder.py").read_text(encoding="utf-8")
+    _watches = "IN FLIGHT" in _rec_src
+    _emits = 'is IN FLIGHT ' in _srv_src
+    check("FD19g the in-flight marker the recorder watches for is a string "
+          "mcp_server really emits (a fixture's own copy pins nothing)",
+          _watches and _emits,
+          f"recorder watches={_watches} mcp_server emits={_emits}")
+
     # FD19c -- the NOT DONE token must be the ONLY way a fill result says it
     # did not act. If a `!r.ok` branch renders anything else, the recorder goes
     # back to enumerating wordings, which is what this replaced.
