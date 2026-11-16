@@ -101,7 +101,11 @@ Mind2Web's stripped HTML snapshots — no scripts, no CSS — so two of the
 collector's eight admitting signals (a registered listener, `cursor:pointer`)
 **cannot fire at all**: measured 0/186 each. It is therefore a structural lower
 bound, and all nine misses are elements that declare nothing clickable in static
-markup. **That "lower bound" is now measured rather than argued:** ablating
+markup — **audited one signal at a time, not asserted: 0 of 9 declare any of the
+eight admitting signals, 0 carry `aria-label`/`title`/`alt`, 0 have anything
+declared inside them.** Admitting them would need a rule keyed on size, position
+or a class name, which is the kind this project removed from every path that
+decides existence. They are the price of that rule, not an unfixed gap. **That "lower bound" is now measured rather than argued:** ablating
 exactly those two signals on a live app removes **59.7% of the listing** (248
 rows to 100, across six domains; one domain built from declared controls loses
 0, as the control). So this benchmark scores a collector with most of its reach

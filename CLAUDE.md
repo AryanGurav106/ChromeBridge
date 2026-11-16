@@ -7812,6 +7812,103 @@ granted in the side panel is refused with the same message the agent gets.
     dialog rect is judged in its own view), FV7–FV9 and FR23 (variables reach the
     TARGET; an unanswerable assertion tool says so), FR22d.
 
+79. **THE NINE MISSES ARE A PRICE, NOT A GAP — asked one signal at a time
+    instead of asserted at the level of the set.** #73 and #78 both describe
+    every remaining Mind2Web miss as "an element that declares nothing clickable
+    in static markup". That sentence is the difference between a defect we have
+    not fixed and a boundary we chose, and it had only ever been checked for the
+    whole set at once. `tools/audit_m2w_misses.py` asks each of the nine for all
+    eight admitting signals separately.
+
+    | | |
+    |---|---|
+    | misses audited | **9** |
+    | declaring ANY of the eight admitting signals | **0** |
+    | carrying `aria-label`, `title` or `alt` | **0** |
+    | with anything DECLARED inside them | **0** |
+
+    They are `span "Pet Type"`, `h1 "Balance Sheet"`, `div "Product Category"`,
+    `li "11"` — bare accordion and filter headers with nothing on them. The
+    probe was written to be able to answer either way and says so: **any miss
+    declaring something would be a DEFECT**, because the collector had a signal
+    and dropped it. None does.
+
+    So admitting them needs a rule keyed on something the page never stated —
+    size, position, the shape of the text, a class name. Those are exactly the
+    rules #27 and #28 removed from every path that decides existence, and the
+    owner's brief forbids them in as many words. **The nine are the measured
+    price of "existence is decided only by declarations", and the price is 9 of
+    186 on a corpus where two of the eight signals cannot fire at all.**
+
+    **AND THE SIZE OF THAT HANDICAP IS NOW MEASURED TOO, which is the other half
+    of the same argument.** "Structural lower bound" has been asserted three
+    times without anyone checking what the two dead signals are worth.
+    `tools/measure_static_floor.py` ablates exactly the `__abClickBound` and
+    `cursor:pointer` admissions at all four of their sites and runs both arms
+    over live pages: **248 rows become 100, so 59.7% of the listing depends on
+    signals a scripts-and-CSS-free snapshot cannot carry.** Per domain: shop
+    74.2%, books 66.3%, hotels 57.1%, grocery 53.7%, rail 33.3% — and **files
+    0.0%**, which is the control that the ablation is not simply emptying the
+    listing, since a domain built from declared controls loses nothing. What is
+    lost has exactly the shape of the misses: `div "Корзина"`, `div "Бонусы"`,
+    `div "1 089 ₽"`.
+
+    **STATED NARROWLY, because the flattering reading is wrong.** This does NOT
+    say the Mind2Web figure would be ~60% higher on live pages: 59.7% is the
+    share of ROWS needing those signals, not of labelled TARGETS, and a human's
+    click target is more often a declared control than an average row is. What
+    it licenses is the claim that was in dispute — **that benchmark scores a
+    collector with most of its reach switched off.** The probe ASSERTS every
+    ablation applied and exits if one did not, because a transformation that
+    silently matches nothing is an ablation that measures nothing.
+
+    **TWO GENERALITY RESULTS FROM THE SAME LIVE SITE**, both on WebPageBench,
+    where the same task with byte-identical success conditions is re-rendered
+    through a different implementation of one control:
+    - **Colour: 12/12 theme pairs, 0 changed lines, same-arm floor 0.** A
+      representation that reads presentation cannot pass this; ours is
+      byte-identical across all six domains. The floor being 0 is a second
+      result — these pages render deterministically, so later measurements have
+      no drift to subtract.
+    - **Control swap: 65 pairs that genuinely vary the markup, 0 unexplained
+      differences**, and `unlabeled` 0 → 0 on every key, so no swap produced a
+      control we could see and could not describe. **10 of the 75 pairs are
+      INERT** — the variant is the component's own default, so they could not
+      have failed whatever the representation does, and counting them would have
+      been counting a check that cannot fail.
+
+    **BOTH APPARENT FAILURES WERE THE PAGE, AND READING THEM IS WHAT SHOWED
+    IT.** `hotels_date_inline` lost 7 named rows because the variant opens an
+    inline calendar and an open overlay marks the rest of the document
+    `aria-hidden` — **55 hidden elements in the canonical against 829 in the
+    variant** — so the "lost" rows are blog links the PAGE declared absent and
+    the listing states the count. `rail_date_native` lost 2 because a custom
+    `div` + nested `span` per date becomes one native `input[date]`: the same
+    affordance in fewer rows, carrying MORE (`format=YYYY-MM-DD`).
+
+    **MY OWN PROBE PRINTED A PASS/FAIL VERDICT AND GOT IT WRONG TWICE ON THIS
+    DATA, once in each direction**, before either case was read. It reports the
+    counts and the explanations now and leaves the call to the reader, because a
+    count cannot distinguish an affordance that left from one the variant
+    renders with fewer elements — #33's rule, in a probe rather than a message.
+    Two further defects of mine: the inert detector reported **0 inert on a set
+    that provably contains 10**, its normaliser scoped to the other probe's
+    track-id prefix (a detector that cannot fire, #30/#39); and the invariance
+    probe's FIRST run reported **2 changed lines on every pair against a floor
+    of 0** — deterministic, consistent, in the direction that would have
+    invalidated the benchmark — which was the two arms being necessarily
+    different tracks, so `Current URL:` differed by the track id. Found by
+    printing the diff instead of trusting the count.
+
+    **THE METRIC DELIBERATELY HAS NO PER-WIDGET VOCABULARY.** "A date swap
+    should yield a row matching `/date|calendar/`" would be the hardcoded
+    pattern matching this project removes from every deciding path — and it
+    would be English, on a Russian-language benchmark.
+
+    **Scope, stated rather than implied:** six synthetic Russian-language apps.
+    The percentages do not transfer to the web; the mechanisms and their
+    directions do.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
