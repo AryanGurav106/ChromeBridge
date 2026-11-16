@@ -3,8 +3,6 @@
 The author's answers, verification dates and caveats are MECHANICALLY REMOVED by
 a whitelist: only the title, site, numbered steps and the end-state question
 survive. `tasks.md` is deliberately NOT your input and you must not open it.
-Eval 3 records its referee's first command being `cat` on the whole answer key,
-which is how this protocol failed once already.
 
 Walk each scenario on the live site and re-derive the end-state value yourself.
 Where your answer and the author's disagree, the task is DROPPED rather than
@@ -199,4 +197,6 @@ adjudicated -- so a disagreement you report is a success, not a failure.
    （「狼煙町」は読みが「ノロシマチ」なので、漢字ではなく読みでナ行に入る。）
 6. ナ行の一覧の中から **狼煙町** を探す。
 7. その行に表示されている郵便番号を読む。
+
+**Question (English):** Starting from Japan Post's postal-code search, drilling
 
