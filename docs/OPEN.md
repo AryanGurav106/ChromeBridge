@@ -240,7 +240,7 @@ and they assert WHICH PATH stopped the step rather than the fixture's row
 count.
 
 
-### 4b. The off-viewport region hint names regions by TAG, not identity — REOPENED
+### 4b. The off-viewport region hint names regions by TAG, not identity — CLOSED (twice)
 #26 built the region hint so a caller can recover an off-viewport target with
 one scoped read instead of a scroll plus a full re-listing, and measured all 76
 off-viewport steps recovering that way. It names each region by its TAG:
@@ -280,10 +280,19 @@ declares nothing the current rule reads.
 **What it DOES declare is inside the region**: a submit button labelled
 «Подписаться», and a placeholder naming an email. A form's submit button names
 what the form DOES, which is exactly what separates a newsletter signup from a
-search — and it is declared content, not a guess about layout. That is the
-candidate, it widens an existing rule rather than inventing one, and it is in
-`background.js`, held under eval 7's Amendment 2. It needs the same pairing as
-#80's: free on a corpus that lacks the shape, proven on a fixture that has it.
+search — and it is declared content, not a guess about layout.
+
+**CLOSED.** A `<form>` that declares none of the three sources is now named by
+its submit — HTML's own `type="submit"`, the same declaration #24's submit
+picker reads, so no wordlist and no layout. Prefixed `submits: …` because it
+names the ACTION rather than the region: `form "Подписаться"` would read as the
+form's own title and it is not one.
+**Priced with #80's own pairing, both arms on the same page load across 30
+frozen sites: +0.026% chars, firing on 2 — `bootstrap_forms` and `chakra`,
+which are exactly the pages where a form is worth naming.** Free where the shape
+is absent, proven on the fixture that has it. RG2d fails pre-fix; RG2b and RG2c
+pass in both arms, so the three declared sources and the
+a-region-with-no-name-is-still-listed rule are untouched.
 
 ### 4c. A visible label not wired to its input is unreachable by `find` `OPEN`
 Same eval-6 run. The page renders «Направление» two lines above the destination

@@ -1398,6 +1398,30 @@ async def main():
               "tag and ref — naming is additive, never a filter",
               "main(ref_" in note and '"' not in note.split("main(ref_")[1][:14],
               note[:120])
+
+        # RG2d — AND WHEN A FORM DECLARES NONE OF THE THREE, ITS SUBMIT NAMES IT.
+        # #80 shipped aria-label / aria-labelledby / first heading, and eval 7
+        # then had TWO agents waste a call on the SAME hint on the SAME page:
+        # the hotels search page has exactly one <form> and it is the NEWSLETTER
+        # SIGNUP, carrying none of the three. A form's submit is a declaration
+        # of its purpose (HTML's own type=submit, what #24's picker reads) and
+        # is exactly what separates a signup from a search.
+        rgs = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await rgs.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await rgs.goto("about:blank")
+        await rgs.set_content(
+            "<body style='margin:0'><main><button>Visible</button></main>"
+            "<form style='margin-top:3000px'>"
+            "<input placeholder='email'>"
+            "<button type='submit'>Подписаться</button></form></body>")
+        await rgs.wait_for_timeout(140)
+        subn = await rgs.evaluate("(function(){ " + COLLECT
+                                  + "; return _collectInteractivePage(false,null,'compact',false,false); })()")
+        snote = next((l for l in subn.splitlines() if l.startswith("[")), "")
+        check("RG2d a form declaring no name is named by its SUBMIT, prefixed so "
+              "it reads as the action rather than as the form's own title",
+              '"submits: Подписаться"' in snote, snote[:190])
+        await rgs.close()
         await rgn.close()
         # The advice has to be PERFORMABLE. The first version named the regions and
         # said to use read_page(ref_id=<that region's ref>) while giving no way to

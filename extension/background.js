@@ -7681,6 +7681,31 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
                   const _h = _host.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
                   if (_h) _rn = (_h.textContent || '').trim();
                 }
+                // ...AND IF IT DECLARES NONE OF THOSE, ITS SUBMIT BUTTON NAMES
+                // WHAT IT DOES. #80 shipped the three sources above and eval 7
+                // then had TWO agents waste a call on the same hint on the same
+                // page: the hotels search page has exactly one `<form>` and it
+                // is the NEWSLETTER SIGNUP, so both scoped to it expecting the
+                // search widget and got `example@mail.ru` / «Подписаться».
+                // The fix was working as designed -- that form carries no
+                // aria-label, no aria-labelledby and no heading -- so the
+                // sources were simply insufficient for the shape.
+                // A form's SUBMIT is a declaration of its purpose (HTML's own
+                // `type=submit`, the same thing #24's submit picker reads), and
+                // it is exactly what separates a signup from a search. Not a
+                // wordlist, not layout, not a class name: the one control the
+                // document marks as the form's action.
+                if (!_rn && _host.tagName && _host.tagName.toLowerCase() === 'form') {
+                  const _sb = _host.querySelector(
+                    'button[type="submit"],input[type="submit"],button:not([type])');
+                  if (_sb) {
+                    const _st = ((_sb.value || _sb.innerText || '') + '').trim();
+                    // Prefixed, because this names the ACTION rather than the
+                    // region -- `form "Подписаться"` would read as the form's
+                    // own title and it is not one.
+                    if (_st) _rn = 'submits: ' + _st;
+                  }
+                }
               } catch (e2) {}
               if (_rn) _lb += ' ' + JSON.stringify(markCut(_rn, 40));
               _offRegions[k] = { n: 0, mmid: String(_hm), label: _lb };
