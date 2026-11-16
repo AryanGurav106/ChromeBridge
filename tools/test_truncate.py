@@ -505,6 +505,18 @@ async def main_async():
           "NOTHING could be shown" in _out2 and _blames_first,
           f"blames_first={_blames_first}")
 
+    # T24b: ...AND THAT THE COLLECTION RAN ANYWAY. Only the PRINTING was cut, and
+    # a caller holding a zero-row listing cannot tell the difference. Measured in
+    # eval 7: an agent called read_page(max_chars=300) DELIBERATELY, to make the
+    # collector stamp refs without paying for a listing, and got this branch --
+    # #34's message working exactly as designed and reading as an error for what
+    # was a successful use. query_elements reads the `mmid` ATTRIBUTE off the DOM
+    # (verified in background.js, not assumed), so the refs really are live.
+    check("T24b ...and says the COLLECTION ran, so the refs it stamped are usable "
+          "even though no row printed",
+          "COLLECTION itself ran" in _out2 and "query_elements" in _out2,
+          _out2[-260:].replace(chr(10), " "))
+
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} truncation checks passed.")
     return 0 if passed == len(results) else 1

@@ -651,7 +651,7 @@ drop the "its refs act normally" clause, or have the query op stamp what it
 returns — which makes a read tool mutate the page's mmid registry, and that is a
 contract change wanting its own measurement.
 
-### 4k. A small `max_chars` is the only way to say "collect, do not print" `OPEN`
+### 4k. A small `max_chars` is the only way to say "collect, do not print" — HALF CLOSED
 Same run. The agent called `read_page(max_chars=300)` deliberately, purely to
 trigger mmid stamping without paying for output, and got the `NOTHING could be
 shown` branch — which is #34's message working exactly as designed, and reads as
@@ -660,6 +660,23 @@ collector to run without rendering a listing.
 
 Related to 4j and probably resolved by the same decision: if `query_elements`
 stamped, neither this nor 4j's extra call would exist.
+
+**HALF CLOSED, server-side.** The message now states the one fact that makes
+the deliberate use legible: **only the PRINTING was cut — the collection ran**,
+so every element the walk reached carries a ref and a following
+`query_elements` / `search_page` / `find` returns refs even though no row
+printed. Verified rather than asserted: `_queryElementsPage` reads the `mmid`
+ATTRIBUTE off the DOM, so the refs really are live. T24b pins it.
+
+**The other half is a CONTRACT CHANGE and is not taken on reasoning.** Making
+`query_elements` stamp would close this and 4j's remainder at once, and it makes
+a READ tool mutate the page's mmid registry. The specific hazard, found by
+reading what depends on it rather than by assuming: the collector assigns mmids
+in DOCUMENT ORDER, and CT1 asserts the overflow list's refs come back sorted —
+so an out-of-order stamp breaks an invariant the listing currently relies on,
+even though #80's own cap notice already tells agents not to infer pairing from
+ref order. Needs the measurement AND a live pass, which is the next thing owed
+after the extension reload.
 
 ### 4l. A stepper's +/- both took the quantity as their name — CLOSED
 Eval 7, on a product page. After adding to the cart:

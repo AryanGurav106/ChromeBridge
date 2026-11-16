@@ -1284,6 +1284,18 @@ def _truncate(text: str, max_chars: int, hint: str = "") -> str:
                     + f" element(s) are missing. Raise max_chars to at least"
                     + f" {_first + len(head) + 120}, or scope the read with ref_id — a"
                     + " scoped listing is not viewport-limited and is usually far smaller."
+                    # THE COLLECTION RAN. Only the PRINTING was cut, and an agent
+                    # reading a zero-row listing has no way to know the difference.
+                    # Measured in eval 7: an agent called read_page(max_chars=300)
+                    # DELIBERATELY, to make the collector stamp refs without paying
+                    # for a listing, and got this branch -- #34's message working
+                    # exactly as designed and reading as an error for what was a
+                    # successful use. Verified rather than asserted: query_elements
+                    # reads the `mmid` ATTRIBUTE off the DOM, so every element the
+                    # walk reached now carries a ref whatever happened to the output.
+                    + " Note the COLLECTION itself ran: every element the walk reached"
+                    + " now carries a ref, so a following query_elements, search_page"
+                    + " or find returns refs even though no row printed here."
                     + (f" {hint}" if hint else "")
                     + "]"
                 )
