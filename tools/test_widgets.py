@@ -2438,6 +2438,29 @@ async def main():
               and "share ONE label" in _cap,
               (_cap[:120] or "(no cap notice on this fixture)"))
 
+        # ---- CT1d/CT1e: AND WHEN THEY CARRY NO ATTRIBUTE EITHER ------------
+        # CT1c's advice was right about the eval-6 page and incomplete as a rule.
+        # Eval 7 met the other half on a grocery catalogue: every card has an
+        # identically-named «Добавить» and NONE of them carries href, value or
+        # title. What separates them is which CARD the button sits in, and none
+        # of the three tools CT1c names expresses containment. The route only
+        # exists since 4q, where search_page began reporting the RECORD's ref
+        # beside the match -- so this asserts the notice names the tool that
+        # PRODUCES that ref, not merely that a card exists.
+        check("CT1d the cap notice names containment as the other separator, and "
+              "the tool that produces the record's ref",
+              bool(_cap) and "WHICH RECORD" in _cap and "search_page" in _cap
+              and "read_page(ref_id=" in _cap,
+              (_cap[:200] or "(no cap notice on this fixture)"))
+        # The eval-7 agent did work out the pairing -- from ref ORDER -- and
+        # flagged it as inference rather than fact: "a wrong inference silently
+        # adds the wrong product." Refs are document order, which does not make
+        # the Nth label belong to the Nth record (#30 settled the same point for
+        # fold members: position is not rank).
+        check("CT1e the cap notice warns off inferring the pairing from ref order",
+              bool(_cap) and "ref ORDER" in _cap,
+              (_cap[:200] or "(no cap notice on this fixture)"))
+
         # ---- CB1/CB1b/CB1c: A CHECKBOX'S value= IS NOT ITS STATE ----------
         # The legend defines `value=` as CURRENT CONTENTS, so `value="true"` on
         # a checkbox reads exactly like "this is ticked". Measured live in

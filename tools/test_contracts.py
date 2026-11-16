@@ -445,6 +445,25 @@ def main() -> int:
           if "START IN ONE TURN" in _bbdoc else
           "MISSING from the only channel a subagent reads")
 
+    # C20e: THE CHEAPER FORMAT MUST NAME WHAT IT DROPS.
+    # `format="flat"` sold itself on size and on "you only need a single named
+    # control". Measured live in eval 7: an agent chose flat TO REDUCE SIZE on a
+    # grocery catalogue where ~40 cards carry an identically-named «Добавить»,
+    # so its condition was satisfied and the advice was still wrong -- what it
+    # then needed was the containment the tree states by indentation, and it
+    # said so: "the cheaper format is the one that drops exactly the containment
+    # relationship that disambiguates identical buttons."
+    # #27 shipped the tree as default for precisely this ("a flat list cannot
+    # express a row") and the escape hatch's own text never caught up. A trade
+    # a parameter does not name is one the caller cannot weigh.
+    _fmt = re.search(r'Field\(description="(\\"tree\\" \(default\).*?)"\)', _srv, re.S)
+    _fmtdoc = _fmt.group(1) if _fmt else ""
+    check("C20e format's own description names the trade flat makes -- that "
+          "rows sharing one label lose the containment that separates them",
+          bool(_fmtdoc) and "SHARE one label" in _fmtdoc
+          and "UNIQUE on the page" in _fmtdoc,
+          (_fmtdoc[-150:] if _fmtdoc else "(format description not found)"))
+
     # C22: A STALE SERVER IS INVISIBLE FROM INSIDE, so it has to be reported.
     # The MCP server is a long-lived stdio process that imports mcp_server.py
     # and core/* ONCE, at connect time; editing them changes nothing until the

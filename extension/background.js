@@ -10605,11 +10605,28 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       // time -- and said the right tool for "many identical controls,
       // distinguished only by an attribute" is `query_elements`, "and the
       // notice doesn't mention it". It does now.
+      // ...AND WHEN THEY CARRY NO ATTRIBUTE EITHER, WHAT SEPARATES THEM IS
+      // CONTAINMENT. The paragraph above shipped in response to eval 6, where 18
+      // identical download links were separated by `href`. Eval 7 then met the
+      // other half on a grocery catalogue: every card has an identically-named
+      // «Добавить» and NONE of them carries a distinguishing attribute -- no
+      // href, no value, no title. What distinguishes them is which CARD the
+      // button sits in, and none of the three tools named above expresses
+      // containment. The agent inferred it from ref ordering and flagged that as
+      // inference: "a wrong inference silently adds the wrong product."
+      // The route only exists since 4q: `search_page` now reports the RECORD's
+      // ref beside the match, standing on the card it had already climbed to in
+      // order to build the context string. So the recovery is two facts the
+      // tools already produce, not a new capability.
       `When many rows share ONE label, neither of those separates them: find ranks ` +
       `them against each other and a scoped read returns one at a time. What ` +
       `distinguishes them is an ATTRIBUTE — query_elements(selector, ` +
       `attributes=["href","value","title"]) prints it beside each ref and joins the ` +
       `listing to the page text in one call. ` +
+      `When they carry NO distinguishing attribute, what separates them is WHICH ` +
+      `RECORD each sits in: search_page the record's own text names the card holding ` +
+      `the hit, and read_page(ref_id=…) returns that card alone. Do not infer the ` +
+      `pairing from ref ORDER. ` +
       `A question about the LARGEST or FIRST of something is ` +
       `not answerable from the rows above alone -- but every omitted entry is listed by ref ` +
       `below, so nothing here is unreachable.` +

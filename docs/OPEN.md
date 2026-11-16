@@ -785,7 +785,7 @@ sides. And both new calls passed POSITIONAL arguments to
 `contextChars` silently took its 150 default. The suite's own helper gets this
 right; hand-written calls did not.
 
-### 4r. CT1c's advice cannot answer the page it was written for `OPEN`
+### 4r. CT1c's advice cannot answer the page it was written for — CLOSED
 **This lands on advice added THIS SESSION**, in response to eval 6, and eval 7
 showed it does not cover the case. The cap notice says:
 
@@ -810,7 +810,27 @@ inference rather than fact: *"on a page where every card has an identically-name
 Containment is the other half and it belongs in the same notice, which means 4q
 first.
 
-### 4s. The cheaper format drops the relationship that disambiguates `OPEN`
+**CLOSED, now that 4q supplies the missing ref.** `search_page` reports the
+RECORD's ref beside the match, standing on the card it had already climbed to in
+order to build the context string — so the recovery is two facts the tools
+already produce rather than a new capability. The notice now carries both
+halves: an ATTRIBUTE when one exists (the eval-6 answer, untouched), and
+otherwise WHICH RECORD each row sits in, with the route named — `search_page`
+the record's own text, then `read_page(ref_id=…)` on the card it names. It also
+says plainly not to infer the pairing from ref ORDER, which is what the eval-7
+agent did and flagged itself: *"a wrong inference silently adds the wrong
+product."*
+
+**Priced across 40 frozen sites, both arms on the same page load: +0.745%
+corpus-wide, worst capped site +3.112%, and it prints on only 6/40 — the pages
+where the cap has ALREADY dropped ~51 entries.** A first draft restructured the
+sentence and cost +1.085% / +4.488%; rewriting it as a pure APPEND to the
+existing one got both figures down with no loss. Cheap for the failure it
+prevents, which is a wrong ACTION rather than a wasted call.
+CT1d/CT1e fail pre-fix; **CT1c passes in both arms**, which is what proves the
+eval-6 half was not traded away for the eval-7 one.
+
+### 4s. The cheaper format drops the relationship that disambiguates — CLOSED
 Same run. The agent chose `format="flat"` to reduce size and then needed the
 containment the tree states by indentation:
 
@@ -823,6 +843,14 @@ control". Here the agent needed a single control whose name was shared by ~40
 others, and nothing in the parameter's own text names that trade. #27 shipped
 the tree as default for exactly this reason ("a flat list cannot express a
 row"); the description of the escape hatch never caught up.
+
+**CLOSED.** The condition was the wrong one: "you only need a single named
+control" was SATISFIED on that page and the advice was still wrong. It now reads
+*"worth passing when the control you want has a name that is UNIQUE on the
+page"*, and names what flat drops — when several rows share one label, flat
+cannot say which record each belongs to, and that containment is the only thing
+telling them apart. A trade a parameter does not name is one the caller cannot
+weigh. C20e pins it and fails pre-fix with the old sentence quoted.
 
 ### 5. SPA readiness, the remaining half `OPEN`
 The mutation-recency signal (#70) separates "still building" from "ready but

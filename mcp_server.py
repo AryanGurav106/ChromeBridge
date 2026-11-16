@@ -1426,7 +1426,7 @@ async def read_page(
     ] = False,
     format: Annotated[
         str,
-        Field(description="\"tree\" (default) indents rows under the page's own structure (header / nav / main / form / table) and collapses identical sibling groups POSITIONALLY, so a repeated record shows which field is which — the 3rd link in each row is one line, not scattered among the others. \"flat\" is the older one-row-per-control listing sorted top-to-bottom; it is ~8% smaller and worth passing when you only need a single named control and do not care how the page is organised."),
+        Field(description="\"tree\" (default) indents rows under the page's own structure (header / nav / main / form / table) and collapses identical sibling groups POSITIONALLY, so a repeated record shows which field is which — the 3rd link in each row is one line, not scattered among the others. \"flat\" is the older one-row-per-control listing sorted top-to-bottom; it is ~8% smaller and worth passing when the control you want has a name that is UNIQUE on the page. When several rows SHARE one label — every card's \"Add to cart\", every row's \"Edit\" — flat cannot say which record each one belongs to, and that containment is the only thing telling them apart; the tree states it by indentation. Do not reach for flat to save size on a page built from repeated records."),
     ] = "tree",
     geometry: Annotated[
         bool,
