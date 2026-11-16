@@ -364,3 +364,68 @@ it out is two measured instances where an agent can act on the wrong thing and
 report success, on a family where 98% of such groups declare nothing. The cost
 of putting it back is a rule keyed on an author's class name, which is the
 failure mode this project has spent eight entries removing.
+
+## Pair 4 — files, «открой Архив проектов, выбери 2024, скачай CSV от 22 марта» (tree in)
+
+| arm | calls | oracle |
+|---|---|---|
+| tree | **6** | **PASS** (`bench_files_download`, `…select_collection`, `…`) |
+
+### Eighteen rows, one name, and a chosen number deciding it
+
+The archive listed **18 download links all reading `a name="Скачать локальный
+файл"`** — identical accessible name, no href at compact detail, no filename, no
+date on the row. The filenames and dates were in the `--- PAGE TEXT ---` block,
+which carries no refs. The agent had to join the two **by document position**:
+
+> *"an inference, not a fact the tools gave me"*
+
+And the collector HAD the identifying text — `query_elements` returned the
+containing `<article>` with it. **It was collected and not shown beside the
+thing to click.**
+
+**The cause was a threshold, and it was written twice.** The `near=`
+disambiguation pass skipped any label over 20 characters — a chosen number
+standing in for "a long label probably distinguishes" — while the very next
+clause already asks the real question: is this label SHARED by 3+ rows?
+`"Скачать локальный файл"` is 22 characters. It missed by two.
+
+**I fixed one copy and the fixture still failed**, which is how the second copy
+was found: the same gate guards the loop that POPULATES the shared-label map, so
+a long label never entered it and the use site then read `undefined` and
+skipped. #21's one-concept-two-spellings, caught by a check rather than by
+reading. (And my edit of the second copy dropped the `byLab.set` line beside it,
+which the suite caught immediately.)
+
+**MEASURED BOTH WAYS, because the first two attempts measured nothing.** I
+priced it on six live landing pages twice and got +0.000% both times — because
+those pages do not contain the shape, which is the same mistake I had just made
+with the region hint. The honest pairing is: **free on a corpus that lacks the
+shape (+0.000%, `near=` counts unchanged on all six), and proven on a fixture
+that has it** — NB2 shows four rows sharing one 23-character label each
+acquiring a distinct hint, NB2b is the control that the hints DIFFER, since
+identical hints would distinguish nothing and #37's drop rule would be right to
+remove them.
+
+### The third instance of one shape
+
+Three pairs, three forms of the same thing: two product cards identical but for
+price when the task word is "audiobook"; a Текст/Аудио toggle with no selected
+state; eighteen download links sharing one name. **Rows that mean different
+things, printed the same.** Every guardrail in this project scores PRESENCE, and
+in all three cases everything was present. Worth naming as a class, because it
+is the one an agent cannot detect from the output alone.
+
+### Also from this run
+
+- **The off-viewport hint named `article(ref_79)`, `article(ref_85)` for
+  below-fold articles while the five VISIBLE articles had no ref printed at
+  all.** The agent: *"if a below-fold article is worth a ref in the hint, the
+  on-screen ones are worth one in the listing."* Cost nothing here only because
+  the target happened to be first.
+- **`form_input` on the year `<select>` reported `Success: selected "2024"
+  (value now: "2024")`** — a real readback, not an intent echo (#23/#24) — and
+  `options=["Выберите год" (disabled), "2023", "2024"]` meant the dropdown never
+  had to be opened to learn its contents (#31). Both called out unprompted.
+- **Cyrillic round-tripped byte-clean everywhere** — labels, option text, the
+  text dump. No escaping, no mojibake (#11d, #42, C23).

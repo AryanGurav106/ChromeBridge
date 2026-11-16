@@ -9492,7 +9492,12 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     const byLab = new Map();
     for (const e of out) {
       const l = e.name || e.text || '';
-      if (!l || l.length > 20) continue;
+      // THE SAME LENGTH GATE WAS WRITTEN TWICE, and removing one copy did
+      // nothing because this one keeps a long label out of the map entirely —
+      // so the use site's `byLab.get(l).size < 3` then reads undefined and
+      // skips. #21's one-concept-two-spellings, caught by a fixture that still
+      // failed after the "fix".
+      if (!l) continue;
       if (!byLab.has(l)) byLab.set(l, new Set());
       byLab.get(l).add(`${e.x},${e.y},${e.w},${e.h}`);
     }
@@ -9512,7 +9517,23 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     const groups = new Map();
     for (const e of out) {
       const l = e.name || e.text || '';
-      if (!l || l.length > 20 || ((byLab.get(l) && byLab.get(l).size) || 0) < 3 || e.near || e.groupKey) continue;
+      // NO LENGTH GATE. It used to skip any label over 20 characters, which is a
+      // chosen number standing in for "a long label probably already
+      // distinguishes" -- and the line already asks the REAL question one clause
+      // later: is this label SHARED by 3+ rows? A long label shared by eighteen
+      // rows distinguishes exactly nothing, and the length test excluded the
+      // case the hint exists for.
+      //
+      // MEASURED LIVE in eval 6: a file archive listed 18 download links all
+      // reading `a name="Скачать локальный файл"` — identical, no href at
+      // compact detail, no filename, no date. That string is 22 characters, so
+      // it missed the gate by two. The filenames and dates were in the PAGE
+      // TEXT block, which carries no refs, and the agent had to join the two by
+      // DOCUMENT POSITION — their words: "an inference, not a fact the tools
+      // gave me". The collector HAD the identifying text: query_elements
+      // returned the containing `<article>` with it. It was collected and not
+      // shown beside the thing to click.
+      if (!l || ((byLab.get(l) && byLab.get(l).size) || 0) < 3 || e.near || e.groupKey) continue;
       const n = mmidReg.get(e.mmid);
       if (!n) continue;
       let hint = '';

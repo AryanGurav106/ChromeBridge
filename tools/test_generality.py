@@ -1792,6 +1792,49 @@ async def main():
         await fv.close()
         await mv.close()
 
+        # NB — A SHARED LABEL IDENTIFIES NOBODY, AND A LENGTH GATE DECIDED IT.
+        # The `near=` disambiguation pass skipped any label over 20 characters —
+        # a chosen number standing in for "a long label probably distinguishes"
+        # — while the very next clause already asks the real question: is this
+        # label SHARED by 3+ rows?
+        #
+        # MEASURED LIVE in eval 6: a file archive listed 18 download links all
+        # reading `a name="Скачать локальный файл"`. That is 22 characters, so
+        # it missed the gate by two. The filenames and dates lived only in the
+        # PAGE TEXT block, which carries no refs, and the agent had to join the
+        # two by DOCUMENT POSITION — their words, "an inference, not a fact the
+        # tools gave me". The collector HAD the text: `query_elements` returned
+        # the containing `<article>` with it.
+        #
+        # Pinned as a fixture because I could not cheaply reach that app state
+        # twice over, and shipping on a hypothesis is what this repo does not do.
+        nb = await browser.new_page(viewport={"width": 900, "height": 3000})
+        await nb.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await nb.goto("about:blank")
+        await nb.set_content(
+            "<body>" + "".join(
+                f"<article><h3>report-{y}.csv</h3><p>Added 0{d}.03.2024</p>"
+                f"<a href='/d{y}' aria-label='Download the local file'>Download</a></article>"
+                for y, d in ((2021, 1), (2022, 2), (2023, 3), (2024, 4)))
+            + "</body>")
+        await nb.wait_for_timeout(140)
+        nbout = await nb.evaluate("(function(){ " + COLLECT
+                                  + "; return _collectInteractivePage(false); })()")
+        await nb.close()
+        _dl = [l for l in nbout.splitlines() if "Download the local file" in l]
+        check("NB2 rows sharing ONE label get a near= hint that tells them "
+              "apart — a label shared by four rows identifies none of them, "
+              "however long it is",
+              len(_dl) >= 3 and all("near=" in l for l in _dl)
+              and len({l.split('near="')[1].split('"')[0] for l in _dl if 'near="' in l}) >= 3,
+              f"{len(_dl)} rows, "
+              f"{len([l for l in _dl if 'near=' in l])} with near=; "
+              + (_dl[0].strip()[:100] if _dl else "NO ROWS"))
+        check("NB2b CONTROL: the hints DIFFER per row, or they would distinguish "
+              "nothing and #37's own rule would be right to drop them",
+              len({l.split('near="')[1].split('"')[0] for l in _dl if 'near="' in l}) == len(_dl),
+              str([l.split('near="')[1].split('"')[0][:22] for l in _dl if 'near="' in l]))
+
         # ---- OC: a handler assigned to the PROPERTY is a declaration ------------
         # An event handler has two spellings and the collector read only one.
         # hasAttribute('onclick') sees `<div onclick="...">`; `el.onclick = fn` —
