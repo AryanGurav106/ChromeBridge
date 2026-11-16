@@ -515,6 +515,87 @@ same mutating flow many times, so the level goes up again. Without it
 its own recorded `4 rows` at every stop point — 0 of its states scored, in
 silence except for one REPLAY FAILURES line.
 
+### 10.8 The numbers
+
+**Live — 9 recordings against 9 real third-party apps, 20 distinct states.**
+`python tools/measure_text_flows.py --measure --corpus ev --replicates 2`
+
+| | |
+|---|---|
+| required values scored | **1,133** (985 prose, 148 table rows) |
+| TEXT-DEPENDENT (the controls-only listing does not carry them) | **1,047 / 1,133 = 0.924** |
+| **TS** | **1,047 / 1,047 = 1.000** |
+| LOST by every arm | **0** |
+
+Per arm, over those 1,047:
+
+| arm | carries |
+|---|---|
+| `read_page(filter="all")`, 50k default | 1,029 = **0.983** |
+| `search_page` | 881 = 0.841 |
+| `query_elements` (generated selector — an upper bound) | 800 = 0.764 |
+| `get_page_text`, 30k default | 797 = **0.761** |
+| `get_page_text`, `max_chars=250000` | 1,047 = **1.000** |
+
+**Every loss at default settings is the BUDGET, and nothing else.** 250 values
+(211 prose, 39 rows) are missed by `get_page_text` at 30k and carried at 250k;
+**0 are missed at both**. The 18 that `read_page(filter="all")` misses at its
+50k default are the same class — all 18 come back at the raised text budget.
+And the budget is not a silent loss: on jawiki the tool itself reports
+`body truncated at 27225 of 62148 chars. YOUR max_chars=30000 was spent as:
+27225 body + 332 readiness banner + 1834 document outline`.
+
+So on this sample the text surface's CAPABILITY is complete, and what an agent
+actually gets depends on a number it chose and was told about.
+
+**Table rows** (148): the renderer the hint points at,
+`read_page(ref_id=<table>, filter="all")`, carries **131 = 0.885**. Association,
+which presence does not measure:
+
+| | ordered | one line (111 rows whose cells are single-line) |
+|---|---|---|
+| `read_page(filter="all")` | 139/148 = 0.939 | 105/111 = 0.946 |
+| scoped table renderer | 129/148 = 0.872 | 102/111 = 0.919 |
+| `get_page_text` | 109/148 = 0.736 | 95/111 = 0.856 |
+
+`search_page` is the weakest arm for a row (91/148 = 0.615) and is being asked
+a question it is not for — it is given the ROW KEY and scored on whether the
+hit's bounded context carries the rest of the row.
+
+Every figure above is from **replicate 1 alone**. An earlier draft of this
+table mixed three of them in from the two-replicate deduped set, which is two
+populations in one ratio — #22's own rule, and the reason it is said here.
+
+**Fixture — 7 recorded flows, 9 distinct states.** 80 required values
+(replicate 1, same population rule as above), **text-dependence 43/80 = 0.537**,
+**TS 43/43 = 1.000**, every arm 1.000.
+**It is saturated and that is the result**: on server-rendered pages that fit
+the budget, every surface carries everything. True of small pages, and no
+evidence at all about large ones (R2).
+
+**Drift floor.** Two replicates on identical code:
+
+| corpus | items in both | disagreements |
+|---|---|---|
+| fixture | 77 (of 77 / 77 after collapsing 3 values a page repeats) | **0 on all seven verdict fields = 0.00%** |
+| live | 1,107 (of 1,114 / 1,112) | **0 on all seven verdict fields = 0.00%** |
+
+The live STATE set moved by one (20 states, then 19) — that is site drift, not
+verdict instability, and it is why the intersection is quoted beside the floor.
+
+**The LOST count across the ruler's own fixes was 55 → 34 → 0**, and every
+step of that was my ruler rather than the product:
+
+| | LOST | what changed |
+|---|---|---|
+| first run | 55 (54 rows) | — |
+| row rule: coverage, not same-line | 34 (33 rows) | 44 of the 54 had a cell whose own text spans lines |
+| hint regex + `innerText`-only sweep | **0** | the scoped arm could finally run on jawiki's 44 tables; and **0 of the 33 remaining lost rows had every cell in Chrome's own `body.innerText`** — they were collapsed navbox content, so the item count fell by exactly 33 and the tools were right not to carry them |
+
+That last line is the one to check rather than trust, and it was: the removed
+set is exactly the lost set, verified value by value against the saved
+ground-truth dumps.
+
 ### 10.9 What this sample cannot support
 
 Stated before the number, as §3 is.
@@ -542,4 +623,28 @@ Stated before the number, as §3 is.
   on pages that fit the budget. That is a true statement about small
   server-rendered pages and no evidence at all about large ones — R2 exactly:
   an ablation measures the code against the sample.
+
+### 10.10 Does this close item 12?
+
+**It narrows it; it does not close it.** The TEXT half goes from *unmeasured*
+to *measured with a denominator, a drift floor and a decomposition*, and the
+headline is worth stating plainly: **on 20 live post-interaction states, every
+one of the 1,047 values a controls-only listing does not carry is carried by
+some text surface, and every shortfall at default settings is the caller's own
+budget.** That is a stronger answer than the one this file expected to find.
+
+What keeps it open:
+
+1. **Not task-weighted.** The items are everything the page renders, not what a
+   task needs. A real MFS weights by the latter. This is the same bound §2
+   accepts for DS, and it is the larger of the two gaps.
+2. **Association is measured and is NOT 1.000** — 0.939 ordered in
+   `read_page(filter="all")`, 0.885 for the scoped renderer's coverage. Carrying
+   a value is not the same as saying which row it belongs to, and the table
+   half of the paper's "Text" row lives there.
+3. **The discovery path is narrower than the tool.** On jawiki the hint reads
+   `44 data table(s) on this page, first 6 by document order` — so the aligned
+   renderer is reachable for 6 of 44 tables from one listing. The renderer
+   scores 0.885; being able to find it is a different number and is not this one.
+4. **20 live states, one page a fifth of them, 1 in 5 replays lost to drift.**
 

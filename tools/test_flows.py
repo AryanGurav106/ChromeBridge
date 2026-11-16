@@ -742,6 +742,75 @@ async def record_and_replay():
     blob = json.dumps(lf.to_json())
     check("FS1 the typed password is NOWHERE in the flow file",
           "hunter2-real-password" not in blob, blob[:160])
+    # FW9 — A WITNESSED CHECK BESIDE AN UNPROVEN ONE OF THE SAME KIND.
+    # `_check_items` keys a check by (kind, which), so two `query` checks on one
+    # step are two keys -- but the unevidenced roll-up compared on `str(k[0])`,
+    # the KIND, and registered unproven ones by kind too. Any unproven query
+    # therefore marked EVERY query on that step unevidenced. Twice wrong: it
+    # over-claims to a human reading `review`, and the runner keys on this exact
+    # prefix to decide the dead-click tie, so a step that DOES carry a falsifier
+    # was treated as one that does not.
+    fbw = FakeBridge()
+    recw = Recorder("two-queries", fbw.entries_fn)
+    # Step 0 SEES the dialog present, which is what witnesses its later absence.
+    recw.after("query_elements", {"selector": ".dlg"},
+               "1 element(s) match '.dlg'", {})
+    ci = {"ref": "ref_1", "action": "left_click", "tabId": 1}
+    ct = await recw.before("computer", ci)
+    recw.after("computer", ci, "clicked", ct)
+    # Now one WITNESSED check (the dialog is gone, and it was seen present) and
+    # one UNPROVEN check of the SAME KIND (never observed before this step).
+    recw.after("query_elements", {"selector": ".dlg"},
+               "0 element(s) match '.dlg'", {})
+    recw.after("query_elements", {"selector": ".flash"},
+               "1 element(s) match '.flash'", {})
+    wf, _ = recw.compile()
+    _rev = " | ".join(r for st in wf.steps for r in (st.review or []))
+    check("FW9 a step carrying a WITNESSED check beside an unproven one of the "
+          "same kind is NOT called unevidenced — the roll-up is per check, not "
+          "per kind, and the runner keys on that prefix to decide a dead click",
+          "unevidenced" not in _rev, _rev[:200] or "(no review lines)")
+    check("FW9b CONTROL: the unproven one is still NAMED, so this did not just "
+          "silence the warning",
+          "unproven" in _rev, _rev[:200] or "(no review lines)")
+
+    # FS1e — THE SAME LOGIN ADDRESSED BY CSS SELECTOR, which is how the leak
+    # actually happened. `fill_form` advertises `selector` and #48/B12 taught
+    # the batch guard to respect it, because a selector is resolved at dispatch
+    # time and is therefore the ref-FREE way to address a form across a page
+    # change. But `ref_paths` excludes it -- correctly, it is not a
+    # per-document handle -- and the recorder was using `ref_paths` to decide
+    # which fields to TYPE-CHECK for a password. So a selector-addressed field
+    # was never checked, never redacted, and never parameterised: MEASURED, a
+    # real recording wrote a live credential in plaintext into seven files.
+    # One function answering two different questions (#21, in reverse).
+    #
+    # The type of a selector-addressed field CANNOT be read, so we cannot tell
+    # a password from any other value. Refusing is the same treatment the
+    # undescribable-ref case already gets, and silence is the one option that
+    # must not remain.
+    fb6b = FakeBridge([E(50, "input", type_="email", name="Work email", editable=True,
+                         clickable=False),
+                       E(51, "input", type_="password", name="Password", editable=True,
+                         clickable=False),
+                       E(52, "button", name="Sign in", type_="submit")])
+    rec3b = Recorder("acme-login-sel", fb6b.entries_fn)
+    lisel = {"fields": [{"selector": "#email", "value": "ada@acme.test"},
+                        {"selector": "#pw", "value": "hunter2-real-password"}],
+             "submit": True, "submit_ref": "ref_52", "tabId": 1}
+    ltsel = await rec3b.before("fill_form", lisel)
+    rec3b.after("fill_form", lisel, "Filled 2/2", ltsel)
+    lfsel, lrsel = rec3b.compile()
+    selblob = json.dumps(lfsel.to_json())
+    check("FS1e a password addressed by CSS SELECTOR is never written in "
+          "plaintext — its type cannot be read, so the step is refused rather "
+          "than recorded with a value we could not check",
+          "hunter2-real-password" not in selblob, selblob[:200])
+    check("FS1f ...and the refusal SAYS SO and says how to fix it, because a "
+          "silently dropped step is how the leak would come back",
+          any("selector" in n and "ref" in n for n in rec3b.notes),
+          " | ".join(rec3b.notes)[:220] or "NO NOTE AT ALL")
+
     check("FS1b ...and the email beside it IS stored — the control that this "
           "redacts the declared password field, not every value",
           "ada@acme.test" in blob)

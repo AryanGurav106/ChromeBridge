@@ -35,7 +35,7 @@ from typing import Any, Callable, Optional
 from .descriptor import build, unwitnessed_ordinal
 from . import secrets
 from .model import (NAVIGATIONAL, Flow, Step, get_ref, mutates, ref_paths,
-                    set_value, slug)
+                    set_value, slug, value_paths)
 
 # Result-string contracts. These parse the OUTPUT of two tools, which is a
 # string contract with mcp_server -- exactly the thing #30 found dead for the
@@ -402,6 +402,27 @@ class Recorder:
             # type enum (secrets.is_secret), so there is no wordlist and no
             # entropy test; the placeholder names the environment variable the
             # replay must read, which is what makes the file safe to commit.
+            # A VALUE WE CANNOT TYPE-CHECK IS NEVER WRITTEN TO THE FILE.
+            # `ref_paths` excludes `selector` (it is not a per-document handle,
+            # #48/B12), so a selector-addressed field has no target descriptor
+            # and `is_secret` can only ever answer False for it. MEASURED: that
+            # path wrote a live credential in PLAINTEXT into seven flow files.
+            #
+            # We cannot know whether such a field is a password, so the only
+            # safe options are to refuse or to write the secret. Refusing is the
+            # same treatment the undescribable-ref case above already gets, and
+            # it is loud: the note names the step and says how to re-record it.
+            # Silence is the one option that must not remain.
+            _unchecked = [vp for vp in value_paths(r["name"], inp)
+                          if vp not in paths]
+            if _unchecked:
+                self.notes.append(
+                    f"step {i} ({r['name']}) dropped — field(s) {_unchecked} carry a "
+                    f"typed value addressed by CSS selector, whose declared type "
+                    f"cannot be read, so this recorder cannot tell a password from "
+                    f"any other value. Re-record that step addressing the field by "
+                    f"ref and the password redaction applies normally.")
+                continue
             for p in paths:
                 tgt = r["targets"].get(p)
                 if secrets.is_secret(tgt):
@@ -660,17 +681,36 @@ class Recorder:
         # NOT a failure by itself. Unevidenced is not wrong (#68), and a step
         # whose assertions merely lack evidence still passes on a normal run.
         # It only decides the tie when the tool ALSO reports it did nothing.
+        # PER CHECK, NOT PER KIND -- the same correction the `hollow` branch 14
+        # lines above already carries, and for the same reason (#63 R2-D4).
+        # `_check_items` keys a check by (kind, which), so two `query` checks on
+        # one step are two keys. Rolling them up to `str(_kind)` made ANY
+        # unproven query mark EVERY query on that step as unevidenced.
+        #
+        # MEASURED on a real recording: a step carrying a WITNESSED
+        # `query '.backdrop:not([hidden]) [role=dialog]' == 0` (seen at 1 the
+        # step before) beside an unproven `query '.flash'` was reported
+        # "every check on this step is hollow or unproven". Twice wrong: it
+        # over-claims to a human reading `review`, and the runner keys on this
+        # exact prefix to decide the dead-click tie, so a step that DOES have a
+        # falsifier was being treated as one that does not.
         _unev: dict = {}
         for _n, _which, _all in hollow:
             _unev.setdefault(_n, set())
             _unev[_n] |= ({"*"} if _all else {x.strip() for x in _which.split(",")})
         for _n, _kind, _which, _first in unproven:
-            _unev.setdefault(_n, set()).add(str(_kind))
+            # Register what the hollow side registers: the identifying string
+            # when there is one, so the two halves compare like with like.
+            _unev.setdefault(_n, set()).add(
+                str(_which) if _which else str(_kind))
         for _n, _flagged in _unev.items():
             _keys = self._check_items(kept[_n].expect or {})
             if not _keys:
                 continue
-            _names = {str(k[0]) for k in _keys}
+            # The check's own identifier, falling back to its kind for `url`,
+            # which has no second element.
+            _names = {str(k[1]) if len(k) > 1 and k[1] is not None else str(k[0])
+                      for k in _keys}
             if "*" in _flagged or _names <= _flagged:
                 kept[_n].review.append(
                     'unevidenced: every check on this step is hollow or unproven, '

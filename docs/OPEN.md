@@ -371,64 +371,65 @@ invariance to the other eight control keys, which is M-B. The 0 floor is a
 second result: these pages render deterministically, so later measurements have
 no drift to subtract.
 
-### 12. Sufficiency: measured for CONTROLS, unmeasured for TEXT `MEASURE FIRST`
-`tools/measure_sufficiency.py` + `docs/SUFFICIENCY.md` close the control half.
-Baseline: **`DS | reachable` = 0.933** (83/89 labelled targets distinguishable
-among the rows we printed), LOSO 0.921–0.951, both negative controls passing and
-both cross-checks against `bench_mind2web` / `bench_trajectory` exact. The
-accessible name carries **51.7pp**, the tree's ancestry path **11.2pp** — a
-number #27 never had, since the tree shipped on a NULL A/B result because no
-metric there could read a listing the way an agent does.
+### 12. Sufficiency: the TEXT half is now MEASURED `OPEN`
+The CONTROL half was already closed: **`DS | reachable` = 0.933**, LOSO
+0.921–0.951, both negative controls passing, the accessible name carrying
+51.7pp and the tree's ancestry path 11.2pp.
 
-**The 38.2pp this entry carried until now was a RULER BUG**, caught in
-`SUFFICIENCY.md` and not propagated back to here — the listing prints identity
-two ways (a bare quoted string after the tag, and `name="…"`) and the ablation
-removed only the first, so it meant different things on different row shapes.
-Recorded because a correction at the bottom of a long document does not correct
-the index that points at it (#67), and this index was wrong for the hour
-between the two being written.
+**THE TEXT HALF IS NOW MEASURED** (`tools/measure_text_flows.py`,
+`SUFFICIENCY.md` §10). It is the half the source paper ranks FIRST (30.5 / 59.5
+coverage drop when ablated, against 4.8–13.6 for any control type), and it was
+unmeasured because a static page load cannot tell "the text surface failed to
+carry it" from "the value did not exist yet". The route through the flow
+recorder — replay to the step before the answer, then ask — closes that, and
+`run_flow(stop_after=N)` became usable over the wire only this session.
 
-**MEASURED AND REFUTED, as a design: the obvious probe cannot work.**
-`tools/measure_text_sufficiency.py` uses eval 4's blind labels (author told
-only to write varied two-hop tasks; every answer re-derived by an independent
-referee) and harvests the pages mechanically from both arms' transcripts. On
-4 tasks it reports 2/5 values carried, and both misses are a validation
-message and a search result -- values that do not EXIST until the page is
-interacted with. The confound is total and checkable in one line: `tasks.md`
-records `Interactions needed` per task and **0 of 22 need zero**. The probe
-measures how many eval tasks are two-hop, which is 100%.
+| | live corpus |
+|---|---|
+| required values scored | **1,133** (985 prose, 148 table rows) |
+| TEXT-DEPENDENT (controls-only listing does not carry them) | 1,047 (0.924) |
+| **TS — carried by SOME text surface** | **1,047 / 1,047 = 1.000** |
+| lost by every arm | **0** |
 
-**The route that would work runs through the flow recorder**: replay a
-recorded flow to the step before the answer, then ask the text surface there.
-That separates "the text surface failed to carry it" from "the value did not
-exist yet", which no static load can.
+Per arm over the 1,047: `read_page(filter="all")` 0.983 · `search_page` 0.841 ·
+`query_elements` 0.764 · `get_page_text` 0.761 — **and `get_page_text` at a
+raised budget 1.000.** Every shortfall at default settings is the caller's
+BUDGET and nothing else: 250 values missed at the 30k default are carried at
+250k, **0 missed at both**, and the tool says so (`body truncated at 27225 of
+62148 chars … spent as 27225 body + 332 readiness banner + 1834 outline`).
 
-**HALF OF THAT ROUTE IS NOW BUILT.** `run_flow(stop_after=N)` replays up to
-and including step N and stops with the page in the state that step left it —
-a validation message, a search result, a filtered table — which a fresh
-navigate to the same url cannot reproduce. It reports `stopped_early` and
-never `passed`, because the later steps' assertions did not run and a caller
-reading "passed" would be reading a flow most of which did not execute
-(FR22/FR22b, with FR22c the control that an ordinary replay still runs to the
-end). What remains is the 20 recordings.
+Drift floor **0.00%** on all seven verdict fields over two replicates, both
+corpora. Live states come from the 8 `ev-*` recordings made by agents in
+#63/#64 who were told nothing about any text measurement, plus todomvc — which
+is the answer to "you chose the states". Stopping happens at EVERY step index,
+deduped by content hash, because choosing the stop point is choosing the sample.
+"Text-only" is measured per item as absence from `read_page(filter="interactive")`,
+not asserted.
 
-**The larger half is open and it is the one the source paper ranks first:
-TEXT** (30.5 / 59.5 coverage drop when ablated, against 4.8–13.6 for any control
-type). Our listing is a listing of *controls*; prose and table data reach the
-agent only via `get_page_text`, `search_page` and `query_elements`, and nothing
-measures whether those carry what a task needs. #14's scoped text and #26's
-table rendering were both built from live-agent complaints, never priced.
+**WHAT KEEPS IT OPEN, and the first is the big one:**
+1. **Not task-weighted.** Items are everything the page renders, a superset of
+   what a task needs. Same bound item 2 accepts for DS, and the larger gap.
+2. **Association is measured and is NOT 1.000.** Ordered-correctly in
+   `read_page(all)` 139/148 = 0.939; the scoped aligned renderer 129/148 =
+   0.872. The table half of the paper's "Text" row lives here, and presence does
+   not measure it.
+3. **The discovery path is narrower than the tool.** The data-table hint names
+   the first 6 of jawiki's **44** tables, and it is the only route to the
+   aligned renderer, which scores 0.885 once reached.
+4. **20 live states, one page a fifth of them**, and 1 in 5 replays lost to five
+   weeks of site drift.
 
-Two measurement debts the control half surfaced, both cheap:
-- **Mind2Web's snapshots have no `href`, no `src`, and no `aria-label`** (0 of
-  61,709 `<a>`; 0 of 6,454 `<img>`; 17,272 `aria_label` against 1 hyphenated
-  attribute). So the `detail` ladder is a near no-op there and AccName step 2C
-  is dead for every implementation. Three structurally-absent signals beyond the
-  two #73 names — **no `detail`/`brief`/`full` comparison taken on Mind2Web
-  means anything.**
-- **Density is not sufficiency, by about 4×** (27.6% of on-screen rows share a
-  printed identity vs 6.7% of the rows a human needed). `audit_dom_quality.py`'s
-  `ambiguous` rate is the first number and has never been the second.
+**FOUR PROBE BUGS, THREE OF THEM DAMNING THE SYSTEM — LOST went 55 → 34 → 0 and
+every step was the ruler**, which is this project's most repeated lesson landing
+on its newest measurement. (a) `search_page` misses were detected with
+`startswith("No match")` and the miss path PREPENDS the readiness note (#39), so
+every miss read as a hit — the nonce control caught it on its first run. (b) A
+table row had to be recovered on ONE LINE, and 44 of the 54 rows scored LOST had
+a cell whose own text spans lines: unrecoverable by construction. (c) The
+data-table hint regex anchored on `page:` while the hint reads `…on this page,
+first 6 by document order:`, so the scoped arm was EMPTY and #26's renderer
+scored 0 on the only state with real tables. (d) `innerText || textContent` in
+the sweep invented values Chrome does not paint (#37).
 
 ### 13. The browser-use A/B measures a path that is no longer theirs `RETIRE THE FRAMING`
 The 84.5%-junk figure (#33) was measured against their `ClickableElementDetector`.

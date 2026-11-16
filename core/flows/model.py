@@ -394,6 +394,34 @@ def set_value(inp: dict, path: str, v) -> None:
     inp["value"] = v
 
 
+def value_paths(name: str, inp: dict) -> list:
+    """Every place in this call's input that carries a VALUE the user typed.
+
+    SEPARATE FROM `ref_paths` ON PURPOSE, and the lack of that separation was a
+    secret-leak defect. `ref_paths` answers "which inputs name a per-document
+    handle", which is a STALENESS question, and `FIELD_REF_KEYS` deliberately
+    excludes `selector` because #48/B12 established that a selector is resolved
+    at dispatch time and is therefore the ref-FREE way to address a form.
+
+    The recorder was using that same answer to decide which fields to
+    TYPE-CHECK for a password. So a field addressed by `selector` -- which
+    `fill_form` advertises, and which the batch guard was taught to respect --
+    produced no path at all: never type-checked, never redacted, never
+    parameterised. MEASURED: a recording made that way wrote a live credential
+    in PLAINTEXT into seven flow files. One function was answering two
+    different questions, which is #21 in reverse.
+
+    This names every value-bearing position regardless of HOW the element is
+    addressed, so the caller can decide what to do about one it cannot check.
+    """
+    out = ["value"] if (inp or {}).get("value") is not None else []
+    if name == "fill_form":
+        for i, f in enumerate((inp or {}).get("fields") or []):
+            if isinstance(f, dict) and f.get("value") is not None:
+                out.append(f"fields.{i}")
+    return out
+
+
 def ref_paths(name: str, inp: dict) -> list:
     """Every place in this call's input that names a per-document handle."""
     out = [k for k in REF_KEYS if (inp or {}).get(k) is not None]
