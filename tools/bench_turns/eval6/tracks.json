@@ -1,0 +1,232 @@
+[
+ {
+  "domain": "grocery",
+  "arm": "tree",
+  "track": "e6_tree_grocery",
+  "task_file": "bench_grocery_navigation.json",
+  "task": "На %HOST% в «Продукты» открой главную, перейди по категориям меню и добавь товар в корзину.",
+  "conditions": [
+   {
+    "event_name": "state_changed",
+    "parameters": {
+     "new_state": "bench_grocery_category"
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {}
+   }
+  ],
+  "created": true
+ },
+ {
+  "domain": "grocery",
+  "arm": "flat",
+  "track": "e6_flat_grocery",
+  "task_file": "bench_grocery_navigation.json",
+  "task": "На %HOST% в «Продукты» открой главную, перейди по категориям меню и добавь товар в корзину.",
+  "conditions": [
+   {
+    "event_name": "state_changed",
+    "parameters": {
+     "new_state": "bench_grocery_category"
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {}
+   }
+  ],
+  "created": true
+ },
+ {
+  "domain": "books",
+  "arm": "tree",
+  "track": "e6_tree_books",
+  "task_file": "digital_books_audio_basket.json",
+  "task": "На %HOST% в «Книги» найди аудиокнигу «Тонкий фарфор у закрытой станции» и добавь в корзину.",
+  "conditions": [
+   {
+    "event_name": "state_changed",
+    "parameters": {
+     "new_state": "bench_books_item",
+     "state_id": "item_51565901"
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_51565901"
+    }
+   }
+  ],
+  "created": true
+ },
+ {
+  "domain": "books",
+  "arm": "flat",
+  "track": "e6_flat_books",
+  "task_file": "digital_books_audio_basket.json",
+  "task": "На %HOST% в «Книги» найди аудиокнигу «Тонкий фарфор у закрытой станции» и добавь в корзину.",
+  "conditions": [
+   {
+    "event_name": "state_changed",
+    "parameters": {
+     "new_state": "bench_books_item",
+     "state_id": "item_51565901"
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_51565901"
+    }
+   }
+  ],
+  "created": true
+ },
+ {
+  "domain": "shop",
+  "arm": "tree",
+  "track": "e6_tree_shop",
+  "task_file": "ecommerce_basket_and_favorites.json",
+  "task": "На %HOST% в «Маркете» найди туалетную бумагу Zewa Deluxe без аромата на 24 рулона, добавь в избранное и в корзину.",
+  "conditions": [
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_1160040708"
+    }
+   },
+   {
+    "event_name": "add_favorites",
+    "parameters": {
+     "item_id": "item_1160040708"
+    }
+   }
+  ],
+  "created": true
+ },
+ {
+  "domain": "shop",
+  "arm": "flat",
+  "track": "e6_flat_shop",
+  "task_file": "ecommerce_basket_and_favorites.json",
+  "task": "На %HOST% в «Маркете» найди туалетную бумагу Zewa Deluxe без аромата на 24 рулона, добавь в избранное и в корзину.",
+  "conditions": [
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_1160040708"
+    }
+   },
+   {
+    "event_name": "add_favorites",
+    "parameters": {
+     "item_id": "item_1160040708"
+    }
+   }
+  ],
+  "created": true
+ },
+ {
+  "domain": "files",
+  "arm": "tree",
+  "track": "e6_tree_files",
+  "task_file": "files_archive_csv.json",
+  "task": "На %HOST% в разделе «Файлы» открой «Архив проектов», выбери 2024 год и скачай CSV от 22 марта.",
+  "conditions": [
+   {
+    "event_name": "bench_files_select_collection",
+    "parameters": {
+     "collection": "project_archive"
+    }
+   },
+   {
+    "event_name": "bench_files_select_year",
+    "parameters": {
+     "year": "2024"
+    }
+   },
+   {
+    "event_name": "bench_files_download",
+    "parameters": {
+     "collection": "project_archive",
+     "year": "2024",
+     "format": "csv",
+     "file": "project-archive-2024.csv"
+    }
+   }
+  ],
+  "created": true
+ },
+ {
+  "domain": "files",
+  "arm": "flat",
+  "track": "e6_flat_files",
+  "task_file": "files_archive_csv.json",
+  "task": "На %HOST% в разделе «Файлы» открой «Архив проектов», выбери 2024 год и скачай CSV от 22 марта.",
+  "conditions": [
+   {
+    "event_name": "bench_files_select_collection",
+    "parameters": {
+     "collection": "project_archive"
+    }
+   },
+   {
+    "event_name": "bench_files_select_year",
+    "parameters": {
+     "year": "2024"
+    }
+   },
+   {
+    "event_name": "bench_files_download",
+    "parameters": {
+     "collection": "project_archive",
+     "year": "2024",
+     "format": "csv",
+     "file": "project-archive-2024.csv"
+    }
+   }
+  ],
+  "created": true
+ },
+ {
+  "domain": "hotels",
+  "arm": "tree",
+  "track": "e6_tree_hotels",
+  "task_file": "hotel_atomic_select_city.json",
+  "task": "На %HOST% в «Отелях» укажи направление: Токио, Япония.",
+  "conditions": [
+   {
+    "event_name": "bench_hotel_select_city",
+    "parameters": {
+     "cityId": "jp-tyo",
+     "label": "Токио, Япония",
+     "cityName": "Токио",
+     "countryName": "Япония"
+    }
+   }
+  ],
+  "created": true
+ },
+ {
+  "domain": "hotels",
+  "arm": "flat",
+  "track": "e6_flat_hotels",
+  "task_file": "hotel_atomic_select_city.json",
+  "task": "На %HOST% в «Отелях» укажи направление: Токио, Япония.",
+  "conditions": [
+   {
+    "event_name": "bench_hotel_select_city",
+    "parameters": {
+     "cityId": "jp-tyo",
+     "label": "Токио, Япония",
+     "cityName": "Токио",
+     "countryName": "Япония"
+    }
+   }
+  ],
+  "created": true
+ }
+]
