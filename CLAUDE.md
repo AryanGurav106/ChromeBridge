@@ -7909,6 +7909,121 @@ granted in the side panel is refused with the same message the agent gets.
     The percentages do not transfer to the web; the mechanisms and their
     directions do.
 
+80. **SIX DEFECTS IN ONE EVAL AND NOT ONE OF THEM WAS IN THE COLLECTOR.** Eval
+    6 prices `format` on SUCCESS against WebPageBench's event oracle — the open
+    half of `OPEN.md` item 11, which #27 could not answer because it shipped the
+    tree default on an explicitly NULL A/B, "because no metric here could read a
+    listing the way an agent does". Eight independent agents, one per (task,
+    arm), each told nothing about a comparison or which arm it was.
+
+    **THE TURN NUMBERS ARE A NULL RESULT AND THE PRE-REGISTRATION SAID THEY
+    WOULD BE.** Pairs so far: hotels 8/9, books 7/7, shop 6/6, files 6/—. Tree
+    ahead by one call in total, which is inside the **12–14% rerun noise floor**
+    arXiv:2608.06171 measures for exactly this kind of observation-format A/B
+    and which the prereg records BEFORE any run, alongside the fact that at n=5
+    the best achievable p is 0.0625 so H1 **cannot clear**. Every pair passed
+    the oracle in both arms. **`format` does not decide success on these tasks**,
+    which is #27's null result reproduced on a second, oracle-scored benchmark.
+
+    **THE YIELD WAS SIX DEFECTS IN AGENT-FACING PROSE, and the collector came
+    out clean every time.** That is the finding worth carrying: by this point
+    the representation itself is in good shape and the layer that TALKS about it
+    is not.
+    - **The aria-hidden note offered a recovery that structurally cannot work.**
+      It said *"find() reaches elements this viewport-scoped listing omits"* —
+      but `find` searches what the COLLECTOR KEPT and an aria-hidden element is
+      dropped AT collection, so two different drop reasons shared one sentence
+      and the recovery belonged to the other. Verified live before changing
+      anything: `read_page` listed 11 elements with the destination field
+      absent, `find` on that field's EXACT placeholder returned "No elements
+      matched", and `query_elements("input")` returned it with a ref that
+      clicks. #33's class inside the note written to end #33's class (AH5).
+    - **`find`'s miss census claimed to describe the page.** "The page holds 91
+      elements: … 2 input" while `query_elements("input")` returned 5, because
+      the census counts the collector's kept entries. It undercut the very tool
+      it was pointing at. It names its own population now (F37 rewritten to its
+      invariant rather than its phrase).
+    - **The off-viewport region hint named regions by TAG.** TWO agents, in both
+      arms, scoped to the only `<form>` because the task said "fill in a search
+      form". It was the newsletter signup; the search widget was not a `<form>`
+      at all. Now carries aria-label / aria-labelledby text / first heading
+      (RG2b, with RG2c the control that an unnamed region is still listed).
+    - **The readiness banner asserted a present tense its own number
+      contradicted** — see below, it got a measurement.
+    - **The cap notice ignored the recovery in its own response.** BOTH shop
+      agents reported the capped listing missing the target while the
+      `--- PAGE TEXT ---` block in the SAME call contained it; the notice
+      offered `find()` and a scoped read, each another round trip. The collector
+      cannot say this (it does not know the server will append), so the server
+      does, gated on the cap having fired (C35/C35b).
+    - **A threshold decided a disambiguation, and it was written twice.** 18
+      download links all reading `a name="Скачать локальный файл"`, no href at
+      compact detail, no filename, no date — the agent joined listing to text
+      **by document position**, *"an inference, not a fact the tools gave me"*,
+      while `query_elements` returned the containing `<article>` with the text
+      in it. The `near=` pass skipped labels over 20 characters; that string is
+      22. **I removed one copy and the fixture still failed** — the same gate
+      guards the loop that POPULATES the shared-label map (#21), and my edit of
+      the second then dropped the `byLab.set` line beside it, which the suite
+      caught at once (NB2/NB2b).
+
+    **THE BANNER COMPLAINT WAS RIGHT AND IT WAS MINE.** THREE of five agents,
+    unprompted and across both arms, said the readiness banner fires on reads
+    that are plainly settled — *"I ignored it each time and was right to, which
+    is the failure mode where an always-on warning trains you to skip it."* That
+    is #15's always-on warning and plausibly my own #70/#77 work, so it got a
+    number: six live apps sampled at six offsets after DOMContentLoaded — the
+    exact moment `browser_batch` reports "this step read the settled page" —
+    gave **30 of 36 reads (83%) printing the STRONG banner, 12 of them with
+    `since` > 1500ms.** At shop t+2000ms: `since=1512ms`, 96 structural, prose
+    saying *"being added, removed or re-texted RIGHT NOW"*. **The count was
+    right and the sentence was false.** The window is NOT narrowed — R23
+    measured 1000ms at 50.7% false-quiet in a clamped tab — the SENTENCE now
+    defers to `since`, which the banner already prints (R-TENSE, with R-TENSE2
+    the control that it still says do not conclude absence).
+
+    **A SHAPE WORTH NAMING: ROWS THAT MEAN DIFFERENT THINGS, PRINTED THE SAME.**
+    Three independent instances in three pairs — two product cards identical but
+    for price where the task word is «аудиокнигу»; a Текст/Аудио toggle whose
+    selected state is invisible; eighteen download links sharing one name.
+    **Every guardrail this project has scores PRESENCE, and in all three cases
+    everything was present.** `lost_identities`, recall, findability, the
+    sufficiency DS — none can see it. It is the silent-WRONG-answer shape rather
+    than the silent-missing-element shape, and an agent cannot detect it from
+    the output alone. One agent put it exactly: *"an agent that trusted the
+    listing alone has a coin flip here and would never know it had lost."*
+
+    **AND ONE OF THOSE THREE IS A DECISION FOR THE OWNER, WITH A NUMBER.** The
+    toggle and the pack-size selector declare their selected state ONLY in a
+    class token — measured on the page: no `role`, `aria-selected`,
+    `aria-pressed`, `aria-current`, `aria-controls`, `tabindex`, style or
+    distinguishing `data-*`; six shared class tokens and one difference,
+    `active`. #29 kept exactly that token as an instrumented last resort "until
+    measured dead" and then measured it dead — ZERO effect across 99 live pages,
+    because the two declared signals always decided first. **That corpus
+    included Vuetify. This app is Vuetify and declares neither signal.** Counted
+    here: **43 sibling groups with exactly one state-classed member, 42 (98%)
+    declaring nothing an ARIA or native rule can read** — with the caveat,
+    recorded so it is not quoted as precise, that the token test matches
+    Vuetify's `--active` modifier generally and the examples are dominated by
+    the nav. So #29's deletion was right about its corpus and leaves this family
+    unserved: **#25's rule applied to a DELETION rather than an addition.**
+    NOT reinstated. A class-name wordlist is what the brief forbids and what
+    #27/#28 removed; both costs are on the table and the call is not mine.
+
+    **THREE MISTAKES OF MY OWN, all caught by measuring.** I priced the region
+    hint at +0.092% across six live pages — **invalid**, those pages never
+    produce the per-region hint, so it measured nothing. I then made the
+    IDENTICAL mistake on the `near=` gate, twice, getting +0.000% on pages that
+    lack the shape. The honest pairing in both cases is *free on a corpus that
+    lacks the shape, proven on a fixture that has it*. And my first RG2b fixture
+    called `set_content` on the page three later checks scope into, so
+    RG3/RG4/RG13 failed on an empty region — a fixture mutating shared state,
+    the vacuous-fixture problem pointing forwards instead of backwards.
+
+    Suites: 1,324 checks. New — AH5/AH5b, F37/F37a2 (rewritten), RG2b/RG2c,
+    R-TENSE/R-TENSE2, C35/C35b, NB2/NB2b.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
