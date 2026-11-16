@@ -450,6 +450,44 @@ result when a submit fails (#4). **A standalone disabled button has no
 equivalent path**, and that asymmetry is the whole item: the same question, asked
 about the same page, answered in one place and not the other.
 
+### 4j. The aria-hidden note promises refs `query_elements` cannot give `OPEN`
+The listing's aria-hidden note sends callers to `query_elements` and says
+verbatim *"it queries the RENDERED document rather than this listing, so it
+returns aria-hidden elements and its refs act normally."*
+
+**The second half is false for anything rendered since the last `read_page`.**
+mmids are stamped by the COLLECTOR (#32), so a suggestion list, a just-opened
+menu or a fresh row carries none. Measured live in eval 7: an agent followed
+that note, typed a destination, queried the suggestion button that had just
+appeared, and got `<button> "Дубай ОАЭ" class="opt active"` with no ref. It
+spent a whole call running `read_page` purely to make the collector stamp, then
+re-queried. Its words: *"for a suggestion list — i.e. anything that appears in
+response to typing, which is the normal case — `query_elements` alone is a dead
+end, and nothing in that note says so."*
+
+**HALF CLOSED, server-side.** Both sibling renderers now say it, and both fire
+on ANY ref-less row rather than only when every row lacks one — the mixed case
+(one read has run, the new half has not been stamped) is the common shape and an
+all-or-nothing guard was silent for it. C36/C36b, with C36c the control that a
+fully-stamped result says nothing. `search_page` carried the all-or-nothing form
+since #32 and had the same hole.
+
+**The note itself still over-promises** and is in `background.js`, held under
+eval 7's Amendment 2 (one build per arm). Two candidate fixes, neither free:
+drop the "its refs act normally" clause, or have the query op stamp what it
+returns — which makes a read tool mutate the page's mmid registry, and that is a
+contract change wanting its own measurement.
+
+### 4k. A small `max_chars` is the only way to say "collect, do not print" `OPEN`
+Same run. The agent called `read_page(max_chars=300)` deliberately, purely to
+trigger mmid stamping without paying for output, and got the `NOTHING could be
+shown` branch — which is #34's message working exactly as designed, and reads as
+an error for what was a successful use. There is no sanctioned way to ask the
+collector to run without rendering a listing.
+
+Related to 4j and probably resolved by the same decision: if `query_elements`
+stamped, neither this nor 4j's extra call would exist.
+
 ### 5. SPA readiness, the remaining half `OPEN`
 The mutation-recency signal (#70) separates "still building" from "ready but
 chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:

@@ -2200,9 +2200,16 @@ async def search_page(
     # this document. Measured live — a first search of a Wikipedia table returned
     # three correct hits with no refs and no explanation, which reads as "these are
     # not things you can act on" rather than "read the page first".
-    if not any(h.get("ref") for h in hits):
-        lines.append("  (No refs yet: elements get one when read_page runs on this page. "
-                     "Call read_page first if you need to act on a match rather than read it.)")
+    # ANY, not ALL. The all-or-nothing form is silent on the commonest shape
+    # there is -- one read_page has run, so the page's original elements carry
+    # refs and anything rendered since does not. Eval 7 hit exactly that through
+    # query_elements; the same guard sits in both renderers for the same reason.
+    _nr = sum(1 for h in hits if not h.get("ref"))
+    if _nr:
+        lines.append(f"  ({_nr} of these have no ref yet: elements get one when read_page "
+                     f"runs on this page, so anything rendered since your last read carries "
+                     f"none. Call read_page first if you need to act on a match rather than "
+                     f"read it.)")
     return "\n".join(lines)
 
 
@@ -2353,6 +2360,28 @@ async def query_elements(
         out.append(f'  <{r.get("tag", "?")}{ref}>{txt}{att}')
     if total > len(rows):
         out.append(f"  … {total - len(rows)} more not shown (the count above is the true total).")
+    # A ROW WITH NO REF IS NOT ACTIONABLE, AND THE REASON IS NOT GUESSABLE.
+    # mmids come from the COLLECTOR, so nothing carries one until read_page has
+    # run on this document (#32). `search_page` says so; this renderer never
+    # did, while the aria-hidden note in the listing points callers HERE and
+    # promises "its refs act normally".
+    # Measured live in eval 7: an agent sent to query_elements by that note
+    # typed a destination, queried the suggestion button that had just appeared,
+    # and got `<button> "Дубай ОАЭ" class="opt active"` with no ref. It spent a
+    # whole call running read_page purely to make the collector stamp, then
+    # re-queried. Its words: "for a suggestion list -- i.e. anything that
+    # appears in response to typing, which is the normal case -- query_elements
+    # alone is a dead end, and nothing in that note says so."
+    # Fires on ANY ref-less row, not only when they all are: after one read_page
+    # the newly-rendered half is exactly the mixed case, and an all-or-nothing
+    # guard is silent for it.
+    _noref = sum(1 for r in rows if not r.get("ref"))
+    if _noref:
+        out.append(
+            f"  ({_noref} of these have NO ref and cannot be acted on yet. mmids are "
+            f"stamped by read_page, so anything rendered SINCE your last read of this "
+            f"page -- a suggestion list, a just-opened menu, a fresh row -- carries none. "
+            f"Run read_page on this tab, then re-query.)")
     # A COUNT OF RENDERED ROWS IS THE WRONG ANSWER when the page declares more exist.
     # This heads the result rather than trailing it: a caller who asked "how many" has
     # their answer in the first line, and a correction underneath it would be read

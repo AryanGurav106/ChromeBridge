@@ -813,6 +813,42 @@ def main() -> int:
           "asserting a fact about the page it cannot establish",
           "has that shape right now" not in _out and "Causes" in _out,
           _out.replace("\n", " ")[:140])
+
+    # ---- C36: A ROW WITH NO REF CANNOT BE ACTED ON, AND ONLY ONE SIBLING SAID SO
+    # mmids come from the COLLECTOR, so nothing carries one until read_page has
+    # run on this document (#32). `search_page` disclosed it; `query_elements`
+    # never did -- while the listing's own aria-hidden note sends callers HERE
+    # and promises "its refs act normally".
+    # Measured live in eval 7: an agent followed that note, typed a destination,
+    # queried the suggestion button that had just appeared, and got
+    # `<button> "Дубай ОАЭ"` with NO ref. It spent a whole call running read_page
+    # purely to make the collector stamp, then re-queried. Its words: "for a
+    # suggestion list -- i.e. anything that appears in response to typing, which
+    # is the normal case -- query_elements alone is a dead end, and nothing in
+    # that note says so."
+    _ms.STATE["bridge"] = _FBQ({"rows": [{"tag": "button", "text": "Дубай ОАЭ"}],
+                                "total": 1})
+    _out = _aio.run(_qe(selector=".opt", tabId=1))
+    check("C36 query_elements says a ref-less row cannot be acted on yet, and "
+          "names read_page as what stamps it",
+          "NO ref" in _out and "read_page" in _out, _out.replace("\n", " ")[:170])
+    # THE MIXED CASE IS THE COMMON ONE and an all-or-nothing guard is silent for
+    # it: after one read_page the page's original elements carry refs and
+    # anything rendered since does not. That is exactly what eval 7 hit.
+    _ms.STATE["bridge"] = _FBQ({"rows": [{"ref": "9", "tag": "button", "text": "old"},
+                                         {"tag": "button", "text": "new"}],
+                                "total": 2})
+    _out = _aio.run(_qe(selector="button", tabId=1))
+    check("C36b ...and it fires when only SOME rows lack a ref, which is the "
+          "shape a page gets after one read plus one interaction",
+          "1 of these have NO ref" in _out, _out.replace("\n", " ")[:170])
+    # CONTROL: every row stamped means nothing to say. Without this, a note that
+    # always fires would pass C36 and be the noise #15 priced.
+    _ms.STATE["bridge"] = _FBQ({"rows": [{"ref": "9", "tag": "button", "text": "x"}],
+                                "total": 1})
+    _out = _aio.run(_qe(selector="button", tabId=1))
+    check("C36c CONTROL: rows that all carry refs get no such note",
+          "NO ref" not in _out, _out.replace("\n", " ")[:120])
     # C19b: WHEN A CAUSE IS A CHECKABLE FACT, CHECK IT. "it is rendered by a
     # frame this query did not reach" sat fourth in a list of four, so the
     # headline still read as absence -- measured live on the jQuery UI slider

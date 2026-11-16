@@ -64,20 +64,13 @@
  {
   "track": "e7_cb_hoteldxb",
   "units": 6,
-  "met": 0,
+  "met": 6,
   "reachable": 6,
-  "events": 0,
-  "passed": false,
-  "passed_reachable": false,
+  "events": 20,
+  "passed": true,
+  "passed_reachable": true,
   "unreachable": [],
-  "unmet": [
-   "bench_hotel_select_city",
-   "bench_hotel_select_start_date",
-   "bench_hotel_select_end_date",
-   "bench_hotel_select_guests",
-   "state_changed",
-   "bench_hotel_select_hotel"
-  ],
+  "unmet": [],
   "key": "hoteldxb",
   "arm": "cb",
   "task_file": "hotel_search_scenario_dubai.json"
@@ -85,20 +78,13 @@
  {
   "track": "e7_cic_hoteldxb",
   "units": 6,
-  "met": 0,
+  "met": 6,
   "reachable": 6,
-  "events": 0,
-  "passed": false,
-  "passed_reachable": false,
+  "events": 24,
+  "passed": true,
+  "passed_reachable": true,
   "unreachable": [],
-  "unmet": [
-   "bench_hotel_select_city",
-   "bench_hotel_select_start_date",
-   "bench_hotel_select_end_date",
-   "bench_hotel_select_guests",
-   "state_changed",
-   "bench_hotel_select_hotel"
-  ],
+  "unmet": [],
   "key": "hoteldxb",
   "arm": "cic",
   "task_file": "hotel_search_scenario_dubai.json"
