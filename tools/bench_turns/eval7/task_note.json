@@ -1,0 +1,4 @@
+{
+ "_why": "Per-task paragraphs added to the prompt body, identical for BOTH arms of that task. Recorded here rather than kept in my head, because #45's withdrawn headline was only catchable because the prompt file still existed. railpay is the one task whose completion requires driving a payment form; the note states the conditions that make that an ordinary test action (exactly localhost, the user's own synthetic benchmark app, fake data, no real payment rail) so an agent does not have to infer them, and so BOTH arms are told the same thing.",
+ "railpay": "This is a synthetic benchmark app running on localhost with fake data — no real payment rail, no real account, no real money. Complete the task through the page's own UI, including its payment step."
+}

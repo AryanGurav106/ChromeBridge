@@ -61,7 +61,7 @@
   "units": 8,
   "met": 8,
   "reachable": 8,
-  "events": 98,
+  "events": 106,
   "passed": true,
   "passed_reachable": true,
   "unreachable": [],
