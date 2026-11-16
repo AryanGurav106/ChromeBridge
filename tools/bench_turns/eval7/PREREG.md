@@ -334,3 +334,45 @@ prompt change, and it is the right one.
 **Recorded here rather than in FINDINGS** because a threat to validity found
 mid-run belongs with the design, dated, including the part where I did not
 anticipate it.
+
+---
+
+## AMENDMENT 5 — 2026-11-16, after run 12. CHANGES NOTHING; records a fact about the build.
+
+**Every ChromeBridge run in this eval is on ONE build, server AND extension,
+and it is the build as of the reload before run 1.** Amendment 2 covered the
+extension deliberately. The server half is true by accident and is worth stating
+because it is load-bearing for how the findings read.
+
+The stdio server imports `mcp_server.py` at CONNECT time. The last `/mcp`
+reconnect was before run 1 was re-run, so every server-side fix made since —
+and there have been several, each from a finding in this very eval — is on disk
+and NOT in the running process. `sw_info` says so without being asked:
+
+```
+server_code_changed_since_start: ["mcp_server.py", "core/flows/model.py",
+                                  "core/flows/runner.py"]
+```
+
+**Confirmed from an agent rather than from that field.** Run 12 quoted
+`"[1] waited 257ms … this step read the settled page"` — wording replaced hours
+earlier. The agents are reading the old strings, which is exactly what one build
+throughout means.
+
+**Two consequences, both stated rather than left to be inferred:**
+
+1. **No server-side fix in this session has been verified live.** Each is
+   fixtured, most are ablated against the pre-fix code, and none has been seen
+   working through a real Chrome. #43's rule is explicit that fixtures encode
+   what you thought of; the live pass is owed and must happen after the eval,
+   not during it.
+2. **A finding reported by a later run may already be fixed on disk.** Run 12's
+   report of the batch/banner contradiction is a real example: the wording it
+   quotes was changed after run 4 raised the same thing. Reading the findings
+   file as a list of OPEN defects would overstate the backlog, so each entry
+   says its status.
+
+**What would have been wrong to do:** reconnect mid-eval to pick the fixes up.
+That splits the server build inside our own arm, between tasks, in the direction
+that flatters later runs — the identical hazard Amendment 2 reloaded the
+extension to avoid, one layer down.

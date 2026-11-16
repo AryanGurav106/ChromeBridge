@@ -148,17 +148,13 @@
  {
   "track": "e7_cb_filespdf",
   "units": 3,
-  "met": 0,
+  "met": 3,
   "reachable": 3,
-  "events": 0,
-  "passed": false,
-  "passed_reachable": false,
+  "events": 9,
+  "passed": true,
+  "passed_reachable": true,
   "unreachable": [],
-  "unmet": [
-   "bench_files_select_collection",
-   "bench_files_select_year",
-   "bench_files_download"
-  ],
+  "unmet": [],
   "key": "filespdf",
   "arm": "cb",
   "task_file": "files_download_pdf.json"
