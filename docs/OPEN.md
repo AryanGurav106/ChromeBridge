@@ -623,6 +623,66 @@ Both arms met it. Ours went to a shell `ls` and found the file;
 line on a click whose target carries a `download` attribute would close it —
 and the attribute is declared, so this needs no guess.
 
+### 4q. `search_page` reports the TEXT's ref and no route to the ACTION `OPEN`
+The last run of eval 7, and the only overhead call in an 8-call task.
+
+`search_page("оливк")` returned `<div ref_1285 …> Оливки Доставка, без косточки
+| 330 г | 229 ₽`. The agent needed the «Добавить» button, `ref_1291` — a
+SIBLING, one level up and over. Neither route reaches it:
+`read_page(ref_id="ref_1285")` scopes to the title div's own subtree, which
+holds no button; and nothing names the parent card.
+
+**What makes this fixable rather than inherent: `search_page` already knows the
+record.** Its own context string IS the card, joined with the declared-boundary
+marker — it climbed there to build it (#47's `_climbTo`) and then reported only
+the leaf's ref. The agent put it exactly: *"it climbed to the card to build that
+string and then reported only the leaf's ref. Naming the record's ref alongside
+the match ref would have let me go straight to `read_page(ref_id=<card>)`."*
+
+Attribution must not change — #32's rule is that the hit belongs to the element
+whose own text first contains the match, or an ancestor reports every child's
+hit. This is an ADDITIONAL field, not a replacement. `background.js`, held under
+eval 7's Amendment 2; the climb target is already in hand there as `p.climb`.
+
+### 4r. CT1c's advice cannot answer the page it was written for `OPEN`
+**This lands on advice added THIS SESSION**, in response to eval 6, and eval 7
+showed it does not cover the case. The cap notice says:
+
+> When many rows share ONE label, neither of those separates them… What
+> distinguishes them is an ATTRIBUTE — `query_elements(selector,
+> attributes=["href","value","title"])`
+
+On a grocery catalogue every card has an identically-named «Добавить» and **none
+of them carries a distinguishing attribute** — no href, no value, no title, and
+no class name to build a selector from. What distinguishes them is **DOM
+CONTAINMENT**: which card the button sits in. None of the three tools the notice
+names expresses containment, and the one that does — `read_page(ref_id=…)` —
+needs the card's ref, which is exactly 4q's missing piece.
+
+So the advice pointed at `query_elements` when the real answer was "read the
+listing and infer from ref ordering", which the agent did and flagged as
+inference rather than fact: *"on a page where every card has an identically-named
+«Добавить», a wrong inference silently adds the wrong product."*
+
+**The honest reading of eval 6 → eval 7:** CT1c was right about the eval-6 page
+(18 download links separated by `href`) and is incomplete as a general rule.
+Containment is the other half and it belongs in the same notice, which means 4q
+first.
+
+### 4s. The cheaper format drops the relationship that disambiguates `OPEN`
+Same run. The agent chose `format="flat"` to reduce size and then needed the
+containment the tree states by indentation:
+
+> `format="tree"` would have nested it unambiguously; I had chosen
+> `format="flat"` *to reduce size*, so the cheaper format is the one that drops
+> exactly the containment relationship that disambiguates identical buttons.
+
+`format`'s description sells flat on size and on "you only need a single named
+control". Here the agent needed a single control whose name was shared by ~40
+others, and nothing in the parameter's own text names that trade. #27 shipped
+the tree as default for exactly this reason ("a flat list cannot express a
+row"); the description of the escape hatch never caught up.
+
 ### 5. SPA readiness, the remaining half `OPEN`
 The mutation-recency signal (#70) separates "still building" from "ready but
 chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:
