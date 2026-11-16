@@ -2041,6 +2041,22 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
     try { _hh = await runInTab(t.id, _hitTestPage, [pt.x, pt.y, params.selector || null]); } catch (e) {}
     let _armed = false;
     try { _armed = !!(await runInTab(t.id, _inputProbePage, [true])); } catch (e) {}
+    // THE DEAD-CLICK GUARD HAD TO BE REACHABLE, AND IT WAS NOT.
+    // `NO EFFECT: ` is a TOKEN the flow recorder keys on to tell "this step did
+    // something" from "this step did nothing" -- and it existed in exactly ONE
+    // place, the `click` op, which `mcp_server.py` never calls. Every flow step
+    // and every agent click arrives here, at `computerOp`, which had no effect
+    // comparison at all. So the guard could not fire for any op a flow uses:
+    // an uninformed audit measured 11 of 110 recorded steps as the population
+    // it exists for, all unguarded. `FD19e` pinned that the token is PRESENT in
+    // the file; nothing pinned that it is REACHABLE -- #30's class inside a
+    // check written to prevent #30's class.
+    // Reuses `_clickEffectPage`, the same comparison the `click` op makes, so
+    // there is no second opinion about what "an effect" is (#21). Only for a
+    // click addressed BY REF: a coordinate click has no element to compare.
+    const _wantFx = params.selector && clickKinds[action];
+    let _fxB = null;
+    if (_wantFx) { try { _fxB = await runInTab(t.id, _clickEffectPage, [params.selector]); } catch (e) {} }
     for (let c = 1; c <= count; c++) {
       await cdpSend(t.id, "Input.dispatchMouseEvent",
         { type: "mousePressed", x: pt.x, y: pt.y, button, clickCount: c, buttons: button === "left" ? 1 : 2, modifiers: bits });
@@ -2055,6 +2071,35 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
       try { _delivered = await runInTab(t.id, _inputProbePage, [false, 'mouse']); } catch (e) {}
     }
     const _dead = _delivered === false ? _notDeliveredNote('mouse') : "";
+    // DELIVERED AND NOTHING CHANGED is the one branch this marks. A click that
+    // NAVIGATED destroys the probe and reports `null`, which claims nothing
+    // (ID3); a dead CHANNEL is the different fact `_dead` carries (#56); and a
+    // click that worked says nothing extra (ID2).
+    let _noEffect = "";
+    // `_delivered === true`, NOT `!== false`. The probe returns null when it was
+    // DESTROYED, which is what a click that navigated looks like -- the
+    // commonest click there is -- and `null` would otherwise reach this branch
+    // and report NO EFFECT for a click that did the biggest thing a click can
+    // do. Requiring `true` means: same document, the page received the event,
+    // and nothing changed. That is the only state this token should mark, and
+    // it excludes navigation by construction rather than by a url comparison
+    // (`tab.url` lags a commit, #61).
+    if (_wantFx && _fxB && _delivered === true) {
+      let _fxA = null;
+      try { _fxA = await runInTab(t.id, _clickEffectPage, [params.selector]); } catch (e) {}
+      // The fields `_clickEffectPage` actually returns: {n, txt, st}. My first
+      // version compared `.url` and `.t`, neither of which exists -- so every
+      // comparison was undefined === undefined and the branch fired on every
+      // delivered click. Checked against the function rather than assumed.
+      if (_fxA && _fxA.n === _fxB.n && _fxA.txt === _fxB.txt
+          && (_fxA.st || '') === (_fxB.st || '')) {
+        _noEffect = ` NO EFFECT: WARNING: the click was delivered and the page did `
+          + `not react (URL, element count, text and the element's own state are all `
+          + `unchanged). The element may be disabled, covered by an overlay, or wired `
+          + `to a handler that does not fire for this input. Re-observe before `
+          + `assuming it worked.`;
+      }
+    }
     // THE REF IS THE IDENTITY, THE COORDINATE IS AN OUTCOME. Acting by ref
     // scrolls the target into view first, and scrollIntoView CENTRES it -- so
     // four clicks on four different elements all reported `at (324,406)` and
@@ -2066,8 +2111,7 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
       ? `${action} on ${params.selector} — landed at (${Math.round(pt.x)},${Math.round(pt.y)}) after scrolling it into view.`
       : `${action} at (${Math.round(pt.x)},${Math.round(pt.y)}).`;
     return _where
-      + `${_dead}${_hitEcho(_hh, params.selector)}${_actNote}${_shiftWarn}${pt.note || ""}`;
-      + `${_dead}${_hitEcho(_hh, params.selector)}${_actNote}${_shiftWarn}${pt.note || ""}`;
+      + `${_dead}${_noEffect}${_hitEcho(_hh, params.selector)}${_actNote}${_shiftWarn}${pt.note || ""}`;
   }
 
   throw new Error(`computer: unknown action ${action}`);

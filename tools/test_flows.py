@@ -441,6 +441,30 @@ def main():
           _watches and _emits,
           f"recorder watches={_watches} mcp_server emits={_emits}")
 
+    # FD19h -- PRESENT IS NOT REACHABLE, and that is the whole finding.
+    # FD19e pins that the NO EFFECT token exists in background.js. It existed
+    # in exactly ONE place: the `click` op. `mcp_server.py` never calls `click`
+    # -- every flow step and every agent click goes through `computer`, which
+    # dispatches to `computerOp`, and that function had no effect comparison at
+    # all. So the dead-click guard could not fire for any op a flow uses, and
+    # an uninformed audit measured 11 of 110 recorded steps as exactly the
+    # population it exists for. A check that pins PRESENCE while the thing is
+    # unreachable is #30's class inside a check written to prevent #30's class.
+    _ops_called = set(re.findall(r'b\.call\("([a-z_]+)"', _srv_src))
+    # SLICED WITH `_extract`, the project's comment/string/regex-aware slicer.
+    # A naive scan for the next "\n}" ended the function at line 1984 of a body
+    # that runs past 2100, because a multi-line template literal contains one --
+    # so the check reported "not in computerOp" for code that is.
+    _bgsrc2 = (ROOT / "extension" / "background.js").read_text(encoding="utf-8")
+    _computer_op = extract("computerOp", _bgsrc2)
+    check("FD19h the NO EFFECT token is emitted by `computerOp` -- the function "
+          "behind the only click op mcp_server actually calls -- not merely "
+          "present somewhere in the file",
+          FR_NO_EFFECT in _computer_op and "computer" in _ops_called,
+          f"in computerOp={FR_NO_EFFECT in _computer_op}; "
+          f"server calls 'computer'={'computer' in _ops_called}; "
+          f"server calls 'click'={'click' in _ops_called}")
+
     # FD19c -- the NOT DONE token must be the ONLY way a fill result says it
     # did not act. If a `!r.ok` branch renders anything else, the recorder goes
     # back to enumerating wordings, which is what this replaced.
