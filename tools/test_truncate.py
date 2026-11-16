@@ -206,6 +206,64 @@ async def main_async():
 
     gpt = ms.get_page_text.fn if hasattr(ms.get_page_text, "fn") else ms.get_page_text
 
+    # ---- T26/T26b: filter="all" CAN LOSE THE TEXT ENTIRELY, IN SILENCE ------
+    # The text block is appended AFTER the listing and `_truncate` slices from
+    # the head, while the residual note counts dropped ELEMENTS. So a caller who
+    # passed filter="all" specifically to reach the text could spend the whole
+    # budget on rows and read "18 more element(s) not shown — raise max_chars",
+    # with nothing saying the text section never arrived.
+    # Measured live in eval 7 on a three-month calendar whose day cells carry no
+    # month label: 190 interactive rows came back, no text at all, and the agent
+    # fell back to a whole-page get_page_text. #22's silent-cut class at SECTION
+    # granularity. The bound is the caller's and stays; it is NAMED.
+    _rp = ms.read_page.fn if hasattr(ms.read_page, "fn") else ms.read_page
+
+    class _FB2:
+        connected = True
+
+        def __init__(self, listing, text):
+            self.listing, self.text = listing, text
+
+        async def call(self, op, **kw):
+            if op == "get_dom_text":
+                return self.text
+            if op == "get_url":
+                return '{"url": "https://app.test/x"}'
+            return self.listing
+
+    _long = ("Current URL: /cal\n"
+             + "\n".join(f'ref_{i} | div "{i}" section=main' for i in range(190)))
+    ms.STATE["bridge"] = _FB2(_long, "Ноябрь 2026 Декабрь 2026 Январь 2027")
+    out = await _rp(tabId=1, ref_id="ref_203", filter="all", max_chars=1200)
+    check("T27 a scoped filter='all' read whose budget cannot hold the text "
+          "SAYS the text was cut, instead of only counting dropped elements",
+          "--- TEXT INSIDE ref_203 ---" not in out
+          and "was cut entirely" in out and "get_page_text" in out,
+          repr(out[-200:]))
+    # NOT an assertion that the result fits in max_chars -- it does not, and
+    # that is pre-existing and measured rather than introduced here. `_truncate`
+    # slices to the budget and then appends its trailer, running 55-83 chars
+    # over on committed code across budgets from 300 to 3000. #42 reserved room
+    # for exactly this in get_page_text, where the note was ~560 chars and
+    # crowded out the body; here it is tens of characters and the note is what
+    # makes the cut honest. An attempt to reserve it did not converge (the
+    # return paths switch branch as the budget shrinks, so the note's length
+    # jumps) and is recorded in docs/OPEN.md. What IS asserted is the property
+    # that matters: the overshoot stays small and bounded by the trailer, so the
+    # bound is advisory rather than meaningless.
+    check("T27b the overshoot is bounded by the trailer itself, not unbounded — "
+          "max_chars bounds the LISTING and the note is added past it",
+          1200 < len(out) <= 1200 + 400, f"len={len(out)} budget=1200")
+    # THE CONTROL. A note that fires whenever filter='all' is passed would pass
+    # T26 while being the noise #15 priced; this is the case where the text DID
+    # survive and must say nothing about being cut.
+    ms.STATE["bridge"] = _FB2('Current URL: /cal\nref_1 | div "x" section=main',
+                              "Ноябрь 2026")
+    out2 = await _rp(tabId=1, ref_id="ref_203", filter="all", max_chars=4000)
+    check("T27c CONTROL: when the text DOES fit, nothing claims it was cut",
+          "--- TEXT INSIDE ref_203 ---" in out2 and "was cut entirely" not in out2,
+          repr(out2[-160:]))
+
     # Outline bigger than the cap -> the "kept whole, body dropped" branch.
     ms.STATE["bridge"] = FB(BANNER + BODY + OUTLINE)
     out = await gpt(tabId=1, max_chars=300)

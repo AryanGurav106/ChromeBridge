@@ -790,10 +790,26 @@ async def main():
     ])
     _txt = text_of(out)
     check("B15 an observation after an ACTING step waits for the DOM to stop "
-          "changing", "waited 310ms for the DOM to stop changing" in _txt
+          "changing", "waited 310ms" in _txt
           and len(RAN) == 2, f"ran={len(RAN)}; {_txt.strip()[:140]}")
-    check("B15b ...and says which step it waited for, and that the read is settled",
-          "step 0 acted" in _txt and "settled page" in _txt, _txt.strip()[:160])
+    # B15b — REWRITTEN TO ITS INVARIANT (#30's TR8d case). It asserted the
+    # phrase "settled page", which is the claim that turned out to be the
+    # problem: this wait ends after 250ms with no structural or text change,
+    # while the readiness banner printed in the SAME response reports a fixed
+    # 3000ms lookback and therefore still counts the churn the wait sat out. A
+    # live agent read "this step read the settled page" directly above
+    # "*** THE DOM IS STILL CHANGING (last change 283ms ago) ***" on nearly
+    # every batch and stopped reading the banner — #15's outcome exactly.
+    # What this is really pinning is that the line NAMES ITS STEP and SAYS WHAT
+    # IT MEASURED, both still true and neither a frozen sentence.
+    check("B15b ...and says which step it waited for, and what it measured — "
+          "not that the page is 'settled', which the banner beside it can "
+          "legitimately contradict",
+          "step 0 acted" in _txt and "added, removed or re-texted" in _txt
+          and "settled page" not in _txt, _txt.strip()[:200])
+    check("B15b2 ...and explains the banner's longer lookback, so two true "
+          "sentences in one response stop reading as a contradiction",
+          "looks back further" in _txt, _txt.strip()[:200])
 
     # B15c — THE CONTROL THAT IT IS NOT AN ALWAYS-ON NOTE, and not an always-on
     # ROUND TRIP. A quiet page is the normal case; a line on every step is the

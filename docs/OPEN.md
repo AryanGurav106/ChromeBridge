@@ -346,6 +346,31 @@ names them and hands over their refs, because a `<table>` is not interactive and
 has no row of its own. Generalising that to "a folded run preceded by text"
 needs a threshold, which is the thing being avoided. Not built.
 
+### 4g. `_truncate` returns more than `max_chars` — MEASURED, NOT FIXED `ACCEPTED`
+Every return path in `_truncate` slices to `max_chars` and then APPENDS its
+trailer, so the result runs over by the trailer's own length. Swept on a 190-row
+listing across budgets from 300 to 3000: **55–83 chars over on committed code**,
+and more once a trailer grows a clause.
+
+#42 reserved room for exactly this in `get_page_text`, where the note was ~560
+chars and was crowding out the body it explained. Here it is tens of characters
+against a budget the caller chose, and the trailer is the thing that makes the
+cut honest (#13: the payload is what must never go).
+
+**An attempt is recorded because it failed in an instructive way.** Threading a
+separate slice point through, so the note prints the caller's number while the
+slice lands short of it, does not converge: the three return paths switch
+between the legend-dropping fallback and the ordinary slice as the budget
+shrinks, so the trailer's length jumps rather than settling. Three iterations
+still left **88 of 386 swept budgets over**, and it broke T22. Reverted.
+
+What shipped instead is that `read_page`'s own `max_chars` description now says
+the bound is on the LISTING and the trailer is added past it, and T27b asserts
+the overshoot stays bounded by the trailer rather than being unbounded. A
+meaningful fix means building each path's note before its slice, which is a
+restructure of the most heavily-tested function in the project and wants its own
+pass rather than a mid-eval edit.
+
 ### 5. SPA readiness, the remaining half `OPEN`
 The mutation-recency signal (#70) separates "still building" from "ready but
 chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:

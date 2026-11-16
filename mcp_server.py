@@ -1055,6 +1055,19 @@ def _truncate(text: str, max_chars: int, hint: str = "") -> str:
     An agent reported that as a loop invitation: the tool suggests the exact knob
     it is already turning. Callers now supply the advice that actually applies.
     """
+    # MEASURED AND DELIBERATELY NOT "FIXED": every return below slices to
+    # `max_chars` and then APPENDS its explanation, so the result runs over the
+    # budget by the note's own length -- swept at 55-83 chars on a 190-row
+    # listing across budgets from 300 to 3000. #42 did reserve room for exactly
+    # this in `get_page_text`, where the note was ~560 chars and was crowding
+    # out the body it explained. Here it is tens of characters and the note is
+    # the thing that makes the cut honest (#13: the payload is what must never
+    # go). An attempt at reserving it is recorded in `docs/OPEN.md`: the three
+    # return paths switch between the legend-dropping fallback and the ordinary
+    # slice as the budget shrinks, so the note's length jumps and the correction
+    # does not converge -- 88 of 386 swept budgets were still over, and T22
+    # broke. `max_chars` bounds the LISTING; the trailer is added past it, and
+    # `read_page`'s own description says so rather than leaving it to be found.
     banner, text = _split_banner(text)
     if banner:
         # Reserve the banner's room, truncate the rest, then put it back.
@@ -1297,7 +1310,7 @@ async def read_page(
         str,
         Field(description='"interactive" for buttons/links/inputs only, "all" to also include the page text.'),
     ] = "all",
-    max_chars: Annotated[int, Field(description="Maximum characters of output (default 50000).")] = 50000,
+    max_chars: Annotated[int, Field(description="Budget for the LISTING, in characters (default 50000). A short trailer naming what was dropped is added past it, so the result can run tens of characters over. With filter=\"all\" the page text is appended AFTER the listing, so a small budget can cut it entirely — the trailer says so by name when that happens.")] = 50000,
     ref_id: Annotated[
         Optional[str],
         Field(description="Ref of a container to scope the listing to — only elements inside that subtree are returned. Use it to read one dialog/panel/table without the rest of the page."),
@@ -1561,7 +1574,39 @@ async def read_page(
         hint = "pass filter='interactive' to drop the page text, or scope with ref_id"
     else:
         hint = "scope with ref_id, or raise max_chars"
-    return _truncate(out, max_chars, hint)
+    _res = _truncate(out, max_chars, hint)
+
+    # THE HALF THE CALLER ASKED FOR CAN BE CUT IN SILENCE, AND THE NOTE TALKS
+    # ABOUT THE OTHER HALF. `filter="all"` appends the text block AFTER the
+    # listing, `_truncate` slices from the head, and the residual note counts
+    # dropped ELEMENTS -- so a caller who passed filter="all" specifically to
+    # reach the text can get a budget spent entirely on rows and a trailer
+    # reading "18 more element(s) not shown — raise max_chars", with nothing
+    # anywhere saying the text section never made it.
+    #
+    # Measured live in eval 7: an agent called
+    # `read_page(ref_id=..., filter="all", max_chars=3000)` to learn three month
+    # headings a calendar's day cells do not carry, got 190 interactive rows and
+    # no text at all, and had to fall back to a whole-page get_page_text. It
+    # said so plainly: the trailer "reports dropped elements and says nothing
+    # about having dropped the entire text section — which, with filter='all',
+    # is the half I explicitly asked for."
+    #
+    # #22's silent-cut class, at section granularity rather than per field. The
+    # bound is not removed -- the caller chose it -- it is NAMED, and the advice
+    # becomes the one that reaches the text in one call instead of the one that
+    # drops it. Re-truncated rather than appended, so the caller's max_chars
+    # still holds.
+    _marker = (f"--- TEXT INSIDE ref_{scope_mmid} ---" if scope_mmid
+               else "--- PAGE TEXT ---")
+    if filter == "all" and _marker in out and _marker not in _res:
+        _hint2 = (f"the TEXT you asked for with filter=\"all\" was cut entirely — "
+                  f"get_page_text(ref_id=\"ref_{scope_mmid}\") returns it alone"
+                  if scope_mmid else
+                  "the PAGE TEXT you asked for with filter=\"all\" was cut entirely — "
+                  "get_page_text() returns it alone, or search_page(pattern) greps it")
+        _res = _truncate(out, max_chars, _hint2)
+    return _res
 
 
 @mcp.tool()
@@ -3933,10 +3978,31 @@ async def browser_batch(
                 _qms = int((_q or {}).get("waitedMs") or 0)
                 if _q and _qms > 0:
                     if _q.get("quiet"):
+                        # TWO TRUE SENTENCES THAT READ AS A CONTRADICTION.
+                        # This said "this step read the settled page" and the
+                        # read's own banner, in the SAME response, said "*** THE
+                        # DOM IS STILL CHANGING (last change 283ms ago; 18
+                        # change(s)) ***". Both are correct and they measure
+                        # different things: this wait ends after `quietMs` (250)
+                        # with no structural or text change, while the banner
+                        # reports a fixed 3000ms LOOKBACK and therefore still
+                        # counts the churn this wait just sat out. A page that
+                        # last moved 251ms ago is quiet to one and changing to
+                        # the other.
+                        # Reported by a live agent as the reason it stopped
+                        # reading the banner at all -- which is the outcome #15
+                        # prices, and the banner is right often enough (the same
+                        # run records it correctly catching a mid-build first
+                        # read) that training the reader past it is the real
+                        # cost. Neither sentence is suppressed: the one making
+                        # the weaker-sounding claim says what it measured and
+                        # why the other looks further back.
                         out.append(TextContent(type="text", text=(
-                            f"[{i}] waited {_qms}ms for the DOM to stop changing "
-                            f"after step {i - 1} acted — this step read the "
-                            f"settled page.")))
+                            f"[{i}] waited {_qms}ms after step {i - 1} acted, "
+                            f"until nothing had been added, removed or re-texted "
+                            f"for {250}ms. A readiness banner below looks back "
+                            f"further than that, so it can still be counting "
+                            f"churn this wait already sat out.")))
                     else:
                         out.append(TextContent(type="text", text=(
                             f"[{i}] waited {_qms}ms and the DOM was STILL being "
