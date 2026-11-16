@@ -118,6 +118,47 @@ without picking one. That second part is deliberate. A message that guesses at
 a cause sends you down the wrong path with confidence, and this project has
 shipped that mistake three times and written a test to stop a fourth.
 
+## The side-by-side, which happened by accident
+
+I meant to run the same task with Claude-in-Chrome's tools and count the calls.
+The second call returned this:
+
+```
+Failed to find element: 429 rate_limit_error
+"You've hit your weekly limit"
+```
+
+Their `find` is model-backed — it makes an inference call to decide what matches
+your description. So when the account's weekly quota is gone, the tool is gone.
+
+Ours is a scorer written in Python, running in the local server, with no API
+call in it at all. Same page, same browser, same exhausted quota, one minute
+later:
+
+```
+Found 35 element(s) matching "Добавить" — showing the top 20
+  ref_140  [button] name="Добавить" under="Выгодная полка"  y=895
+  ref_258  [button] name="Добавить" under="Для вечеринки"   y=1853
+  ref_315  [button] name="Добавить" under="Молочное и яйца" y=2923
+  ...
+```
+
+Thirty-five buttons with the same name, each separated by the page's own
+section heading.
+
+**The fair version of this:** a model-backed matcher should beat a lexical one
+on a question like "the control that completes checkout", where there is no
+word in common between the goal and the control. We measured that on ours and
+it scores exactly zero — our own docs say so, and tell you to describe the
+element rather than the goal. That is a real trade and I am not pretending
+otherwise.
+
+What is not a trade is the dependency. Every model call in ChromeBridge is one
+*you* chose to make from your own agent loop. The server holds no key, and no
+tool in it can fail because something upstream ran out — which also means a
+recorded flow replays at 0.84 seconds whether or not any model is reachable at
+all.
+
 ## The honest part
 
 This is one flow on one app. The locator half is measured properly — 12,030
