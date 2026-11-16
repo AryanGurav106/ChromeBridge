@@ -130,3 +130,52 @@ so rather than claiming the prediction hit.
 `gen.py` · `score.py` · `collect.py` (rebuilds `runs.tsv` from subagent meta —
 never self-reports) · `analyse.py` (prints achievable-p and leave-one-host-out)
 · `runs.tsv` · `FINDINGS.md` · `CLOSEOUT.md`.
+
+---
+
+## AMENDMENT 1 — written after the tasks arrived, BEFORE the referee pass and
+## before any run. Three grading defects found mechanically.
+
+The tasks were authored blind and all ten were walked by their author. A
+mechanical check of the answer key against each task's own steps — run while
+building the blinded referee input — found three problems that would have
+corrupted grading. Eval 4 found the same class twice (Amendments 6 and 7) and
+found it AFTER 12 runs; this is the same check moved before the data.
+
+**(a) T4 carries ZERO backticked answer values, so it cannot be graded.** The
+key is built from backticked spans on the `**Answer:**` line (eval 4 Amendment
+6, adopted because comma-splitting breaks on an answer that contains commas). A
+task with no span has an empty requirement set, which every answer satisfies —
+a check that cannot fail, which is the defect `record_flow(stop)` warns about in
+a different part of this repo. **T4 is DROPPED unless its author supplies
+backticked values at the referee pass.** It is not silently patched by me: I
+have read the answers and can no longer act as its author.
+
+**(b) T5 and T10 have an answer span that is also an INSTRUCTION term.** T5's
+answer is `University of Vermont` and its step 4 says "click **University of
+Vermont**". T10's answer carries `狼煙町` as a qualifier and its step 6 says to
+find 狼煙町. A grader keying on backticked spans would credit an agent for
+echoing the instruction it was given.
+
+Neither is a leak of the thing being asked — T5 asks which of two universities
+is higher and the steps visit both; T10 asks for a postal code. But the GRADER
+cannot tell an echo from a derivation. Fixed at the grader, not the task:
+**a required span that also appears in that task's own prompt is dropped from
+`require_all` for that task**, leaving T5 on `$19,058` and T10 on `927-1441`,
+which are the values only the live page can supply. If that leaves a task with
+no requirement, it is dropped under (a).
+
+**(c) The first blinding attempt leaked 5 of 17 answer values** and would have
+handed the referee the key. It stripped `**Answer:**` and `**Verified:**` lines
+— a blacklist — and the values leaked through the author's FLAG prose, which
+discusses the figures it cautions about ("the count of 96 and which occupation
+lands…"). Rebuilt as a WHITELIST: only the title, site, numbered steps and
+question survive. This repo's own rule, applied to a protocol rather than to
+code.
+
+**A note on my own check, because it was wrong first too.** It compared every
+answer value against the WHOLE blinded file and reported `17` as leaked — in
+fact matching the substring inside "drops from 17 to", in an unrelated task. A
+value must be checked against ITS OWN task's section, with word boundaries. The
+global substring version reported 5 leaks where there are 2, which is the
+flattering-or-damning-result rule landing on a safety check.
