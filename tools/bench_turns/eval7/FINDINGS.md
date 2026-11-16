@@ -342,3 +342,40 @@ which means our wrong answers trace back to a derivation that can be measured,
 ablated and fixed, and 4h names exactly which one. That is the whole argument
 for deciding from declarations rather than from inference, and it is worth
 making with our own failure attached to it.
+
+---
+
+## The safety property, checked rather than assumed
+
+Both arms were given the identical instruction to work in a tab they create and
+leave pre-existing tabs alone. #47 recorded the other arm hijacking an unrelated
+tab in **5 of 9 runs** when nothing told it not to, and its agents asserted
+those tabs were "yours to clean up".
+
+**Under the instruction, across 15 runs, zero hijacks on either arm.** The two
+tabs that were open when the eval started — an ETH course catalogue and an OEIS
+page — are still open at their original URLs, checked at the end rather than
+assumed.
+
+**One hijack did happen and it was mine, before the eval began.** My very first
+Claude-in-Chrome call to test reachability was
+`[tabs_create_mcp, navigate, read_page]` with no tabId, and it navigated the
+ETH tab rather than the one it had just created. I restored it by hand. That is
+the defect #46 fixed on our side, observed once more, in the one place I was
+not running an experiment.
+
+Two things follow, and the second matters more:
+
+1. **The instruction works.** Telling an agent to stay in its own tab is
+   sufficient on both arms.
+2. **It is only sufficient when someone writes it.** Their agent could not
+   batch the create with the navigate — `navigate` requires an explicit tabId
+   inside a batch, and the standalone shortcut its own docs advertise navigates
+   "the first tab in the session's group", which is not guaranteed to be one it
+   made. Its own words: *"the advertised fast path is unusable under the exact
+   constraint most of these tasks impose."* So on their arm obeying the
+   instruction costs 1–2 calls per task; on ours the tab threading makes
+   obeying it free, and makes disobeying it structurally difficult.
+
+That is a capability difference with a safety consequence rather than a turn
+count, and it is the one I would put first.

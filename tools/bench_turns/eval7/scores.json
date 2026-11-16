@@ -221,16 +221,13 @@
  {
   "track": "e7_cic_grocat",
   "units": 2,
-  "met": 0,
+  "met": 2,
   "reachable": 2,
-  "events": 0,
-  "passed": false,
-  "passed_reachable": false,
+  "events": 16,
+  "passed": true,
+  "passed_reachable": true,
   "unreachable": [],
-  "unmet": [
-   "state_changed",
-   "basket_add"
-  ],
+  "unmet": [],
   "key": "grocat",
   "arm": "cic",
   "task_file": "grocery_basket_category_named_product.json"
