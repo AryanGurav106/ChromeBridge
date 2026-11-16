@@ -510,6 +510,13 @@ def _content_rows(text: str) -> list[str]:
             rows.append(ln)
     return rows
 
+# The last tab `tabs_create_mcp` handed back, so a batch refused for a missing
+# tabId can NAME a candidate instead of only saying one is missing. Read in one
+# place (the pre-flight refusal) and never used to choose a tab: see #46 for why
+# inheriting a tab across calls is the defect, not the feature.
+LAST_MCP_TAB: dict = {}
+
+
 def _delta_listing(prev: list[str], cur: list[str]) -> Optional[str]:
     """Render cur as a change-set against prev, or None if that is a bad trade.
 
@@ -593,8 +600,46 @@ def _delta_listing(prev: list[str], cur: list[str]) -> Optional[str]:
             # valid, wrong coordinate. Use the same marked cut as the rows.
             head.append(f"      (was: {_cut(before, 100)})")
     if added:
+        # A NEW ROW WITH NO PARENT IS A ROW YOU CAN MISREAD. The tree format
+        # carries a row's container by INDENT, and a delta keeps the indent
+        # while omitting every unchanged row -- so the parent is invisible and
+        # adjacent `+` lines can belong to entirely unrelated subtrees.
+        # Measured live in eval 7: opening a passenger picker added
+        #   + ref_447 | button "close" (just appeared)
+        # directly above the picker's own rows. It was the clear-X on the DATE
+        # chip; clicking it wiped the date and cost a re-open and re-select.
+        # The agent's own words: "this is the one defect here that actually
+        # changed what I clicked".
+        # Resolved from the lines themselves, so the delta stays line-based
+        # (#16b: diffing structured entries would mean a THIRD formatter, and
+        # vocabulary drift between the two that exist produced five of eleven
+        # defects in one study). The nearest preceding line at a SHALLOWER
+        # indent that is not itself new is, by construction, a container the
+        # caller already knows -- which is exactly the context that was missing.
+        def _indent(ln: str) -> int:
+            return len(ln) - len(ln.lstrip())
+
+        _added_set = {id(a) for a in added}
+        _ctx: dict = {}
+        for _i, _ln in enumerate(cur):
+            if id(_ln) not in _added_set:
+                continue
+            _d = _indent(_ln)
+            for _j in range(_i - 1, -1, -1):
+                _p = cur[_j]
+                if _indent(_p) >= _d or not _p.strip():
+                    continue
+                if id(_p) in _added_set:
+                    # A new parent is context the caller does not have either;
+                    # keep climbing to one they do.
+                    _d = _indent(_p)
+                    continue
+                _ctx[id(_ln)] = _cut(_p.strip(), 60)
+                break
         head.append(f"NEW OR CHANGED ({len(added)}):")
-        head.extend("  + " + ln for ln in added)
+        for _ln in added:
+            _u = _ctx.get(id(_ln))
+            head.append("  + " + _ln + (f"   [under {_u}]" if _u else ""))
     if removed:
         head.append(f"NO LONGER LISTED ({len(removed)}) — these left the listing. They were "
                     f"either removed from the page OR merely scrolled out of the viewport, so a "
@@ -1268,6 +1313,16 @@ async def tabs_create_mcp() -> str:
     """Create a new empty tab in the MCP tab group (creates the group if needed)."""
     b = await _bridge()
     res = await b.call("tabs_create")
+    # Remembered ONLY so a batch refused for a missing tabId can name a
+    # candidate (see the pre-flight). Never used to choose a tab: inheriting
+    # across calls is #46's silent wrong-tab defect, and outside a batch a
+    # missing tabId still means the user's ACTIVE tab.
+    try:
+        _t = res.get("tabId") if isinstance(res, dict) else None
+        if _t:
+            LAST_MCP_TAB["id"] = int(_t)
+    except Exception:
+        pass
     return json.dumps(res, ensure_ascii=False)
 
 
@@ -3617,9 +3672,27 @@ async def browser_batch(
             _missing = [p for p, v in _sig.parameters.items()
                         if v.default is inspect.Parameter.empty and p not in _given]
             if _missing:
+                # NAME THE TAB THE SERVER ALREADY KNOWS. The documented opener
+                # is `[tabs_create_mcp, navigate, read_page]` with tabId omitted
+                # on the later steps, and that is exactly what teaches the
+                # habit: a live agent carried it into its NEXT batch, which has
+                # no create step, and the refusal said only that an argument
+                # was missing. The pre-flight did its job (nothing half-ran) and
+                # the repair was one the server could have supplied, since
+                # `tabs_create_mcp` told it the id.
+                # A SUGGESTION, never a substitution: inheriting across batches
+                # is the silent wrong-tab defect #46 fixed, and outside a batch
+                # a missing tabId still means the user's ACTIVE tab. Naming a
+                # candidate in a refusal nobody acted on cannot drive anything.
+                _hint = ""
+                if "tabId" in _missing and LAST_MCP_TAB.get("id"):
+                    _hint = (f" The last tab this session created was "
+                             f"{LAST_MCP_TAB['id']} — pass tabId explicitly if you "
+                             f"meant that one. (Omitting tabId only inherits inside "
+                             f"the SAME batch, after a tabs_create_mcp step.)")
                 return [TextContent(type="text", text=(
                     f"[{i}] REFUSED: {name} is missing required argument(s) {', '.join(_missing)} — "
-                    f"NOTHING in this batch ran."))]
+                    f"NOTHING in this batch ran.{_hint}"))]
         except (TypeError, ValueError):
             pass  # unintrospectable callable: fall through and let the call itself report
         if name == "tabs_create_mcp":

@@ -811,6 +811,43 @@ async def main():
           "sentences in one response stop reading as a contradiction",
           "looks back further" in _txt, _txt.strip()[:200])
 
+    # ---- B16: A REFUSAL THAT NAMES THE REPAIR THE SERVER ALREADY KNOWS -----
+    # The documented opener is `[tabs_create_mcp, navigate, read_page]` with
+    # tabId omitted after the create -- which is exactly what teaches the habit.
+    # A live agent carried it into its NEXT batch, which has no create step, and
+    # the refusal said only that an argument was missing. The pre-flight did its
+    # job and nothing half-ran; the repair was one the server could supply.
+    # A SUGGESTION, never a substitution: inheriting across batches is #46's
+    # silent wrong-tab defect, and a candidate named in a refusal nobody acted
+    # on cannot drive anything.
+    install([SAME] * 6)
+    ms.LAST_MCP_TAB.clear()
+    ms.LAST_MCP_TAB["id"] = 4242
+    out = await ms.browser_batch([{"name": "fake_act", "input": {"ref": 9}}])
+    _txt = text_of(out)
+    check("B16 a batch refused for a missing tabId names the tab this session "
+          "created, and says inheritance only works inside one batch",
+          "missing required argument" in _txt and "4242" in _txt
+          and "SAME batch" in _txt and len(RAN) == 0,
+          f"ran={len(RAN)}; {_txt.strip()[:170]}")
+    # CONTROL 1: with no tab ever created there is nothing to suggest, and the
+    # refusal must not invent one.
+    install([SAME] * 6)
+    ms.LAST_MCP_TAB.clear()
+    out = await ms.browser_batch([{"name": "fake_act", "input": {"ref": 9}}])
+    _txt = text_of(out)
+    check("B16b CONTROL: with no created tab, the refusal suggests none",
+          "missing required argument" in _txt and "pass tabId explicitly" not in _txt,
+          _txt.strip()[:140])
+    # CONTROL 2: a DIFFERENT missing argument must not acquire a tab hint.
+    install([SAME] * 6)
+    ms.LAST_MCP_TAB["id"] = 4242
+    out = await ms.browser_batch([{"name": "fake_act", "input": {"tabId": 1}}])
+    _txt = text_of(out)
+    check("B16c CONTROL: a non-tabId missing argument gets no tab suggestion",
+          "pass tabId explicitly" not in _txt, _txt.strip()[:140])
+    ms.LAST_MCP_TAB.clear()
+
     # B15c — THE CONTROL THAT IT IS NOT AN ALWAYS-ON NOTE, and not an always-on
     # ROUND TRIP. A quiet page is the normal case; a line on every step is the
     # noise #15 priced, and "wait on everything" would pass B15 while taxing

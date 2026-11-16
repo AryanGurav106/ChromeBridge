@@ -202,6 +202,50 @@ def main():
           _out16b is not None and "Item 6 EDITED" in _out16b,
           (_out16b or "REFUSED").splitlines()[0][:76])
 
+    # ---- T17: A NEW ROW CARRIES THE CONTAINER IT APPEARED IN ---------------
+    # The tree format states a row's container by INDENT and a delta drops every
+    # unchanged row, so the parent is invisible and adjacent `+` lines can come
+    # from unrelated subtrees. Measured live in eval 7: opening a passenger
+    # picker added `+ ref_447 | button "close"` beside the picker's own rows;
+    # it was the clear-X on the DATE chip, and clicking it wiped the date.
+    # The context is resolved from the LINES, so the delta stays line-based.
+    _before = [
+        'ref_10 | div "Туда"',
+        'ref_20 | div "Пассажиры"',
+    ]
+    _after = [
+        'ref_10 | div "Туда"',
+        '  ref_447 | button "close"',          # belongs to the DATE chip
+        'ref_20 | div "Пассажиры"',
+        '  ref_455 | button "minus"',          # belongs to the picker
+    ]
+    _o17 = delta(_before, _after) or ""
+    _close = next((l for l in _o17.splitlines() if "ref_447" in l), "")
+    _minus = next((l for l in _o17.splitlines() if "ref_455" in l), "")
+    check("T17 a new row names the nearest ALREADY-KNOWN container it sits under",
+          'under ref_10 | div "Туда"' in _close
+          and 'under ref_20 | div "Пассажиры"' in _minus,
+          f"close={_close.strip()[:70]!r} minus={_minus.strip()[:70]!r}")
+    # CONTROL 1: a top-level new row has no known container and must claim none,
+    # or every row would acquire a parent and the marker would mean nothing.
+    _o17b = delta(['ref_10 | div "A"'], ['ref_10 | div "A"', 'ref_99 | div "B"']) or ""
+    _b = next((l for l in _o17b.splitlines() if "ref_99" in l), "")
+    check("T17b CONTROL: a row with no shallower known ancestor claims none",
+          "under" not in _b, f"{_b.strip()[:70]!r}")
+    # CONTROL 2: a parent that is ITSELF new is not context the caller has — the
+    # climb must keep going to one they already knew.
+    # Padded: with 1 row in and 3 out the delta is correctly REFUSED as bigger
+    # than the listing itself, so the first version of this check measured the
+    # refusal rather than the climb.
+    _pad = [f'ref_{600 + i} | a "Pad {i}"' for i in range(30)]
+    _o17c = delta(['ref_10 | div "Known"'] + _pad,
+                  ['ref_10 | div "Known"', '  ref_50 | div "NewParent"',
+                   '    ref_51 | button "deep"'] + _pad) or ""
+    _deep = next((l for l in _o17c.splitlines() if "ref_51" in l), "")
+    check("T17c CONTROL: a container that is also NEW is skipped, since it is "
+          "not context the caller already has",
+          'under ref_10 | div "Known"' in _deep, f"{_deep.strip()[:80]!r}")
+
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} delta checks passed.")
     return 0 if passed == len(results) else 1

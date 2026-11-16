@@ -402,6 +402,54 @@ meaningful fix means building each path's note before its slice, which is a
 restructure of the most heavily-tested function in the project and wants its own
 pass rather than a mid-eval edit.
 
+### 4h. `near=` named a DIFFERENT option than the row's own value `OPEN`
+Eval 7, on a payment-method radio group. `find("ОПЛАТИТЬ Банковская карта")`
+returned:
+
+```
+ref_2380  [input]  [radio] value="yoomoney" near="Банковская карта"  under="Способ оплаты"
+```
+
+A **yoomoney** radio advertised as `near="Банковская карта"` — and the radio
+that genuinely IS Банковская карта (`ref_2376`) **was not returned at all**,
+though the query matches its label. Acting on the returned ref selects the wrong
+payment method.
+
+Two halves, and they live in different files:
+- **The row is internally contradictory**, which is the collector's: `near=` is
+  the nearest visible text and it picked the neighbouring option's label. #37
+  already drops a `near=` shared by rows that have their own identity; a radio's
+  `value=` is a WIRE KEY rather than a label (the same class #41 marked
+  `(post-key)` for), so the "has its own identity" test does not fire here.
+- **`find` ranked it confidently**, which is the scorer's. #27 made `near=`
+  count as CONTENT coverage deliberately, and it fixed two failures pointing in
+  opposite directions, so demoting it is not a free change.
+
+**Not fixed, and not guessed at.** The agent noted the data to catch it was
+present — `value="yoomoney"` sat in the same row — which is the "two rows that
+mean different things, printed alike" shape named in eval 6, here as ONE row
+that contradicts itself. A fix wants the collector half measured first (does
+suppressing `near=` when the row carries a wire-key `value=` lose anything?) and
+`find`'s half checked against F4/F15/F25/F29, which are the regressions #27 and
+#39 recorded when this scorer was last touched.
+
+### 4i. A `(disabled)` submit names no blocker `OPEN`
+Eval 7: «ОФОРМИТЬ ЗАКАЗ» stayed `(disabled)` with every visible field filled.
+The blocker was a required `(unselected)` combobox per passenger that only
+materialises AFTER a passenger is chosen and had scrolled above the fold, so the
+viewport-scoped listing never showed it. `query_elements("input:invalid,
+[aria-invalid='true'], .error")` returned nothing — the disable is Vue-driven,
+not HTML validation.
+
+What cracked it was a scoped read, which is not viewport-limited, where the rows
+read `(unselected)` with the legend already explaining them. So the information
+was reachable in one call and the agent needed two to think of it.
+
+`fill_form` already enumerates unfilled `(required)`/`(unselected)` fields in its
+result when a submit fails (#4). **A standalone disabled button has no
+equivalent path**, and that asymmetry is the whole item: the same question, asked
+about the same page, answered in one place and not the other.
+
 ### 5. SPA readiness, the remaining half `OPEN`
 The mutation-recency signal (#70) separates "still building" from "ready but
 chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:
