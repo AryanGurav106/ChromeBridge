@@ -8898,6 +8898,30 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         // Code-ish text ({};<>) is a snippet, not a label — skip it so the
         // heading walk below provides the hint instead.
         const labelish = (t) => t && !/[{};<>]/.test(t);
+        // ONE VISIBILITY RULE FOR BOTH WALKS. W19 (#30) fixed the sibling walk
+        // below -- `near=` is documented as "nearest VISIBLE text" and was
+        // reading comment bodies and display:none spans -- and did not migrate
+        // the HEADING walk after it, which had no visibility test of any kind.
+        // Measured: a `display:none` <h3>, and a visible container holding a
+        // hidden <h3>, both produced `near="GHOSTLABEL"`. `near=` counts as
+        // CONTENT coverage in find's scorer since #27, so an invisible string
+        // carries a wrong element into the CONFIDENT results -- W19's exact
+        // end-to-end consequence, in the half W19 did not reach.
+        // Fails OPEN on a throw, which is what the sibling walk has always done.
+        const _nearVis = (n) => {
+          try {
+            if (!n || n.nodeType !== 1) return false;
+            let v = (typeof n.checkVisibility === 'function')
+              ? n.checkVisibility({ checkVisibilityCSS: true })
+              : !!n.offsetParent;
+            // Zero area is not visible and checkVisibility says nothing about it.
+            if (v) {
+              const r = n.getBoundingClientRect();
+              if (!(r.width > 0 && r.height > 0)) v = false;
+            }
+            return v;
+          } catch (e) { return true; }
+        };
         let cur = el;
         for (let d = 0; d < 2 && !nearLabel && cur; d++) {
           let p = cur.previousSibling, hops = 0;
@@ -8954,11 +8978,30 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           for (let d = 0; d < 4 && anc && anc !== document.body && !nearLabel; d++, anc = anc.parentElement) {
             let sib = anc.previousElementSibling, k = 0;
             while (sib && k < 4 && !nearLabel) {
+              if (!_nearVis(sib)) { sib = sib.previousElementSibling; k++; continue; }
               if (/^H[1-6]$/.test(sib.tagName) || sib.getAttribute('role') === 'heading') {
                 nearLabel = short(sib.innerText);
               } else if (sib.querySelector) {
                 const h = sib.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
-                if (h) nearLabel = short(h.innerText);
+                if (h && _nearVis(h)) nearLabel = short(h.innerText);
+              }
+              // A FIELD'S LABEL IS NOT ALWAYS A HEADING, and this walk accepted
+              // nothing else -- so a label sitting more than two containers above
+              // its input was unreachable, which is the shape every grid-based
+              // form uses. Measured on six real shapes: four already worked, and
+              // the two misses were both "the label is a preceding sibling of an
+              // ancestor 3+ levels up, and it is a <div> rather than an <h*>".
+              // That is eval 6's «Направление» -- the one word the TASK ITSELF
+              // used, unreachable by find because the page never wired the label
+              // to the input and nothing else carried the string.
+              // The existing guards do the limiting, so this adds no new one:
+              // short() refuses anything over 60 characters (a container's whole
+              // text cannot become a label), labelish() refuses code, and the
+              // two drop passes below delete a hint shared by rows that have
+              // their own identity or shared by every member of a group.
+              if (!nearLabel) {
+                const t = short(sib.innerText);
+                if (labelish(t)) nearLabel = t;
               }
               sib = sib.previousElementSibling; k++;
             }

@@ -2382,6 +2382,63 @@ async def main():
               f"th_rows_with_near={[l.strip()[:70] for l in nb.splitlines() if 'near=' in l and '| th' in l]}")
         await nbp.close()
 
+        # ---- NB3-NB3c: A FIELD'S LABEL IS NOT ALWAYS A HEADING, AND THE HEADING
+        # WALK HAD NO VISIBILITY TEST AT ALL.
+        # Eval 6: the page renders «Направление» two lines above the destination
+        # field, the input's accessible name is EMPTY, and its placeholder is
+        # «Город, отель или аэропорт» -- so the one word the TASK ITSELF used was
+        # unreachable by find, which is the first query any reader would try.
+        # Measured across six real shapes: four already worked and the two misses
+        # were both "the label is a preceding sibling of an ancestor 3+ levels up
+        # and is a <div>, not an <h*>" -- the shape every grid-based form uses.
+        # The same probe found W19's defect (#30) alive in the half W19 never
+        # migrated: the heading walk read a display:none <h3>, and a heading
+        # inside a hidden container, and `near=` counts as CONTENT coverage in
+        # find's scorer -- so an invisible string carried a wrong element into
+        # the CONFIDENT results. Both controls fail against the pre-fix walk.
+        nbq = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await nbq.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await nbq.goto("about:blank")
+
+        async def _near_of(html):
+            await nbq.set_content("<main>" + html + "</main>")
+            await nbq.wait_for_timeout(120)
+            rows = await nbq.evaluate(
+                "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+            r = next((e for e in rows if e.get("tag") == "input"), None)
+            return (r or {}).get("near") or ""
+
+        _n = await _near_of(
+            "<div class=f><div class=head><span class=lbl>Napravlenie</span></div>"
+            "<div class=body><div class=ctl><input placeholder='City, hotel or airport'>"
+            "</div></div></div>")
+        check("NB3 a label three containers above an unlabelled input is reachable "
+              "as near=, not only when it is a heading",
+              _n == "Napravlenie", f"near={_n!r}")
+
+        _n = await _near_of(
+            "<div class=row><div class=col><div class=lbl>Napravlenie</div></div>"
+            "<div class=col><div class=cell><div class=inner>"
+            "<input placeholder='City, hotel or airport'></div></div></div></div>")
+        check("NB3b ...including across a grid column, which is how real forms "
+              "put a label above its field",
+              _n == "Napravlenie", f"near={_n!r}")
+
+        _n = await _near_of(
+            "<div class=f><h3 style='display:none'>GHOSTLABEL</h3>"
+            "<div class=body><div class=x><input placeholder='City'></div></div></div>")
+        check("NB3c CONTROL: a display:none heading contributes nothing -- near= "
+              "is documented as nearest VISIBLE text (W19)",
+              "GHOST" not in _n, f"near={_n!r}")
+
+        _n = await _near_of(
+            "<div class=f><div style='display:none'><h3>GHOSTLABEL</h3></div>"
+            "<div class=body><div class=x><input placeholder='City'></div></div></div>")
+        check("NB3d CONTROL: nor does a heading inside a hidden container -- the "
+              "sibling is rendered-checked, and so is the heading found inside it",
+              "GHOST" not in _n, f"near={_n!r}")
+        await nbq.close()
+
         # ---- HD1-HD1d: THE PAGE'S OWN DESCRIPTION OF A FIELD. The collector already
         # RESOLVED aria-describedby / aria-errormessage (#29 used them to keep help
         # text out of `value=`) and then discarded the text, so a form could state the

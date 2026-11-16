@@ -294,7 +294,7 @@ is absent, proven on the fixture that has it. RG2d fails pre-fix; RG2b and RG2c
 pass in both arms, so the three declared sources and the
 a-region-with-no-name-is-still-listed rule are untouched.
 
-### 4c. A visible label not wired to its input is unreachable by `find` `OPEN`
+### 4c. A visible label not wired to its input is unreachable by `find` — CLOSED
 Same eval-6 run. The page renders «Направление» two lines above the destination
 field; the input's accessible name is EMPTY and its placeholder is «Город, отель
 или аэропорт». So the one word the TASK ITSELF uses is unreachable by `find`,
@@ -311,6 +311,38 @@ is designed for exactly this (a HINT for unnamed fields) and did not appear.
 **Measure before changing anything:** #37 tightened `near=` because it was
 firing where it distinguished nothing, and loosening it back is the move that
 needs a number, not an anecdote.
+
+**MEASURED, and the gap is precise rather than general.** Six real shapes of
+"unlabelled input, visible label above it" put through the collector: **four
+already worked** — a sibling `<div>`, a label inside a wrapper sibling, an
+unwired `<label>`, a preceding heading. The two misses share one cause: the
+hint has TWO walks, and the second (the ancestor walk, which is the only one
+with reach) accepted **headings only**. So a label three containers above its
+input, written as a `<div>`, was unreachable — which is how every grid-based
+form puts a label above a field, and is eval 6's «Направление».
+
+**No new guard was added, because the existing ones do the limiting.**
+`short()` refuses anything over 60 characters, so a container's whole text can
+never become a label; `labelish()` refuses code; and #37's two drop passes still
+delete a hint shared by rows that have their own identity. Priced across 40
+frozen sites, both arms on the same page load: **+77 hints, of which +68 land on
+rows with NO identity of their own** — the inverse of the DataTables profile
+#37 was fixing (18 of 28 on already-named rows, zero on the nine that needed
+one) — **for +0.031% of listing characters.**
+
+**AND THE SAME PROBE FOUND W19 ALIVE IN THE HALF W19 NEVER MIGRATED.** #30 fixed
+the SIBLING walk — `near=` is documented as "nearest VISIBLE text" and was
+reading comment bodies and `display:none` spans — and left the HEADING walk with
+no visibility test of any kind. Measured: a `display:none` `<h3>`, and a visible
+container holding a hidden `<h3>`, both produced `near="GHOSTLABEL"`. `near=`
+counts as CONTENT coverage in find's scorer since #27, so an invisible string
+carries a wrong element into the CONFIDENT results — W19's exact end-to-end
+consequence. One `_nearVis` helper now serves both walks.
+
+NB3/NB3b fail pre-fix with an empty hint; **NB3c/NB3d fail pre-fix with
+`near='GHOSTLABEL'`**, reproducing the leak rather than describing it.
+The end-to-end link was already pinned: F25/F26 cover `near=` as content
+coverage, so a field whose only identity is its hint is reachable by it.
 
 ### 4d. `search_page`'s climb is a no-op against same-text wrappers — CLOSED
 #42 states the rule as a condition about SUFFICIENCY — climb whenever the
