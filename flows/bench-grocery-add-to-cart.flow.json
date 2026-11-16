@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "name": "bench-grocery-add-to-cart",
+  "origin": "http://localhost:8080",
+  "recorded_at": "2026-11-16T19:12:57",
+  "viewport": {
+    "width": 1512,
+    "height": 812
+  },
+  "lang": "en",
+  "require": {
+    "path": "/e7_cb_grocat/produkty_11/bench_grocery_category",
+    "search": {
+      "pattern": "Оливки",
+      "min": 1,
+      "observed": 1
+    },
+    "query": {
+      "selector": "[aria-label=\"Убрать\"]",
+      "count": 0
+    }
+  },
+  "steps": [
+    {
+      "name": "tabs_create_mcp",
+      "input": {},
+      "on_fail": "ask"
+    },
+    {
+      "name": "navigate",
+      "input": {
+        "url": "http://localhost:8080/e7_cb_grocat/produkty_11/bench_grocery_category"
+      },
+      "on_fail": "ask",
+      "review": [
+        "dropped: the query for '[aria-label=\"Убрать\"]' found nothing and was never seen present, so its absence witnesses nothing",
+        "unproven: search 'Оливки' was first observed AFTER this step, so nothing here says it would have failed before"
+      ]
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click"
+      },
+      "targets": {
+        "ref": {
+          "level": 2,
+          "desc": {
+            "tag": "button",
+            "role": "",
+            "type": "button",
+            "name": "Добавить",
+            "section": "main",
+            "under": "Консервы"
+          },
+          "full": {
+            "tag": "button",
+            "role": "",
+            "type": "button",
+            "name": "Добавить",
+            "section": "main",
+            "under": "Консервы",
+            "near": "229 ₽"
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": "[aria-label=\"Убрать\"]",
+          "count": 1,
+          "attrs": {
+            "aria-label": "Убрать",
+            "class": "action-button decrease-button"
+          }
+        }
+      },
+      "on_fail": "ask"
+    }
+  ]
+}

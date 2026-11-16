@@ -4997,6 +4997,22 @@ async def _flow_call(tool: str, inp: dict):
     fn = _BATCHABLE.get(tool)
     if fn is None:
         raise RuntimeError(f"flow step names {tool!r}, which is not a runnable tool")
+    # NOT EVERY TOOL TAKES A TAB, and the runner fills one in for every step --
+    # it has to, because a flow may create a tab mid-run and everything after it
+    # belongs there (#58). `tabs_create_mcp` takes NO arguments, so a flow that
+    # opens the way `instructions=` and browser_batch's own description both
+    # teach -- tabs_create_mcp first -- died on step 0 with
+    # `tabs_create_mcp() got an unexpected keyword argument 'tabId'`. Found by
+    # replaying a flow recorded on a real app, which is the only place it could
+    # have been found: every offline test builds its steps by hand.
+    #
+    # Asked of the SIGNATURE, through the same `_takes_tab` browser_batch uses
+    # (#21: one concept, one spelling). A list of tool names here is the
+    # `_OBSERVES` whitelist #42 deleted after it went unupdated three times in
+    # one day, and the runner cannot ask this itself -- it holds a dispatch
+    # callable, not the function objects.
+    if "tabId" in inp and not _takes_tab(fn):
+        inp = {k: v for k, v in inp.items() if k != "tabId"}
     return await fn(**inp)
 
 

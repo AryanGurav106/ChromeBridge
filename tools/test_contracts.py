@@ -1086,6 +1086,52 @@ def main() -> int:
           f"only in _FIELD_STOP: {sorted(_fs - _cs)}; "
           f"only in _CLIMB_STOP: {sorted(_cs - _fs)}"
           if _fs != _cs else f"{len(_fs)} tags, agreed")
+
+    # C39: THE FLOW RUNNER FILLS IN A tabId FOR EVERY STEP -- it has to, because
+    # a flow may create a tab mid-run and everything after it belongs there
+    # (#58) -- and `tabs_create_mcp` takes NO arguments. So a flow that opens
+    # the way `instructions=` and browser_batch's own description BOTH teach
+    # died on step 0 with "tabs_create_mcp() got an unexpected keyword argument
+    # 'tabId'". Found by replaying a flow recorded on a real app; every offline
+    # test builds its steps by hand, so nothing here could have caught it.
+    # Driven rather than grepped (#19: the render is the untested link), with a
+    # stub standing in for the real tool so no browser is touched.
+    import asyncio as _aio
+    import importlib.util as _ilu2
+    _sp = _ilu2.spec_from_file_location(
+        "_ms_tab", _Path(__file__).resolve().parents[1] / "mcp_server.py")
+    _msm = _ilu2.module_from_spec(_sp)
+    try:
+        _sp.loader.exec_module(_msm)
+        _seen = {}
+
+        async def _no_tab():
+            _seen["no_tab"] = True
+            return "ok"
+
+        async def _with_tab(tabId: int = 0):
+            _seen["with_tab"] = tabId
+            return "ok"
+
+        _msm._BATCHABLE["__probe_no_tab"] = _no_tab
+        _msm._BATCHABLE["__probe_with_tab"] = _with_tab
+        _err = None
+        try:
+            _aio.run(_msm._flow_call("__probe_no_tab", {"tabId": 7}))
+        except TypeError as e:
+            _err = str(e)
+        _aio.run(_msm._flow_call("__probe_with_tab", {"tabId": 7}))
+    except Exception as e:  # pragma: no cover - import failure is the finding
+        _err, _seen = f"probe could not run: {e}", {}
+    check("C39 a flow step whose tool takes NO tabId still runs — the runner "
+          "fills one in for every step and tabs_create_mcp accepts none",
+          _err is None and _seen.get("no_tab") is True,
+          _err or f"seen={_seen}")
+    # THE CONTROL. "Always strip tabId" would satisfy C39 and break every other
+    # step in every flow, since the runner's whole tab-threading contract (#58)
+    # is that later steps run in the tab a create made.
+    check("C39b CONTROL: ...and a tool that DOES take one still receives it",
+          _seen.get("with_tab") == 7, f"seen={_seen}")
     # OC6: `toLocaleLowerCase()` is SPECIFIED to use the host default locale, so
     # the same page and the same request can give different answers on different
     # machines. MEASURED AND THE SCARY VERSION DID NOT REPRODUCE: the audit
