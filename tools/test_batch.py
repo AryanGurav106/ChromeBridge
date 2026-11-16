@@ -903,6 +903,37 @@ async def main():
           "pass tabId explicitly" not in _txt, _txt.strip()[:140])
     ms.LAST_MCP_TAB.clear()
 
+    # ---- B18: COMMIT IS NOT CONTENT, so a NAVIGATION gets the quiet wait too
+    # `_settle` ends at the new document's DOM, which is right for a navigation
+    # and is NOT where a client-rendered app finishes -- its first paint happens
+    # strictly after that point. The quiet wait was gated on a step having
+    # ACTED, so `click -> read_page` settled and `navigate -> read_page` did
+    # not. Measured live in eval 7 as the only wasted call of an otherwise
+    # 6-call run: the opening batch came back holding 7 nav buttons with the
+    # page text still reading `debug_msg: Going to first step`.
+    install([SAME] * 6, navs=[{"waited_ms": 120, "settled": True, "navigated": True}],
+            quiets=[{"quiet": True, "waitedMs": 240}])
+    out = await ms.browser_batch([
+        {"name": "navigate", "input": {"tabId": 1, "url": "https://spa.test/"}},
+        {"name": "fake_obs", "input": {"tabId": 1}},
+    ])
+    _txt = text_of(out)
+    check("B18 an observation after a NAVIGATION waits for the DOM to stop "
+          "changing, not only for the document to parse",
+          "waited 240ms" in _txt and len(RAN) == 2,
+          f"ran={len(RAN)}; {_txt.strip()[:200]}")
+    # CONTROL: an observation after an OBSERVATION still asks nothing. Without
+    # it, "wait on everything" would satisfy B18 while taxing every batch (#38).
+    install([SAME] * 6, quiets=[{"quiet": True, "waitedMs": 240}])
+    out = await ms.browser_batch([
+        {"name": "fake_obs", "input": {"tabId": 1}},
+        {"name": "fake_obs", "input": {"tabId": 1}},
+    ])
+    _txt = text_of(out)
+    check("B18b CONTROL: an observation after an observation waits for nothing",
+          "stop changing" not in _txt and len(RAN) == 2,
+          f"ran={len(RAN)}; {_txt.strip()[:140]}")
+
     # B15c — THE CONTROL THAT IT IS NOT AN ALWAYS-ON NOTE, and not an always-on
     # ROUND TRIP. A quiet page is the normal case; a line on every step is the
     # noise #15 priced, and "wait on everything" would pass B15 while taxing

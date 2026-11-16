@@ -4046,6 +4046,9 @@ async def browser_batch(
     _stale_why = None      # the page moved under the plan; set once, never cleared
     _stale_nav = False     # ...and whether that was a NAVIGATION, which is the only
                            # thing that moves history. A DOM change is not one.
+    _navigated = False     # the PREVIOUS step navigated this tab, so the quiet wait
+                           # applies too: `_settle` ends at the new document's DOM
+                           # and a client-rendered app paints strictly after that.
     _acted = False         # an earlier step of THIS batch named a ref/coordinate and ran,
                            # so any focus it set is the focus later steps meant
     _dropped: list = []    # ref-naming steps skipped after that, named once at the end
@@ -4142,6 +4145,12 @@ async def browser_batch(
         # the step.
         if _tab is not None and i > 0:
             _st = await _settle(_tab)
+            # WHETHER A NAVIGATION HAPPENED, asked rather than predicted (#51):
+            # this is the same reply that decides the settle, so it costs no
+            # extra round trip. A click that navigated counts, which is exactly
+            # the case a step's own INPUT cannot reveal.
+            if _st and ((_st.get("waited_ms") or 0) > 0 or _st.get("navigated")):
+                _navigated = True
             if _st and (_st.get("waited_ms") or 0) > 0:
                 # Reported only when it actually waited. A line on every step would
                 # be the always-on note #15 priced as pure noise and #43 deleted
@@ -4179,7 +4188,21 @@ async def browser_batch(
             # only -- an ad-driven page runs attribute churn for ever and
             # waiting on "any mutation" would hang on every commercial page
             # (#70 measured theguardian at ~7 @style mutations per 2s).
-            if _acted:
+            # ...AND AFTER A NAVIGATION TOO, because commit is not content.
+            # `_settle` above ends at the new document's DOM, which is the right
+            # place for a navigation and is NOT where a client-rendered app
+            # finishes: its first paint happens strictly after that point.
+            # Measured live in eval 7 and it cost the run its only wasted call:
+            # an opening `[tabs_create_mcp, navigate, read_page]` came back
+            # holding only the 7 nav buttons, with the page text still reading
+            # `debug_msg: Going to first step` -- the router had not run. The
+            # agent's diagnosis was exact: "the machinery exists and works well;
+            # it just doesn't fire after navigate."
+            # Free where it is not wanted: `await_quiet` returns immediately on
+            # a settled page (waitedMs 0, which prints nothing), so a navigation
+            # to a server-rendered page pays one bridge op and the wait engages
+            # only where something is still painting.
+            if _acted or _navigated:
                 _q = await _quiet(_tab)
                 _qms = int((_q or {}).get("waitedMs") or 0)
                 if _q and _qms > 0:

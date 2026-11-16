@@ -646,7 +646,7 @@ them, and point at re-running without it. NF1 fails pre-fix; **NF2 is the
 control that a genuinely empty buffer claims nothing about a filter**, without
 which the note would fire everywhere and mean nothing (#15).
 
-### 4o. A navigate gets the COMMIT wait, not the CONTENT wait `OPEN`
+### 4o. A navigate gets the COMMIT wait, not the CONTENT wait — CLOSED
 `browser_batch` waits twice and for different things: `_settle` after a
 navigation (Chrome's own `onDOMContentLoaded`, #51) and `_quiet` after an ACTION
 (mutations stopping, #51). The second is gated on a step having ACTED, and a
@@ -661,13 +661,17 @@ wasted call. The agent put the diagnosis exactly: *"the machinery exists and
 works well; it just doesn't fire after `navigate` … For an SPA the first paint
 happens strictly after the point `navigate` returns."*
 
-**The fix is to extend `_quiet`'s gate to a preceding navigation**, and the
-cost is already measured: `await_quiet` returns immediately on a settled page
-(`waitedMs` 0, prints nothing), so a navigation to a server-rendered page pays
-one bridge op. The wait only engages where it is wanted. `mcp_server.py`, held
-only because the eval must stay on one server build (Amendment 5).
+**CLOSED.** `_quiet`'s gate is now `_acted or _navigated`, and `_navigated` is
+read off the SAME `_settle` reply that already decides the document wait — asked
+rather than predicted (#51), so it costs no extra round trip and it catches a
+CLICK that navigated, which a step's own input cannot reveal.
+Free where it is not wanted: `await_quiet` returns immediately on a settled page
+and prints nothing, so a server-rendered navigation pays one bridge op.
+B18 fails pre-fix; **B18b is the control that an observation after an
+observation still waits for nothing**, without which "wait on everything" would
+satisfy B18 while taxing every batch (#38).
 
-### 4p. A download click has no page-side consequence, and nothing says so `OPEN`
+### 4p. A download click has no page-side consequence, and nothing says so — CLOSED
 Eval 7, the files task. After clicking a `download` anchor: URL unchanged, DOM
 re-read byte-identical, click output `landed at (1214,350)` — which confirms
 the CLICK, not the DOWNLOAD. **The default verification instinct, re-reading the
@@ -675,9 +679,16 @@ page, is structurally incapable of confirming this action**, and nothing in the
 click result or the anchor's row hints at what would be.
 
 Both arms met it. Ours went to a shell `ls` and found the file;
-`read_network_requests` is the in-tooling answer and nothing points at it. One
-line on a click whose target carries a `download` attribute would close it —
-and the attribute is declared, so this needs no guess.
+`read_network_requests` is the in-tooling answer and nothing points at it.
+
+**CLOSED.** A click whose target declares `download` now says that the URL, the
+DOM and a re-read are identical whether or not the file arrived, and names
+`read_network_requests` as the check that can see it. Declared attribute, no
+guess — and resolved up to the nearest `<a>`, because the ref is routinely a
+span inside the link. It rides the AGREEING branch, which is otherwise silent,
+because silence is exactly the problem here.
+X10f fails pre-fix; **X11b is the control that an ordinary agreeing click still
+says nothing**, so this did not become per-click noise.
 
 ### 4q. `search_page` reports the TEXT's ref and no route to the ACTION — CLOSED
 The last run of eval 7, and the only overhead call in an 8-call task.

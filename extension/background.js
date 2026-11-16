@@ -1533,7 +1533,7 @@ function _hitTestPage(x, y, wantSel) {
     return cut + '\u2026(+' + (t.length - cut.length) + ')'; };
   const out = { ref: null, tag: '', role: '', label: '', deep: 0, listed: false,
                 oob: false, substituted: false, chain: [], shared: null,
-                sharedTag: '' };
+                sharedTag: '', isDownload: false };
   try {
     const vw = window.innerWidth || document.documentElement.clientWidth || 0;
     const vh = window.innerHeight || document.documentElement.clientHeight || 0;
@@ -1596,6 +1596,28 @@ function _hitTestPage(x, y, wantSel) {
     try {
       if (wantSel) {
         const want = document.querySelector(wantSel);
+        // A DOWNLOAD IS THE ONE ACTION WITH NO PAGE-SIDE CONSEQUENCE, and the
+        // default way to verify -- re-read the page -- is structurally
+        // incapable of confirming it. Measured live in eval 7 on BOTH arms:
+        // after clicking a download anchor the URL was unchanged, a re-read was
+        // byte-identical, and the click line said `landed at (1214,350)`, which
+        // confirms the CLICK and not the DOWNLOAD. One agent went to a shell
+        // `ls`; the in-tooling answer is read_network_requests and nothing
+        // pointed at it.
+        // `download` is a DECLARED attribute, so this needs no guess. Checked
+        // on the named element and its nearest anchor, because the ref is
+        // routinely a span inside the <a>.
+        try {
+          let _d = want;
+          for (let i = 0; i < 4 && _d; i++) {
+            if (_d.tagName && _d.tagName.toLowerCase() === 'a'
+                && _d.hasAttribute && _d.hasAttribute('download')) {
+              out.isDownload = true;
+              break;
+            }
+            _d = _d.parentElement;
+          }
+        } catch (e) {}
         if (want && !want.contains(el) && !el.contains(want)) {
           const mine = new Set(out.chain);
           let w2 = want;
@@ -1710,7 +1732,17 @@ function _hitEcho(h, sel) {
         + ` — something is on top, the layout moved since the coordinate was produced,`
         + ` or the two are siblings.${_sh}`;
     }
-    if (_inChain) return '';   // hit inside your own target: silent, like any agreement
+    if (_inChain) {
+      // ...except for a download, where silence is the problem. Nothing on the
+      // page changes, so an agreeing echo plus an unchanged re-read reads as
+      // "nothing happened" for an action that worked.
+      return h.isDownload
+        ? ' NOTE: this is a download link (it declares `download`), so NOTHING on'
+          + ' the page changes — the URL, the DOM and a re-read are all identical'
+          + ' whether or not the file arrived. Re-reading cannot confirm it;'
+          + ' read_network_requests on this tab can.'
+        : '';
+    }
     if (want && !h.ref) {
       return ` WARNING: you named ref_${want}, but the renderer finds ${what}${deep} at that point.`;
     }

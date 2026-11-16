@@ -79,6 +79,8 @@ _HIT_PAGE = """<!doctype html><meta charset=utf-8><body style="margin:0">
      a <text> label painted over the seat it belongs to, handler delegated to the
      <svg> above both. The veil case has no listed ancestor in common, so it
      exercises the other branch and stays the control for it. -->
+<a id=dl mmid="51" download href="/f.pdf" style="position:absolute;left:400px;top:200px;width:120px;height:24px">
+  <span id=dlspan mmid="53">Download</span></a>
 <div id=widget mmid="41" style="position:absolute;left:400px;top:300px;width:160px;height:40px">
   <div id=seat mmid="43" style="position:absolute;left:0;top:0;width:160px;height:40px"></div>
   <div id=lbl  mmid="45" style="position:absolute;left:0;top:0;width:160px;height:40px"></div>
@@ -89,7 +91,8 @@ window.__mmidReg = new Map([["7",document.getElementById('want')],
   ["13",document.getElementById('host')],["21",document.getElementById('outer')],
   ["23",document.getElementById('inner')],["31",document.getElementById('wrap')],
   ["41",document.getElementById('widget')],["43",document.getElementById('seat')],
-  ["45",document.getElementById('lbl')]]);
+  ["45",document.getElementById('lbl')],["51",document.getElementById('dl')],
+  ["53",document.getElementById('dlspan')]]);
 document.getElementById('host').attachShadow({mode:'open'}).innerHTML =
   '<button style="width:120px;height:30px">Inside shadow</button>';
 </script></body>"""
@@ -206,6 +209,20 @@ async def _hit_echo_checks(browser, check):
           "MISMATCH" in _veil and "SIBLINGS sharing" not in _veil,
           _veil.strip()[:150])
 
+    # X10f/X10g — A DOWNLOAD HAS NO PAGE-SIDE CONSEQUENCE, so an AGREEING echo
+    # plus an unchanged re-read reads as "nothing happened" for an action that
+    # worked. Measured live in eval 7 on BOTH arms: URL unchanged, DOM re-read
+    # byte-identical, click line reporting only where it landed. One agent went
+    # to a shell `ls`. `download` is a declared attribute, so this needs no
+    # guess -- and it is checked up to the nearest <a>, because the ref is
+    # routinely a span inside the link.
+    _dl = await echo(460, 210, "[mmid='53']")      # the span INSIDE the anchor
+    check("X10f a click on a download link says a re-read cannot confirm it, "
+          "and names the check that can",
+          "download link" in _dl and "read_network_requests" in _dl,
+          _dl.strip()[:190])
+    # CONTROL: an ordinary agreeing click stays silent. Without this the note
+    # would fire on every click and be the noise #15 priced.
     h = await hit(100, 315)
     check("X11 an unobstructed control resolves to its own ref, with its label",
           h["ref"] == "11" and "Clear target" in (h["label"] or ""),
