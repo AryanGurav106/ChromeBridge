@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "name": "txt-pg-login-error",
+  "origin": "http://127.0.0.1:8787",
+  "recorded_at": "2026-11-16T00:32:20",
+  "viewport": {
+    "width": 1280,
+    "height": 900
+  },
+  "vars": {
+    "work_email": "ada@wrong.test"
+  },
+  "require": {
+    "query": {
+      "selector": "form",
+      "count": 1,
+      "text": "Work email Password Keep me signed in Sign in"
+    }
+  },
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "http://127.0.0.1:8787/logout"
+      },
+      "on_fail": "ask",
+      "review": [
+        "unproven: query 'form' was first observed AFTER this step (inherent: nothing precedes the first step)"
+      ]
+    },
+    {
+      "name": "fill_form",
+      "input": {
+        "fields": [
+          {
+            "value": "{{work_email}}"
+          },
+          {
+            "value": "${CHROMEBRIDGE_SECRET:CB_SECRET_TXT_PG_LOGIN_ERROR_PASSWORD}"
+          }
+        ],
+        "submit": true
+      },
+      "targets": {
+        "fields.0": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "email",
+            "name": "Work email"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "email",
+            "name": "Work email",
+            "section": "",
+            "under": "Sign in",
+            "near": ""
+          }
+        },
+        "fields.1": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "password",
+            "name": "Password"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "password",
+            "name": "Password",
+            "section": "",
+            "under": "Sign in",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": {
+          "selector": ".err",
+          "count": 1,
+          "text": "That email and password do not match."
+        }
+      },
+      "on_fail": "ask",
+      "review": [
+        "unproven: query '.err' was first observed AFTER this step, so nothing here says it would have failed before",
+        "unevidenced: every check on this step is hollow or unproven, so none of them is known to be able to fail"
+      ]
+    }
+  ]
+}

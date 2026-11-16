@@ -1,0 +1,122 @@
+{
+  "schema": 1,
+  "name": "txt-pg-modal",
+  "origin": "http://127.0.0.1:8787",
+  "recorded_at": "2026-11-16T00:32:26",
+  "viewport": {
+    "width": 1280,
+    "height": 900
+  },
+  "vars": {
+    "work_email": "ada@acme.test"
+  },
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "http://127.0.0.1:8787/logout"
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "fill_form",
+      "input": {
+        "fields": [
+          {
+            "value": "{{work_email}}"
+          },
+          {
+            "value": "${CHROMEBRIDGE_SECRET:CB_SECRET_TXT_PG_MODAL_PASSWORD}"
+          }
+        ],
+        "submit": true
+      },
+      "targets": {
+        "fields.0": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "email",
+            "name": "Work email"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "email",
+            "name": "Work email",
+            "section": "",
+            "under": "Sign in",
+            "near": ""
+          }
+        },
+        "fields.1": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "password",
+            "name": "Password"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "password",
+            "name": "Password",
+            "section": "",
+            "under": "Sign in",
+            "near": ""
+          }
+        }
+      },
+      "on_fail": "ask",
+      "review": [
+        "dropped: the query for '.backdrop:not([hidden]) [role=dialog]' found nothing and was never seen present, so its absence witnesses nothing"
+      ]
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "button",
+            "role": "",
+            "type": "",
+            "name": "New project"
+          },
+          "full": {
+            "tag": "button",
+            "role": "",
+            "type": "",
+            "name": "New project",
+            "section": "",
+            "under": "Projects",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "query": [
+          {
+            "selector": ".backdrop:not([hidden]) [role=dialog]",
+            "count": 1,
+            "text": "New project Create a project in this workspace. Project name Region Select a region ⌄ Plan Select a plan Free Team Enterprise Cancel Create project"
+          },
+          {
+            "selector": "#newproj label",
+            "count": 3
+          }
+        ]
+      },
+      "on_fail": "ask",
+      "review": [
+        "unproven: query '#newproj label' was first observed AFTER this step, so nothing here says it would have failed before",
+        "unevidenced: every check on this step is hollow or unproven, so none of them is known to be able to fail"
+      ]
+    }
+  ]
+}
