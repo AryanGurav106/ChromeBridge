@@ -590,6 +590,39 @@ absence is only evidence when the thing doing the looking says what it looked
 at. `search_page` already carries that discipline (#39's settled-state note);
 these two do not. `background.js`, held under eval 7's Amendment 2.
 
+### 4o. A navigate gets the COMMIT wait, not the CONTENT wait `OPEN`
+`browser_batch` waits twice and for different things: `_settle` after a
+navigation (Chrome's own `onDOMContentLoaded`, #51) and `_quiet` after an ACTION
+(mutations stopping, #51). The second is gated on a step having ACTED, and a
+`navigate` is not an act by that rule — so `click -> read_page` settles and
+`navigate -> read_page` does not.
+
+**On a client-rendered app, commit is not content.** Measured live in eval 7:
+an opening `[tabs_create_mcp, navigate, read_page]` returned a listing holding
+only the 7 nav buttons, with page text reading `debug_msg: Going to first step`
+— the Vue router had not run yet — and the whole main content absent. One
+wasted call. The agent put the diagnosis exactly: *"the machinery exists and
+works well; it just doesn't fire after `navigate` … For an SPA the first paint
+happens strictly after the point `navigate` returns."*
+
+**The fix is to extend `_quiet`'s gate to a preceding navigation**, and the
+cost is already measured: `await_quiet` returns immediately on a settled page
+(`waitedMs` 0, prints nothing), so a navigation to a server-rendered page pays
+one bridge op. The wait only engages where it is wanted. `mcp_server.py`, held
+only because the eval must stay on one server build (Amendment 5).
+
+### 4p. A download click has no page-side consequence, and nothing says so `OPEN`
+Eval 7, the files task. After clicking a `download` anchor: URL unchanged, DOM
+re-read byte-identical, click output `landed at (1214,350)` — which confirms
+the CLICK, not the DOWNLOAD. **The default verification instinct, re-reading the
+page, is structurally incapable of confirming this action**, and nothing in the
+click result or the anchor's row hints at what would be.
+
+Both arms met it. Ours went to a shell `ls` and found the file;
+`read_network_requests` is the in-tooling answer and nothing points at it. One
+line on a click whose target carries a `download` attribute would close it —
+and the attribute is declared, so this needs no guess.
+
 ### 5. SPA readiness, the remaining half `OPEN`
 The mutation-recency signal (#70) separates "still building" from "ready but
 chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:

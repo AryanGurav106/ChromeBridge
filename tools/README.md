@@ -21,7 +21,7 @@ Two kinds of thing live here, and the difference matters:
   --------------------------------------------------
   delta       unit     PASS        3.3s  10/10
   ...
-  21 passed, 0 failed, 0 skipped of 21 suite(s); 1362 checks; 127s
+  21 passed, 0 failed, 0 skipped of 21 suite(s); 1364 checks; 127s
   ALL GREEN
 ```
 

@@ -2217,11 +2217,31 @@ async def search_page(
         where = (f" [in {_sc}]" if _sc else (f" [#{_nth} in document order]" if _nth else ""))
         lines.append(f'  <{h.get("tag", "?")}{ref}{loc}>{where} {ctx}')
     if _located:
+        # THE REF AND THE CONTEXT ARE TWO DIFFERENT UNITS, PRINTED IN ONE ROW.
+        # The ref is the ATTRIBUTION unit -- the element whose own text first
+        # contains the whole match (#32's rule, so an ancestor cannot report a
+        # child's hit) -- while the context is the nearest enclosing RECORD the
+        # climb reached (#47). Both are right; printing them adjacent with
+        # nothing saying so is what misleads.
+        # Measured live in eval 7. A row read
+        #   <div ref_1120 "Медный вензель…"@46> МЕДНЫЙ ВЕНЗЕЛЬ … | 4.5 | 430 | 689 ₽
+        # and the agent took ref_1120 to be the thing holding 689 ₽. It scoped a
+        # read to it and got back one text node -- a whole round trip for a
+        # string already on the line. Its words: "the ref and the price sit on
+        # one line inside one `<div …>` bracket".
+        # Said in the trailer that already exists rather than per row: the exact
+        # version wants the climb depth, which the page computes as `p.hops` and
+        # does not send, and that is an extension change.
         lines.append('  (`"text"@N` is the match and its character offset in the context '
                      "quoted on that line; ` | ` marks a boundary the page declared — between "
                      "cells, list items or blocks, or a line break. A literal "
                      "pattern matches any whitespace where it has a space, so "
-                     "text broken across lines is found as it reads.)")
+                     "text broken across lines is found as it reads. "
+                     "The ref owns the MATCH, not necessarily the whole context: "
+                     "context is quoted from the nearest enclosing record, so a "
+                     "value you can see beside the match may belong to a sibling "
+                     "element. Scope a read to that ref and you get the match's "
+                     "own element, which is often a single text node.)")
     # NAMED ONLY WHEN IT APPEARS (#13). It is carried by the colliding rows alone,
     # so on most results there is no such notation to explain and a standing line
     # about it would be describing a field the output does not contain.

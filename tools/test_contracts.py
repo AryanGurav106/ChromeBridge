@@ -726,6 +726,36 @@ def main() -> int:
           and '"SIGQUIT"@0' in _out and '"SIGUSR1"@12' in _out,
           f"{len(_rows)} row(s); identical={_rows[0] == _rows[1] if len(_rows) == 2 else 'n/a'}")
 
+    # ---- C37: THE REF AND THE CONTEXT ARE TWO DIFFERENT UNITS -------------
+    # The ref is the ATTRIBUTION unit (the element whose own text first contains
+    # the whole match, #32) and the context is the nearest enclosing RECORD the
+    # climb reached (#47). Both are right; printing them adjacent with nothing
+    # saying so is what misleads.
+    # Measured live in eval 7: a row read
+    #   <div ref_1120 "Медный вензель…"@46> МЕДНЫЙ ВЕНЗЕЛЬ … | 4.5 | 430 | 689 ₽
+    # and the agent took ref_1120 to own the 689 ₽. It scoped a read to it and
+    # got one text node back -- a round trip for a string already on the line.
+    check("C37 the located trailer says the ref owns the MATCH, not necessarily "
+          "the whole context quoted beside it",
+          "owns the MATCH" in _out and "belong to a sibling" in _out,
+          _out.replace("\n", " ")[-220:])
+    # CONTROL: the trailer is conditional (#13 -- a notation is explained only
+    # when it appears), so a result with no located match must not carry it.
+    class _FBP:
+        connected = True
+
+        async def call(self, op, **kw):
+            return {"hits": [{"match": "whole", "context": "whole", "at": 0,
+                              "tag": "p", "ref": "5"}],
+                    "total": 1, "shown": 1, "scanned": 1}
+
+    _ms.STATE["bridge"] = _FBP()
+    _out2 = _aio.run(_sp(pattern="whole", tabId=1))
+    check("C37b CONTROL: a match that fills its own element carries no such "
+          "trailer, so the explanation appears only where the notation does",
+          "owns the MATCH" not in _out2, _out2.replace("\n", " ")[:160])
+    _ms.STATE["bridge"] = _FB()
+
     # C30/C30b: THE SERVER'S ROW PATTERNS MUST MATCH THE ROW THE EXTENSION EMITS IN
     # THE DEFAULT FORMAT. C12 guards the boundary line that introduces the rows; this
     # guards the rows themselves, and the defect was the same shape one line down.
