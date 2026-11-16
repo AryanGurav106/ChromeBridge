@@ -2600,10 +2600,13 @@ async function readinessNote(tabId, scopeMmid) {
         return `*** THE DOM IS STILL CHANGING (last change ${m.since}ms ago; ` +
                `${moved}${sat} change(s) in the last ${m.win}ms: ${kinds.join(', ')}${where}` +
                (bits.length ? `; also ${bits.join('; ')}` : '') + `). ` +
-               `Elements are being added, removed or re-texted right now, so this read is a ` +
-               `snapshot of a page still being built: do NOT conclude something is absent ` +
-               `from it, and re-observe before trusting any coordinate. Refs are re-measured ` +
-               `at click time, so acting BY REF is safe. ***\n`;
+               `Elements were added, removed or re-texted in that window — the age above ` +
+               `says when the last one was, and it is the number to judge by: a few ms means ` +
+               `the page is building AS YOU READ, and a couple of seconds means it has ` +
+               `stopped and this window still covers the build. While it is recent, do NOT ` +
+               `conclude something is absent from this read, and re-observe before trusting ` +
+               `any coordinate. Refs are re-measured at click time, so acting BY REF is ` +
+               `safe. ***\n`;
       }
       // ATTRIBUTE CHURN ONLY — reported as a FACT, with no "may be absent"
       // warning, because nothing was added, removed or re-texted in the window.

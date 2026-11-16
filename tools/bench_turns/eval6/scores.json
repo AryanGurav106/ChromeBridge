@@ -1,69 +1,31 @@
 [
  {
-  "track": "e6_tree_books",
+  "track": "e6_tree_shop",
   "conditions": 2,
-  "events": 15,
+  "events": 12,
   "names": [
-   "apply_filter",
+   "add_favorites",
    "basket_add",
    "click",
    "scroll",
    "state_changed",
-   "submit_search",
    "visibility"
   ],
   "per": [
    {
     "cond": {
-     "event_name": "state_changed",
+     "event_name": "basket_add",
      "parameters": {
-      "new_state": "bench_books_item",
-      "state_id": "item_51565901"
+      "item_id": "item_1160040708"
      }
     },
     "pass": true
    },
    {
     "cond": {
-     "event_name": "basket_add",
+     "event_name": "add_favorites",
      "parameters": {
-      "item_id": "item_51565901"
-     }
-    },
-    "pass": true
-   }
-  ],
-  "passed": true
- },
- {
-  "track": "e6_flat_books",
-  "conditions": 2,
-  "events": 15,
-  "names": [
-   "apply_filter",
-   "basket_add",
-   "click",
-   "scroll",
-   "state_changed",
-   "submit_search",
-   "visibility"
-  ],
-  "per": [
-   {
-    "cond": {
-     "event_name": "state_changed",
-     "parameters": {
-      "new_state": "bench_books_item",
-      "state_id": "item_51565901"
-     }
-    },
-    "pass": true
-   },
-   {
-    "cond": {
-     "event_name": "basket_add",
-     "parameters": {
-      "item_id": "item_51565901"
+      "item_id": "item_1160040708"
      }
     },
     "pass": true

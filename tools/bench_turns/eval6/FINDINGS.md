@@ -200,3 +200,70 @@ changing at that instant? Recorded as a thing to measure.
   TWICE (two refs carrying the same `"4.8 365"`), plus two spans splitting the
   rating into `4.8` and `365`. 168 on screen, capped at 150. The cap is being
   paid for repetition of one record rather than for distinct books.
+
+## The banner complaint, measured — and it was right
+
+THREE of five agents so far, unprompted and across both arms, said the readiness
+banner fires on reads that are plainly settled. *"I ignored it each time and was
+right to, which is the failure mode where an always-on warning trains you to
+skip it."* That is #15's always-on warning, and it is plausibly caused by my own
+#70/#77 work, so it got a number rather than a defence.
+
+Six live apps, sampled at six offsets after DOMContentLoaded — which is exactly
+the moment `browser_batch`'s settle reports "this step read the settled page":
+
+| | |
+|---|---|
+| reads sampled | 36 |
+| printing the STRONG banner | **30 (83%)** |
+| of those, last change **>1500ms ago** | **12** |
+
+    shop   t+2000ms   since=1512ms   96 structural   -> "STILL CHANGING"
+    hotels t+2000ms   since=1858ms   60 structural   -> "STILL CHANGING"
+
+Nothing had changed for ~1.9 seconds, and the prose said *"Elements are being
+added, removed or re-texted **right now**"*. **That sentence is false at that
+instant.** The COUNT is correct — the window is 3000ms, widened in R23 because
+1000ms is 50.7% false-quiet in a clamped hidden tab — but the prose asserted a
+present tense its own printed number contradicted.
+
+**The window is not narrowed**, because that reintroduces the false quiet R23
+exists to prevent. The sentence now defers to `since`, which the banner already
+prints: a few ms means the page is building as you read, a couple of seconds
+means it has stopped and the window still covers its build. `R-TENSE` fails
+against the old wording; `R-TENSE2` is the control that it still says do NOT
+conclude absence, so the warning was not softened into uselessness.
+
+## Pair 3 — shop, «найди … Zewa Deluxe … добавь в избранное и в корзину» (tree in)
+
+| arm | calls | oracle |
+|---|---|---|
+| tree | **6** | see scores.json |
+
+### The advertised recovery was explicitly unavailable
+
+The first catalogue read returned **171 on screen capped at 150**, plus *"485
+more below the viewport"* and *"74 under aria-hidden"* — while the
+`--- PAGE TEXT ---` block below it contained the **entire** catalogue including
+the target. So the text pass saw the whole page and the actionable listing saw
+roughly 7% of it. The off-viewport hint named `main(ref_18): 485` and marked it
+**"too big to return in full"**, which is #26's own honest clause working — and
+it means the hint named the region and then said the recovery would not work.
+`search_page` was the only route left, and the agent found it unaided.
+
+That is not a defect so much as the shape of the trade: on a dense catalogue the
+listing is a sample and the TEXT is the index. Worth stating somewhere the agent
+reads, because this agent worked it out and the previous four did not face it.
+
+### Two notes that are the page's fault, recorded so nobody chases them
+
+- **The product spec table is wrong**: `Бренд: Белый`, `Аромат: Белый`,
+  `Цвет: Белый`. Scent is not a colour and the brand is Zewa. An agent
+  confirming «без аромата» from the spec block rather than the title would
+  conclude it had the wrong product. Relevant if anything downstream grades on
+  that block.
+- **No URL shortcut exists.** The agent guessed the cards were anchors and
+  queried `[href*='1160040708']`; they are `<div>`s with JS handlers and no
+  href. The DOM declares no destinations here, so clicking the title is the only
+  route — which is the same per-domain anchor split the first WebPageBench pass
+  measured (books and shop: 0 anchors).

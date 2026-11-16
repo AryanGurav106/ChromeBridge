@@ -1761,6 +1761,35 @@ const FIELDS3 = () => ([
       String(r.result).includes("THE DOM IS STILL CHANGING")
         && String(r.result).includes("40 structural"), JSON.stringify(r).slice(0, 200));
 
+    // R-TENSE — THE BANNER MUST NOT ASSERT A PRESENT TENSE ITS OWN NUMBER
+    // CONTRADICTS. Two live agents, unprompted and in one pair, reported the
+    // full "*** THE DOM IS STILL CHANGING ***" paragraph printing on reads the
+    // batch had ALREADY settled, and one said "I ignored it each time and was
+    // right to", which is #15's always-on warning exactly.
+    //
+    // MEASURED rather than argued: across six live apps sampled at six offsets
+    // after DOMContentLoaded, 30 of 36 reads (83%) printed the strong banner,
+    // and 12 of those had `since` > 1500ms -- the page had demonstrably stopped
+    // and the 3000ms window (R23, widened because 1000ms is 50.7% false-quiet
+    // in a clamped tab) still held the build's own mutations. At shop t+2000ms:
+    // since=1512ms, 96 structural, and the prose said "right now".
+    //
+    // The window is NOT narrowed -- that reintroduces the false quiet R23
+    // exists to prevent. The SENTENCE now defers to `since`, which the banner
+    // already prints, so the reader judges from a number instead of a claim.
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0,
+      mut: _mut({ since: 1512, structural: 96, win: 3000 }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("R-TENSE a banner whose last change was 1512ms ago does not claim "
+          + "elements are being re-texted RIGHT NOW",
+      !/right now/i.test(String(r.result))
+        && String(r.result).includes("1512ms"), String(r.result).slice(0, 200));
+    check("R-TENSE2 CONTROL: it still says do NOT conclude absence, so this did "
+          + "not soften the warning into uselessness",
+      /do NOT conclude something is absent/i.test(String(r.result)),
+      String(r.result).slice(0, 160));
+
     currentStubs["_readinessPage"] = () => ({
       ready: "complete", imgs: 0, prog: 0, busy: 0,
       mut: _mut({ attrs: { style: 25 } }) });
