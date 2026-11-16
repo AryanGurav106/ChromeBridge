@@ -571,7 +571,7 @@ live run. QS1 fails pre-fix with the live symptom exactly (`button "1"` twice);
 for**, and my first fixture missed the branch entirely at 23% area coverage —
 the vacuous-fixture problem, eighth instance.
 
-### 4m. A checkbox's `value=` reads as its state `OPEN`
+### 4m. A checkbox's `value=` reads as its state — CLOSED
 Same run: `ref_3566 | input[checkbox] name="Выбрать все" value="true"` while
 `query_elements(attributes=["checked"])` says `checked="false"` on all four.
 
@@ -584,7 +584,18 @@ presence or absence of `(checked)`; the `value=` beside it contradicts that.
 #23 fixed the sibling case (`value="on"`, the DOM default never written by the
 page). This is a page that genuinely writes `value="true"`, so suppressing it
 outright would drop authored content — the fix is to put it in a slot that does
-not mean state. `background.js`, held under Amendment 2.
+not mean state.
+
+**CLOSED.** It moves to its own key: `submits="true"`, with a legend line that
+says in as many words that it is NOT state and that the `(checked)` flag is.
+Printing it is still worth doing — `OPEN.md` 4h is a radio group where the value
+is the only honest identity — so this keeps the information and changes what the
+key MEANS.
+CB1/CB1b/CB1d fail pre-fix and reproduce the live symptom exactly
+(`value="true"` on an unchecked box). **CB1c is the control and passes in both
+arms**: a text input's `value=` IS its contents and is untouched. My first
+version of that control also asserted the `submits=` count, which is zero
+pre-fix — so it failed ablated and was not a control at all; that half is CB1d.
 
 ### 4n. A FILTERED miss reads exactly like a silent page — CLOSED
 **Found on the OTHER arm in eval 7, and ours has it in two tools.** Worth

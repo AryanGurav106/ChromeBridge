@@ -2438,6 +2438,49 @@ async def main():
               and "share ONE label" in _cap,
               (_cap[:120] or "(no cap notice on this fixture)"))
 
+        # ---- CB1/CB1b/CB1c: A CHECKBOX'S value= IS NOT ITS STATE ----------
+        # The legend defines `value=` as CURRENT CONTENTS, so `value="true"` on
+        # a checkbox reads exactly like "this is ticked". Measured live in
+        # eval 7: `input[checkbox] name="Выбрать все" value="true"` while
+        # query_elements said checked="false" on all four. An agent that
+        # trusted the row would have reported a cart as fully selected when
+        # nothing was. #23 fixed the sibling case (value="on", the DOM default)
+        # and left this one, because a page that genuinely WRITES the attribute
+        # is authored content -- the fix is a key that does not mean state.
+        cbp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await cbp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await cbp.goto("about:blank")
+        await cbp.set_content(
+            "<main>"
+            "<label>All <input type=checkbox name=all value='true'></label>"
+            "<label>Bare <input type=checkbox name=bare></label>"
+            "<label>Typed <input type=text name=t value='hello'></label>"
+            "</main>")
+        await cbp.wait_for_timeout(150)
+        cb = str(await cbp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _all = next((l for l in cb.splitlines() if "name=\"all\"" in l or "All" in l), "")
+        check("CB1 an UNCHECKED checkbox does not print its submit value in the "
+              "slot that means contents",
+              'value="true"' not in cb and 'submits="true"' in cb,
+              " // ".join(l.strip()[:70] for l in cb.splitlines() if "checkbox" in l))
+        check("CB1b ...and the legend explains the new key and says it is not state",
+              "submits=" in cb and "NOT its state" in cb,
+              next((l for l in cb.splitlines() if "submits=" in l and "POSTS" in l), "NO LEGEND"))
+        # CB1c is the CONTROL and must pass in BOTH arms: a text input's value
+        # IS its contents and this change must not touch it. The first version
+        # also asserted the submits= count, which is 0 pre-fix -- so it failed
+        # ablated and was not a control at all. That half belongs with CB1.
+        check("CB1c CONTROL: a text input keeps value= as its contents — this "
+              "moved one key for one kind of input, not the slot itself",
+              'value="hello"' in cb,
+              " // ".join(l.strip()[:70] for l in cb.splitlines() if "[text]" in l))
+        check("CB1d a checkbox declaring NO value gains no submits= key, so the "
+              "notation appears only where the author chose one",
+              cb.count("submits=") == 2,   # one row + one legend line
+              f"submits= occurrences={cb.count('submits=')}")
+        await cbp.close()
+
         # ---- RC1/RC1b: THE RECORD THE CONTEXT CAME FROM, NAMED -------------
         # search_page reports the ATTRIBUTION unit (the element whose own text
         # first contains the match, #32) and quotes context from the nearest

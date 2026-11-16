@@ -4935,6 +4935,7 @@ async function collectCrossFrames(tabId, geometry) {
       let id = '';
       if (e.name)        id += ` name=${JSON.stringify(e.name)}`;
       if (e.value)       id += ` value=${JSON.stringify(e.value)}`;
+      if (e.submits)     id += ` submits=${JSON.stringify(e.submits)}`;
       if (e.placeholder) id += ` placeholder=${JSON.stringify(e.placeholder)}`;
       if (!id && e.text) id = ` "${e.text}"`;
       if (!id && e.label) id = ` "${e.label}"`;
@@ -8230,8 +8231,22 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           // when the page set nothing, so it made an unchecked box read as ON and
           // was identical for checked and unchecked alike. Report the ATTRIBUTE
           // only, which is present exactly when the author chose a submit value.
+          // ...AND IT STILL LANDED IN THE SLOT THAT MEANS CONTENTS. The legend
+          // defines `value=` as CURRENT CONTENTS, so `value="true"` on a
+          // checkbox reads exactly like "this is ticked". Measured live in
+          // eval 7: `input[checkbox] name="Выбрать все" value="true"` while
+          // `query_elements(attributes=["checked"])` said checked="false" on
+          // all four. An agent that trusted the row would have reported a cart
+          // as fully selected when nothing was.
+          // The attribute is what the box POSTS WHEN CHECKED -- the wire-key
+          // class #41 marks `(post-key)` for -- and its STATE is already
+          // carried by the presence or absence of `(checked)`. It is still
+          // worth printing: #OPEN 4h is a radio group where the value is the
+          // only honest identity. So it keeps its information and moves to a
+          // key that does not mean state.
           if (tagL === 'input' && /^(checkbox|radio)$/.test((el.getAttribute('type') || '').toLowerCase())) {
-            return (el.getAttribute('value') || '').trim();
+            try { el.__abSubmitValue = (el.getAttribute('value') || '').trim(); } catch (e) {}
+            return '';
           }
           // An <input> holds one line a person typed — no cap. A <textarea> is
           // genuinely unbounded, so it keeps a generous MARKED bound, and only so
@@ -9123,6 +9138,9 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       })(),
       placeholder: placeholderAttr || cePlaceholder,
       value: currentValue,
+      // What a checkbox/radio SUBMITS when checked, kept apart from `value`
+      // because that key means CURRENT CONTENTS and a checkbox has none.
+      submits: (() => { try { return el.__abSubmitValue || ''; } catch (e) { return ''; } })(),
       text: buttonText,
       x: Math.round(ax), y: Math.round(ay),
       w: Math.round(aw), h: Math.round(ah),
@@ -11804,6 +11822,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     let identity = '';
     if (e.name)        identity += ` name=${JSON.stringify(e.name)}`;
     if (e.value)       identity += ` value=${JSON.stringify(e.value)}`;
+    if (e.submits)     identity += ` submits=${JSON.stringify(e.submits)}`;
     if (e.placeholder) identity += ` placeholder=${JSON.stringify(e.placeholder)}`;
     // For pure buttons/links (no name/value/placeholder), show their text, then
     // fall back to any synthesized label, then to an explicit icon-control hint
@@ -12405,6 +12424,7 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     if (has(e => e.name))        L.push(`  - name="..." — IDENTITY (label / accessible name).`);
     if (has(e => e.near))        L.push(`  - near="..." — nearest visible text: a HINT for unnamed fields, never the real name.`);
     if (has(e => e.value))       L.push(`  - value="..." — CURRENT CONTENTS; empty/absent means blank.`);
+    if (has(e => e.submits))     L.push(`  - submits="..." — what a checkbox/radio POSTS when checked. NOT its state: whether it is ticked is the (checked) flag, and its absence means unticked.`);
     if (has(e => e.placeholder)) L.push(`  - placeholder="..." — a format HINT, not a value.`);
     // NAME THE TOKENS ACTUALLY PRESENT, not a fixed four. `activeHint` also returns
     // `pressed`, and the `data-state` branch returns `active`, `open` and `on` — so on
