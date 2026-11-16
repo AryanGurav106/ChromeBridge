@@ -429,3 +429,133 @@ is the one an agent cannot detect from the output alone.
   had to be opened to learn its contents (#31). Both called out unprompted.
 - **Cyrillic round-tripped byte-clean everywhere** — labels, option text, the
   text dump. No escaping, no mojibake (#11d, #42, C23).
+
+---
+
+## Pair 5 — grocery (tree 7, flat 6)
+
+`«На %HOST% в «Продукты» открой главную, перейди по категориям меню и добавь
+товар в корзину.»` Both arms PASS the oracle (`state_changed` →
+`bench_grocery_category`, then `basket_add`). **Flat wins this one by a call**,
+which is the only pair that goes that way.
+
+Reading the two transcripts, the difference is not the format. The tree agent
+spent a call on a screenshot after an in-page anchor jump left the URL unchanged
+and the re-read carrying no `(just appeared)` flags — it could not tell a click
+that did nothing from a click that scrolled. The flat agent reached for `find`
+on the same page and got 22 add-buttons annotated `under="Выгодная полка"` /
+`under="Фрукты и ягоды"` in one call. Different tool choices on the same
+listing, not different listings.
+
+### THE FINDING OF THE WHOLE EVAL: a closed drawer outranked the page
+
+**Both agents reported it independently, in their own words, without having seen
+each other's run.** On the category page the listing's 150 entry slots were
+taken almost entirely by two off-canvas drawers:
+
+```
+ref_1011 | img name="Парфюмерная вода Estée Lauder Cinnabar" section=dialog (off to the side — scroll horizontally)
+ref_1390 | button "Оплатить"                                  section=dialog (off to the side — scroll horizontally)
+ref_1122 | div "Сухой корм Exoprima То что надо, для попугаев" section=dialog (below-fold)
+```
+
+Perfume, a computer monitor, pizza, parrot food — on a page about vegetables.
+The products the agent had navigated to appeared **only** in the overflow:
+
+```
+... +86 more interactive element(s) not shown (listing capped at 150; dialog/required/dropdown/input fields are prioritized).
+OMITTED BUT ACTIONABLE (ref:"label", 86 element(s), document order): ... 646:"−13% Виноград Хусейни 500 г 149 129 ₽" ... 690:"−31% Яблоки Голден 500 г 129 89 ₽" ...
+```
+
+One of them put the diagnosis better than my own first reading: *"it promoted a
+drawer the listing itself had labelled `(off to the side)`."*
+
+**Re-derived live before changing anything** (#16), on the shipped build, on the
+page they hit:
+
+```
+{"dialogNodes":2,"dialogOffscreen":2,"dialogOnscreen":0,"vw":1512,
+ "rects":[{"cls":"checkout-drawer","x":1512,"y":21,"w":950,"h":770},
+          {"cls":"sberpay-drawer",  "x":1512,"y":0, "w":400,"h":812}]}
+```
+
+Both parked at `x === innerWidth`. And **no MODAL banner was printed**, so
+`dialogOpen` had already decided — correctly — that nothing was open. The fact
+that disqualifies those rows was computed and then ignored one function later:
+#18's asymmetry, two passes disagreeing about whether a dialog is in front of
+you.
+
+**FIXED by gating on `dialogOpen`, not on `e.offscreen`.** The offscreen flag
+looks like the obvious key and is the wrong one: a modal taller than the
+viewport has its lower half offscreen and those rows ARE its content — the
+`offscreen:` field's own comment says "typically modal scroll content". When a
+dialog is genuinely open nothing changes at all.
+
+**Priced on 40 frozen sites, both arms on the same page load so run-order drift
+cannot align with the arm (#19): 1 site changed, by +3/−3 refs against its own
+drift of 4 — i.e. nothing. −0.11% chars overall. `godbolt`, the one site in the
+set with a modal genuinely open, is untouched**, which is the control pointing
+the right way. Recorded as measured-HARMLESS, not measured-valuable: the corpus
+does not contain the pathology, and #25's rule is that an ablation measures the
+code against the sample and cannot measure the sample. The value evidence is
+CT2 and the live page.
+
+CT2 fails against the pre-fix rule with the live symptom exactly — **0 of 60
+page rows shown, 200 drawer rows** — and passes at 60/60. CT2b is the control
+that this did not become "never prioritise a dialog": with the modal really
+open, all 200 of its rows keep their slots, below-fold ones included.
+
+### A second report, where the agent's diagnosis was wrong and the defect is real
+
+> *"`search_page(pattern="Корзина", context_chars=120)` → `<div ref_603>
+> Корзина`. Requested 120 context chars, received 7, and the thing I needed was
+> one DOM hop away."*
+
+Measured, six levels up from the matched node:
+
+| | ref_603 | 601 | 598 | 597 | 596 | 595 |
+|---|---|---|---|---|---|---|
+| innerText | Корзина | Корзина | Корзина | Корзина | Корзина | Корзина |
+
+It is not one hop away — it is **six**, and every level in between is a Vuetify
+wrapper carrying the identical string. (The badge itself is `display:none` while
+the count is 0, which is why the same search on an untouched page is correctly
+silent.) So the climb was not skipped; it fired, moved one level, and landed
+somewhere that added nothing.
+
+The stated rule (#42) is a condition about SUFFICIENCY — climb whenever the
+element's own text cannot supply the `context_chars` asked for — and the
+implementation applies it ONCE (#43's one-hop fallback, which exists because
+multi-hop quoted whole lists). Against a chain of same-text wrappers, one hop
+is a no-op and the condition is still unmet.
+
+**Not fixed here, deliberately.** The obvious rule — keep climbing while the
+ancestor adds no new text — re-opens #43 directly: a link inside a sole-child
+wrapper inside a list reaches the LIST at the first level that adds text, which
+is the aozora defect. The candidate that looks right is the one the codebase
+already has a spelling for: `_inFieldWrapper`'s rule from #29, climb while the
+ancestor still corresponds to ONE control and stop at the first that holds a
+second. That needs a corpus measurement of both halves before it ships (#41,
+#44), and `_searchTextPage` is injected standalone so it needs a forced
+byte-identical copy with an OC7-style tripwire. Logged in `docs/OPEN.md`.
+
+### Also from this run
+
+- **`(just appeared)` carried zero signal after a navigation** — every row
+  flagged, correctly, because the whole document is new. The flat agent then
+  found it genuinely useful at a smaller scope: a scoped read of the product
+  card is where `button name="Убрать"` stood out as created by the click.
+- **The readiness banner fired on 4 of 5 reads**, and on one of them the batch's
+  own settle line sat directly above it saying the opposite. That is the #80
+  R-TENSE finding reported a third time, from a third agent, and the prose fix
+  shipped in #80 addresses the tense while this is the trigger rate. Both arms
+  ignored it every time and were right every time.
+- **`browser_batch` + `tabs_create_mcp` inheritance did what it is for**: the
+  tree agent put 5 batches where ~11 calls would have gone, the flat agent did
+  a three-hop navigation, an action and two verifications in 6.
+- **The add-to-cart control has no accessible name at all** — an unlabeled icon
+  `div` beside the price, so `find("добавить в корзину")` cannot reach it and
+  the tree agent clicked a raw coordinate off a screenshot. Nothing is
+  declared on it; this is the measured price of "existence is decided only by
+  declarations" meeting a page that declares nothing, same class as #79's nine
+  Mind2Web misses.

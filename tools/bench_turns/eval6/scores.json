@@ -1,6 +1,254 @@
 [
  {
+  "track": "e6_tree_grocery",
+  "conditions": 2,
+  "events": 14,
+  "names": [
+   "basket_add",
+   "click",
+   "scroll",
+   "state_changed",
+   "visibility"
+  ],
+  "per": [
+   {
+    "cond": {
+     "event_name": "state_changed",
+     "parameters": {
+      "new_state": "bench_grocery_category"
+     }
+    },
+    "pass": true
+   },
+   {
+    "cond": {
+     "event_name": "basket_add",
+     "parameters": {}
+    },
+    "pass": true
+   }
+  ],
+  "passed": true
+ },
+ {
+  "track": "e6_flat_grocery",
+  "conditions": 2,
+  "events": 8,
+  "names": [
+   "basket_add",
+   "click",
+   "scroll",
+   "state_changed",
+   "visibility"
+  ],
+  "per": [
+   {
+    "cond": {
+     "event_name": "state_changed",
+     "parameters": {
+      "new_state": "bench_grocery_category"
+     }
+    },
+    "pass": true
+   },
+   {
+    "cond": {
+     "event_name": "basket_add",
+     "parameters": {}
+    },
+    "pass": true
+   }
+  ],
+  "passed": true
+ },
+ {
+  "track": "e6_tree_books",
+  "conditions": 2,
+  "events": 16,
+  "names": [
+   "apply_filter",
+   "basket_add",
+   "click",
+   "scroll",
+   "state_changed",
+   "submit_search",
+   "visibility"
+  ],
+  "per": [
+   {
+    "cond": {
+     "event_name": "state_changed",
+     "parameters": {
+      "new_state": "bench_books_item",
+      "state_id": "item_51565901"
+     }
+    },
+    "pass": true
+   },
+   {
+    "cond": {
+     "event_name": "basket_add",
+     "parameters": {
+      "item_id": "item_51565901"
+     }
+    },
+    "pass": true
+   }
+  ],
+  "passed": true
+ },
+ {
+  "track": "e6_flat_books",
+  "conditions": 2,
+  "events": 15,
+  "names": [
+   "apply_filter",
+   "basket_add",
+   "click",
+   "scroll",
+   "state_changed",
+   "submit_search",
+   "visibility"
+  ],
+  "per": [
+   {
+    "cond": {
+     "event_name": "state_changed",
+     "parameters": {
+      "new_state": "bench_books_item",
+      "state_id": "item_51565901"
+     }
+    },
+    "pass": true
+   },
+   {
+    "cond": {
+     "event_name": "basket_add",
+     "parameters": {
+      "item_id": "item_51565901"
+     }
+    },
+    "pass": true
+   }
+  ],
+  "passed": true
+ },
+ {
+  "track": "e6_tree_shop",
+  "conditions": 2,
+  "events": 12,
+  "names": [
+   "add_favorites",
+   "basket_add",
+   "click",
+   "scroll",
+   "state_changed",
+   "visibility"
+  ],
+  "per": [
+   {
+    "cond": {
+     "event_name": "basket_add",
+     "parameters": {
+      "item_id": "item_1160040708"
+     }
+    },
+    "pass": true
+   },
+   {
+    "cond": {
+     "event_name": "add_favorites",
+     "parameters": {
+      "item_id": "item_1160040708"
+     }
+    },
+    "pass": true
+   }
+  ],
+  "passed": true
+ },
+ {
+  "track": "e6_flat_shop",
+  "conditions": 2,
+  "events": 12,
+  "names": [
+   "add_favorites",
+   "basket_add",
+   "click",
+   "scroll",
+   "state_changed",
+   "visibility"
+  ],
+  "per": [
+   {
+    "cond": {
+     "event_name": "basket_add",
+     "parameters": {
+      "item_id": "item_1160040708"
+     }
+    },
+    "pass": true
+   },
+   {
+    "cond": {
+     "event_name": "add_favorites",
+     "parameters": {
+      "item_id": "item_1160040708"
+     }
+    },
+    "pass": true
+   }
+  ],
+  "passed": true
+ },
+ {
   "track": "e6_tree_files",
+  "conditions": 3,
+  "events": 18,
+  "names": [
+   "bench_files_download",
+   "bench_files_select_collection",
+   "bench_files_select_year",
+   "click",
+   "state_changed",
+   "visibility"
+  ],
+  "per": [
+   {
+    "cond": {
+     "event_name": "bench_files_select_collection",
+     "parameters": {
+      "collection": "project_archive"
+     }
+    },
+    "pass": true
+   },
+   {
+    "cond": {
+     "event_name": "bench_files_select_year",
+     "parameters": {
+      "year": "2024"
+     }
+    },
+    "pass": true
+   },
+   {
+    "cond": {
+     "event_name": "bench_files_download",
+     "parameters": {
+      "collection": "project_archive",
+      "year": "2024",
+      "format": "csv",
+      "file": "project-archive-2024.csv"
+     }
+    },
+    "pass": true
+   }
+  ],
+  "passed": true
+ },
+ {
+  "track": "e6_flat_files",
   "conditions": 3,
   "events": 10,
   "names": [
@@ -38,6 +286,60 @@
       "year": "2024",
       "format": "csv",
       "file": "project-archive-2024.csv"
+     }
+    },
+    "pass": true
+   }
+  ],
+  "passed": true
+ },
+ {
+  "track": "e6_tree_hotels",
+  "conditions": 1,
+  "events": 12,
+  "names": [
+   "bench_hotel_select_city",
+   "click",
+   "scroll",
+   "state_changed",
+   "visibility"
+  ],
+  "per": [
+   {
+    "cond": {
+     "event_name": "bench_hotel_select_city",
+     "parameters": {
+      "cityId": "jp-tyo",
+      "label": "Токио, Япония",
+      "cityName": "Токио",
+      "countryName": "Япония"
+     }
+    },
+    "pass": true
+   }
+  ],
+  "passed": true
+ },
+ {
+  "track": "e6_flat_hotels",
+  "conditions": 1,
+  "events": 8,
+  "names": [
+   "bench_hotel_select_city",
+   "click",
+   "scroll",
+   "state_changed",
+   "visibility"
+  ],
+  "per": [
+   {
+    "cond": {
+     "event_name": "bench_hotel_select_city",
+     "parameters": {
+      "cityId": "jp-tyo",
+      "label": "Токио, Япония",
+      "cityName": "Токио",
+      "countryName": "Япония"
      }
     },
     "pass": true

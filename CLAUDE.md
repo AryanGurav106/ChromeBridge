@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1324 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1327 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1324 checks, ~127s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1327 checks, ~126s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -8021,8 +8021,66 @@ granted in the side panel is refused with the same message the agent gets.
     RG3/RG4/RG13 failed on an empty region — a fixture mutating shared state,
     the vacuous-fixture problem pointing forwards instead of backwards.
 
-    Suites: 1,324 checks. New — AH5/AH5b, F37/F37a2 (rewritten), RG2b/RG2c,
-    R-TENSE/R-TENSE2, C35/C35b, NB2/NB2b.
+    **THE LAST PAIR FOUND THE BIGGEST ONE, AND BOTH ITS AGENTS FOUND IT
+    INDEPENDENTLY: a CLOSED off-canvas drawer took every slot the cap had.**
+    The cap's priority set is "what is in front of the user" and `section=dialog`
+    was in it unconditionally. On the grocery category page two drawers parked
+    at `x === innerWidth` (`checkout-drawer` 950x770, `sberpay-drawer` 400x812)
+    resolved to `section=dialog` and filled **all 150 entries** with perfume, a
+    monitor, pizza and parrot food, pushing the category the agent had just
+    opened — its chips and all five products — into `OMITTED BUT ACTIONABLE`.
+    One agent put it better than my own first reading: *"it promoted a drawer the
+    listing itself had labelled `(off to the side)`."* **And no MODAL banner was
+    printed**, so `dialogOpen` had already decided, correctly, that nothing was
+    open — the fact that disqualifies those rows was computed and ignored one
+    function later. #18's asymmetry, two passes disagreeing about whether a
+    dialog is in front of you.
+    Gated on **`dialogOpen`, deliberately NOT on `e.offscreen`**: the offscreen
+    flag is the obvious key and the wrong one, because a modal taller than the
+    viewport has its lower half offscreen and those rows ARE its content — the
+    `offscreen:` field's own comment says "typically modal scroll content". When
+    a dialog is genuinely open, nothing changes.
+    **Priced on 40 frozen sites, both arms on the SAME page load (#19): 1 site
+    changed, by +3/−3 refs against its own drift of 4 — i.e. nothing — and
+    −0.11% chars. `godbolt`, the one site in the set with a modal really open,
+    is untouched**, which is the control pointing the right way. Recorded as
+    measured-HARMLESS, not measured-valuable: #25's rule is that an ablation
+    measures the code against the sample and cannot measure the sample, and this
+    corpus does not contain the pathology. The value evidence is CT2, which
+    fails pre-fix with the live symptom exactly — **0 of 60 page rows shown,
+    200 drawer rows** — and CT2b, the control that with the modal really open
+    all 200 of its rows keep their slots. **My first CT2 asserted a drawer-row
+    COUNT I had predicted and failed on working code**; the invariant is that
+    every on-screen page row survives, and once the drawer stops getting
+    guaranteed slots, filling the leftover budget with it is correct.
+
+    **A SECOND REPORT WHERE THE AGENT'S DIAGNOSIS WAS WRONG AND THE DEFECT IS
+    REAL.** `search_page("Корзина", context_chars=120)` returned 7 characters,
+    and the agent said the answer was "one DOM hop away". Measured: it is
+    **six**, and every level in between is a Vuetify wrapper carrying the
+    identical string. So the climb was not skipped — it fired, moved one level,
+    and landed somewhere that added nothing. #42 states the rule as a condition
+    about SUFFICIENCY; the implementation applies it ONCE, because #43 measured
+    multi-hop quoting whole lists. **Not fixed here**: the obvious rule (climb
+    while the ancestor adds no text) walks a link through its sole-child wrapper
+    into the LIST, which is the aozora defect #43 ended. The candidate is
+    `_inFieldWrapper`'s rule from #29 — climb while the ancestor is still ONE
+    control — and it needs both halves measured first (#41, #44) plus a forced
+    byte-identical copy, since `_searchTextPage` is injected standalone.
+    `docs/OPEN.md` 4d.
+
+    **THE EVAL CLOSED 34–34 ON TURNS, 10/10 PASS ON BOTH ARMS, 1–1 on decided
+    pairs.** H4's second half was wrong — I predicted tree ≤ flat and it is
+    exactly level — so #27's +8.7% token cost is neither repaid in turns nor
+    punished on these tasks. What it does settle is `OPEN.md` item 11's success
+    half for `format`: **no measurable difference**, which is #27's own null A/B
+    reproduced on a second benchmark, in another language, scored by the app's
+    own business events rather than by a listing. It does NOT test #27's actual
+    argument — that flat misleads on grouped records — because no task here has
+    that shape. Closeout and per-pair detail in `tools/bench_turns/eval6/`.
+
+    Suites: 1,327 checks. New — AH5/AH5b, F37/F37a2 (rewritten), RG2b/RG2c,
+    R-TENSE/R-TENSE2, C35/C35b, NB2/NB2b, CT1c, CT2/CT2b.
 
 ## Debugging starting points
 
@@ -8030,6 +8088,7 @@ granted in the side panel is refused with the same message the agent gets.
 |---------|---------------|
 | Listing has 0 elements after a click | `_collectInteractivePage` — check `isInteractive`, visibility filter, and `aria-hidden` / `inert` exclusion |
 | An element you can see is missing from every listing | Since #28 no heuristic deletes, so it is one of ten rules — run `read_page(ledger=true)` scoped to its container and read the name. If the name is not in `L10c`'s `SPEC_DELETES` set, a rule started deleting again and that test should have caught it |
+| The listing is full of `section=dialog` rows for a panel you cannot see, and the page you are on is in `OMITTED BUT ACTIONABLE` | Fixed in #80 — the cap's priority set contained `section=dialog` unconditionally, so two off-canvas drawers parked at `x === innerWidth` took all 150 entries while `dialogOpen` had already decided nothing was open. Keyed on `dialogOpen` now, NOT on `e.offscreen`: a modal taller than the viewport has its lower half offscreen and those rows are its content. If a drawer still outranks the page, check whether the page is genuinely raising the MODAL banner (CT2b is the control that an open dialog still wins) |
 | A page-injected function returns zeros/empties on every page, and no error anywhere | It calls a top-level sibling. `runInTab` → `executeScript({func})` stringifies ONE function, so the sibling is a free identifier, the `ReferenceError` lands in the nearest `try/catch`, and you get a plausible zero. `C11` in `test_contracts.py` enumerates all 25 injection targets and fails on this — run it first. Inline the helper as an inner closure (see the `dup:deepall` sites). #30 |
 | A feature reports "nothing to compare" or an empty result forever, and its tests pass | Suspect a string contract with the extension's output, not the logic. `delta` was dead for its whole life because the server split on `"Act on an element"` while the extension emits `"Act on a row by its ref_N:"`. `C12` pins that one; if you add another such marker, add a check beside it. #30 |
 | A row starts with several refs (`ref_4 ref_5 ref_6 \| div "…"`) | By design since #29 — nested elements with the SAME label and the SAME box share one row, in document order, outermost first. Any of them acts on that spot; they are not ranked, because #28 measured those rules deleting 2.8pp of ground truth |

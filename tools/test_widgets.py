@@ -2408,6 +2408,81 @@ async def main():
         _bare_refs = re.findall(r"(?:^|\s)(\d+)(?=\s|$)", _body)
         check("CT1b every overflow ref carries a label or at least its tag",
               bool(_tail) and not _bare_refs, "bare_refs=" + str(_bare_refs[:5]))
+
+        # ---- CT1c: THE RECOVERY FOR *IDENTICAL* ROWS IS NEITHER OF THE TWO OFFERED.
+        # The notice offered `find` and a scoped read. Measured in eval 6 by two
+        # agents on one page: 18 download links all named "Скачать локальный файл",
+        # separated only by an href the compact listing omits. One of them worked out
+        # why BOTH recoveries are wrong there -- find scores 18 identically-labelled
+        # rows against each other, and a scoped read returns one article at a time --
+        # and said the right tool for "many identical controls, distinguished only by
+        # an attribute" is query_elements, "and the notice doesn't mention it".
+        _cap = next((l for l in ct.splitlines() if "LARGEST or FIRST" in l), "")
+        check("CT1c the cap notice names query_elements for rows that share one "
+              "label, since neither find nor a scoped read separates them",
+              bool(_cap) and "query_elements(selector" in _cap
+              and "share ONE label" in _cap,
+              (_cap[:120] or "(no cap notice on this fixture)"))
+
+        # ---- CT2/CT2b: A CLOSED OFF-CANVAS DRAWER MUST NOT OUTRANK THE PAGE.
+        # The cap's priority set exists for "what is in front of the user", and
+        # `section=dialog` was in it unconditionally. Measured live in eval 6 by
+        # two agents independently on one grocery page: two drawers parked at
+        # x === innerWidth (`checkout-drawer`, `sberpay-drawer`) resolved to
+        # section=dialog and took EVERY one of the 150 slots, pushing the
+        # category page the agent had just opened -- its chips and all five
+        # product cards -- into OMITTED BUT ACTIONABLE. The collector had
+        # already decided `dialogOpen === false` and had already flagged every
+        # one of those rows `(off to the side)`.
+        # CT2b is the half that matters more: with the dialog genuinely OPEN the
+        # priority must still hold, including for its below-fold rows, or this
+        # would just be "never prioritise dialogs".
+        async def _capshape(open_modal):
+            pg = await browser.new_page(viewport={"width": 1280, "height": 900})
+            await pg.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+            await pg.goto("about:blank")
+            _sty = "display:block;font-size:7px;line-height:8px;margin:0"
+            _page = "".join(f"<a href=/p{i} style='{_sty}'>PAGELINK{i}</a>"
+                            for i in range(60))
+            _drw = "".join(f"<a href=/d{i} style='{_sty}'>DRAWERLINK{i}</a>"
+                           for i in range(200))
+            # Closed: parked one viewport to the right, rendered, not display:none
+            # -- which is why it passes the visibility test legitimately. Open:
+            # covering the page, so dialogOpen's own signals fire.
+            box = ("position:fixed;left:0;top:0;width:1280px;height:900px;"
+                   "background:#fff;z-index:9" if open_modal else
+                   "position:fixed;left:1280px;top:0;width:900px;height:900px")
+            await pg.set_content(
+                f"<main style='margin:0'>{_page}</main>"
+                f"<div role=dialog aria-modal='{str(bool(open_modal)).lower()}' "
+                f"style='{box};overflow:auto'>{_drw}</div>")
+            await pg.wait_for_timeout(200)
+            txt = str(await pg.evaluate(
+                "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+            await pg.close()
+            return txt
+
+        _closed = await _capshape(False)
+        _body = _closed.split("OMITTED BUT ACTIONABLE")[0]
+        # The invariant is that EVERY on-screen page row survives the cap, not a
+        # guess at how many drawer rows remain: once the drawer stops getting
+        # guaranteed slots it still competes in reading order, and filling the
+        # leftover budget with it is correct. The first version of this check
+        # asserted `drawer < 60` -- an outcome I predicted rather than the
+        # property -- and it failed on working code.
+        check("CT2 a CLOSED off-canvas drawer does not take the cap's slots from "
+              "the page the user is actually on",
+              all(f"PAGELINK{i}\"" in _body for i in range(60)),
+              f"page_rows_shown={sum(1 for i in range(60) if f'PAGELINK{i}' in _body)}/60 "
+              f"drawer_rows={_body.count('DRAWERLINK')}")
+        _open = await _capshape(True)
+        _obody = _open.split("OMITTED BUT ACTIONABLE")[0]
+        check("CT2b CONTROL: when the dialog really IS open its rows keep their "
+              "priority, below-fold ones included",
+              "MODAL/DIALOG IS CURRENTLY OPEN" in _open
+              and _obody.count("DRAWERLINK") > 100,
+              f"banner={'yes' if 'MODAL' in _open else 'NO'} "
+              f"drawer_rows={_obody.count('DRAWERLINK')}")
         await ctp.close()
 
         # ---- TK: the matcher that ACTS must fold the way the one that RANKS does

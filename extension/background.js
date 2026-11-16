@@ -10278,7 +10278,24 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     // and truncate before them defeats the request: on a docs page an agent asked
     // for `full`, got 107 header nav entries, and the listing ran out before the
     // article body it cared about.
-    const isPriority = (e) => e.section === 'dialog' || e.required || e.unselected || e.editable ||
+    // ...AND `section=dialog` EARNS ITS SLOT ONLY WHEN A DIALOG IS ACTUALLY OPEN.
+    // The premise of this set is "what is in front of the user": a dialog's rows
+    // matter because a modal BLOCKS the page. Two eval-6 agents hit the other
+    // case independently on one grocery page -- two off-canvas drawers
+    // (`checkout-drawer` 950x770 and `sberpay-drawer` 400x812, both parked at
+    // x === innerWidth) resolved to section=dialog, took EVERY ONE of the 150
+    // slots, and pushed the category the user had just navigated to -- its
+    // subcategory chips and all five product cards -- into the overflow. The
+    // listing had already flagged every one of those rows `(off to the side --
+    // scroll horizontally)` and had already decided `dialogOpen === false`, so
+    // the fact that disqualifies them was computed and then ignored: #18's
+    // asymmetry, two passes disagreeing about whether a dialog is in front of
+    // you. Keyed on `dialogOpen` and NOT on `e.offscreen`, because a modal
+    // taller than the viewport has its lower half offscreen and those rows ARE
+    // its content (see `offscreen:`'s own comment, "typically modal scroll
+    // content"). When a dialog IS open nothing here changes.
+    const isPriority = (e) => (e.section === 'dialog' && dialogOpen) || e.required ||
+                              e.unselected || e.editable ||
                               e.mediaOnly || formyTags.has(e.tag);
     const pri = out.filter(isPriority);
     const rest = out.filter(e => !isPriority(e));
@@ -10367,7 +10384,22 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         : `Prefer narrowing — read_page(ref_id=…) on a smaller region, or find (it `
           + `searches the whole page). `) +
       `read_page(ref_id=…, filter="all") returns the TEXT inside a row when what you ` +
-      `want is in a list or table. A question about the LARGEST or FIRST of something is ` +
+      `want is in a list or table. ` +
+      // THE RECOVERY FOR *IDENTICAL* ROWS IS NEITHER OF THE TWO ABOVE.
+      // Measured in eval 6, by two agents on one page: 18 download links all
+      // named "Скачать локальный файл", distinguished only by an href the
+      // compact listing omits. One of them worked out why both offered
+      // recoveries are wrong here -- `find` would score 18 identically-labelled
+      // rows against each other, and a scoped read returns one article at a
+      // time -- and said the right tool for "many identical controls,
+      // distinguished only by an attribute" is `query_elements`, "and the
+      // notice doesn't mention it". It does now.
+      `When many rows share ONE label, neither of those separates them: find ranks ` +
+      `them against each other and a scoped read returns one at a time. What ` +
+      `distinguishes them is an ATTRIBUTE — query_elements(selector, ` +
+      `attributes=["href","value","title"]) prints it beside each ref and joins the ` +
+      `listing to the page text in one call. ` +
+      `A question about the LARGEST or FIRST of something is ` +
       `not answerable from the rows above alone -- but every omitted entry is listed by ref ` +
       `below, so nothing here is unreachable.` +
       (_capTail.length ? `

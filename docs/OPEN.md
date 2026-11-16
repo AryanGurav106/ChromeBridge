@@ -170,7 +170,7 @@ and they assert WHICH PATH stopped the step rather than the fixture's row
 count.
 
 
-### 4b. The off-viewport region hint names regions by TAG, not identity `OPEN`
+### 4b. The off-viewport region hint names regions by TAG, not identity — CLOSED
 #26 built the region hint so a caller can recover an off-viewport target with
 one scoped read instead of a scroll plus a full re-listing, and measured all 76
 off-viewport steps recovering that way. It names each region by its TAG:
@@ -186,9 +186,15 @@ the region's accessible name or its first heading" — `form "Путешеств
 выгоднее!"` would have said instantly that it was the wrong one.
 
 The collector already resolves accessible names and already finds the main
-heading (#30's declared-rank rule), so the information exists. What is not yet
-measured is the cost: a name per region on every listing that carries the hint.
-Same shape as #31's constraints, which measured at median 0.00%.
+heading (#30's declared-rank rule), so the information exists.
+
+**CLOSED in #80.** The hint now carries aria-label, aria-labelledby text or the
+region's first heading, clipped with `markCut`, so the same line reads
+`form "Путешествуйте выгоднее!"(ref_212): 8`. RG2b pins it and RG2c is the
+control that a region declaring no identity is still listed rather than dropped.
+Cost: the honest pairing is free on a corpus that lacks the shape and proven on
+a fixture that has it — my first two attempts to price it measured nothing,
+because the pages I priced it on never produce a per-region hint at all.
 
 ### 4c. A visible label not wired to its input is unreachable by `find` `OPEN`
 Same eval-6 run. The page renders «Направление» two lines above the destination
@@ -207,6 +213,42 @@ is designed for exactly this (a HINT for unnamed fields) and did not appear.
 **Measure before changing anything:** #37 tightened `near=` because it was
 firing where it distinguished nothing, and loosening it back is the move that
 needs a number, not an anecdote.
+
+### 4d. `search_page`'s climb is a no-op against same-text wrappers `MEASURE FIRST`
+#42 states the rule as a condition about SUFFICIENCY — climb whenever the
+element's own text cannot supply the `context_chars` the caller asked for — and
+the implementation applies it ONCE, because #43 measured multi-hop climbing
+quoting whole lists and set the fallback to exactly one hop.
+
+Against a chain of wrappers that all carry the same string, one hop is a no-op
+and the condition is still unmet. **Measured live in eval 6**, on the grocery
+cart widget, six levels up from the matched node:
+
+    ref_603 div.label        innerText "Корзина"
+    ref_601 span.v-btn__content         "Корзина"
+    ref_598 button.v-btn                "Корзина"
+    ref_597 div.v-badge__wrapper        "Корзина"
+    ref_596 div.v-badge                 "Корзина"
+    ref_595 div.menu-btn                "Корзина"   <- the count badge lives here
+
+The agent asked for 120 context chars and got 7. It reported the answer as "one
+DOM hop away"; it is six, which is why the climb firing correctly still helped
+nobody. (The badge is `display:none` while the count is 0, so the same search on
+an untouched page is correctly silent — the symptom only exists once the cart
+has something in it.)
+
+**The obvious fix re-opens #43.** "Keep climbing while the ancestor adds no new
+text" walks a link through its sole-child wrapper straight into the LIST, which
+is the aozora defect #43 was written to end.
+
+**The candidate worth measuring** is the rule this codebase already has a
+spelling for: `_inFieldWrapper` from #29 — climb while the ancestor still
+corresponds to ONE control, stop at the first that holds a second. That is
+exactly what separates the two cases: the badge is part of one widget, the
+aozora siblings are separate records. Two things to settle before it ships:
+the corpus cost of both halves (#41, #44), and that `_searchTextPage` is
+injected standalone, so it needs a forced byte-identical copy with an OC7-style
+tripwire rather than a sibling call (#30's C11 class).
 
 ### 5. SPA readiness, the remaining half `OPEN`
 The mutation-recency signal (#70) separates "still building" from "ready but
