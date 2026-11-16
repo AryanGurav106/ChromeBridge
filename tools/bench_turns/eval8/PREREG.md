@@ -78,3 +78,58 @@ itself and to leave pre-existing tabs alone.
 **Falsifier unchanged**, scaled: if either arm scores below 3 of 4 on the
 benchmark's own event oracle, this is reported as a tooling failure rather than
 as a comparison.
+
+---
+
+## AMENDMENT 2 — THE RUN IS VOID. Written as the results came in.
+
+**The falsifier fired.** My own bar: *"if either arm scores below 3 of 4 on the
+benchmark's own event oracle, this is reported as a tooling failure rather than
+as a comparison."* The claude-in-chrome arm scored **0 of 3 returned** — every
+one failed before touching the app.
+
+All three failed identically:
+
+```
+navigate -> "Navigated to http://localhost:8080/e8_cic_…/"
+read_page -> Failed: Frame with ID 0 is showing error page
+screenshot -> same
+```
+
+Each retried on `localhost` and on `127.0.0.1`, one after a 3s wait. Each
+checked `curl` from a shell and got **HTTP 200 in ~1ms**.
+
+**And it is not the app, which I verified rather than assumed.** ChromeBridge
+loaded `http://localhost:8080/e8_cic_rail2p/` — the very URL the cic agent
+could not open — routed to `/state_rail_main/bench_rail_main`, and read 45
+elements off it. Same browser, same minute, same track. So the failure is on
+the claude-in-chrome side and the arms were never comparable.
+
+**Therefore no comparison is reported from this run, and none will be quoted
+from it.** The chromebridge numbers that did land are recorded below as
+observations about our own arm only. A result built on the other arm failing to
+reach the start page would be worthless, and worse than worthless if published.
+
+**What the cause probably is, stated as a hypothesis and NOT as a finding:**
+claude-in-chrome has its own per-site permission model, separate from
+ChromeBridge's side-panel grant, and the brief's line "permission for
+localhost:8080 is already granted" is true only of ours. Eval 7's cic agents
+did reach the app, so something differs — the container restart, the new track
+ids, or that extension's state. Not diagnosed, and it is not this project's bug
+to diagnose.
+
+**Contamination note, in our favour and therefore worth stating loudest:** two
+cic agents reported that `tabs_context_mcp(createIfEmpty)` handed them a tab
+another agent then navigated, so the arms shared a tab group. Contemporaneous
+pairs (Amendment 1) bought a drift control and cost tab isolation. If this is
+rerun, the arms go back to serial with rotation, which is what evals 3 and 7
+did and why.
+
+## Observations about the chromebridge arm only (NOT a comparison)
+
+- `grocat:cb` **completed** in 12 calls (11 browser). One-turn start, 0 ceremony
+  calls. Its agent named three things unprompted: the readiness banner fired on
+  a page that was already actionable; `find` for "Оливки … add to cart" returned
+  the image and the name div but not the «Добавить» button, which is named only
+  "Добавить" with no product in it; and a default `filter="all"` read after a
+  nav dumped a very long PAGE TEXT block it did not need.
