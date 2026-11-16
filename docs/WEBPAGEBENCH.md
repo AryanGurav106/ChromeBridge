@@ -547,3 +547,65 @@ hopeful one.
 
 **Scope.** Six synthetic apps; the PERCENTAGE does not transfer to the web. The
 mechanism and its direction do.
+
+---
+
+## THE LOOP IS PROVEN END TO END — 2026-11-16
+
+The assessment above listed two things as unverified and the first pass closed
+one. This closes the other: **`create_track` → an agent acts through
+ChromeBridge → the oracle scores it** has now been run.
+
+Task `ecommerce_basket_any_product` ("add any product from the catalogue to the
+basket"), one condition, `basket_add` with no parameters. Driven through the
+real extension against the user's own Chrome on a granted origin — **one grant
+covers all six apps, since they are one origin**, which is the debt evals 3 and
+4 could not avoid when they had to arm `ALLOW_ALL_ORIGINS`.
+
+    events logged: 9
+    by name: {state_changed: 3, visibility: 1, scroll: 2, click: 2, basket_add: 1}
+      basket_add (any) -> PASS
+        payload: {"type":"basket_add","item_id":"item_2551220911","amount":1}
+    TASK VERDICT: PASS
+
+**The payload is the evidence that the oracle is representation-independent.**
+The generic click tracker also fired — 2 `click`, 2 `scroll` — and the condition
+keys on NEITHER. It keys on the semantic event the business logic emits AFTER
+the state mutation, carrying `item_id` and `amount`. It cannot see how the agent
+acted or what it was shown, which is the property that makes a cross-arm
+comparison meaningful.
+
+**WHAT THIS DOES NOT ESTABLISH, and the gap is the whole eval.** n=1, one arm,
+and *I* was the agent — which is the bias the eval protocol exists to remove.
+This proves the PATH, not any number. A real measurement is N tasks × arms ×
+independent agents, scored from this oracle.
+
+**ROUTE NOTES for whoever runs it**, each one learned by getting it wrong:
+- A runnable track is `tests/bench/config.json` MERGED with a task file. From a
+  task file alone the app renders `State Not Found`.
+- Events come from `POST /event/get`. `POST /track/get` returns the CONFIG, and
+  reading events from it reports **FAIL on a task that passed** — which is what
+  my first reader did. Caught by reading the server's own log rather than
+  believing the verdict.
+- A product card's unnamed button is `Добавить в избранное` (add to FAVOURITES),
+  not the cart. Clicking the regularly-spaced unnamed buttons would fire the
+  wrong event. `read_page(ref_id=…, detail="full")` names it.
+- The catalogue has **no `<a>` in `main`** — shop navigates by button, which is
+  the same per-domain split the first pass measured.
+
+**Observed working, unprompted, on a real page during this run:** the readiness
+banner naming `1 network request(s) in flight (xmlhttprequest)` while the app
+fetched its config; the duplicate-banner rule keeping BOTH banners because they
+differed (45 vs 46 changes, 0ms vs 10ms — #77's exact-equality rule); the
+`(just appeared)` novelty flag; the fold warning `INTERLEAVED with 1 other
+group(s) — position is not rank, merge by ref`; the scroll note after each ref
+click; `query_elements` answering a miss with *"The page is SETTLED: no DOM
+change for 75023ms and nothing in flight. An absence found in this state is
+evidence of absence, not of bad timing"*; and `get_page_text` itemising its
+budget as `844 body, and this note`.
+
+**And the new UNKNOWN banner fired on a scoped read** — `NO DOM CHANGE COULD BE
+ATTRIBUTED TO THE SUBTREE YOU SCOPED TO … the page as a whole last changed
+46569ms ago`. Correct, and worth watching: on a settled page this replaces
+silence with a sentence, and whether that is signal or noise at scale has not
+been measured. Recorded as a thing to measure rather than assumed fine.
