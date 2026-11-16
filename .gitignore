@@ -23,5 +23,9 @@ flows/crm-*.flow.json
 flows/boxsy-*.flow.json
 
 # Files an eval agent downloads into the repo root while driving the benchmark
-# (WebPageBench's files task ends in a real browser download).
+# (WebPageBench's files tasks end in a real browser download). Widened after a
+# second task produced `lab-reports-2024 (1).pdf` -- naming one file is how the
+# next one gets committed by accident.
 project-archive-*.csv
+lab-reports-*.pdf
+lab-reports-*.csv

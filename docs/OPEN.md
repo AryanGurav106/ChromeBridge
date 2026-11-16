@@ -555,6 +555,41 @@ page). This is a page that genuinely writes `value="true"`, so suppressing it
 outright would drop authored content — the fix is to put it in a slot that does
 not mean state. `background.js`, held under Amendment 2.
 
+### 4n. A FILTERED miss reads exactly like a silent page `OPEN`
+**Found on the OTHER arm in eval 7, and ours has it in two tools.** Worth
+recording how it arrived: the eval's value is not only the comparison. An agent
+driving the competing toolset reported a defect in its network reader, and
+checking ours against the description found the same shape.
+
+```
+extension/background.js:
+  "No network requests recorded for this tab" + (pat ? ` matching "${pat}"` : "") + "."
+  "No console messages matched."
+```
+
+Neither states how many requests or messages ARE held. So *"your filter matched
+nothing"* and *"this page did nothing"* render almost identically, and the
+second is a far stronger claim than the buffer can support.
+
+**What it cost on the other arm, and would cost on ours.** The agent filtered on
+`lab-reports` to check a download, got `No requests matching "lab-reports"`,
+concluded nothing had fired — and four `POST /event/add` requests confirming the
+action were sitting in the same buffer. It then **clicked the download link a
+second time to "make it fire"**, on an app whose entire purpose is recording
+what you do. A real side effect, caused purely by a message that could not
+distinguish its two meanings.
+
+**The fix is one number and it is already in hand**: `total` is computed before
+the filter is applied in both branches, so
+`No requests matching "lab-reports" (4 recorded for this tab)` costs nothing.
+`read_console_messages` is worse — it does not say whether a pattern was even
+in play.
+
+This is #16's rule as an OUTPUT contract rather than a measurement one: an
+absence is only evidence when the thing doing the looking says what it looked
+at. `search_page` already carries that discipline (#39's settled-state note);
+these two do not. `background.js`, held under eval 7's Amendment 2.
+
 ### 5. SPA readiness, the remaining half `OPEN`
 The mutation-recency signal (#70) separates "still building" from "ready but
 chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:
