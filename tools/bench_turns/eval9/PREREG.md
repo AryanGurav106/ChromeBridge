@@ -61,3 +61,28 @@ WITHIN an arm, so no two tasks of the same arm run at once.
 Both arms are the same model, so correctness saturates and is a falsifier
 rather than a metric. And a tool-call count is not a quality measure: an arm
 can be fast and wrong, which is what the falsifier is for.
+
+---
+
+## AMENDMENT 1 — two pairs per wave, not one. Written at launch.
+
+The design above says "no two tasks of the same arm run at once". I am running
+**two pairs per wave** (4 agents), so two tasks of the same arm DO overlap.
+
+Reason, and the evidence for it: eval 8 ran four chromebridge agents
+concurrently and all four completed, each in its own tab. The within-arm hazard
+is specifically the one two of eval 8's claude-in-chrome agents reported —
+`tabs_context_mcp(createIfEmpty)` handing out a tab another agent then
+navigated — and every brief here carries the same instruction, identical in
+both arms: *"Work in a tab you open yourself, and leave any tab that was
+already open exactly as it is."*
+
+**The risk this accepts, stated plainly:** if an agent reports an anomaly that
+looks like another agent moving its tab, that pair is dropped rather than
+scored, and the drop is recorded. It is not adjudicated and it is not quietly
+kept.
+
+Cross-arm contamination remains impossible for the reason in the design: the
+arms are in different browsers (eval 8, Amendment 3).
+
+Waves: `T3,T5` · `T6,T7` · `T8,T9` · `T10,T11`.
