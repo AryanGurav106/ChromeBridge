@@ -2682,6 +2682,62 @@ async def record_and_replay():
           "--check-only and CI",
           bool(_rev) and getattr(_rt, "review", None) == fw8.steps[0].review)
 
+    # ---- FW9: THE ONE THAT CATCHES A FALSE **PASS** --------------------
+    # #57 catches a check that cannot fail; #68 one that carries no evidence.
+    # Both are about the check's own history. This is a third axis: the check is
+    # live and real and changed, and it does not mention the thing the step
+    # acted on, so it cannot tell a correct action from one that landed on a
+    # neighbour.
+    # DEMONSTRATED on a flow shipped an hour before this was written: target
+    # name="Добавить" under="Консервы", assertion `[aria-label="Убрать"] count
+    # 1`. Point the same step at the third «Добавить» under a DIFFERENT section
+    # -- another product entirely -- and the replay reports PASS 3/3 in 0.86s,
+    # because "one remove button exists" is true whichever product you add.
+    def _reviews(target, selector):
+        """Drive the recorder through its REAL api -- before/after/compile --
+        rather than hand-building raw records, which is also the half that
+        proves the warning survives the compile."""
+        r = Recorder("x", FakeBridge([]).entries_fn, origin="https://shop.test")
+        _inp = {"action": "left_click", "ref": "ref_9", "tabId": 5}
+        r.after("navigate", {"url": "https://shop.test/c", "tabId": 5},
+                "Navigated to https://shop.test/c", {})
+        r.after("query_elements", {"tabId": 5, "selector": selector},
+                f"No element matches {selector!r}", {})
+        r.after("computer", _inp, "clicked", {"ref": target})
+        r.after("query_elements", {"tabId": 5, "selector": selector},
+                f"1 element(s) match {selector!r}:\n  <button ref_4> (no text)", {})
+        f, _rep = r.compile()
+        return [rv for st in f.steps for rv in (st.review or [])]
+
+    _amb = {"level": 6, "of": 3, "nth": 2,
+            "full": {"tag": "button", "role": "", "type": "button",
+                     "name": "Add", "section": "main", "under": "Canned goods"}}
+    _uniq = {"level": 2,
+             "full": {"tag": "button", "role": "", "type": "button",
+                      "name": "Place the order", "section": "main"}}
+
+    _r1 = _reviews(_amb, "[aria-label='Remove']")
+    check("FW10 a step that had to be disambiguated, asserting nothing that "
+          "identifies it, is named -- its assertions would pass on a neighbour",
+          any(r.startswith("unscoped:") for r in _r1), str(_r1))
+
+    # CONTROL 1: the assertion DOES name the record. Nothing to warn about --
+    # without this, "always warn" would satisfy FW9 and the line would mean
+    # nothing on the flows that got it right.
+    _r2 = _reviews(_amb, "[data-section='Canned goods'] .remove")
+    check("FW10b CONTROL: ...and it is silent when an assertion names what the "
+          "step acted on",
+          not any(r.startswith("unscoped:") for r in _r2), str(_r2))
+
+    # CONTROL 2: a target that resolved on its OWN NAME has no neighbour to be
+    # confused with, so warning there would fire on the commonest shape there
+    # is -- click Submit, assert the url changed. #15's always-on warning,
+    # priced once and deleted twice in this project.
+    _r3 = _reviews(_uniq, "[aria-label='Remove']")
+    check("FW10c CONTROL: a target unique on its own name is not warned about, "
+          "however unrelated its assertion",
+          not any(r.startswith("unscoped:") for r in _r3), str(_r3))
+
     nb = FakeBridge([])
     noted = Flow(name="n", steps=[Step(
         name="computer", input={"action": "left_click"},

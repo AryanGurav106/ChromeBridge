@@ -103,7 +103,63 @@ nothing, because rewording the emitter leaves the fixture green while the real
 path breaks. `FD19g` closes it, and fires on a planted reword
 (`mcp_server emits=False`).
 
-## 4. What I did NOT audit
+## 4. A DEMONSTRATED FALSE PASS, in a flow shipped an hour earlier
+
+The most valuable thing a fragility review can return, found by attacking my
+own artefact rather than by reading it.
+
+`flows/bench-grocery-add-to-cart.flow.json`, recorded against the live grocery
+SPA, targets:
+
+```
+name="Добавить"  section=main  under="Консервы"
+```
+
+and asserts:
+
+```
+[aria-label="Убрать"]  count 1
+```
+
+**No token that identifies the target appears in the assertion.** So I pointed
+the same step at the THIRD «Добавить» under a different section — a completely
+different product — and replayed:
+
+```
+PASS  FALSEPASS-probe    3/3 step(s) in 0.86s
+```
+
+It added the wrong thing and reported success, because "one remove button
+exists" is true whichever product you add. The precondition does not save it
+either: `search 'Оливки' min 1` is a page-level fact, true whether or not the
+olives were what got added.
+
+**My first probe did NOT reproduce it, and that is worth recording.** Pointing
+the target at a section with three matching buttons and no ordinal made the
+runner REFUSE — *"3 elements match … and the step records no ordinal, so which
+one it meant is not recoverable"* — which is the locator safety property (#49)
+working. The false PASS only appears once the locator resolves cleanly, which
+is exactly why it is a different axis from everything already guarded.
+
+**The axis.** #57 catches an assertion that CANNOT fail (same value before and
+after). #68 catches one that carries no evidence (never observed beforehand).
+Both are about the check's own history. This one is live, real, and did change
+— and it does not mention the thing the step acted on, so it cannot tell a
+correct action from one that landed on a neighbour.
+
+**Closed by `unscoped:`,** a fourth review kind, gated on the target having
+NEEDED disambiguation — an ordinal was stored, or the level that resolved it
+had to reach into `under`/`near`. That gate is what keeps it from firing on the
+commonest shape there is: click Submit, assert the url changed, where the url
+has no reason to contain the word Submit. A target unique on its own name has
+no neighbour to be confused with. FW10 fails pre-fix; FW10b (the assertion DOES
+name the record) and FW10c (the target is unique) pass in both arms.
+
+**The shipped flow still carries the weakness** — its `review` was computed
+before this rule existed, and re-recording needs the MCP server to reload. It
+is left in place deliberately, as the artefact the rule was derived from.
+
+## 5. What I did NOT audit
 
 Named so the resumed agents do not assume it was covered:
 

@@ -668,6 +668,62 @@ class Recorder:
                 + (' (inherent: nothing precedes the first step)' if _first else
                    ', so nothing here says it would have failed before'))
 
+        # ...AND THE ONE THAT CATCHES A FALSE **PASS** RATHER THAN A WEAK ONE.
+        #
+        # DEMONSTRATED, on a flow recorded against a live grocery SPA and
+        # shipped an hour earlier. Its target is
+        #     name="Добавить" section=main under="Консервы"
+        # and its assertion is `[aria-label="Убрать"] count 1`. Point the same
+        # step at the THIRD «Добавить» under a different section -- a completely
+        # different product -- and the replay reports PASS 3/3 in 0.86s, because
+        # "one remove button exists" is true whichever product you add. The
+        # precondition does not save it either: `search 'Оливки' min 1` is a
+        # page-level fact, true whether or not the olives were the thing added.
+        #
+        # #57 catches an assertion that CANNOT fail and #68 one that carries no
+        # evidence. Both are about the check's own history. This is a different
+        # axis: the check is live, it changed, it is perfectly real -- and it
+        # does not mention the thing the step acted on, so it cannot tell a
+        # correct action from one that landed on a neighbour.
+        #
+        # GATED ON THE TARGET HAVING NEEDED DISAMBIGUATION, because that is what
+        # makes a neighbour possible. A step whose target resolved on its own
+        # name has nothing to be confused with, and warning there would fire on
+        # the commonest shape there is -- click Submit, assert the url changed,
+        # where the url has no reason to contain the word Submit. That is #15's
+        # always-on warning, which this project has priced once and deleted
+        # twice. "Needed disambiguation" is read from the recording rather than
+        # guessed: an ordinal was stored (`of` is not None), or the level that
+        # resolved it had to reach past tag+role+name+section into `under`/
+        # `near` -- both facts the descriptor already carries.
+        for _n, st in enumerate(kept):
+            if not st.targets or not st.expect:
+                continue
+            _blob = json.dumps(st.expect, ensure_ascii=False)
+            for _path, _t in st.targets.items():
+                if not isinstance(_t, dict):
+                    continue
+                _d = _t.get("full") or _t.get("desc") or {}
+                _needed = _t.get("of") is not None or bool(
+                    (_d.get("under") or "").strip() or (_d.get("near") or "").strip())
+                if not _needed:
+                    continue
+                # Every token that says WHICH element this is, as opposed to
+                # what KIND it is. tag/role/type/section are shared by the
+                # neighbours, so they identify nothing here.
+                _ident = [str(_d.get(k) or "").strip()
+                          for k in ("name", "under", "near")]
+                _ident = [t for t in _ident if len(t) >= 2]
+                if not _ident or any(t in _blob for t in _ident):
+                    continue
+                st.review.append(
+                    'unscoped: this step had to be disambiguated from similar '
+                    'elements, and none of what identifies it '
+                    f'({", ".join(repr(t) for t in _ident)}) appears in its '
+                    'assertions -- so they would also pass if the action landed '
+                    'on one of its neighbours. Assert something that names THIS '
+                    'record, not just that something changed')
+
         # WHEN *EVERY* CHECK IS UNEVIDENCED, THE STEP IS AS UNGUARDED AS ONE
         # WITH NO CHECKS AT ALL -- and the runner's dead-click guard could not
         # see that, because it gates on `not step.expect` and a hollow check is

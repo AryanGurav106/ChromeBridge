@@ -159,6 +159,41 @@ tool in it can fail because something upstream ran out — which also means a
 recorded flow replays at 0.84 seconds whether or not any model is reachable at
 all.
 
+## Then I attacked it, and it passed when it shouldn't have
+
+A green test you have not tried to break is a green test you know nothing
+about. So I took the flow above and pointed its click at a different product —
+the third «Добавить» under another section — and ran it.
+
+```
+PASS    3/3 step(s) in 0.86s
+```
+
+It added the wrong thing and said everything was fine. The assertion is "one
+remove button exists", and that is true whichever product you add. The
+precondition didn't save it either: "the page mentions olives" is true whether
+or not the olives were what went in the basket.
+
+The first version of that probe *did* get caught, and the way it got caught is
+the interesting part. I pointed the target at a section with three matching
+buttons and no tiebreaker, and the runner refused outright: *3 elements match
+and the step records no ordinal, so which one it meant is not recoverable.*
+The locator is careful. The locator was never the problem. The problem only
+shows up once the locator does its job perfectly and the **assertion** is the
+thing that can't tell.
+
+That's a different axis from the two guards already there. One of them catches
+an assertion that cannot fail. The other catches one that was never observed
+beforehand, so nothing says it would have failed. Both are about the check's
+own history. This one is live, real, and genuinely changed — and it says
+nothing about *what* you acted on.
+
+The fix is a fourth warning at record time, and the whole design is in its
+gate: it only fires when the target **needed** disambiguating in the first
+place. Click a button that is the only one with its name, assert the url
+changed, and you hear nothing — because there was no neighbour to confuse it
+with, and a warning that fires on that shape is a warning people learn to skip.
+
 ## The honest part
 
 This is one flow on one app. The locator half is measured properly — 12,030
