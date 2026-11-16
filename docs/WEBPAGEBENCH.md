@@ -371,3 +371,51 @@ navigate by link carry almost no `aria-label`, and the domains that carry
 **Still not established:** the full `create_track → agent acts → check()` loop
 has not been run against a real agent, and no arm has been run. There is still
 no number anywhere in this work.
+
+---
+
+## FIRST RESULT — theme invariance, 2026-11-16
+
+`tools/measure_wpb_invariance.py`. This is not one of the three measurements
+designed above; it is the INSTRUMENT CHECK that has to pass before any of them
+is believed, and it is the cheapest real test of this project's headline claim.
+
+WebPageBench ships 12 `__theme_dark` variants whose task text and success
+conditions are **byte-identical** to their canonical twin — verified by the probe
+before it measures anything, and it refuses rather than running if they differ —
+and which vary only by `ui_variants: {"theme": "dark"}`. A representation built
+on what the DOCUMENT DECLARES must produce the same listing for both. One built
+on presentation will not.
+
+Arms interleaved light / dark / light per pair, so run-order drift cannot align
+with the arm (#19) and the same-arm difference is the floor measured in the same
+window. Refs are normalised away because `mmid`s are additive per document and
+comparing them would measure the counter rather than the page.
+
+| | result |
+|---|---|
+| pairs measured | **12 / 12**, across all six domains |
+| rows per listing | 14 (files) to 136 (books) |
+| **changed lines, dark vs light** | **0** |
+| same-arm drift floor | **0** |
+
+**The listing is byte-identical under a colour-only change, on every pair.**
+That is a narrow property stated narrowly: it establishes that the
+representation does not read COLOUR. It does not establish invariance to the
+other eight control keys, which is M-B and is a different measurement.
+
+The floor being 0 everywhere is a second, unlooked-for result: these pages
+render deterministically across loads, so the later measurements have no drift
+to subtract. The frozen 106-site corpus has 18 named non-deterministic replays
+and a 0.5% token floor; this has neither.
+
+**AND THE FIRST RUN OF THIS PROBE REPORTED THE OPPOSITE**, with a number that
+read exactly like a real finding: **2 changed lines on every pair against a
+floor of 0** — deterministic, consistent across pairs, in the direction that
+would have invalidated the benchmark. It was the harness. The two arms are
+necessarily different tracks, so the `Current URL:` line differs by the track
+id and nothing else. Found by printing the diff instead of trusting the count,
+which is #16's rule, and the normaliser now strips it. A probe that damns the
+system gets re-derived before it is believed, and this one would have been
+reported as "the representation reads presentation" by anyone who stopped at
+the summary line.

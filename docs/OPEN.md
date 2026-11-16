@@ -352,9 +352,24 @@ reaches the state via `javascript_tool` or by typing a URL measures Claude's
 ingenuity, not the listing. Pin the toolset and report the fallback rate beside
 every number, as #27 pinned `filter="interactive"`.
 
-**Blocked on standing the site up**, which needs Docker started or `npm install`
-on a third-party repo. Not established yet: real `href`/roles (expected from a
-Vue router app, unverified), and the oracle has never fired end to end.
+**THE SITE IS UP AND BOTH UNVERIFIED ITEMS ARE NOW CHECKED (#79).** The oracle
+fires end to end (`Added event: event_name=state_changed`, `POST /event/add
+200`, from a plain page load). The `href` prediction was HALF WRONG and it
+narrows the measurement: hrefs exist, so Mind2Web's 0-of-40 collapse does not
+reproduce, but they are distributed INVERSELY to aria by domain — books and shop
+have **0 anchors and 37–43 aria-labels**, hotels and rail have **12–18 anchors
+and 1–3 aria-labels**. So the `detail` ladder is measurable on at most 2 of 6
+domains, which is #73's Mind2Web finding reappearing in the benchmark chosen to
+escape it. `format` is unaffected.
+
+**FIRST RESULT, and it is the instrument check rather than one of the three
+measurements: 12/12 theme pairs, 0 changed lines, same-arm floor 0**
+(`tools/measure_wpb_invariance.py`). The listing is byte-identical under a
+colour-only change on every pair across all six domains. Narrow and stated
+narrowly — it establishes that the representation does not read COLOUR, not
+invariance to the other eight control keys, which is M-B. The 0 floor is a
+second result: these pages render deterministically, so later measurements have
+no drift to subtract.
 
 ### 12. Sufficiency: measured for CONTROLS, unmeasured for TEXT `MEASURE FIRST`
 `tools/measure_sufficiency.py` + `docs/SUFFICIENCY.md` close the control half.
