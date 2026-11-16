@@ -197,3 +197,50 @@ as the open question this run raises.
   those**, and these runs predate that build.
 - The `(occluded/blocked)` flag and long runs of unnamed `div`/`svg` header rows
   were called noise.
+
+---
+
+## AMENDMENT 3 — THE ROOT CAUSE, AND WHY NO LOCALHOST EVAL CAN BE VALID
+
+Diagnosed by driving the other arm's tools MYSELF rather than inferring from
+four agent reports:
+
+| from claude-in-chrome's browser | result |
+|---|---|
+| `http://localhost:8080/e8_cic_rail2p/` | error page, every read fails |
+| `https://example.com` | **loads, reads fine** |
+| `http://10.1.16.118:8080/…` (this host's LAN address) | `navigate` reports success; 4s later the tab is **still on example.com** — the navigation never happened |
+
+And the tab ids say it outright: claude-in-chrome's tabs are `1662410xxx`,
+ChromeBridge's are `1711645xxx`. **These are two different browsers**, and that
+one reaches the public internet but not this machine — neither loopback nor the
+LAN address. It is not local.
+
+**So a locally-hosted benchmark cannot be a fair head-to-head target, by
+construction and not by accident.** Every localhost comparison against that arm
+is void before it starts. That is a property of the setup, not a defect in
+either product, and it should have been checked before 8 agents were spent.
+
+**The trade this exposes, which is the useful part.** A local benchmark buys an
+exact event oracle and costs the other arm entirely. Public sites buy a fair
+comparison and cost the oracle — you score from transcripts and a referee
+instead. The previous evals that CLEARED were all on public sites, and that is
+why.
+
+**And the comparison the session was chasing already exists.** `eval3/` is 19
+tasks, 38 runs, one independent agent per (task, arm), serial with the arm order
+rotated, tasks written by an author who did not know a toolset was under test,
+ground truth re-derived by a referee driving headless Chromium. Re-derived from
+its own `runs.tsv` on this checkout just now:
+
+```
+H1 PRIMARY   (all 19)    : 15/17 to CB (2 tie)  p=0.0023  -> CLEARS p<0.05
+H1 SECONDARY (16 strong) : 13/15 to CB (1 tie)  p=0.0074  -> CLEARS p<0.05
+wall clock               : 17/19 pairs          p=0.0007
+```
+
+Eval 8 was an attempt at a SECOND one with an exact oracle. It failed for a
+reason worth writing down, and the finding it produced instead — three agents,
+three apps, the page's own content marked `aria-hidden` and our advice telling
+them to close a dialog that was not open — is worth more than the number would
+have been.
