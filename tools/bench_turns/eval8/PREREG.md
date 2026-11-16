@@ -48,3 +48,33 @@ test, as in eval 7.
 Both arms are the same model, so correctness saturates and cannot discriminate —
 it is a falsifier, not a metric. Wall clock is not a bar: #35 and #41 both
 measured a ~47s/task drift floor that swallows it.
+
+---
+
+## AMENDMENT 1 — written at launch, before any result
+
+**4 tasks, not 8.** Launched `shop3`, `grocat`, `hoteldxb`, `rail2p` — 8
+conditions. All 16 tracks exist and the other four tasks can be run later, but
+the account came off a weekly API limit under four hours ago and sixteen
+browser agents at once is how it is re-exhausted. Running half and reporting
+half honestly beats running all and losing the lot.
+
+**This moves the bar, and the bar moves BEFORE the data.** At n=4 the best
+achievable two-sided sign-test p is **0.125**, so **H1 cannot clear p<0.05 at
+this n, by construction.** A 4/4 sweep is reported as 4/4 with p=0.125 and
+called *directionally consistent, underpowered*, never as a result. That is the
+same arithmetic eval 3's AMENDMENT 1 ran into and it is stated here first
+rather than discovered afterwards. The remaining four tasks would take n to 8
+and the bar back to p<0.05; whether to run them is a decision for after these
+land.
+
+**Both arms of each task launched TOGETHER**, rather than serially with the arm
+order rotated as in evals 3 and 7. Contemporaneous pairs are a stronger drift
+control — the two arms see the same machine, the same browser and the same
+minute — and the cross-talk that forced serial running in #39 is addressed
+differently here: every brief tells the agent to work only in a tab it creates
+itself and to leave pre-existing tabs alone.
+
+**Falsifier unchanged**, scaled: if either arm scores below 3 of 4 on the
+benchmark's own event oracle, this is reported as a tooling failure rather than
+as a comparison.
