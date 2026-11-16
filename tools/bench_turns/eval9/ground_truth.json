@@ -1,0 +1,44 @@
+[
+ {
+  "id": "T1",
+  "answer": "2019-07-06",
+  "url": "https://www.debian.org/releases/buster/",
+  "confirmed": false,
+  "why": "NOT present in rendered text"
+ },
+ {
+  "id": "T2",
+  "answer": "1.674 927 500 56 x 10^-27 kg",
+  "url": "https://physics.nist.gov/cgi-bin/cuu/Value?mn",
+  "confirmed": false,
+  "why": "NOT present in rendered text"
+ },
+ {
+  "id": "T3",
+  "answer": "369.71",
+  "url": "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.txt",
+  "confirmed": true,
+  "why": "found on the page"
+ },
+ {
+  "id": "T4",
+  "answer": "1969, Walker",
+  "url": "https://openlibrary.org/works/OL59800W/The_Left_Hand_of_Darkness",
+  "confirmed": false,
+  "why": "NOT present in rendered text"
+ },
+ {
+  "id": "T5",
+  "answer": "drei Jahre",
+  "url": "https://www.gesetze-im-internet.de/bgb/__195.html",
+  "confirmed": true,
+  "why": "found on the page"
+ },
+ {
+  "id": "T6",
+  "answer": "three",
+  "url": "https://www.postgresql.org/docs/current/runtime-config-connection.html",
+  "confirmed": true,
+  "why": "found on the page"
+ }
+]
