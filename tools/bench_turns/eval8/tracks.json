@@ -1,0 +1,716 @@
+[
+ {
+  "key": "rail2p",
+  "arm": "cb",
+  "track": "e8_cb_rail2p",
+  "task_file": "rail_book_to_cart_2_passengers.json",
+  "task": "На %HOST% в «Поездах» найди билеты Москва — Санкт-Петербург на 17.11.2026, 2 пассажира, добавь в корзину.",
+  "n_conditions": 10,
+  "conditions": [
+   {
+    "event_name": "select_city",
+    "parameters": {
+     "field": "from",
+     "name": "Москва"
+    }
+   },
+   {
+    "event_name": "select_city",
+    "parameters": {
+     "field": "to",
+     "name": "Санкт-Петербург"
+    }
+   },
+   {
+    "event_name": "select_date",
+    "parameters": {
+     "date": "2026-11-17"
+    }
+   },
+   {
+    "event_name": "submit_search",
+    "parameters": {}
+   },
+   {
+    "event_name": "select_train",
+    "parameters": {}
+   },
+   {
+    "event_name": "select_tariff",
+    "parameters": {}
+   },
+   {
+    "event_name": "select_seat",
+    "parameters": {
+     "seats_amount": 2
+    }
+   },
+   {
+    "event_name": "select_passenger",
+    "parameters": {
+     "passenger_index": 1
+    }
+   },
+   {
+    "event_name": "select_passenger",
+    "parameters": {
+     "passenger_index": 2
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {}
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cb_rail2p\"\n}\n"
+ },
+ {
+  "key": "rail2p",
+  "arm": "cic",
+  "track": "e8_cic_rail2p",
+  "task_file": "rail_book_to_cart_2_passengers.json",
+  "task": "На %HOST% в «Поездах» найди билеты Москва — Санкт-Петербург на 17.11.2026, 2 пассажира, добавь в корзину.",
+  "n_conditions": 10,
+  "conditions": [
+   {
+    "event_name": "select_city",
+    "parameters": {
+     "field": "from",
+     "name": "Москва"
+    }
+   },
+   {
+    "event_name": "select_city",
+    "parameters": {
+     "field": "to",
+     "name": "Санкт-Петербург"
+    }
+   },
+   {
+    "event_name": "select_date",
+    "parameters": {
+     "date": "2026-11-17"
+    }
+   },
+   {
+    "event_name": "submit_search",
+    "parameters": {}
+   },
+   {
+    "event_name": "select_train",
+    "parameters": {}
+   },
+   {
+    "event_name": "select_tariff",
+    "parameters": {}
+   },
+   {
+    "event_name": "select_seat",
+    "parameters": {
+     "seats_amount": 2
+    }
+   },
+   {
+    "event_name": "select_passenger",
+    "parameters": {
+     "passenger_index": 1
+    }
+   },
+   {
+    "event_name": "select_passenger",
+    "parameters": {
+     "passenger_index": 2
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {}
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cic_rail2p\"\n}\n"
+ },
+ {
+  "key": "railpay",
+  "arm": "cb",
+  "track": "e8_cb_railpay",
+  "task_file": "rail_book_and_pay_2_passengers.json",
+  "task": "На %HOST% в «Поездах» оформи и оплати билет Москва — Санкт-Петербург на 17.11.2026 для 2 пассажиров.",
+  "n_conditions": 8,
+  "conditions": [
+   {
+    "event_name": "select_city",
+    "parameters": {
+     "field": "from",
+     "name": "Москва"
+    }
+   },
+   {
+    "event_name": "select_city",
+    "parameters": {
+     "field": "to",
+     "name": "Санкт-Петербург"
+    }
+   },
+   {
+    "event_name": "select_date",
+    "parameters": {
+     "date": "2026-11-17"
+    }
+   },
+   {
+    "event_name": "select_seat",
+    "parameters": {
+     "seats_amount": 2
+    }
+   },
+   {
+    "event_name": "select_passenger",
+    "parameters": {
+     "passenger_index": 1
+    }
+   },
+   {
+    "event_name": "select_passenger",
+    "parameters": {
+     "passenger_index": 2
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {}
+   },
+   {
+    "event_name": "submit_payment",
+    "parameters": {
+     "result": "success"
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cb_railpay\"\n}\n"
+ },
+ {
+  "key": "railpay",
+  "arm": "cic",
+  "track": "e8_cic_railpay",
+  "task_file": "rail_book_and_pay_2_passengers.json",
+  "task": "На %HOST% в «Поездах» оформи и оплати билет Москва — Санкт-Петербург на 17.11.2026 для 2 пассажиров.",
+  "n_conditions": 8,
+  "conditions": [
+   {
+    "event_name": "select_city",
+    "parameters": {
+     "field": "from",
+     "name": "Москва"
+    }
+   },
+   {
+    "event_name": "select_city",
+    "parameters": {
+     "field": "to",
+     "name": "Санкт-Петербург"
+    }
+   },
+   {
+    "event_name": "select_date",
+    "parameters": {
+     "date": "2026-11-17"
+    }
+   },
+   {
+    "event_name": "select_seat",
+    "parameters": {
+     "seats_amount": 2
+    }
+   },
+   {
+    "event_name": "select_passenger",
+    "parameters": {
+     "passenger_index": 1
+    }
+   },
+   {
+    "event_name": "select_passenger",
+    "parameters": {
+     "passenger_index": 2
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {}
+   },
+   {
+    "event_name": "submit_payment",
+    "parameters": {
+     "result": "success"
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cic_railpay\"\n}\n"
+ },
+ {
+  "key": "hoteldxb",
+  "arm": "cb",
+  "track": "e8_cb_hoteldxb",
+  "task_file": "hotel_search_scenario_dubai.json",
+  "task": "На %HOST% в «Отели» найди жильё в Дубае, ОАЭ на 05–09.03.2027 для 2 гостей и открой Marina Skyline Towers.",
+  "n_conditions": 6,
+  "conditions": [
+   {
+    "event_name": "bench_hotel_select_city",
+    "parameters": {
+     "cityId": "ae-dubai",
+     "label": "Дубай, ОАЭ",
+     "cityName": "Дубай",
+     "countryName": "ОАЭ"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_start_date",
+    "parameters": {
+     "date": "2027-03-05"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_end_date",
+    "parameters": {
+     "date": "2027-03-09"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_guests",
+    "parameters": {
+     "rooms": [
+      {
+       "adults": 2,
+       "kids": []
+      }
+     ],
+     "roomsCount": 1,
+     "guestsCount": 2
+    }
+   },
+   {
+    "event_name": "state_changed",
+    "parameters": {
+     "new_state": "bench_hotel_search"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_hotel",
+    "parameters": {
+     "hotelId": "h-ae-dubai-2",
+     "hotelName": "Marina Skyline Towers",
+     "cityId": "ae-dubai"
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cb_hoteldxb\"\n}\n"
+ },
+ {
+  "key": "hoteldxb",
+  "arm": "cic",
+  "track": "e8_cic_hoteldxb",
+  "task_file": "hotel_search_scenario_dubai.json",
+  "task": "На %HOST% в «Отели» найди жильё в Дубае, ОАЭ на 05–09.03.2027 для 2 гостей и открой Marina Skyline Towers.",
+  "n_conditions": 6,
+  "conditions": [
+   {
+    "event_name": "bench_hotel_select_city",
+    "parameters": {
+     "cityId": "ae-dubai",
+     "label": "Дубай, ОАЭ",
+     "cityName": "Дубай",
+     "countryName": "ОАЭ"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_start_date",
+    "parameters": {
+     "date": "2027-03-05"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_end_date",
+    "parameters": {
+     "date": "2027-03-09"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_guests",
+    "parameters": {
+     "rooms": [
+      {
+       "adults": 2,
+       "kids": []
+      }
+     ],
+     "roomsCount": 1,
+     "guestsCount": 2
+    }
+   },
+   {
+    "event_name": "state_changed",
+    "parameters": {
+     "new_state": "bench_hotel_search"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_hotel",
+    "parameters": {
+     "hotelId": "h-ae-dubai-2",
+     "hotelName": "Marina Skyline Towers",
+     "cityId": "ae-dubai"
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cic_hoteldxb\"\n}\n"
+ },
+ {
+  "key": "hotel2rm",
+  "arm": "cb",
+  "track": "e8_cb_hotel2rm",
+  "task_file": "hotel_search_scenario_two_rooms.json",
+  "task": "На %HOST% в «Отели» подбери жильё в Милане, Италия на 17–21.11.2026: два номера по 2 взрослых в каждом.",
+  "n_conditions": 5,
+  "conditions": [
+   {
+    "event_name": "bench_hotel_select_city",
+    "parameters": {
+     "cityId": "it-mil",
+     "label": "Милан, Италия",
+     "cityName": "Милан",
+     "countryName": "Италия"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_start_date",
+    "parameters": {
+     "date": "2026-11-17"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_end_date",
+    "parameters": {
+     "date": "2026-11-21"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_guests",
+    "parameters": {
+     "rooms": [
+      {
+       "adults": 2,
+       "kids": []
+      },
+      {
+       "adults": 2,
+       "kids": []
+      }
+     ],
+     "roomsCount": 2,
+     "guestsCount": 4
+    }
+   },
+   {
+    "event_name": "state_changed",
+    "parameters": {
+     "new_state": "bench_hotel_search"
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cb_hotel2rm\"\n}\n"
+ },
+ {
+  "key": "hotel2rm",
+  "arm": "cic",
+  "track": "e8_cic_hotel2rm",
+  "task_file": "hotel_search_scenario_two_rooms.json",
+  "task": "На %HOST% в «Отели» подбери жильё в Милане, Италия на 17–21.11.2026: два номера по 2 взрослых в каждом.",
+  "n_conditions": 5,
+  "conditions": [
+   {
+    "event_name": "bench_hotel_select_city",
+    "parameters": {
+     "cityId": "it-mil",
+     "label": "Милан, Италия",
+     "cityName": "Милан",
+     "countryName": "Италия"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_start_date",
+    "parameters": {
+     "date": "2026-11-17"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_end_date",
+    "parameters": {
+     "date": "2026-11-21"
+    }
+   },
+   {
+    "event_name": "bench_hotel_select_guests",
+    "parameters": {
+     "rooms": [
+      {
+       "adults": 2,
+       "kids": []
+      },
+      {
+       "adults": 2,
+       "kids": []
+      }
+     ],
+     "roomsCount": 2,
+     "guestsCount": 4
+    }
+   },
+   {
+    "event_name": "state_changed",
+    "parameters": {
+     "new_state": "bench_hotel_search"
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cic_hotel2rm\"\n}\n"
+ },
+ {
+  "key": "shop3",
+  "arm": "cb",
+  "track": "e8_cb_shop3",
+  "task_file": "ecommerce_basket_three_products.json",
+  "task": "На %HOST% в «Маркете» добавь в корзину 3 упаковки влажного корма Felix «Аппетитные кусочки» с ягнёнком в желе, 1 упаковку туалетной бумаги Zewa Just 1 на 12 рулонов (4 слоя) и 2 упаковки изотоника Snace со вкусом земляники.",
+  "n_conditions": 3,
+  "conditions": [
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_714958775",
+     "amount": 3
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_1417585321",
+     "amount": 1
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_1717020676",
+     "amount": 2
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cb_shop3\"\n}\n"
+ },
+ {
+  "key": "shop3",
+  "arm": "cic",
+  "track": "e8_cic_shop3",
+  "task_file": "ecommerce_basket_three_products.json",
+  "task": "На %HOST% в «Маркете» добавь в корзину 3 упаковки влажного корма Felix «Аппетитные кусочки» с ягнёнком в желе, 1 упаковку туалетной бумаги Zewa Just 1 на 12 рулонов (4 слоя) и 2 упаковки изотоника Snace со вкусом земляники.",
+  "n_conditions": 3,
+  "conditions": [
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_714958775",
+     "amount": 3
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_1417585321",
+     "amount": 1
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_1717020676",
+     "amount": 2
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cic_shop3\"\n}\n"
+ },
+ {
+  "key": "filespdf",
+  "arm": "cb",
+  "track": "e8_cb_filespdf",
+  "task_file": "files_download_pdf.json",
+  "task": "На %HOST% в разделе «Файлы» открой «Отчёты лаборатории», выбери 2024 год и скачай файл lab-reports-2024.pdf.",
+  "n_conditions": 3,
+  "conditions": [
+   {
+    "event_name": "bench_files_select_collection",
+    "parameters": {
+     "collection": "lab_reports"
+    }
+   },
+   {
+    "event_name": "bench_files_select_year",
+    "parameters": {
+     "year": "2024"
+    }
+   },
+   {
+    "event_name": "bench_files_download",
+    "parameters": {
+     "collection": "lab_reports",
+     "year": "2024",
+     "format": "pdf",
+     "file": "lab-reports-2024.pdf"
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cb_filespdf\"\n}\n"
+ },
+ {
+  "key": "filespdf",
+  "arm": "cic",
+  "track": "e8_cic_filespdf",
+  "task_file": "files_download_pdf.json",
+  "task": "На %HOST% в разделе «Файлы» открой «Отчёты лаборатории», выбери 2024 год и скачай файл lab-reports-2024.pdf.",
+  "n_conditions": 3,
+  "conditions": [
+   {
+    "event_name": "bench_files_select_collection",
+    "parameters": {
+     "collection": "lab_reports"
+    }
+   },
+   {
+    "event_name": "bench_files_select_year",
+    "parameters": {
+     "year": "2024"
+    }
+   },
+   {
+    "event_name": "bench_files_download",
+    "parameters": {
+     "collection": "lab_reports",
+     "year": "2024",
+     "format": "pdf",
+     "file": "lab-reports-2024.pdf"
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cic_filespdf\"\n}\n"
+ },
+ {
+  "key": "booksexp",
+  "arm": "cb",
+  "track": "e8_cb_booksexp",
+  "task_file": "digital_books_author_expensive_basket.json",
+  "task": "На %HOST% в «Книги» найди самую дорогую книгу Ники Ледневой и добавь в корзину.",
+  "n_conditions": 2,
+  "conditions": [
+   {
+    "event_name": "state_changed",
+    "parameters": {
+     "new_state": "bench_books_item",
+     "state_id": "item_69446647"
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_69446647"
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cb_booksexp\"\n}\n"
+ },
+ {
+  "key": "booksexp",
+  "arm": "cic",
+  "track": "e8_cic_booksexp",
+  "task_file": "digital_books_author_expensive_basket.json",
+  "task": "На %HOST% в «Книги» найди самую дорогую книгу Ники Ледневой и добавь в корзину.",
+  "n_conditions": 2,
+  "conditions": [
+   {
+    "event_name": "state_changed",
+    "parameters": {
+     "new_state": "bench_books_item",
+     "state_id": "item_69446647"
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_69446647"
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cic_booksexp\"\n}\n"
+ },
+ {
+  "key": "grocat",
+  "arm": "cb",
+  "track": "e8_cb_grocat",
+  "task_file": "grocery_basket_category_named_product.json",
+  "task": "На %HOST% в «Продукты» открой категорию «Продукты», найди оливки без косточки и добавь в корзину.",
+  "n_conditions": 2,
+  "conditions": [
+   {
+    "event_name": "state_changed",
+    "parameters": {
+     "new_state": "bench_grocery_category"
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_66079548"
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cb_grocat\"\n}\n"
+ },
+ {
+  "key": "grocat",
+  "arm": "cic",
+  "track": "e8_cic_grocat",
+  "task_file": "grocery_basket_category_named_product.json",
+  "task": "На %HOST% в «Продукты» открой категорию «Продукты», найди оливки без косточки и добавь в корзину.",
+  "n_conditions": 2,
+  "conditions": [
+   {
+    "event_name": "state_changed",
+    "parameters": {
+     "new_state": "bench_grocery_category"
+    }
+   },
+   {
+    "event_name": "basket_add",
+    "parameters": {
+     "item_id": "item_66079548"
+    }
+   }
+  ],
+  "created": true,
+  "server": "{\n  \"track_id\": \"e8_cic_grocat\"\n}\n"
+ }
+]
