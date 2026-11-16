@@ -2821,7 +2821,22 @@ async def find(
             counts[k] = counts.get(k, 0) + 1
         top = sorted(counts.items(), key=lambda kv: -kv[1])[:10]
         census = ", ".join(f"{n} {t}" for t, n in top)
-        return (f"\n\nThe page holds {len(raw)} elements: {census}.\n"
+        # SAYS WHAT IT COUNTS. `raw` is the COLLECTOR's kept entries -- what
+        # `find` can search -- and the old wording, "The page holds N
+        # elements", is a claim about the PAGE. Measured live on a settled
+        # page: the census read `2 input` while `query_elements("input")`
+        # returned 5, because three were dropped as not-rendered or declared
+        # absent. A live agent hit exactly this, reported the contradiction,
+        # and had to trust the tool the census was pointing AT over the census
+        # itself.
+        #
+        # That matters more here than in most messages, because this census
+        # exists to help the reader write an EXACT query -- so understating the
+        # population undercuts the one recovery it is offering. #33's rule:
+        # state the fact, never assert more than the tool knows.
+        return (f"\n\nfind can search {len(raw)} element(s) here: {census}. "
+                f"That is what the COLLECTOR kept; query_elements goes to the "
+                f"RENDERED document and may return more.\n"
                 f"find ranks by WORDS, so it cannot reach a control whose label "
                 f"shares none with your query. If you can express the target as a "
                 f"CSS selector or a literal string, these answer exactly and in one "

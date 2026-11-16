@@ -1973,6 +1973,30 @@ async def main():
               "open role=menu IS listed below" in with_menu,
               with_menu[with_menu.find("consistent with"):][:60] if "consistent with" in with_menu else "NOT NAMED")
 
+        # AH5 — THE RECOVERY MUST MATCH THE DROP REASON. This sentence used to
+        # offer `find()`, which is the recovery for the VIEWPORT-scoped omission
+        # (#6 keeps offscreen controls in the structured set find searches) and
+        # cannot work for THIS drop: an aria-hidden element is removed at
+        # collection, so it is not in the set find searches at all.
+        #
+        # MEASURED LIVE in eval 6, on a hotel search whose whole widget sat
+        # under an aria-hidden ancestor: read_page listed 11 elements and none
+        # was the destination field; `find` on that field's EXACT placeholder
+        # returned "No elements matched"; `query_elements("input")` returned it
+        # and clicking its ref worked. An agent trusting the note would have
+        # spent a call on a tool that cannot answer — #33's class, inside the
+        # note written to end #33's class.
+        check("AH5 the aria-hidden note points at query_elements, which reaches "
+              "these, and says find() cannot — the recovery has to match the "
+              "drop reason",
+              "query_elements" in with_menu and "find() cannot" in with_menu,
+              with_menu[with_menu.find("To REACH"):][:110] if "To REACH" in with_menu
+              else "NO RECOVERY NAMED")
+        check("AH5b ...and it still names the ledger, which is what answers "
+              "WHICH elements were dropped rather than how to reach them",
+              "ledger=true" in with_menu,
+              "ledger named" if "ledger=true" in with_menu else "LEDGER DROPPED")
+
         # THE CONTROL. Same drops, no popup on the page: the note must still appear
         # and must NOT claim something is open.
         await ahp.set_content(

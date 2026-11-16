@@ -12146,9 +12146,27 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
            + ` which needs nothing; (c) a library's duplicate markup, e.g. mobile and`
            + ` desktop copies of one nav, which also needs nothing.`
            + (_pop ? ` An open role=${_pop} IS listed below, which is consistent with (a).` : '')
-           + ` read_page(ledger=true) names exactly what was dropped, and find() reaches`
-           + ` elements this viewport-scoped listing omits. This is page STATE, not the`
-           + ` page's contents.`);
+           + ` read_page(ledger=true) names exactly what was dropped.`
+           // THE RECOVERY HAS TO MATCH THE DROP REASON, and this sentence used
+           // to offer `find()`, which is the recovery for a DIFFERENT one.
+           // `find` searches what the COLLECTOR KEPT, and an aria-hidden
+           // element is dropped at collection (`_drop(el,'aria-hidden')`), not
+           // merely filtered to the viewport -- so find can never reach one.
+           // `query_elements` goes to the RENDERED document, so it does, and
+           // its refs act normally.
+           //
+           // MEASURED LIVE, on a hotel search whose entire widget sat under an
+           // aria-hidden ancestor: read_page listed 11 elements and none of
+           // them was the destination field; `find` on that field's EXACT
+           // placeholder returned "No elements matched"; `query_elements("input")`
+           // returned it, and clicking its ref worked. An agent that trusted
+           // this sentence would have spent a call on a tool that cannot
+           // answer -- #33's class, in the note written to end #33's class.
+           + ` To REACH one of these, use query_elements(selector): it queries the`
+           + ` RENDERED document rather than this listing, so it returns`
+           + ` aria-hidden elements and its refs act normally. find() cannot —`
+           + ` it searches only what was collected, and these were dropped from`
+           + ` collection. This is page STATE, not the page's contents.`);
     } else if (_ah >= 25) {
       L.push(`  - NOTE: ${_ah} interactive element(s) sit under aria-hidden="true" ancestors and are`
            + ` not listed, and NONE of them carry a label or text of their own — on component`

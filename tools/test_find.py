@@ -515,8 +515,21 @@ async def main():
          el(mmid="3", tag="a", name="Docs", y=80))
 
     out = await run("zzqqx nothing like this at all")
-    check("F37 a total miss reports what the page HOLDS, not just that it missed",
-          "3 elements" in out and "2 select" in out, out.replace("\n", " ")[:150])
+    # ASSERTS THE CENSUS, NOT ITS WORDING. The first version keyed on the
+    # literal "3 elements", which was the phrase and not the property -- the
+    # same defect #30 rewrote TR8d for. The wording changed when the census
+    # stopped claiming to describe the PAGE: `raw` is what the COLLECTOR kept,
+    # and measured live on a settled page the census read `2 input` while
+    # `query_elements("input")` returned 5. A live agent hit that contradiction
+    # and had to trust the tool the census was pointing at over the census.
+    check("F37 a total miss reports a CENSUS of what find can search, not just "
+          "that it missed",
+          "3 element" in out and "2 select" in out and "1 a" in out,
+          out.replace("\n", " ")[:170])
+    check("F37a2 ...and the census says whose population it is, so a reader who "
+          "then queries the DOM is not surprised to find more",
+          "COLLECTOR" in out and "query_elements" in out,
+          out.replace("\n", " ")[:170])
     check("F37b ...and names the tools that can answer exactly",
           "query_elements" in out and "search_page" in out, out.replace("\n", " ")[:150])
     check("F37c ...and explains that find ranks by WORDS, so the miss is informative",

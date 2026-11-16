@@ -170,6 +170,44 @@ and they assert WHICH PATH stopped the step rather than the fixture's row
 count.
 
 
+### 4b. The off-viewport region hint names regions by TAG, not identity `OPEN`
+#26 built the region hint so a caller can recover an off-viewport target with
+one scoped read instead of a scroll plus a full re-listing, and measured all 76
+off-viewport steps recovering that way. It names each region by its TAG:
+
+    form(ref_212): 8, section(ref_274): 36, article(ref_177): 6, main(ref_71): 4
+
+**Measured live in eval 6.** An agent told to fill in a hotel search scoped to
+`ref_212` — the only `form` on the page, and the task was "fill in a search
+form". It is the **newsletter signup at the bottom of the page**. The actual
+search widget is not a `<form>` at all; it is plain divs inside `section`. One
+wasted call, and the agent said the hint "would have been decisive if it carried
+the region's accessible name or its first heading" — `form "Путешествуйте
+выгоднее!"` would have said instantly that it was the wrong one.
+
+The collector already resolves accessible names and already finds the main
+heading (#30's declared-rank rule), so the information exists. What is not yet
+measured is the cost: a name per region on every listing that carries the hint.
+Same shape as #31's constraints, which measured at median 0.00%.
+
+### 4c. A visible label not wired to its input is unreachable by `find` `OPEN`
+Same eval-6 run. The page renders «Направление» two lines above the destination
+field; the input's accessible name is EMPTY and its placeholder is «Город, отель
+или аэропорт». So the one word the TASK ITSELF uses is unreachable by `find`,
+which is the first query any reader would try.
+
+This is the page's defect — an unlabelled input — and `find` behaving correctly:
+it is a lexical matcher over resolved identities (#20), and there is no identity
+to match. **What rescued the agent was find's own miss census**, which pushed it
+to `query_elements("input")`. So the #39 census earned its keep on its first
+live outing.
+
+The open question is whether `near=` should have carried «Направление» here. It
+is designed for exactly this (a HINT for unnamed fields) and did not appear.
+**Measure before changing anything:** #37 tightened `near=` because it was
+firing where it distinguished nothing, and loosening it back is the move that
+needs a number, not an anecdote.
+
 ### 5. SPA readiness, the remaining half `OPEN`
 The mutation-recency signal (#70) separates "still building" from "ready but
 chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:

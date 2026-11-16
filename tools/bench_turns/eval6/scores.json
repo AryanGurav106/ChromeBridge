@@ -1,0 +1,56 @@
+[
+ {
+  "track": "e6_tree_hotels",
+  "conditions": 1,
+  "events": 11,
+  "names": [
+   "bench_hotel_select_city",
+   "click",
+   "scroll",
+   "state_changed",
+   "visibility"
+  ],
+  "per": [
+   {
+    "cond": {
+     "event_name": "bench_hotel_select_city",
+     "parameters": {
+      "cityId": "jp-tyo",
+      "label": "Токио, Япония",
+      "cityName": "Токио",
+      "countryName": "Япония"
+     }
+    },
+    "pass": true
+   }
+  ],
+  "passed": true
+ },
+ {
+  "track": "e6_flat_hotels",
+  "conditions": 1,
+  "events": 8,
+  "names": [
+   "bench_hotel_select_city",
+   "click",
+   "scroll",
+   "state_changed",
+   "visibility"
+  ],
+  "per": [
+   {
+    "cond": {
+     "event_name": "bench_hotel_select_city",
+     "parameters": {
+      "cityId": "jp-tyo",
+      "label": "Токио, Япония",
+      "cityName": "Токио",
+      "countryName": "Япония"
+     }
+    },
+    "pass": true
+   }
+  ],
+  "passed": true
+ }
+]
