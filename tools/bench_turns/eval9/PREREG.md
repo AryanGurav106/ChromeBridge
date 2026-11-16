@@ -86,3 +86,38 @@ Cross-arm contamination remains impossible for the reason in the design: the
 arms are in different browsers (eval 8, Amendment 3).
 
 Waves: `T3,T5` · `T6,T7` · `T8,T9` · `T10,T11`.
+
+---
+
+## AMENDMENT 2 — wave 1 blocked on CONSENT, which is the gate working
+
+Both chromebridge agents in wave 1 returned UNOBTAINABLE after ONE call:
+
+```
+Permission required: ChromeBridge is not allowed to act on https://gml.noaa.gov
+Permission required: ChromeBridge is not allowed to act on https://www.gesetze-im-internet.de
+```
+
+Neither read a page, neither retried, and both said so. That is default-deny
+per origin behaving exactly as specified — the first op on a new site is
+SUPPOSED to be refused — and it is the one thing in this comparison that is a
+real product difference rather than a measurement artefact.
+
+**It is a genuine asymmetry and it is recorded as one.** ChromeBridge pays a
+one-time, per-origin consent cost that the other arm does not pay at all. Eval 7
+handled this by arming `ALLOW_ALL_ORIGINS` for the duration under a dated
+amendment, on the reasoning that per-origin consent is a setup cost rather than
+a per-task turn cost, so counting it would charge us once per site for a safety
+property the other arm lacks.
+
+**I am NOT re-arming that flag on my own.** It was authorised once, for one
+eval, by the user, and an approval for one run does not carry to the next. The
+8 origins need granting in the side panel, or this eval reports as blocked.
+
+Origins the run needs:
+`gml.noaa.gov` · `gesetze-im-internet.de` · `postgresql.org` ·
+`rfc-editor.org` · `federalreserve.gov` · `kubernetes.io` · `boe.es` ·
+`nobelprize.org`
+
+Wave 1 (T3, T5) is **not scored**: neither arm's number means anything when one
+of them never reached a page. Both will be re-run once the origins are granted.
