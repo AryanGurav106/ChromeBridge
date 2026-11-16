@@ -296,3 +296,41 @@ runs are scored all-conditions-or-fail while this eval's primary metric is
 conditions satisfied, so the numbers are not directly comparable; and they ran
 in September 2026 against their own rolled-forward dates, which is a different
 task text from ours. They bound difficulty, not performance.
+
+---
+
+## AMENDMENT 4 — 2026-11-16, after run 7. CHANGES NOTHING; records a threat I did not foresee.
+
+**Both MCP servers are loaded in every agent's environment, so each arm can
+read the other's server instructions.** Run 7's Claude-in-Chrome agent did,
+explicitly:
+
+> The capability is plainly expressible — the chromebridge server instructions
+> loaded in this same session describe the opposite behaviour ("A batch may open
+> with `tabs_create_mcp` and OMIT tabId on the steps after it — they inherit the
+> tab it just made"). One wasted turn on bookkeeping, every single session.
+
+It is comparing its own tool against ours because ours is in its context.
+
+**What this can and cannot do.** It cannot change what either toolset DOES. It
+can change (a) what an agent ATTEMPTS — trying a pattern the other server
+documents and its own does not — and (b) the feedback it writes, which is the
+qualitative half of this eval.
+
+**Direction of the bias is AGAINST the arm that reads the other's instructions
+and tries the unsupported pattern**, which here is Claude-in-Chrome. So it does
+not flatter us; if anything it costs them a call. That is the opposite of the
+direction that would need the eval re-run, and it is why nothing changes.
+
+**Not fixed, deliberately.** Suppressing it means telling every agent to ignore
+a namespace, which is more instruction in a prompt whose whole discipline is to
+teach neither arm anything (#45). Unloading one server per run would change the
+environment between arms, which is worse.
+
+**How to remove it properly, if this eval is ever repeated:** run each arm in a
+session with only its own server registered. That is a harness change, not a
+prompt change, and it is the right one.
+
+**Recorded here rather than in FINDINGS** because a threat to validity found
+mid-run belongs with the design, dated, including the part where I did not
+anticipate it.
