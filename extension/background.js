@@ -13293,6 +13293,20 @@ function _searchTextPage(pattern, opts) {
       ? e.className.trim().replace(/\s+/g, ' ') : '');
     return c ? e.tagName + '.' + c : _sig(e, 3);
   };
+  // COST, MEASURED RATHER THAN ASSUMED. This computes a depth-3 signature for
+  // every sibling until it finds a SECOND of the same kind, so the shape that
+  // could hurt is a parent with thousands of children none of which match.
+  // Three arms on one page load, order rotated (#19), 25 hits per run:
+  //   4000 IDENTICAL siblings (a real record list)   +0.08ms
+  //   800 UNIQUE siblings, each ~73 nodes deep       +3.14ms
+  //   4000 UNIQUE siblings, shallow (worst found)   +11.86ms
+  // The dominant term is sibling COUNT, not subtree depth -- `_sig`'s depth
+  // bound holds -- and the early exit makes a record list free REGARDLESS of
+  // where in it the hit sits, because the first two children already match.
+  // 11.86ms is half a bridge hop and 0.3% of a model turn (#38), so no cap is
+  // added: a cap on the sibling scan would make a record list longer than the
+  // cap stop being recognised, which is a WRONG ANSWER bought with a chosen
+  // number -- #77 records exactly that trade going bad on the mutation ring.
   const _isRecord = (n) => {
     try {
       const p = n.parentElement;
