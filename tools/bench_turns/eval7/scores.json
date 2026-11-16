@@ -1,0 +1,272 @@
+[
+ {
+  "track": "e7_cb_rail2p",
+  "units": 10,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "select_city",
+   "select_city",
+   "select_date",
+   "submit_search",
+   "select_train",
+   "select_tariff",
+   "select_seat",
+   "select_passenger",
+   "select_passenger",
+   "basket_add"
+  ],
+  "key": "rail2p",
+  "arm": "cb",
+  "task_file": "rail_book_to_cart_2_passengers.json"
+ },
+ {
+  "track": "e7_cic_rail2p",
+  "units": 10,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "select_city",
+   "select_city",
+   "select_date",
+   "submit_search",
+   "select_train",
+   "select_tariff",
+   "select_seat",
+   "select_passenger",
+   "select_passenger",
+   "basket_add"
+  ],
+  "key": "rail2p",
+  "arm": "cic",
+  "task_file": "rail_book_to_cart_2_passengers.json"
+ },
+ {
+  "track": "e7_cb_railpay",
+  "units": 8,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "select_city",
+   "select_city",
+   "select_date",
+   "select_seat",
+   "select_passenger",
+   "select_passenger",
+   "basket_add",
+   "submit_payment"
+  ],
+  "key": "railpay",
+  "arm": "cb",
+  "task_file": "rail_book_and_pay_2_passengers.json"
+ },
+ {
+  "track": "e7_cic_railpay",
+  "units": 8,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "select_city",
+   "select_city",
+   "select_date",
+   "select_seat",
+   "select_passenger",
+   "select_passenger",
+   "basket_add",
+   "submit_payment"
+  ],
+  "key": "railpay",
+  "arm": "cic",
+  "task_file": "rail_book_and_pay_2_passengers.json"
+ },
+ {
+  "track": "e7_cb_hoteldxb",
+  "units": 6,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "bench_hotel_select_city",
+   "bench_hotel_select_start_date",
+   "bench_hotel_select_end_date",
+   "bench_hotel_select_guests",
+   "state_changed",
+   "bench_hotel_select_hotel"
+  ],
+  "key": "hoteldxb",
+  "arm": "cb",
+  "task_file": "hotel_search_scenario_dubai.json"
+ },
+ {
+  "track": "e7_cic_hoteldxb",
+  "units": 6,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "bench_hotel_select_city",
+   "bench_hotel_select_start_date",
+   "bench_hotel_select_end_date",
+   "bench_hotel_select_guests",
+   "state_changed",
+   "bench_hotel_select_hotel"
+  ],
+  "key": "hoteldxb",
+  "arm": "cic",
+  "task_file": "hotel_search_scenario_dubai.json"
+ },
+ {
+  "track": "e7_cb_hotel2rm",
+  "units": 5,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "bench_hotel_select_city",
+   "bench_hotel_select_start_date",
+   "bench_hotel_select_end_date",
+   "bench_hotel_select_guests",
+   "state_changed"
+  ],
+  "key": "hotel2rm",
+  "arm": "cb",
+  "task_file": "hotel_search_scenario_two_rooms.json"
+ },
+ {
+  "track": "e7_cic_hotel2rm",
+  "units": 5,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "bench_hotel_select_city",
+   "bench_hotel_select_start_date",
+   "bench_hotel_select_end_date",
+   "bench_hotel_select_guests",
+   "state_changed"
+  ],
+  "key": "hotel2rm",
+  "arm": "cic",
+  "task_file": "hotel_search_scenario_two_rooms.json"
+ },
+ {
+  "track": "e7_cb_shop3",
+  "units": 3,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "basket_add",
+   "basket_add",
+   "basket_add"
+  ],
+  "key": "shop3",
+  "arm": "cb",
+  "task_file": "ecommerce_basket_three_products.json"
+ },
+ {
+  "track": "e7_cic_shop3",
+  "units": 3,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "basket_add",
+   "basket_add",
+   "basket_add"
+  ],
+  "key": "shop3",
+  "arm": "cic",
+  "task_file": "ecommerce_basket_three_products.json"
+ },
+ {
+  "track": "e7_cb_filespdf",
+  "units": 3,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "bench_files_select_collection",
+   "bench_files_select_year",
+   "bench_files_download"
+  ],
+  "key": "filespdf",
+  "arm": "cb",
+  "task_file": "files_download_pdf.json"
+ },
+ {
+  "track": "e7_cic_filespdf",
+  "units": 3,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "bench_files_select_collection",
+   "bench_files_select_year",
+   "bench_files_download"
+  ],
+  "key": "filespdf",
+  "arm": "cic",
+  "task_file": "files_download_pdf.json"
+ },
+ {
+  "track": "e7_cb_booksexp",
+  "units": 2,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "state_changed",
+   "basket_add"
+  ],
+  "key": "booksexp",
+  "arm": "cb",
+  "task_file": "digital_books_author_expensive_basket.json"
+ },
+ {
+  "track": "e7_cic_booksexp",
+  "units": 2,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "state_changed",
+   "basket_add"
+  ],
+  "key": "booksexp",
+  "arm": "cic",
+  "task_file": "digital_books_author_expensive_basket.json"
+ },
+ {
+  "track": "e7_cb_grocat",
+  "units": 2,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "state_changed",
+   "basket_add"
+  ],
+  "key": "grocat",
+  "arm": "cb",
+  "task_file": "grocery_basket_category_named_product.json"
+ },
+ {
+  "track": "e7_cic_grocat",
+  "units": 2,
+  "met": 0,
+  "events": 0,
+  "passed": false,
+  "unmet": [
+   "state_changed",
+   "basket_add"
+  ],
+  "key": "grocat",
+  "arm": "cic",
+  "task_file": "grocery_basket_category_named_product.json"
+ }
+]
