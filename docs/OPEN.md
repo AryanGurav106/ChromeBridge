@@ -240,7 +240,7 @@ and they assert WHICH PATH stopped the step rather than the fixture's row
 count.
 
 
-### 4b. The off-viewport region hint names regions by TAG, not identity — CLOSED
+### 4b. The off-viewport region hint names regions by TAG, not identity — REOPENED
 #26 built the region hint so a caller can recover an off-viewport target with
 one scoped read instead of a scroll plus a full re-listing, and measured all 76
 off-viewport steps recovering that way. It names each region by its TAG:
@@ -265,6 +265,25 @@ control that a region declaring no identity is still listed rather than dropped.
 Cost: the honest pairing is free on a corpus that lacks the shape and proven on
 a fixture that has it — my first two attempts to price it measured nothing,
 because the pages I priced it on never produce a per-region hint at all.
+
+**REOPENED by eval 7, where TWO agents wasted a call on the same hint on the
+same page.** The hotels search page has exactly one `<form>` and it is the
+NEWSLETTER SIGNUP; the search widget is not a form at all. Both scoped to
+`form(ref_212)` because a search widget is visually a form, and both got
+`input[email] placeholder="example@mail.ru"` and `button "Подписаться"`.
+
+**The #80 fix is working as designed and its sources are insufficient here**:
+that form declares no `aria-label`, no `aria-labelledby`, and contains no
+heading, so RG2c's control path fires and it falls back to the tag. The page
+declares nothing the current rule reads.
+
+**What it DOES declare is inside the region**: a submit button labelled
+«Подписаться», and a placeholder naming an email. A form's submit button names
+what the form DOES, which is exactly what separates a newsletter signup from a
+search — and it is declared content, not a guess about layout. That is the
+candidate, it widens an existing rule rather than inventing one, and it is in
+`background.js`, held under eval 7's Amendment 2. It needs the same pairing as
+#80's: free on a corpus that lacks the shape, proven on a fixture that has it.
 
 ### 4c. A visible label not wired to its input is unreachable by `find` `OPEN`
 Same eval-6 run. The page renders «Направление» two lines above the destination

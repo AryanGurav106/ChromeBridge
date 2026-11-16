@@ -786,23 +786,64 @@ def _merge_text_banner(out: str, text: str) -> tuple[str, str]:
     while the stripped one said the opposite about the very text printed beneath
     it.
 
-    Three cases, decided by EXACT STRING EQUALITY so nothing here is a judgement:
-      identical            -> strip. This is the common duplicate and the reason
+    Three cases, decided by the banner's TIER so nothing here is a judgement:
+      same tier            -> strip. This is the common duplicate and the reason
                               the strip exists at all.
-      different, both set  -> keep the text's banner INLINE, where its position
+      different tier       -> keep the text's banner INLINE, where its position
                               shows which observation it belongs to.
       listing has none     -> PROMOTE the text's banner to the front, so
                               `_truncate` protects it instead of cutting it.
+
+    TIER, NOT EXACT STRING EQUALITY, and that is a correction to the first
+    version of this. Exact equality is defeated by a COUNTER: the two
+    observations are milliseconds apart, so one reads `45 change(s) … 2 text`
+    and the other `46 change(s) … 3 text`, the strings differ, and both were
+    printed. Measured live in eval 7 -- ~1,200 characters of
+    identical-in-substance prose in one response, on a default
+    `filter="all"` read, reported by the agent as *"differing only by the
+    mutation counter having ticked"*.
+    The tier IS the substance: `THE DOM IS STILL CHANGING` and
+    `Minor DOM activity` need opposite responses, while two readings of the same
+    tier a few milliseconds apart need one. It is read off the marker phrase
+    THIS CODEBASE EMITS, which is the same move as #39's state words -- our own
+    notation, not the page's -- so it cannot drift into interpreting prose.
     """
     tb, body = _split_banner(text)
     if not tb:
         return out, body
     ob = _split_banner(out)[0]
-    if ob == tb:
+    if _banner_tier(ob) == _banner_tier(tb):
         return out, body
     if ob:
         return out, text
     return _prepend_to_listing(out, tb), body
+
+
+# The marker phrases the readiness banner leads with, longest first so a prefix
+# cannot shadow a longer sibling. Each names a DIFFERENT response: act now, read
+# on regardless, wait on the network, or go and find out.
+_BANNER_TIERS = (
+    "THE DOM IS STILL CHANGING",
+    "DOM STABLE, NETWORK BUSY",
+    "Minor DOM activity",
+    "No DOM change could be attributed",
+    "PAGE IS STILL SETTLING",
+)
+
+
+def _banner_tier(b: str) -> str:
+    """Which KIND of readiness banner this is, or its raw text if none matches.
+
+    Falling back to the raw string keeps an unrecognised banner on the strict
+    old behaviour: a new tier nobody taught this function is kept rather than
+    silently folded into another, which is the safe direction.
+    """
+    if not b:
+        return ""
+    for t in _BANNER_TIERS:
+        if t in b:
+            return t
+    return b
 
 
 def _prepend_to_listing(out: str, line: str) -> str:

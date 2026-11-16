@@ -92,19 +92,13 @@
  {
   "track": "e7_cb_hotel2rm",
   "units": 5,
-  "met": 0,
+  "met": 5,
   "reachable": 5,
-  "events": 0,
-  "passed": false,
-  "passed_reachable": false,
+  "events": 20,
+  "passed": true,
+  "passed_reachable": true,
   "unreachable": [],
-  "unmet": [
-   "bench_hotel_select_city",
-   "bench_hotel_select_start_date",
-   "bench_hotel_select_end_date",
-   "bench_hotel_select_guests",
-   "state_changed"
-  ],
+  "unmet": [],
   "key": "hotel2rm",
   "arm": "cb",
   "task_file": "hotel_search_scenario_two_rooms.json"

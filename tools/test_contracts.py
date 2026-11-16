@@ -1178,6 +1178,28 @@ def main() -> int:
     _B1 = "*** THE DOM IS STILL CHANGING (x) ***\n"
     _B2 = "*** Minor DOM activity (y) ***\n"
     _L, _T = 'ref_1 | a "Home"\n', "page text\n"
+    # SAME TIER, DIFFERENT COUNTER -- the shape exact equality could not fold.
+    # The two banners are separate round trips milliseconds apart, so one reads
+    # `45 change(s) ... 2 text` and the other `46 change(s) ... 3 text`; under
+    # the old rule both printed, ~1,200 chars of identical-in-substance prose in
+    # one response. Measured live in eval 7.
+    _B2a = "*** Minor DOM activity (45 change(s) in the last 3000ms: 3 @class) ***\n"
+    _B2b = "*** Minor DOM activity (46 change(s) in the last 3000ms: 4 @class) ***\n"
+    _tick = _ms._merge_text_banner(_B2a + _L, _B2b + _T)
+    check("C32d two readings of the SAME tier a few ms apart print once — a "
+          "counter ticking between them is not a disagreement",
+          _ms._split_banner(_tick[1])[0] == ""
+          and _ms._split_banner(_tick[0])[0] == _B2a,
+          repr((_tick[0][:46], _tick[1][:46])))
+    # CONTROL: an UNRECOGNISED banner falls back to strict equality, so a tier
+    # nobody taught _banner_tier is kept rather than silently folded into another.
+    _BX = "*** SOMETHING NEW (1) ***\n"
+    _BY = "*** SOMETHING NEW (2) ***\n"
+    _unk = _ms._merge_text_banner(_BX + _L, _BY + _T)
+    check("C32e CONTROL: an unknown banner keeps the strict behaviour, so a new "
+          "tier is not folded into an existing one by accident",
+          _ms._split_banner(_unk[1])[0] == _BY, repr(_unk[1][:46]))
+
     _same = _ms._merge_text_banner(_B2 + _L, _B2 + _T)
     _diff = _ms._merge_text_banner(_B2 + _L, _B1 + _T)
     _bare = _ms._merge_text_banner(_L, _B1 + _T)
