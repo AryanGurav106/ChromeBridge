@@ -289,6 +289,63 @@ the corpus cost of both halves (#41, #44), and that `_searchTextPage` is
 injected standalone, so it needs a forced byte-identical copy with an OC7-style
 tripwire rather than a sibling call (#30's C11 class).
 
+### 4e. A hit on a SIBLING reads as "you missed", and the click works `OPEN`
+The hit-test echo distinguishes "you hit the inside of your own target" (silent,
+the normal case for any control with inner markup) from "something else is in
+the way" (MISMATCH). It has no third case, and eval 7 found one.
+
+On a rail seat map, both seat clicks returned:
+
+    MISMATCH: you named ref_1381, but the renderer hit-tests an element with no
+    ref of its own (nearest listed ancestor: ref_1378 <svg>) — something not in
+    the current listing is on top at that point
+
+**Both clicks landed.** The hit node is an SVG `<text>` label painted over the
+seat, a SIBLING of the seat `<g>` rather than a descendant, so `_inChain` is
+correctly false — and the event still bubbles to the common `<svg>` where the
+handler is delegated. The agent: *"the message gives no way to separate 'this
+still landed on your element' from 'this hit the wrong thing'. I nearly spent a
+verification call."* What saved it was an unrelated signal, a badge count.
+
+The message also asserts exactly two causes — "something is on top, or the
+layout moved" — and this is a third. #33's class, in the echo.
+
+**The shape of a fix, and why it is not a guess.** `h.chain` already carries the
+HIT element's ancestor refs. Walking the NAMED ref's ancestors the same way and
+intersecting gives a listed common ancestor as a FACT, so the echo can say "you
+hit a sibling; both are inside ref_1378" instead of naming two causes neither of
+which applies. It must NOT claim the click worked — whether a handler sits on
+that ancestor is not knowable from geometry, though `__abClickBound` is a
+declared signal that could narrow it.
+
+**Compounding it (#23's open item, reported again):** both seat clicks printed
+the identical coordinate, because acting by ref centres the target. Two
+different seats, two identical coordinates, two MISMATCH warnings reads exactly
+like clicking the same thing twice.
+
+### 4f. A run of identical siblings whose meaning is in undeclared text `MEASURED, NOT FIXABLE WITHOUT A GUESS`
+Eval 7, a three-month calendar. `read_page` listed ~236 day cells; the three
+month titles are bare `<div class="month-title">` — no `<h1>`–`<h6>`, no
+`role=heading`, no `aria-label` — so they are not interactive, not entries, and
+the container holding title + grid has ONE kept child subtree and is pruned by
+#27's single-kept-child rule. The agent got `1:"1" 2:"2" 3:"3"…` and could not
+tell November from January, and spent a call on `read_page(ref_id=…,
+filter="all")` to recover the headings.
+
+That call IS the designed recovery and it worked. What is not available is any
+way to know in advance that it was needed.
+
+**Reading the class name is the fix this project does not take** (#27, #28, and
+the owner's brief). The page declares nothing about those three strings, which
+puts this in the same class as #79's nine Mind2Web misses and eval 6's unlabeled
+add-to-cart control: the measured price of "existence and structure are decided
+only by declarations". Recorded so it is not re-derived as a bug.
+
+What WOULD be defensible is the shape #26 used for data tables — the listing
+names them and hands over their refs, because a `<table>` is not interactive and
+has no row of its own. Generalising that to "a folded run preceded by text"
+needs a threshold, which is the thing being avoided. Not built.
+
 ### 5. SPA readiness, the remaining half `OPEN`
 The mutation-recency signal (#70) separates "still building" from "ready but
 chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:
