@@ -278,7 +278,12 @@ class Run:
                            f"front of it ran.")
                     return self._stop(FAILED,
                                       f"the app is not in the state this flow starts "
-                                      f"from: {bad}. Stopped before step {self.i} "
+                                      # `bad` is a SENTENCE and may already end
+                                      # in one of its own ("…does render more
+                                      # now."), which read as "now.. Stopped".
+                                      # Measured live replaying a flow twice
+                                      # against a real app.
+                                      f"from: {bad.rstrip('.')}. Stopped before step {self.i} "
                                       f"({step.name}). {ran}")
             # A TARGET GETS THE SAME WINDOW A POSTCONDITION DOES.
             #
