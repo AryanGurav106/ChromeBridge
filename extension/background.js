@@ -2339,7 +2339,45 @@ function _readinessPage(scopeMmid) {
   // to know where to ask.
   const _scopeDoc = _scope ? _scope.ownerDocument : null;
   const o = { ready: document.readyState, imgs: 0, busy: 0, prog: 0, mut: null,
+              frozenFade: 0,
               scoped: !!_scope, scopeMiss: _scopeMiss };
+  // AN ENTRY ANIMATION THAT WILL NEVER START, which in this regime is NOT a
+  // race but a permanent false negative.
+  //
+  // MEASURED in the agent's own tab (hidden BY DESIGN -- #12, and activating it
+  // was tried and rejected because it drags the user out of their work):
+  //   requestAnimationFrame fired 0 times in 2.6s   (60fps would give ~120)
+  //   setTimeout(16ms) fired 3 times in 2.6s        (clamped to about 1Hz)
+  //   a `transition: left 1200ms` moved 0px in 1.5s and never arrived
+  //   a `transition: opacity 300ms` from 0 held computed opacity at "0" for the
+  //     whole 2s, and checkVisibility({opacityProperty:true}) -- the
+  //     collector's OWN test -- answered false at every sample
+  // So a dialog, toast or dropdown that fades in is absent from `read_page`
+  // INDEFINITELY, not for 300ms. #66 recorded this symptom on a Bootstrap modal
+  // and diagnosed it as "the batch read the page before the fade"; that was
+  // wrong, and waiting for the fade would have waited forever.
+  //
+  // THE SIGNAL IS DECLARED, not guessed. The Web Animations API says it
+  // outright: `pending === true` with `startTime === null` means the animation
+  // has not been given a start time -- it is waiting for a frame that is not
+  // coming -- while `playState` still reads "running". No class name, no
+  // framework name, no threshold.
+  //
+  // COST: document.getAnimations() measured at 0.01ms. The cheap DECLARED
+  // fields are filtered first and only the survivors cost a style resolve, so
+  // there is no bound to choose: an animation pending at time zero is rare, and
+  // a page with thousands of them is paying for its own pathology.
+  try {
+    for (const _a of document.getAnimations()) {
+      if (!_a.pending || _a.currentTime) continue;
+      if (_a.transitionProperty && _a.transitionProperty !== 'opacity') continue;
+      const _t = _a.effect && _a.effect.target;
+      if (!_t || !_t.isConnected) continue;
+      if (_scope && _scope !== _t && !_scope.contains(_t)) continue;
+      if (getComputedStyle(_t).opacity !== '0') continue;
+      o.frozenFade++;
+    }
+  } catch (e) {}
   // DOM MUTATION RECENCY -- the signal that answers the question actually being
   // asked ("if I wait, will this change?") rather than the one the other four
   // answer ("is the network idle?"). Recorded by listener_tag.js at
@@ -2558,7 +2596,32 @@ async function webmcpNote(tabId) {
 // actually scoped to had not moved in 4s. Reporting the document's churn under a
 // listing that deliberately excludes the document is the same category error as
 // the page-level facts #11 and #26 had to stop leaking into a scoped read.
+// AN ENTRY ANIMATION THAT WILL NEVER START gets its own sentence, appended to
+// whatever the note otherwise says -- INCLUDING the empty string, because the
+// usual case is a page that is completely settled while the fade sits frozen.
+// Every other signal here answers "if I wait, will this change?" and the answer
+// for this one is NO, so folding it into that list would be a lie by placement.
+// The recovery is verified rather than asserted: an `opacity: 0` element still
+// takes pointer events (unlike visibility:hidden), and `query_elements` queries
+// the RENDERED document by selector instead of applying the collector's
+// visibility rule -- so it reaches what the listing omits, and a click by that
+// route lands.
 async function readinessNote(tabId, scopeMmid) {
+  const _fadeSentence = (r) => {
+    if (!r || !r.frozenFade) return '';
+    return _withFade(`*** ${r.frozenFade} element(s) are held at opacity 0 by an entry `
+      + `transition that CANNOT START while this tab is in the background, which `
+      + `it is by design. This is not a race that waiting fixes -- measured, the `
+      + `transition makes zero progress -- so those elements will not appear in `
+      + `a listing however long you wait. They ARE present and still take `
+      + `pointer events: reach them with query_elements(selector), which queries `
+      + `the rendered document rather than applying this listing's visibility `
+      + `rule. A dialog, toast or dropdown that fades in is the usual case. ***`, r);
+  };
+  const _withFade = (note, r) => {
+    const f = _fadeSentence(r);
+    return f ? (note ? note + '\n' + f : f) : note;
+  };
   let r = null;
   try { r = await runInTab(tabId, _readinessPage, [scopeMmid === undefined ? null : scopeMmid]); } catch (e) {}
   const pend = _netPending.get(tabId);
@@ -2571,7 +2634,7 @@ async function readinessNote(tabId, scopeMmid) {
     net++;
     kinds.set(t || 'other', (kinds.get(t || 'other') || 0) + 1);
   }
-  if (!r) return '';
+  if (!r) return _withFade('', r);
   const bits = [];
   if (r.imgs) bits.push(`${r.imgs} image(s) still loading`);
   // NAME THE KINDS. "2 network request(s) in flight" cannot be acted on, and
@@ -2671,14 +2734,14 @@ async function readinessNote(tabId, scopeMmid) {
     // (the page's, not the subtree's) and that on that app would have come back
     // STILL CHANGING every time. #33's class -- a note asserting a recovery
     // nobody verified -- in a note I wrote to fix #33's class.
-    return `*** No DOM change could be attributed to the SUBTREE YOU SCOPED TO. The page ` +
+    return _withFade(`*** No DOM change could be attributed to the SUBTREE YOU SCOPED TO. The page ` +
            `as a whole last changed ${m.sinceAny}ms ago, and nothing inside a page can have ` +
            `changed more recently than the page did — so your subtree has been quiet for AT ` +
            `LEAST that long.${sat} Attribution can be lost three ways (a record past the ` +
            `per-batch store bound, a wrapped ring, or an element deeper than the containment ` +
            `walk reaches), so if that number is small this is UNKNOWN rather than quiet; if it ` +
            `is large, the subtree is settled` +
-           (bits.length ? `; also ${bits.join('; ')}` : '') + `. ***\n`;
+           (bits.length ? `; also ${bits.join('; ')}` : '') + `. ***\n`, r);
   }
   if (m && m.since >= 0) {
     const moved = m.structural + m.text +
@@ -2715,7 +2778,7 @@ async function readinessNote(tabId, scopeMmid) {
       // readyState for being, rebuilt one unit over. Caught by measuring the ad
       // case before shipping rather than after.
       if (m.structural || m.text) {
-        return `*** THE DOM IS STILL CHANGING (last change ${m.since}ms ago; ` +
+        return _withFade(`*** THE DOM IS STILL CHANGING (last change ${m.since}ms ago; ` +
                `${moved}${sat} change(s) in the last ${m.win}ms: ${kinds.join(', ')}${where}` +
                (bits.length ? `; also ${bits.join('; ')}` : '') + `). ` +
                `Elements were added, removed or re-texted in that window — the age above ` +
@@ -2724,7 +2787,7 @@ async function readinessNote(tabId, scopeMmid) {
                `stopped and this window still covers the build. While it is recent, do NOT ` +
                `conclude something is absent from this read, and re-observe before trusting ` +
                `any coordinate. Refs are re-measured at click time, so acting BY REF is ` +
-               `safe. ***\n`;
+               `safe. ***\n`, r);
       }
       // ATTRIBUTE CHURN ONLY — reported as a FACT, with no "may be absent"
       // warning, because nothing was added, removed or re-texted in the window.
@@ -2732,13 +2795,13 @@ async function readinessNote(tabId, scopeMmid) {
       // judgement. The attribute NAMES are printed rather than filtered: @style on
       // a carousel and @disabled on a form unlocking are both attribute-only and
       // need opposite responses. The reader can tell them apart. We cannot.
-      return `*** Minor DOM activity (${moved}${sat} change(s) in the last ${m.win}ms: ` +
+      return _withFade(`*** Minor DOM activity (${moved}${sat} change(s) in the last ${m.win}ms: ` +
              `${kinds.join(', ')}${where}` +
              (bits.length ? `; also ${bits.join('; ')}` : '') + `). ` +
              `No element was added, removed or re-texted in that window, so the listing ` +
              `below is structurally current. Attribute churn is usually animation or ` +
              `presentation — but read the names above: @disabled, @aria-expanded or ` +
-             `@value moving means page STATE is changing. ***\n`;
+             `@value moving means page STATE is changing. ***\n`, r);
     }
     if (bits.length) {
       // QUIET DOM, BUSY NETWORK. The case that produced the complaint: a page
@@ -2750,15 +2813,15 @@ async function readinessNote(tabId, scopeMmid) {
       // #33's class, in the banner being rewritten to fix #33's class. Whether
       // this read is good enough depends on what the caller is looking for, and
       // the caller knows that and we do not.
-      return `*** DOM STABLE${r.scoped ? ' IN THE SUBTREE YOU SCOPED TO' : ''}` +
+      return _withFade(`*** DOM STABLE${r.scoped ? ' IN THE SUBTREE YOU SCOPED TO' : ''}` +
              `${r.scopeMiss ? ' (page-wide: the ref you scoped to did not resolve)' : ''}` +
              `, NETWORK BUSY. No DOM change for ${m.since}ms; separately ` +
              `${bits.join('; ')}. What is rendered now is not being rewritten — whether ` +
-             `MORE will arrive is what those requests decide. ***\n`;
+             `MORE will arrive is what those requests decide. ***\n`, r);
     }
-    return '';   // quiet DOM, quiet network: say nothing at all.
+    return _withFade('', r);   // quiet DOM, quiet network: say nothing at all.
   }
-  if (!bits.length) return '';
+  if (!bits.length) return _withFade('', r);
   // Says "any coordinate" rather than "box() coordinates": box() is opt-in now
   // (`geometry=true`), so naming it would describe a field most reads do not
   // contain, while the warning still applies to a screenshot coordinate or one
@@ -2770,10 +2833,10 @@ async function readinessNote(tabId, scopeMmid) {
   const _missNote = r.scopeMiss
     ? ' NOTE: the ref you scoped to did not resolve here, so this describes the WHOLE PAGE.'
     : '';
-  return `*** PAGE IS STILL SETTLING (${bits.join('; ')}).${_missNote} Content may still be arriving, ` +
+  return _withFade(`*** PAGE IS STILL SETTLING (${bits.join('; ')}).${_missNote} Content may still be arriving, ` +
          `and any coordinate may shift as it does — re-observe before trusting one, ` +
          `and do NOT conclude something is absent from this read alone. Refs are re-measured at ` +
-         `click time, so acting BY REF is safe. ***\n`;
+         `click time, so acting BY REF is safe. ***\n`, r);
 }
 
 // ---------------------------------------------------------------------------

@@ -482,6 +482,54 @@ async def main():
               m is not None and m["structural"] > 0, f"mut={m}")
         await pg.close()
 
+        # R33/R33b AN ENTRY ANIMATION THAT WILL NEVER START.
+        # MEASURED in the agent's own tab, which is hidden BY DESIGN (#12):
+        #   requestAnimationFrame fired 0 times in 2.6s (60fps gives ~120)
+        #   setTimeout(16ms) fired 3 times in 2.6s -- clamped to about 1Hz
+        #   `transition: opacity 300ms` from 0 held computed opacity at "0" for
+        #     the whole 2s, and checkVisibility({opacityProperty:true}) -- the
+        #     COLLECTOR'S OWN test -- answered false at every sample.
+        # So a dialog or toast that fades in is absent from read_page
+        # INDEFINITELY. #66 saw this on a Bootstrap modal and diagnosed "the
+        # batch read before the fade"; waiting would have waited for ever.
+        # The signal is the Web Animations API's own: `pending` with
+        # currentTime 0 means no start time has been given, i.e. it is waiting
+        # for a frame. Headless Playwright renders VISIBLE, so the frozen state
+        # is reproduced by probing in the SAME TASK as the trigger, before any
+        # frame can run -- which is exactly the state the hidden tab stays in.
+        pg = await tagged_page("<!doctype html><meta charset=utf-8><body>"
+                               "<button id=keep>Keep</button>")
+        r = await pg.evaluate("(function(){ " + READY + ";"
+            " var d=document.createElement('div');"
+            " d.style.cssText='position:fixed;left:40px;top:40px;width:200px;"
+            "height:60px;opacity:0;transition:opacity 300ms linear';"
+            " document.body.appendChild(d); d.getBoundingClientRect();"
+            " d.style.opacity='1';"
+            " return _readinessPage(); })()")
+        check("R33 an element held at opacity 0 by a transition that has not "
+              "been given a start time is COUNTED, not silently dropped",
+              r.get("frozenFade") == 1, f"frozenFade={r.get('frozenFade')}")
+
+        # THE CONTROL. Without it "always count something" would pass R33 and
+        # the sentence would fire on every page -- #15's always-on warning,
+        # priced once and deleted twice in this project.
+        await pg.close()
+        # A CLEAN PAGE, because the element R33 created is still in the DOM with
+        # its animation still pending -- the control would otherwise measure
+        # R33's fixture and fail for a reason that is not the code's.
+        pg = await tagged_page("<!doctype html><meta charset=utf-8><body>"
+                               "<button id=keep>Keep</button>")
+        r2 = await pg.evaluate("(function(){ " + READY + ";"
+            " var d=document.createElement('div');"
+            " d.style.cssText='position:fixed;left:40px;top:120px;width:200px;"
+            "height:60px;opacity:1';"
+            " document.body.appendChild(d); d.getBoundingClientRect();"
+            " return _readinessPage(); })()")
+        check("R33b CONTROL: an element with no pending entry transition counts "
+              "nothing",
+              (r2.get("frozenFade") or 0) == 0, f"frozenFade={r2.get('frozenFade')}")
+        await pg.close()
+
         # R19 A SAME-ORIGIN FRAME'S CHURN IS NOT QUIET. listener_tag.js runs in
         # ALL frames so each keeps its own ring, but the probe runs in the TOP
         # frame only — so a page whose content lives in an iframe would report

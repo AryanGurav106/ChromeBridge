@@ -958,7 +958,60 @@ chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:
   there is no published evidence it improves anything. A cheap A/B with
   `bench_turns`.
 
-### 6. A CSS transition is not waited for `OPEN`
+### 6. A CSS transition is not waited for — PREMISE INVERTED, MEASURED
+
+**THE ITEM WAS WRONG ABOUT WHICH WAY THE PROBLEM POINTS.** It read: a
+`browser_batch` of four observations after a click all read the page before
+Bootstrap's ~300ms fade, so a CSS-transition settle is wanted but would be a
+chosen duration. Measured in the AGENT'S OWN TAB, which is hidden by design
+(#12, and activating it was tried and rejected because it drags the user out of
+their work):
+
+| probe | result |
+|---|---|
+| `requestAnimationFrame` in 2.6s | **0 callbacks** (60fps would give ~120) |
+| `setTimeout(16ms)` in 2.6s | **3 ticks** — clamped to roughly 1Hz |
+| `transition: left 1200ms` | moved **0px in 1.5s**, never arrived |
+| `transition: opacity 300ms` from 0 | computed opacity `"0"` for the whole 2s |
+| `checkVisibility({opacityProperty:true})` on it — the COLLECTOR'S OWN test | **false at every sample** |
+
+So there is no fade to wait for. **A dialog, toast or dropdown that fades in is
+absent from `read_page` INDEFINITELY**, and waiting would have waited for ever.
+#66's diagnosis of its own symptom was the opposite of the cause.
+
+**It also closes #5's per-ref primitive bullet.** Playwright's actionability
+check is *the same bounding box across two consecutive animation frames*. In
+this regime there are no animation frames — not slower, zero — so that
+primitive is not something we have failed to build, it is something the regime
+forbids. A timer-based substitute costs ~1s per sample at the clamped rate,
+which is unaffordable on the commonest op there is.
+
+**WHAT SHIPPED is a named fact, not a wait.** The signal is the Web Animations
+API's own declaration: `pending === true` with `startTime === null` means the
+animation has not been given a start time — it is waiting for a frame that is
+not coming — while `playState` still reads `"running"`. No class name, no
+framework name, no threshold. `document.getAnimations()` measured at **0.01ms**,
+and the cheap declared fields are filtered before any style resolve, so there is
+no cost bound to choose.
+
+The sentence appends to whatever the readiness note otherwise says INCLUDING the
+empty string, because the usual case is a page that is completely settled while
+the fade sits frozen — folding it into the "if I wait, will this change?" list
+would be a lie by placement, since the answer here is no.
+
+**The recovery is verified rather than asserted:** an `opacity: 0` element still
+takes pointer events (unlike `visibility:hidden`), and `query_elements` queries
+the RENDERED document by selector instead of applying the collector's visibility
+rule — so it reaches what the listing omits.
+
+R33 fails pre-fix (`frozenFade=None`); R33b passes in both arms.
+
+**NOT taken: admitting opacity-0 elements to the listing.** #78 measured that
+across 96 sites — 175 elements, 0 identities lost, and the interactive ones were
+exhaustively 14 skip links and 2 back-to-top buttons. That verdict stands; this
+is a different question with a different answer.
+
+### 6b-original. The old framing, kept for the record `SUPERSEDED`
 #51's settle covers **navigations**. A `browser_batch` of four observations after
 a click all read the page before a ~300ms Bootstrap fade and came back empty on
 a click that had worked. A fixed transition duration would be a chosen number;
