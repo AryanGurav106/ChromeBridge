@@ -1093,6 +1093,38 @@ parse, worst 43.4%, because Mind2Web nests a frame's whole document inside the
 `<iframe>` element. No labelled target is among them.
 
 ### 11. No task-success measurement for our own ladder — A ROUTE EXISTS `MEASURE FIRST`
+
+**A SECOND ROUTE, found by the 2026-11 survey (`docs/research/SURVEY-2026-11.md`):
+ComponentBench, [arXiv:2608.18307](https://arxiv.org/abs/2608.18307), COLM 2026,
+code and data released.** 2,910 tasks over 97 canonical component types from the
+widely used component libraries, shipped as GENERATED interactive Next.js apps —
+deterministic and replayable — each with a PROGRAMMATIC oracle rather than an LLM
+judge, and **target values hidden in React closures**. That last detail is what
+makes it worth more than WebPageBench for this particular question: it fixes all
+three things that defeated #75's attempt on Mind2Web at once — the leaked answer
+(Mind2Web's `backend_node_id` ordering put the gold target anomalously early, and
+a blind judge found it three for three), the missing CSS, and the stripped step
+values. Its headline is that observation/action space ALONE moves success by more
+than 30 points (GPT-5 mini 83.1% AX-tree → 48.9% pixel-only), and four arms are
+already implemented including browser-use.
+
+And it is centred on exactly the Radix / shadcn / HeadlessUI / MUI families this
+project was built around — fix #1 in CLAUDE.md exists because Radix gates on
+`pointerdown`.
+
+**NOT YET VERIFIED AT SOURCE.** #78's precedent is that WebPageBench's claims
+were checked against the released artefact by a probe that exits nonzero and
+self-tests against planted violations, because the paper is not the artefact.
+ComponentBench gets the same treatment before any number from it is quoted. The
+survey also flags one thing it could NOT establish: whether ComponentBench has
+per-step ELEMENT ground truth, which is what would also make it a successor to
+the Mind2Web recall ruler. Absence not confirmed — check, do not assume.
+
+**One figure to NOT import.** A search summary attributed "17.3% of tasks
+flipping between identical runs" to ComponentBench; the surveying agent checked
+and **that figure is not in the paper**. Do not place it beside
+[arXiv:2608.06171](https://arxiv.org/abs/2608.06171)'s measured 12–14% rerun
+noise floor as if it were a second data point.
 `detail` and `format` are priced on recall and tokens, never on end-to-end
 success with a strong model.
 
