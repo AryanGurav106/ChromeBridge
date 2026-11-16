@@ -489,7 +489,7 @@ it needs checking against F4/F15/F25/F29, which are the regressions #27 and #39
 recorded when this scorer was last touched. With the collector half fixed, the
 contradictory row no longer exists for the scorer to rank.
 
-### 4i. A `(disabled)` submit names no blocker `OPEN`
+### 4i. A `(disabled)` submit names no blocker — MEASURED, DON'T BUILD
 Eval 7: «ОФОРМИТЬ ЗАКАЗ» stayed `(disabled)` with every visible field filled.
 The blocker was a required `(unselected)` combobox per passenger that only
 materialises AFTER a passenger is chosen and had scrolled above the fold, so the
@@ -505,6 +505,54 @@ was reachable in one call and the agent needed two to think of it.
 result when a submit fails (#4). **A standalone disabled button has no
 equivalent path**, and that asymmetry is the whole item: the same question, asked
 about the same page, answered in one place and not the other.
+
+**THE ASYMMETRY IS REAL AND THE BINDING IT NEEDS DOES NOT EXIST.**
+`tools/audit_disabled_gate.py`, 105 frozen live-captured sites, self-tested
+first because the headline is a zero and a detector reporting zero is worth
+nothing until it has been seen to fire:
+
+| | |
+|---|---|
+| visible DISABLED buttons | **74** |
+| of them a DECLARED submit (`type=submit`, or implicit submit in a `<form>`) | **0** |
+| with a form owner — what `fill_form` binds to | **0** |
+| with `aria-controls` | 8 |
+| with `aria-describedby` | 1 |
+| with NO declared association of any kind | **65** |
+| required-and-empty fields corpus-wide | 9, on 7/105 sites |
+
+**Porting `fill_form`'s scope rule ships a feature that fires zero times.** Its
+scope is `btn.form`, and across 105 pages not one disabled button has one.
+
+**And a note on the disabled buttons that DO occur would be wrong on every one
+of them.** They are `«`, `‹`, `Previous`, `Today`, `Save`, `Code Generator`,
+`Recents`, `Select framework` — pagination at a boundary, toolbar states with
+nothing selected, premium-gated features. Nothing is blocking them and nothing
+can unblock them, so "here is what is blocking this" is a false sentence 74
+times out of 74. That is #15's always-on warning, measured rather than
+predicted, and the generic version of the advice costs ~195 characters on the
+~70% of pages that hold a disabled control (≈3.8% of a median listing, against
+the 2.6% the detail legend was accepted at).
+
+**The eval-7 page is outside what any of this could reach.** Its checkout is a
+Vue widget with no `<form>`, so `el.form` is null and `type=submit` is absent —
+the same answer `fill_form` gives there, which #4 already settled as the honest
+one. HTML and ARIA define no other link between a button and the fields it
+gates; `aria-controls` is the closest and on all 8 instances here it points at
+the table a pager controls, not at a blocker.
+
+**What the agent actually needed was already printed.** The off-viewport note
+reports BOTH directions, the magnitude in viewport-heights, and the regions with
+their refs — and a scoped read is not viewport-limited, which is exactly what
+cracked it. The residual gap is a reasoning step (connect a disabled control to
+the regions that note names), not a missing fact, and this project does not fix
+reasoning steps by adding a sentence that is false on 74 of 74 measured cases.
+
+**What would reopen it:** not another attribute — those were tested. A corpus of
+real checkout flows, where the population is disabled SUBMITS rather than
+disabled pagers, and where the 0/74 might not hold. #25's rule applies in full:
+this ablation measures the code against the sample and cannot measure the
+sample.
 
 ### 4j. The aria-hidden note promises refs `query_elements` cannot give — CLOSED
 The listing's aria-hidden note sends callers to `query_elements` and says
