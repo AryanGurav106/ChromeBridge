@@ -2,6 +2,7 @@
  {
   "id": "T1",
   "answer": "2019-07-06",
+  "onpage": "2019-07-06",
   "url": "https://www.debian.org/releases/buster/",
   "confirmed": false,
   "why": "NOT present in rendered text"
@@ -9,6 +10,7 @@
  {
   "id": "T2",
   "answer": "1.674 927 500 56 x 10^-27 kg",
+  "onpage": "1.674 927 500 56 x 10^-27 kg",
   "url": "https://physics.nist.gov/cgi-bin/cuu/Value?mn",
   "confirmed": false,
   "why": "NOT present in rendered text"
@@ -16,6 +18,7 @@
  {
   "id": "T3",
   "answer": "369.71",
+  "onpage": "369.71",
   "url": "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.txt",
   "confirmed": true,
   "why": "found on the page"
@@ -23,13 +26,15 @@
  {
   "id": "T4",
   "answer": "1969, Walker",
+  "onpage": "1969, Walker",
   "url": "https://openlibrary.org/works/OL59800W/The_Left_Hand_of_Darkness",
   "confirmed": false,
-  "why": "NOT present in rendered text"
+  "why": "could not load: Error: Page.goto: net::ERR_CONNECTION_REFUSED at https://openlibrary.org/works/OL59800W/The_Left_"
  },
  {
   "id": "T5",
   "answer": "drei Jahre",
+  "onpage": "drei Jahre",
   "url": "https://www.gesetze-im-internet.de/bgb/__195.html",
   "confirmed": true,
   "why": "found on the page"
@@ -37,7 +42,48 @@
  {
   "id": "T6",
   "answer": "three",
+  "onpage": "three",
   "url": "https://www.postgresql.org/docs/current/runtime-config-connection.html",
+  "confirmed": true,
+  "why": "found on the page"
+ },
+ {
+  "id": "T7",
+  "answer": "1 April 1998",
+  "onpage": "1 April 1998",
+  "url": "https://www.rfc-editor.org/rfc/rfc2324.html",
+  "confirmed": true,
+  "why": "found on the page"
+ },
+ {
+  "id": "T8",
+  "answer": "5.25-5.50",
+  "onpage": "5.25-5.50",
+  "url": "https://www.federalreserve.gov/monetarypolicy/openmarket.htm",
+  "confirmed": true,
+  "why": "found on the page"
+ },
+ {
+  "id": "T9",
+  "answer": "10259",
+  "onpage": "10259",
+  "url": "https://kubernetes.io/docs/reference/networking/ports-and-protocols/",
+  "confirmed": true,
+  "why": "found on the page"
+ },
+ {
+  "id": "T10",
+  "answer": "un mínimo de 300 y un máximo de 400 Diputados",
+  "onpage": "un mínimo de 300 y un máximo de 400 Diputados",
+  "url": "https://www.boe.es/buscar/act.php?id=BOE-A-1978-31229",
+  "confirmed": true,
+  "why": "found on the page"
+ },
+ {
+  "id": "T11",
+  "answer": "John James Rickard Macleod",
+  "onpage": "John James Rickard Macleod",
+  "url": "https://www.nobelprize.org/prizes/medicine/1923/summary/",
   "confirmed": true,
   "why": "found on the page"
  }

@@ -42,6 +42,17 @@ NOTES: <one sentence on anything that cost you a call, or "none">
 
 def main():
     tasks = json.loads((HERE / "tasks.json").read_text(encoding="utf-8"))
+    # ONLY TASKS THE REFEREE CONFIRMED. The author verified its own answers,
+    # and three of its first six did not survive an independent check -- so the
+    # referee's verdict, not the author's, decides what runs. A task the
+    # referee could not confirm is DROPPED rather than adjudicated, which is
+    # what eval 3 did to two of its own.
+    gt = json.loads((HERE / "ground_truth.json").read_text(encoding="utf-8"))
+    keep = {r["id"] for r in gt if r["confirmed"]}
+    dropped = [t["id"] for t in tasks if t["id"] not in keep]
+    tasks = [t for t in tasks if t["id"] in keep]
+    if dropped:
+        print(f"dropped by the referee, not run: {', '.join(dropped)}")
     out = {}
     for t in tasks:
         for arm, ns in NS.items():

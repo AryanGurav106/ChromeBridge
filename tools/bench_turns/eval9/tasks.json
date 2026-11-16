@@ -1,8 +1,106 @@
 [
- {"id":"T1","shape":"reference","start":"https://www.debian.org/","task":"Start at https://www.debian.org/. Find the page for the Debian release with the codename 'buster' (Debian 10). Report the date on which Debian 10.0 was initially released, in the format YYYY-MM-DD.","answer":"2019-07-06","verified_from":"https://www.debian.org/releases/buster/","distractors":"2022-09-10 (last point release 10.13), 2022-06-30 (security updates end), 2021-08-14 (Debian 11 release)"},
- {"id":"T2","shape":"gov-search","start":"https://physics.nist.gov/cuu/Constants/","task":"Start at https://physics.nist.gov/cuu/Constants/ (NIST CODATA fundamental physical constants). Use the site's constants listing or search to find the 'neutron mass' (in kg). Report its numerical value exactly as printed, in the form '1.xxx xxx xxx xx e-27 kg' with digits only to the first factor (e.g. write the coefficient with the spaces as shown on the page, then 'x 10^-27 kg').","answer":"1.674 927 500 56 x 10^-27 kg","verified_from":"https://physics.nist.gov/cgi-bin/cuu/Value?mn","distractors":"proton mass 1.672 621 925 95 x 10^-27 kg (adjacent, nearly identical); standard uncertainty 0.000 000 000 85"},
- {"id":"T3","shape":"data-table","start":"https://gml.noaa.gov/ccgg/trends/data.html","task":"Start at https://gml.noaa.gov/ccgg/trends/data.html (NOAA GML Mauna Loa CO2 data). Find the Mauna Loa ANNUAL MEAN CO2 data table (not monthly, not global). Report the annual mean CO2 value in ppm for the year 2000, exactly as printed (two decimals).","answer":"369.71","verified_from":"https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.txt","distractors":"354.45 (1990), 390.10 (2010), 0.12 (the uncertainty column), and monthly or global-mean values for 2000"},
- {"id":"T4","shape":"catalogue","start":"https://openlibrary.org/","task":"Start at https://openlibrary.org/. Search the catalogue for the novel 'The Left Hand of Darkness' by Ursula K. Le Guin and open the work page for that novel (not a study guide, anthology or adaptation). Report the year it was originally published, as shown on the work page (4 digits), and the publisher shown for that original publication.","answer":"1969, Walker","verified_from":"https://openlibrary.org/works/OL59800W/The_Left_Hand_of_Darkness","distractors":"2003 (Ace Books edition listed first), 2017 (Library of America omnibus), 2016 (BBC dramatisation), 1976 (Finnish edition)"},
- {"id":"T5","shape":"non-english","start":"https://www.gesetze-im-internet.de/","task":"Start at https://www.gesetze-im-internet.de/ (German federal laws, in German). Find the Burgerliches Gesetzbuch (BGB) and open paragraph 195 (Regelmaessige Verjaehrungsfrist). Report, in German exactly as written in the law, the length of the regular limitation period (e.g. 'N Jahre' with the number as a word).","answer":"drei Jahre","verified_from":"https://www.gesetze-im-internet.de/bgb/__195.html","distractors":"dreissig Jahre (par. 197 for certain claims), zehn Jahre (par. 196 for land rights), the starting-date rule in par. 199 (end of the year)"},
- {"id":"T6","shape":"deep-docs","start":"https://www.postgresql.org/docs/current/","task":"Start at https://www.postgresql.org/docs/current/ (PostgreSQL documentation). Navigate to the Server Configuration section on connections and authentication and find the configuration parameter 'superuser_reserved_connections'. Report its default value as a word or number exactly as the docs state it.","answer":"three","verified_from":"https://www.postgresql.org/docs/current/runtime-config-connection.html","distractors":"100 (max_connections default, same page), 0 (tcp_keepalives_idle default)"}
+ {
+  "id": "T1",
+  "shape": "reference",
+  "start": "https://www.debian.org/",
+  "task": "Start at https://www.debian.org/. Find the page for the Debian release with the codename 'buster' (Debian 10). Report the date on which Debian 10.0 was initially released, in the format YYYY-MM-DD.",
+  "answer": "2019-07-06",
+  "verified_from": "https://www.debian.org/releases/buster/",
+  "distractors": "2022-09-10 (last point release 10.13), 2022-06-30 (security updates end), 2021-08-14 (Debian 11 release)"
+ },
+ {
+  "id": "T2",
+  "shape": "gov-search",
+  "start": "https://physics.nist.gov/cuu/Constants/",
+  "task": "Start at https://physics.nist.gov/cuu/Constants/ (NIST CODATA fundamental physical constants). Use the site's constants listing or search to find the 'neutron mass' (in kg). Report its numerical value exactly as printed, in the form '1.xxx xxx xxx xx e-27 kg' with digits only to the first factor (e.g. write the coefficient with the spaces as shown on the page, then 'x 10^-27 kg').",
+  "answer": "1.674 927 500 56 x 10^-27 kg",
+  "verified_from": "https://physics.nist.gov/cgi-bin/cuu/Value?mn",
+  "distractors": "proton mass 1.672 621 925 95 x 10^-27 kg (adjacent, nearly identical); standard uncertainty 0.000 000 000 85"
+ },
+ {
+  "id": "T3",
+  "shape": "data-table",
+  "start": "https://gml.noaa.gov/ccgg/trends/data.html",
+  "task": "Start at https://gml.noaa.gov/ccgg/trends/data.html (NOAA GML Mauna Loa CO2 data). Find the Mauna Loa ANNUAL MEAN CO2 data table (not monthly, not global). Report the annual mean CO2 value in ppm for the year 2000, exactly as printed (two decimals).",
+  "answer": "369.71",
+  "verified_from": "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.txt",
+  "distractors": "354.45 (1990), 390.10 (2010), 0.12 (the uncertainty column), and monthly or global-mean values for 2000"
+ },
+ {
+  "id": "T4",
+  "shape": "catalogue",
+  "start": "https://openlibrary.org/",
+  "task": "Start at https://openlibrary.org/. Search the catalogue for the novel 'The Left Hand of Darkness' by Ursula K. Le Guin and open the work page for that novel (not a study guide, anthology or adaptation). Report the year it was originally published, as shown on the work page (4 digits), and the publisher shown for that original publication.",
+  "answer": "1969, Walker",
+  "verified_from": "https://openlibrary.org/works/OL59800W/The_Left_Hand_of_Darkness",
+  "distractors": "2003 (Ace Books edition listed first), 2017 (Library of America omnibus), 2016 (BBC dramatisation), 1976 (Finnish edition)"
+ },
+ {
+  "id": "T5",
+  "shape": "non-english",
+  "start": "https://www.gesetze-im-internet.de/",
+  "task": "Start at https://www.gesetze-im-internet.de/ (German federal laws, in German). Find the Burgerliches Gesetzbuch (BGB) and open paragraph 195 (Regelmaessige Verjaehrungsfrist). Report, in German exactly as written in the law, the length of the regular limitation period (e.g. 'N Jahre' with the number as a word).",
+  "answer": "drei Jahre",
+  "verified_from": "https://www.gesetze-im-internet.de/bgb/__195.html",
+  "distractors": "dreissig Jahre (par. 197 for certain claims), zehn Jahre (par. 196 for land rights), the starting-date rule in par. 199 (end of the year)"
+ },
+ {
+  "id": "T6",
+  "shape": "deep-docs",
+  "start": "https://www.postgresql.org/docs/current/",
+  "task": "Start at https://www.postgresql.org/docs/current/ (PostgreSQL documentation). Navigate to the Server Configuration section on connections and authentication and find the configuration parameter 'superuser_reserved_connections'. Report its default value as a word or number exactly as the docs state it.",
+  "answer": "three",
+  "verified_from": "https://www.postgresql.org/docs/current/runtime-config-connection.html",
+  "distractors": "100 (max_connections default, same page), 0 (tcp_keepalives_idle default)"
+ },
+ {
+  "id": "T7",
+  "shape": "reference",
+  "start": "https://www.rfc-editor.org/",
+  "task": "Start at https://www.rfc-editor.org/. Find the RFC titled 'Hyper Text Coffee Pot Control Protocol (HTCPCP/1.0)' (RFC 2324). Report the date printed in its header, exactly as written (day, month name, year).",
+  "answer": "1 April 1998",
+  "onpage": "1 April 1998",
+  "verified_from": "https://www.rfc-editor.org/rfc/rfc2324.html",
+  "distractors": "RFC 7168 'The Hyper Text Coffee Pot Control Protocol for Tea Efflux Appliances (HTCPCP-TEA)' is dated 1 April 2014"
+ },
+ {
+  "id": "T8",
+  "shape": "data-table",
+  "start": "https://www.federalreserve.gov/",
+  "task": "Start at https://www.federalreserve.gov/. Find the Federal Reserve's 'Open Market Operations' page, which has tables of changes in the target federal funds rate by year. In the 2023 table, find the row for July 27 and report the 'Level (%)' value for that row exactly as printed (a range like 'x.xx-y.yy').",
+  "answer": "5.25-5.50",
+  "onpage": "5.25-5.50",
+  "verified_from": "https://www.federalreserve.gov/monetarypolicy/openmarket.htm",
+  "distractors": "5.00-5.25 (May 4, 2023 row), 4.50-4.75 (Feb 2, 2023), 25 (the Increase column for that row)"
+ },
+ {
+  "id": "T9",
+  "shape": "deep-docs",
+  "start": "https://kubernetes.io/docs/home/",
+  "task": "Start at https://kubernetes.io/docs/home/. In the Reference section, under Networking Reference, open 'Ports and Protocols'. In the Control plane table, find the port used by kube-scheduler and report the port number only.",
+  "answer": "10259",
+  "onpage": "10259",
+  "verified_from": "https://kubernetes.io/docs/reference/networking/ports-and-protocols/",
+  "distractors": "10257 (kube-controller-manager, adjacent row), 10250 (Kubelet API), 2379-2380 (etcd), 6443 (API server)"
+ },
+ {
+  "id": "T10",
+  "shape": "non-english",
+  "start": "https://www.boe.es/",
+  "task": "Start at https://www.boe.es/ (Spanish official gazette, in Spanish). Find the text of the Constitucion Espanola (1978) in the BOE legislation. Open Articulo 68, paragraph 1, which says how many Diputados the Congreso is made up of. Report the range exactly as written in Spanish, starting with 'un minimo de' (keep accents as on the page).",
+  "answer": "un mínimo de 300 y un máximo de 400 Diputados",
+  "onpage": "un mínimo de 300 y un máximo de 400 Diputados",
+  "verified_from": "https://www.boe.es/buscar/act.php?id=BOE-A-1978-31229",
+  "distractors": "Articulo 69 (Senate: four senators per province), 350 (the actual current number of deputies, not stated here)"
+ },
+ {
+  "id": "T11",
+  "shape": "catalogue",
+  "start": "https://www.nobelprize.org/",
+  "task": "Start at https://www.nobelprize.org/. Find the Nobel Prize in Physiology or Medicine 1923 (awarded for the discovery of insulin). It was shared by two laureates. Report the full name of the laureate who is NOT Frederick Grant Banting, exactly as written on the prize summary page.",
+  "answer": "John James Rickard Macleod",
+  "onpage": "John James Rickard Macleod",
+  "verified_from": "https://www.nobelprize.org/prizes/medicine/1923/summary/",
+  "distractors": "John Macleod (short form in the page header; not the full name), Charles Best (co-discoverer who did not receive the prize), Frederick Grant Banting"
+ }
 ]
