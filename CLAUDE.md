@@ -7774,6 +7774,39 @@ granted in the side panel is refused with the same message the agent gets.
     is now their DEFAULT, so re-running that A/B would measure the same obsolete
     path again. The conclusion stands and the framing does not.
 
+    **LIVE-VERIFIED, and #76/#77 are confirmed in the one place that counts.**
+    #43's rule makes a live pass non-optional and #76/#77 shipped without one,
+    because the extension could not be reloaded. After the reload (worker
+    `g25h9p`, age 180s, and `server_code_changed_since_start` silent, so both
+    halves are current), on ptable.com with churn induced by a real page action
+    inside ONE batch — which is how it has to be driven, since #77 measured a
+    `setInterval` ticker stopping dead in a hidden tab:
+
+    | read, same instant, same page | banner |
+    |---|---|
+    | unscoped | `THE DOM IS STILL CHANGING … 3 change(s): 1 structural, 1 @class, 1 @style` |
+    | scoped to `main` | `Minor DOM activity … 1 @class, 1 @style **INSIDE THE SUBTREE YOU SCOPED TO**` |
+    | scoped to `header` | *(nothing)* |
+
+    Three fixes confirmed in one reading. The banner **appears at
+    `max_chars=300`**, where pre-fix it was invisible at 300, 420 and 700 — #77's
+    ordering fix, which is the defect that had made the readiness signal absent
+    from every scoped read since the scope header was added. It sits ABOVE the
+    `[scoped to the subtree of ref_96]` line, which is the mechanism. And the
+    scoped answer is genuinely DIFFERENT from the document's: the document has a
+    structural change and gets the strong do-not-conclude-absence warning, while
+    the region the caller asked about has none and correctly gets the milder
+    tier — #76's whole point, on a real page rather than a fixture.
+
+    **The header reading nothing is the control**, and it is the distinction the
+    D2 work turned on: that region was genuinely OBSERVED quiet, so it takes the
+    silent path rather than the new UNKNOWN path. Silence and "I could not see"
+    are now two different outputs, and this read exercises the first one.
+
+    Also confirmed unasked: the batch reported `waited 612ms for the DOM to stop
+    changing after step 0 acted` (#51), and the kind-split put `1 structural`
+    into the strong tier while `@class`/`@style` alone took the minor one (#70).
+
     Suites: 1,309 checks. New — C33–C35 (the serialization repair, the credit
     cap, and the cap-withdrawal counter, with four controls), MV4/MV4b (the
     dialog rect is judged in its own view), FV7–FV9 and FR23 (variables reach the
