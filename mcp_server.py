@@ -2215,7 +2215,20 @@ async def search_page(
         _sc = h.get("scope")
         _nth = h.get("nth")
         where = (f" [in {_sc}]" if _sc else (f" [#{_nth} in document order]" if _nth else ""))
-        lines.append(f'  <{h.get("tag", "?")}{ref}{loc}>{where} {ctx}')
+        # THE RECORD THE CONTEXT CAME FROM, when it is not the match's own
+        # element. The ref names the ATTRIBUTION unit; the context is quoted
+        # from the nearest enclosing record, and a caller who wants the card's
+        # OTHER controls -- its add-to-cart button, its checkbox -- needs that
+        # one. Measured live in eval 7 as the only overhead call in an 8-call
+        # task: a match on a product title could not be turned into the card's
+        # button, because nothing named the card.
+        # Printed only when it differs and carries a ref, so a match that fills
+        # its own element pays nothing (#13: a notation appears only where it
+        # applies).
+        _rr = h.get("recordRef")
+        _rec = (f"  [record: ref_{_rr}"
+                + (f" <{h['recordTag']}>" if h.get("recordTag") else "") + "]") if _rr else ""
+        lines.append(f'  <{h.get("tag", "?")}{ref}{loc}>{where} {ctx}{_rec}')
     if _located:
         # THE REF AND THE CONTEXT ARE TWO DIFFERENT UNITS, PRINTED IN ONE ROW.
         # The ref is the ATTRIBUTION unit -- the element whose own text first

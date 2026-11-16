@@ -1996,6 +1996,20 @@ async def main():
               "WHICH elements were dropped rather than how to reach them",
               "ledger=true" in with_menu,
               "ledger named" if "ledger=true" in with_menu else "LEDGER DROPPED")
+        # AH5c — AND IT MUST NOT PROMISE A REF IT CANNOT GIVE. The sentence
+        # used to end "and its refs act normally". mmids are stamped by the
+        # COLLECTOR (#32), so anything rendered SINCE the last read_page carries
+        # none. Measured live in eval 7: an agent followed this exact sentence,
+        # queried a suggestion button that had just appeared, got a ref-less
+        # row, and spent a whole call running read_page purely to make the
+        # collector stamp. #33's class, inside this note.
+        check("AH5c ...and it does NOT promise that refs always work — it names "
+              "the one case where they do not, and the one-call repair",
+              "its refs act normally" not in with_menu
+              and "rendered since does not" in with_menu
+              and "re-query" in with_menu,
+              with_menu[with_menu.find("To REACH"):][:230] if "To REACH" in with_menu
+              else "NO RECOVERY NAMED")
 
         # THE CONTROL. Same drops, no popup on the page: the note must still appear
         # and must NOT claim something is open.
@@ -2423,6 +2437,56 @@ async def main():
               bool(_cap) and "query_elements(selector" in _cap
               and "share ONE label" in _cap,
               (_cap[:120] or "(no cap notice on this fixture)"))
+
+        # ---- RC1/RC1b: THE RECORD THE CONTEXT CAME FROM, NAMED -------------
+        # search_page reports the ATTRIBUTION unit (the element whose own text
+        # first contains the match, #32) and quotes context from the nearest
+        # enclosing RECORD (#47's climb). Eval 7's last run spent its only
+        # overhead call turning a match on a product title into the card's
+        # add-to-cart button, because nothing named the card -- a scoped read of
+        # the title div holds no button. The climb already stands on the record
+        # when it builds the string, so this is a fact in hand.
+        rcp = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await rcp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await rcp.goto("about:blank")
+        await rcp.set_content(
+            "<main><article><div>Оливки без косточки</div><div>229 руб</div>"
+            "<button>Dobavit</button></article>"
+            "<p>Lorem ipsum dolor sit amet consectetur NEEDLE adipiscing elit "
+            "sed do eiusmod tempor incididunt ut labore.</p></main>")
+        await rcp.wait_for_timeout(150)
+        _ = await rcp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()")
+        # `_searchTextPage(pattern, OPTS)` -- an options OBJECT, not positionals.
+        # My first version passed `false, false, 200, '', 20`, so opts was
+        # `false`, every option was ignored and contextChars silently took its
+        # 150 default. The suite's own `search()` helper gets this right; these
+        # two calls were hand-written and did not.
+        rc = await rcp.evaluate(
+            "(function(){ " + SEARCH + "; return _searchTextPage("
+            "'Оливки', {contextChars: 200}); })()")
+        _h = (rc or {}).get("hits") or []
+        check("RC1 a match whose context was climbed names the RECORD it came "
+              "from, so the card's other controls are reachable in one call",
+              bool(_h) and _h[0].get("recordRef")
+              and _h[0].get("recordTag") == "article",
+              f"{_h[0] if _h else 'NO HIT'}")
+        # THE CONTROL NEEDS A MATCH THAT NEVER CLIMBS, which is not the same as
+        # one that fills its element -- a match filling its element has NOTHING
+        # either side, so `_wants` asks for more and the one-hop fallback (#43)
+        # fires. Two wrong versions of this check before the rule was clear:
+        # 200 chars around a 52-char paragraph, then 10 chars around the same.
+        # What actually stops the climb is real text on BOTH sides within the
+        # element's own string.
+        rc2 = await rcp.evaluate(
+            "(function(){ " + SEARCH + "; return _searchTextPage("
+            "'NEEDLE', {contextChars: 10}); })()")
+        _h2 = (rc2 or {}).get("hits") or []
+        check("RC1b CONTROL: a match whose own element already supplies the "
+              "context names NO record — the notation appears only where the "
+              "climb actually happened",
+              bool(_h2) and not _h2[0].get("recordRef"), f"{_h2[0] if _h2 else 'NO HIT'}")
+        await rcp.close()
 
         # ---- QS1/QS1b/QS1c: A STEPPER'S +/- MUST NOT BOTH TAKE THE QUANTITY
         # The worst-shaped defect eval 7 found. synthLabel's card-pattern branch

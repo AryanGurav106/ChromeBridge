@@ -12285,8 +12285,20 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
            // `find` searches what the COLLECTOR KEPT, and an aria-hidden
            // element is dropped at collection (`_drop(el,'aria-hidden')`), not
            // merely filtered to the viewport -- so find can never reach one.
-           // `query_elements` goes to the RENDERED document, so it does, and
-           // its refs act normally.
+           // `query_elements` goes to the RENDERED document, so it does.
+           //
+           // IT DOES NOT ALWAYS HAND BACK A REF, AND THIS NOTE USED TO PROMISE
+           // ONE. mmids are stamped by the COLLECTOR (#32), so anything
+           // rendered SINCE the last read_page -- a suggestion list, a
+           // just-opened menu, a fresh row -- carries none. Measured live in
+           // eval 7: an agent followed this exact sentence, typed a
+           // destination, queried the suggestion button that had just
+           // appeared, and got a row with no ref. It spent a whole call
+           // running read_page purely to make the collector stamp, then
+           // re-queried. Its words: "for a suggestion list -- i.e. anything
+           // that appears in response to typing, which is the normal case --
+           // query_elements alone is a dead end, and nothing in that note says
+           // so." #33's class again, in this same note.
            //
            // MEASURED LIVE, on a hotel search whose entire widget sat under an
            // aria-hidden ancestor: read_page listed 11 elements and none of
@@ -12297,7 +12309,10 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
            // answer -- #33's class, in the note written to end #33's class.
            + ` To REACH one of these, use query_elements(selector): it queries the`
            + ` RENDERED document rather than this listing, so it returns`
-           + ` aria-hidden elements and its refs act normally. find() cannot —`
+           + ` aria-hidden elements. An element ALREADY on the page when you last`
+           + ` read it comes back with its ref; one rendered since does not, because`
+           + ` refs are stamped by read_page — if a row comes back ref-less, read the`
+           + ` page once and re-query. find() cannot reach these at all —`
            + ` it searches only what was collected, and these were dropped from`
            + ` collection. This is page STATE, not the page's contents.`);
     } else if (_ah >= 25) {
@@ -13225,7 +13240,34 @@ function _searchTextPage(pattern, opts) {
     // its children are in. Their offsets were translated by add() above, so this
     // is a re-slice at a known position rather than a search.
     if (pend) {
-      for (const p of pend) { p.hops++; _ctx(p, full, bounds); }
+      for (const p of pend) {
+        p.hops++;
+        _ctx(p, full, bounds);
+        // NAME THE RECORD THE CONTEXT CAME FROM, not only the leaf that owns
+        // the match. Attribution is UNCHANGED (#32: the hit belongs to the
+        // element whose own text first contains the whole match, or an
+        // ancestor reports every child's hit) -- this is an ADDITIONAL field.
+        //
+        // Measured live in eval 7, and it was the only overhead call in an
+        // 8-call task. A match on a product title gave `ref_1285`; the agent
+        // needed the card's «Добавить» button, a SIBLING one level up and over.
+        // Neither route reaches it: a scoped read of the title div holds no
+        // button, and nothing named the parent card. Its words: "it climbed to
+        // the card to build that string and then reported only the leaf's ref.
+        // Naming the record's ref alongside the match ref would have let me go
+        // straight to read_page(ref_id=<card>)."
+        // We are standing ON that record right now -- `node` is the ancestor
+        // whose text just supplied the context -- so this is a fact already in
+        // hand, not a second walk. Last write wins, which is the ancestor the
+        // context finally came from.
+        try {
+          const _rm = node.getAttribute && node.getAttribute('mmid');
+          if (_rm && node !== p.self) {
+            p.hit.recordRef = _rm;
+            p.hit.recordTag = (node.tagName || '').toLowerCase();
+          }
+        } catch (e) {}
+      }
       pend = pend.filter((p) => _wants(p, full));
       if (!pend.length) pend = null;
     }
@@ -13272,7 +13314,11 @@ function _searchTextPage(pattern, opts) {
         };
         hits.push(hit);
         hitNodes.push(node);
-        const p = { hit: hit, at: at0, len: len0, hops: 0, climb: _climbTo(node) };
+        // `self` is the hit's OWN element, kept so an ancestor can tell whether
+        // it is the record or the match itself without an O(n) lookup per hit
+        // per ancestor -- which is what the first version of recordRef did.
+        const p = { hit: hit, self: node, at: at0, len: len0, hops: 0,
+                    climb: _climbTo(node) };
         _ctx(p, full, bounds);
         if (_wants(p, full)) (pend || (pend = [])).push(p);
       }

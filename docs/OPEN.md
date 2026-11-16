@@ -469,7 +469,7 @@ result when a submit fails (#4). **A standalone disabled button has no
 equivalent path**, and that asymmetry is the whole item: the same question, asked
 about the same page, answered in one place and not the other.
 
-### 4j. The aria-hidden note promises refs `query_elements` cannot give `OPEN`
+### 4j. The aria-hidden note promises refs `query_elements` cannot give — CLOSED
 The listing's aria-hidden note sends callers to `query_elements` and says
 verbatim *"it queries the RENDERED document rather than this listing, so it
 returns aria-hidden elements and its refs act normally."*
@@ -643,7 +643,7 @@ Both arms met it. Ours went to a shell `ls` and found the file;
 line on a click whose target carries a `download` attribute would close it —
 and the attribute is declared, so this needs no guess.
 
-### 4q. `search_page` reports the TEXT's ref and no route to the ACTION `OPEN`
+### 4q. `search_page` reports the TEXT's ref and no route to the ACTION — CLOSED
 The last run of eval 7, and the only overhead call in an 8-call task.
 
 `search_page("оливк")` returned `<div ref_1285 …> Оливки Доставка, без косточки
@@ -661,8 +661,22 @@ the match ref would have let me go straight to `read_page(ref_id=<card>)`."*
 
 Attribution must not change — #32's rule is that the hit belongs to the element
 whose own text first contains the match, or an ancestor reports every child's
-hit. This is an ADDITIONAL field, not a replacement. `background.js`, held under
-eval 7's Amendment 2; the climb target is already in hand there as `p.climb`.
+hit. This is an ADDITIONAL field, not a replacement.
+
+**CLOSED.** The climb already STANDS ON the record when it re-slices the
+context, so `recordRef`/`recordTag` are stamped there — a fact in hand, not a
+second walk — and the row prints `[record: ref_N <article>]` only when it
+differs from the match's own element. The hit's own node is kept on the pending
+object as `self`, because the first version compared via `hits.indexOf` which is
+O(n) per hit per ancestor.
+RC1 fails pre-fix; **RC1b is the control that a match whose own element already
+supplies the context names none**. Two wrong versions of that control first: a
+match that FILLS its element has nothing either side, so `_wants` asks for more
+and the one-hop fallback fires — what stops the climb is real text on BOTH
+sides. And both new calls passed POSITIONAL arguments to
+`_searchTextPage(pattern, opts)`, so every option was ignored and
+`contextChars` silently took its 150 default. The suite's own helper gets this
+right; hand-written calls did not.
 
 ### 4r. CT1c's advice cannot answer the page it was written for `OPEN`
 **This lands on advice added THIS SESSION**, in response to eval 6, and eval 7
