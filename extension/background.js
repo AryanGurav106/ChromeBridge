@@ -2057,6 +2057,9 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
     const _wantFx = params.selector && clickKinds[action];
     let _fxB = null;
     if (_wantFx) { try { _fxB = await runInTab(t.id, _clickEffectPage, [params.selector]); } catch (e) {} }
+    // Read BEFORE the dispatch. See the guard below for why `_delivered` alone
+    // cannot tell a click that navigated from one that did nothing.
+    const _navSeqB = navSeq(t.id);
     for (let c = 1; c <= count; c++) {
       await cdpSend(t.id, "Input.dispatchMouseEvent",
         { type: "mousePressed", x: pt.x, y: pt.y, button, clickCount: c, buttons: button === "left" ? 1 : 2, modifiers: bits });
@@ -2076,15 +2079,28 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
     // (ID3); a dead CHANNEL is the different fact `_dead` carries (#56); and a
     // click that worked says nothing extra (ID2).
     let _noEffect = "";
-    // `_delivered === true`, NOT `!== false`. The probe returns null when it was
-    // DESTROYED, which is what a click that navigated looks like -- the
-    // commonest click there is -- and `null` would otherwise reach this branch
-    // and report NO EFFECT for a click that did the biggest thing a click can
-    // do. Requiring `true` means: same document, the page received the event,
-    // and nothing changed. That is the only state this token should mark, and
-    // it excludes navigation by construction rather than by a url comparison
-    // (`tab.url` lags a commit, #61).
-    if (_wantFx && _fxB && _delivered === true) {
+    // `_delivered === true`, NOT `!== false`: the probe returns null when it was
+    // DESTROYED, and `null` would otherwise report NO EFFECT for a click that did
+    // the biggest thing a click can do.
+    //
+    // THAT WAS NOT ENOUGH, AND THIS COMMENT USED TO CLAIM IT WAS -- it said
+    // requiring `true` means "same document". It does not. The probe lives on the
+    // OLD document's `window` and the readback is ONE executeScript round trip, a
+    // few milliseconds after `mouseReleased`. A click on a link has not committed
+    // its navigation by then: the probe is alive, answers `true`, and `_fxB` and
+    // `_fxA` are BOTH taken against the page being left. Identical, every time.
+    // Eval 9 measured the cost -- 5 of our 7 scored runs lost calls to this token
+    // firing on clicks that had plainly navigated -- and it is a comment asserting
+    // a guarantee the code does not have, which is C15's class inside the guard
+    // written to stop tools claiming what they have not checked.
+    //
+    // ASK CHROME RATHER THAN INFER (#51). `onBeforeNavigate` lands in the worker
+    // the moment a navigation STARTS, whether or not the old document is still
+    // painting, so "did this tab start a main-frame navigation since the click"
+    // is a counter comparison against a FACT. `_navState` alone cannot answer it:
+    // a fast navigation can start and settle between dispatch and readback and
+    // leave that map empty at both ends.
+    if (_wantFx && _fxB && _delivered === true && navSeq(t.id) === _navSeqB) {
       let _fxA = null;
       try { _fxA = await runInTab(t.id, _clickEffectPage, [params.selector]); } catch (e) {}
       // The fields `_clickEffectPage` actually returns: {n, txt, st}. My first
@@ -2934,6 +2950,18 @@ const _navState = new Map();    // tabId -> { phase: 'pending'|'committed', url,
 const _navWaiters = new Map();  // tabId -> [fn, ...]
 let _navGen = 0;
 
+// PER-TAB COUNT OF MAIN-FRAME NAVIGATION STARTS. `_navState` answers "is one in
+// flight RIGHT NOW", which is not the question a click's effect probe has to
+// ask. A fast navigation can start AND settle between the click dispatch and the
+// readback, leaving that map empty at both ends, so a caller comparing it would
+// conclude nothing had happened. A monotonic count answers the question that is
+// actually being asked -- "did one START since I looked" -- and only equality is
+// ever compared, so it does not matter that one navigation bumps it twice
+// (onBeforeNavigate and onCommitted both route through `_navStart`).
+// Per TAB, so a navigation in another tab cannot suppress a real finding here.
+const _navSeq = new Map();      // tabId -> count of main-frame navigations STARTED
+function navSeq(tabId) { return _navSeq.get(tabId) || 0; }
+
 function _navSettle(tabId) {
   _navState.delete(tabId);
   const arr = _navWaiters.get(tabId);
@@ -2944,6 +2972,7 @@ function _navSettle(tabId) {
 
 function _navStart(tabId, phase, url) {
   const gen = ++_navGen;
+  _navSeq.set(tabId, (_navSeq.get(tabId) || 0) + 1);
   _navState.set(tabId, { phase, url: url || '', since: Date.now(), gen });
   // A navigation that neither commits nor errors must not pin the tab as busy
   // forever: a stuck entry would make EVERY later wait in every later batch pay
@@ -2974,7 +3003,7 @@ try {
     // batch wait out the cap for a page that is never going to arrive.
     if (d.frameId === 0) _navSettle(d.tabId);
   });
-  chrome.tabs.onRemoved.addListener((tabId) => _navSettle(tabId));
+  chrome.tabs.onRemoved.addListener((tabId) => { _navSeq.delete(tabId); _navSettle(tabId); });
 } catch (e) { /* nothing is ever marked pending below if this failed */ }
 
 try {

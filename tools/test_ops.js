@@ -1291,6 +1291,102 @@ const FIELDS3 = () => ([
       String(r.result || r.error).slice(0, 160));
   });
 
+  // A CLICK THAT NAVIGATED IS NOT A CLICK THAT DID NOTHING, and for five months
+  // the guard could not tell them apart. `computerOp` reports `NO EFFECT` when
+  // the input was DELIVERED and the page did not move -- and its own comment
+  // claimed that requiring `_delivered === true` established "same document".
+  // It did not. The delivery probe lives on the OLD document's `window` and the
+  // readback is one `executeScript` round trip after `mouseReleased`, so a link
+  // click has not committed yet: the probe is alive, answers `true`, and both
+  // effect snapshots are taken against the page being LEFT. Eval 9 measured it
+  // at 5 of our 7 scored runs losing calls to the token on clicks that worked.
+  //
+  // Modelled exactly: the navigation ANNOUNCEMENT lands in the worker during the
+  // readback while the old document -- and therefore every snapshot -- is
+  // unchanged. That is the live ordering, not a convenient one.
+  await test("the NO EFFECT token and a navigation", async () => {
+    // `fire` is declared LOCALLY in each test that needs it, and leaving it out
+    // here cost the first run of this block: the stubs threw a ReferenceError,
+    // `runInTab`'s catch swallowed it, `_delivered` stayed null, and ID9 PASSED
+    // for entirely the wrong reason while its two controls failed. The controls
+    // are what found it, which is the whole argument for having them.
+    const fire = (arr, d) => arr.forEach((f) => f(d));
+    const same = () => ({ n: 100, txt: 1000, st: "" });   // identical before and after
+    resetState();
+    setStubs({
+      _computerPoint: () => ({ x: 500, y: 356 }),
+      _hitTestPage: () => null,
+      _rectForPage: () => ({ x: 60, y: 40, w: 20, h: 20, visible: true }),
+      _clickEffectPage: same,
+      _inputProbePage: (arm) => {
+        if (arm) return true;
+        // Chrome announces the navigation here: after the dispatch, before the
+        // old document has gone anywhere.
+        fire(listeners.navBefore, { tabId: 1, frameId: 0, url: "https://b.test/after-click" });
+        return true;                                      // the probe SURVIVED
+      },
+    });
+    let r = await callOp("computer",
+      { tabId: 1, action: "left_click", selector: "[mmid='5']" });
+    check("ID9 a click that STARTED a navigation is not reported as having no effect, "
+      + "even though the probe survived and the page had not changed yet",
+      r.ok && !/NO EFFECT/.test(String(r.result)), String(r.result).slice(0, 160));
+
+    // THE CONTROL, and it is the whole reason the check above means anything:
+    // "never emit the token" would satisfy ID6 while deleting the guard. Same
+    // stubs, same identical snapshots, no navigation announced.
+    resetState();
+    setStubs({
+      _computerPoint: () => ({ x: 500, y: 356 }),
+      _hitTestPage: () => null,
+      _rectForPage: () => ({ x: 60, y: 40, w: 20, h: 20, visible: true }),
+      _clickEffectPage: same,
+      _inputProbePage: () => true,
+    });
+    r = await callOp("computer",
+      { tabId: 1, action: "left_click", selector: "[mmid='5']" });
+    check("ID9b CONTROL: a delivered click on a page that genuinely did not move "
+      + "still reports NO EFFECT",
+      r.ok && /NO EFFECT/.test(String(r.result)), String(r.result).slice(0, 160));
+
+    // AND THE COUNTER IS PER TAB. A navigation in ANOTHER tab must not buy this
+    // click an excuse -- that would be the guard suppressed by unrelated traffic,
+    // which on any busy browser is most of the time.
+    resetState();
+    setStubs({
+      _computerPoint: () => ({ x: 500, y: 356 }),
+      _hitTestPage: () => null,
+      _rectForPage: () => ({ x: 60, y: 40, w: 20, h: 20, visible: true }),
+      _clickEffectPage: same,
+      _inputProbePage: (arm) => {
+        if (!arm) fire(listeners.navBefore, { tabId: 99, frameId: 0, url: "https://other.test/" });
+        return true;
+      },
+    });
+    r = await callOp("computer",
+      { tabId: 1, action: "left_click", selector: "[mmid='5']" });
+    check("ID9c CONTROL: another TAB navigating does not suppress the token",
+      r.ok && /NO EFFECT/.test(String(r.result)), String(r.result).slice(0, 160));
+
+    // A SUBFRAME IS NOT THE PAGE. `_navStart` is only reached from frameId 0, so
+    // an ad iframe reloading mid-click cannot explain away a dead button either.
+    resetState();
+    setStubs({
+      _computerPoint: () => ({ x: 500, y: 356 }),
+      _hitTestPage: () => null,
+      _rectForPage: () => ({ x: 60, y: 40, w: 20, h: 20, visible: true }),
+      _clickEffectPage: same,
+      _inputProbePage: (arm) => {
+        if (!arm) fire(listeners.navBefore, { tabId: 1, frameId: 7, url: "https://ads.test/" });
+        return true;
+      },
+    });
+    r = await callOp("computer",
+      { tabId: 1, action: "left_click", selector: "[mmid='5']" });
+    check("ID9d CONTROL: a SUBFRAME navigating does not suppress the token",
+      r.ok && /NO EFFECT/.test(String(r.result)), String(r.result).slice(0, 160));
+  });
+
   await test("await_navigation waits on a FACT, and only while there is one", async () => {
     // #47/#48: an observation chained after a CLICK read the page the click was in
     // the middle of replacing (search_page, get_url, get_page_text -- three
