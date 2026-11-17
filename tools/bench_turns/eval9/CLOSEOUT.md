@@ -16,11 +16,18 @@ Reproduce with `python analyse.py` from this directory.
 | T3 | NOAA annual mean CO2 | **5** | 8 | CB |
 | T5 | gesetze-im-internet BGB | 1 | 4 | EXCLUDED (Amendment 5) |
 | T6 | postgresql docs | 11 | **7** | CIC |
-| T7 | debian release history | 9 | **7** | CIC |
+| T7 | rfc-editor.org | 9 | **7** | CIC |
 | T8 | federalreserve.gov | **6** | 13 | CB |
 | T9 | kubernetes.io | **7** | 12 | CB |
 | T10 | boe.es (es) | **8** | 12 | CB |
 | T11 | nobelprize.org | 12 | **9** | CIC |
+
+**Three of the eleven authored tasks never ran**, all dropped by the referee
+before any agent existed, which is the instrument working rather than a loss:
+T1 (debian.org) and T2 (physics.nist.gov) because the author's answer is not in
+the page's rendered text, and T4 because openlibrary.org refused the
+connection outright. `prompts.json` holds only the eight survivors, so no agent
+could have been given a task the referee had not confirmed.
 
 The totals lean our way by 14.7%, a hair outside the 12–14% rerun floor
 arXiv:2608.06171 measures for this kind of A/B. **That is not the result.** The

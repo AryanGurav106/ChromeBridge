@@ -280,3 +280,38 @@ arms. If a CIC run reads an href and navigates to it, it scores the same way.
 
 **Not grandfathered.** T5 stays excluded: both arms typed a URL neither had seen
 on a page.
+
+## AMENDMENT 9 — the restore, and the probe that says it has NOT landed
+
+Written 2026-11-17, after the last wave. Amendment 3 committed to restoring
+`ALLOW_ALL_ORIGINS` immediately after the run and to verifying it **by probing
+a refused origin, not by reading the file.** Done, and the probe is the point:
+
+| check | result |
+|---|---|
+| the flag at `background.js:393` | `false` |
+| `git diff` after committing | empty; the only change was that line |
+| `node tools/test_permissions.js` | **24 passed, 0 failed, 24 total** with NO `not-applicable (gate off)` caveat |
+| control-byte sweep, `node --check` | 0 CRLF, 0 NUL, 0 BS, no BOM; parses |
+| **a gated op on an UNGRANTED origin** | **SUCCEEDED** |
+
+`read_page` on the `kubernetes.io` tab returned a listing. Amendment 2 records
+that all eight eval origins were ungranted — that is why the flag was armed at
+all — so a listing is the gate still being OFF in the browser.
+
+`sw_info`: worker `5dsnvt`, age 723s. The restore landed on disk roughly a
+minute before that probe, and the worker is eleven minutes older than the
+restore. **It is still running the armed build**, which is #47's measurement
+reproducing exactly: a live MV3 worker does not pick up a flag change while our
+own persistent WebSocket keeps it from being evicted. #47 saw the arming take
+effect with no reload because the worker happened to be idle through a
+compaction, and the restore NOT take effect, with probes still succeeding
+minutes later.
+
+**So the state is: restored in the repository, NOT restored in the browser.**
+Only an extension reload at `chrome://extensions` closes it, and that is the
+user's action, not one this session can take. Until then the loaded extension
+is permissive and "default deny, per origin" is untrue of it.
+
+Recorded here rather than reported as done, because Amendment 3's whole reason
+for demanding a probe is that reading the file would have said yes.
