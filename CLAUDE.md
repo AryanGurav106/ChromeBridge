@@ -8247,16 +8247,20 @@ granted in the side panel is refused with the same message the agent gets.
     unprompted:** T11/cic reached its last hop by the Macleod link's own href,
     the same move as T11/cb two rows up.
 
-    **NOT LIVE-VERIFIED YET, and #43 makes that non-optional.** The fix is
-    fixtured and ablated; the loaded extension still runs the pre-fix build and
-    an extension reload is the user's action. The same is true of the consent
-    gate: Amendment 3 armed `ALLOW_ALL_ORIGINS` for this eval and committed to a
-    probe rather than a file read, and the probe says the restore has NOT landed
-    — `read_page` on an ungranted `kubernetes.io` tab returned a listing with the
-    worker 11 minutes older than the restore. **Restored in the repository, NOT
-    in the browser**, which is #47's measurement reproducing exactly: a live MV3
-    worker does not pick up a flag change while our own persistent WebSocket
-    keeps it from being evicted.
+    **THE CONSENT GATE IS RESTORED IN THE BROWSER, verified by the probe
+    Amendment 3 demanded rather than by reading the file.** Before the reload,
+    `read_page` on an ungranted `kubernetes.io` tab returned a listing with the
+    worker 11 minutes older than the restore — #47's measurement reproducing
+    exactly, since a live MV3 worker does not pick up a flag change while our own
+    persistent WebSocket keeps it from being evicted. After the reload (worker
+    `6n182f`, age 12s, `bridge_ms_total` reset, so both halves respawned), the
+    SAME origin is refused at `assertOpAllowed`.
+    **And the restore revealed what the armed flag had been hiding: the grant
+    table in this profile is EMPTY.** `http://localhost:8787`, the local fixture
+    the flow suite uses, is refused too. So while the flag was true, "default
+    deny, per origin" was not merely bypassed for the eval's eight origins —
+    there was nothing underneath it at all. That is the case for a probe over a
+    file read, one layer deeper than Amendment 3 put it.
 
     Suites: 1,434 checks. New — ID9 (a click that STARTED a navigation is not
     reported as having no effect; FAILS against the pre-fix guard with the live

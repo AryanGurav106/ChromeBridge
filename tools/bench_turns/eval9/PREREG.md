@@ -315,3 +315,27 @@ is permissive and "default deny, per origin" is untrue of it.
 
 Recorded here rather than reported as done, because Amendment 3's whole reason
 for demanding a probe is that reading the file would have said yes.
+
+### CLOSED 2026-11-17, by the same probe
+
+The user reloaded the extension. `sw_info` reports worker `6n182f` at age 12s
+with `bridge_ms_total` reset to 4.1, so both halves respawned rather than the
+client merely re-handshaking. The probe was then re-run on the SAME origin that
+had succeeded before the reload:
+
+```
+navigate https://kubernetes.io/... ->
+  Permission required: ChromeBridge is not allowed to act on https://kubernetes.io
+  Nothing was read, clicked or changed (refused op: navigate).
+  [op=navigate sw=6n182f+17s at assertOpAllowed (background.js:452:9)]
+```
+
+**Restored in the repository AND in the browser.** All five of Amendment 3's
+checks now hold.
+
+One thing the restore revealed that the armed flag had been hiding: the grant
+table in this profile is EMPTY. `http://localhost:8787`, the local fixture the
+flow suite uses, is refused too. So for the whole period the flag was true,
+"default deny, per origin" was not merely bypassed for the eval's eight origins
+— there was nothing underneath it at all. That is the argument for the probe
+rather than the file read, one layer deeper than Amendment 3 made it.
