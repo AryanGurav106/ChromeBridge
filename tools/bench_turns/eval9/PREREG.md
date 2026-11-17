@@ -251,3 +251,32 @@ worse than a confounded pair — and T6 is flagged as affected.
 the same one at readback, which `await_navigation`'s own state already knows.
 It goes in after the runs, with its own check, and the eval is re-read
 afterwards to see whether any other pair carries the same note.
+
+## AMENDMENT 8 — an href read OFF THE PAGE is navigation; a recalled URL is not
+
+Written 2026-11-17, after wave 3, because the question has now come up twice
+and deciding it twice is how a rule becomes two rules (#21).
+
+T8/cb reached the answer by asking `query_elements` for the Open Market
+Operations link's `href` on the Policy Tools page and then navigating to that
+href instead of clicking it. T7/cb did the same thing after a ref click
+reported NO EFFECT. Neither is the behaviour Amendment 5 excludes.
+
+**The line is PROVENANCE, not the shape of the call.** Amendment 5 excludes a
+pair where the agent typed a deep URL it RECALLED — `/bgb/__195.html` was in the
+model's head before the browser opened, so the pair measured prior knowledge and
+not the toolset. An href read off a page the agent navigated to is the page's
+own declared destination: it is a link, followed. The agent could not have known
+it without first reaching that page with the tools under test, which is the
+entire thing the metric is trying to count.
+
+**Applied symmetrically, and that has to be said because it currently favours
+us.** Our listing carries `href` at `brief` detail (#61) and eval 7 recorded the
+other arm's `find` omitting it, so in practice this move is available to one arm
+more often than the other. That is a real capability difference and counting it
+is the point of the benchmark — but a reader who disagrees should be able to
+find and discount it, so every row where it happened says so in the note, in both
+arms. If a CIC run reads an href and navigates to it, it scores the same way.
+
+**Not grandfathered.** T5 stays excluded: both arms typed a URL neither had seen
+on a page.

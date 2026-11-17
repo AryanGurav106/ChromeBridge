@@ -1,3 +1,4 @@
+task	arm	answer	calls	status	note
 T3	cb	369.71	5	ok	query_elements to read the annual-mean file's link target; one get_page_text was unnecessary
 T3	cic	369.71	8	ok	tab ended up outside the tool group; a retry and a mismatched-tab-id error each cost a call
 T5	cb	drei Jahre	1	shortcut	went straight to /bgb/__195.html instead of starting at the site root
@@ -6,4 +7,7 @@ T6	cb	three	11	ok	find/search_page misses plus a click that reported NO EFFECT b
 T6	cic	three	7	ok	navigated by links only (docs home > 19. Server Configuration > 19.3); tabs_context/create/close were separate calls; find needed a second round trip
 T7	cb	1 April 1998	9	ok	a ref click on the search-result link had NO EFFECT so it used the href the link declared; search input read as disabled on first read; a form_input ref went stale after navigation
 T7	cic	1 April 1998	7	ok	tab-context created an extra blank tab; navigated via the site search, no constructed URL
-task	arm	answer	calls	status	note
+T8	cb	5.25-5.50	6	ok	found the Open Market Operations link's href with query_elements on the Policy Tools page and navigated to that href rather than clicking it; a failed home-page search and a noisy all-links query also cost calls
+T8	cic	5.25-5.50	13	ok	nav menus never exposed the link, so it used site search, which routed via the archive page and then back to the main page by breadcrumb
+T9	cb	10259	7	ok	clicks on Reference and on ports-and-protocols both reported NO EFFECT although they DID navigate (Amendment 7 false positive, third sighting); reached by find/search, no URL typed
+T9	cic	10259	12	ok	ref clicks on the ports-and-protocols link reported SUCCESS and never navigated, ~5 calls; recovered via the sidebar entry then a coordinate click
