@@ -1108,6 +1108,22 @@ _ROLE_WORDS_INTL = frozenset(_fold(h) for h, _k in _ROLE_HINTS if not h.isascii(
 _ROLE_WORDS_INTL_LONGEST = tuple(sorted(_ROLE_WORDS_INTL, key=len, reverse=True))
 
 
+# SCRIPTS WITH NO WORD SEPARATORS. One spelling, used by BOTH the tokeniser and
+# `_hit` — they are asking the same question and a second copy is the failure
+# PRINCIPLE 17 names. It is a DENYLIST of scripts that genuinely have no spaces,
+# not an allowlist of the ones we thought of: Latin, Greek, Cyrillic, Hebrew,
+# Arabic, Hangul and every Indic script DO use spaces and Python's `\b` works for
+# them, which is why they are deliberately absent (adding them once made the
+# decoy 이검색어저장소 outrank the real button 상품 검색).
+# Ext A, the compatibility ideographs and halfwidth katakana are included for the
+# same reason as the ranges beside them, and for no other: they are ideographic
+# or kana and carry no separators.
+_NOSPACE_RE = re.compile(
+    r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"      # CJK ext A, unified, compat
+    r"\u3040-\u30ff\uff66-\uff9f"                      # kana, halfwidth kana
+    r"\u0e00-\u0e7f\u0e80-\u0eff\u1780-\u17ff\u1000-\u109f]")  # Thai, Lao, Khmer, Myanmar
+
+
 def _role_only(tok: str) -> bool:
     """True when `tok` names only KINDS of control and so identifies none of them.
 
@@ -2665,8 +2681,15 @@ async def find(
     # exactly the one-concept-two-spellings failure, and the table has to be folded
     # with the same rule the query is.
     query = _nfc(query)
+    # `len(t) > 1` DROPS A WHOLE WORD in a logographic script. 猫 IS the word for
+    # cat and 车票 split by a stray space is two words, so `find("猫")` returned NO
+    # CONFIDENT MATCH against a button literally named 猫, and `find("车 票")`
+    # returned "No elements matched" against a 车票 button. Reproduced both before
+    # fixing. The one-character cut is right for a spaced script, where a lone
+    # letter carries nothing, and wrong wherever a character is a word — which is
+    # the question `_NOSPACE_RE` already answers for `_hit` two functions down.
     tokens = [t for t in re.split(r"\W+", _fold(query), flags=re.UNICODE)
-              if len(t) > 1 and t not in _STOP]
+              if (len(t) > 1 or _NOSPACE_RE.search(t)) and t not in _STOP]
     q_full = _fold(query.strip())
 
     def _hit(token: str, text: str) -> float:
@@ -2689,7 +2712,7 @@ async def find(
         # full weight: query 검색 ranked the decoy 이검색어저장소 above the real
         # button 상품 검색. Those scripts use spaces and Python \b works for them.
         # Bare digits land here too, so "42" no longer matches "item 3427" at 1.0.
-        if re.search(r"[\u4e00-\u9fff\u3040-\u30ff\u0e00-\u0e7f\u0e80-\u0eff\u1780-\u17ff\u1000-\u109f]", token):
+        if _NOSPACE_RE.search(token):
             return 1.0 if token in text else 0.0
         if re.search(r"\b" + re.escape(token) + r"\b", text):
             return 1.0          # whole word: "search" in "search box"

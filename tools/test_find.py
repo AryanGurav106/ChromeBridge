@@ -617,6 +617,44 @@ async def main():
           "content, so it does not match an unrelated control by type alone",
           not out.startswith("Found"), out.splitlines()[0][:80])
 
+    # F41 — A WHOLE WORD WAS DROPPED FOR BEING ONE CHARACTER LONG. The tokeniser
+    # cut every token of length 1, which is right in a spaced script (a lone
+    # letter identifies nothing) and wrong wherever a character IS a word.
+    # Reproduced before fixing: find("猫") returned NO CONFIDENT MATCH against a
+    # button literally named 猫, and find("车 票") returned "No elements matched"
+    # against a 车票 button. The rule that separates the two cases already existed
+    # for `_hit` and is now one constant used by both (PRINCIPLE 17).
+    page(el(mmid="5", tag="button", name="猫", label="猫"),
+         el(mmid="6", tag="button", name="犬", label="犬"))
+    out = await run("猫")
+    check("F41 a one-character logographic query reaches the control named with "
+          "that character", out.startswith("Found") and "ref_5" in out,
+          out.splitlines()[0][:70])
+    page(el(mmid="8", tag="button", name="车票", label="车票"))
+    out = await run("车 票")
+    check("F41b ...and a spaceless label split by a stray space in the QUERY is "
+          "still reached, rather than matching nothing at all",
+          out.startswith("Found"), out.splitlines()[0][:70])
+    page(el(mmid="9", tag="button", name="ねこ", label="ねこ"))
+    out = await run("ね")
+    check("F41c kana too, which the same constant covers",
+          out.startswith("Found"), out.splitlines()[0][:70])
+    # THE CONTROLS. Without these, deleting the length cut entirely would pass
+    # F41 and make every single Latin letter a content token, so "a" would match
+    # most of the page under a confident header.
+    page(el(mmid="7", tag="a", name="Apple", label="Apple"),
+         el(mmid="8", tag="a", name="Banana", label="Banana"))
+    out = await run("a")
+    check("F41d CONTROL: a lone LATIN letter is still dropped — it identifies "
+          "nothing and would match most of a page",
+          not out.startswith("Found"), out.splitlines()[0][:60])
+    page(el(mmid="9", tag="button", name="본문", label="본문"))
+    out = await run("본")
+    check("F41e CONTROL: a lone HANGUL syllable is still dropped — Korean uses "
+          "spaces, the existing rule excludes it deliberately, and widening that "
+          "is a separate decision with its own evidence",
+          not out.startswith("Found"), out.splitlines()[0][:60])
+
     passed = sum(1 for r in results if r)
     print(f"\n{passed}/{len(results)} find checks passed.")
     return 0 if passed == len(results) else 1

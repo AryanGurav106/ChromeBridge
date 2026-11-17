@@ -84,7 +84,11 @@ TAG_JS = str(ROOT / "extension" / "listener_tag.js")
 VIEWPORT = {"width": 1280, "height": 1600}
 PER_SITE = 120
 ARMS = ("base", "resort", "resort-last", "resort-first", "shuffle", "edit-cell", "bump-digits", "drop-other")
-VARIANTS = {"rec": ("text", "attr"), "win": ("win", "attr")}
+# txt is the text-only variant. It exists because the first full run showed an
+# auto-generated id (Angular Material's `mat-select-value-3`) is unique, looks
+# stable, and is a per-load counter: 4 of 120 descriptors on one site resolved to
+# the WRONG element with NO mutation applied at all.
+VARIANTS = {"rec": ("text", "attr"), "txt": ("text", "text"), "win": ("win", "attr")}
 
 # ----------------------------------------------------------------------------
 # In-page helpers. window.__rw.atoms(groups) and window.__rw.mutate(kind, ...)
@@ -438,6 +442,13 @@ async def run_site(browser, name, url, rng):
                 for v, ks in VARIANTS.items():
                     vn = v_new(t, mm, b, st[v], post, ks) if st[v] else ve
                     bump(arm, v, vn, ex)
+                    if st[v]:
+                        # APPLES TO APPLES: only descriptors that actually HAVE a
+                        # record witness. The pooled number above includes the
+                        # ~36% that have none and fall back to the ordinal, which
+                        # dilutes every rate toward the existing resolver.
+                        bump(arm, v + "@has", vn, ex)
+                        bump(arm, "exist@" + v, ve, ex)
         finally:
             await ctx.close()
     row["verd"] = {a_: {k: dict(v) for k, v in d.items()} for a_, d in verd.items()}
@@ -459,8 +470,11 @@ async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sites", type=int, default=40)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--no-win", action="store_true", help="drop the rejected neighbour-window variant")
     args = ap.parse_args()
     rng = random.Random(args.seed)
+    if args.no_win:
+        VARIANTS.pop("win", None)
     rows = []
     async with async_playwright() as p:
         browser = await p.chromium.launch()
@@ -491,7 +505,7 @@ async def main() -> int:
                      ("record TEXT unique (child-of-LCA)", "text"),
                      ("record WINDOW text unique (both neighbours)", "win"),
                      ("record/member ATTR unique", "attr"),
-                     ("variant rec = text|attr", "rec_any"), ("variant win = win|attr", "win_any"),
+                     ("variant rec = text|attr", "rec_any"), ("variant txt = text only", "txt_any"), ("variant win = win|attr", "win_any"),
                      ("shipped OR rec", "rec_or_shipped"), ("shipped OR win", "win_or_shipped"),
                      ("aria-rowindex/posinset present (positional)", "rowix"),
                      ("no record could be isolated", "no_record")):
@@ -517,6 +531,17 @@ async def main() -> int:
                 continue
             print(f"  {arm:<13}{who:<9}{nn:>6}{c['CORRECT'] / nn:>10.1%}{c['REFUSED'] / nn:>10.1%}{c['WRONG'] / nn:>9.1%}"
                   f"   | {uu:>5} {u['CORRECT'] / max(uu, 1):>6.1%} {u['REFUSED'] / max(uu, 1):>6.1%} {u['WRONG'] / max(uu, 1):>6.1%}")
+    print(f"\n  ONLY descriptors that HAVE a record witness (variant rec) -- same targets, both resolvers")
+    print(f"  {'arm':<13}{'resolver':<11}{'n':>6}{'CORRECT':>10}{'REFUSED':>10}{'WRONG':>9}")
+    for arm in ARMS:
+        for who in ("exist@rec", "rec@has", "exist@txt", "txt@has"):
+            c = tot(rows, ["verd", arm, who])
+            nn = sum(c.values())
+            if nn:
+                print(f"  {arm:<13}{who:<11}{nn:>6}{c['CORRECT'] / nn:>10.1%}{c['REFUSED'] / nn:>10.1%}{c['WRONG'] / nn:>9.1%}")
+    for v in ("rec", "txt"):
+        bw = [(r["name"], r["verd"]["base"].get(v, {}).get("WRONG", 0)) for r in rows if r.get("verd")]
+        print(f"  base-arm WRONG by site, variant {v} (must be none):", [x for x in bw if x[1]])
     inval = [r["name"] for r in rows if r.get("ruler_valid") is False]
     if inval:
         print(f"\n  ruler invalid (mmid sets differ between loads), arm skipped on: {', '.join(inval)}")
