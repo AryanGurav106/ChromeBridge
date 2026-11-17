@@ -9560,6 +9560,52 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       label,
       name: accessibleName,
       near: nearLabel,                  // adjacent-text hint for identity-less fields
+      // RECORD ATOMS — the text of the DECLARED record this control sits in.
+      // STRUCTURED ARRAY ONLY. It is never printed, so it costs the agent zero
+      // characters; it exists for the flow recorder, which has no other way to
+      // tell two identical rows apart after their order changes.
+      //
+      // WHY THIS AND NOT THE ORDINAL. A recorded step that can only say "the 3rd
+      // Delete button" is correct until the list re-sorts, and then it deletes
+      // the wrong invoice and reports PASSED. Measured on 39 frozen sites: the
+      // shipped self+anchor witness is 11.6% WRONG under a re-sort on the
+      // descriptors it covers, where a content witness is 0.4%; on a DIFFERENT
+      // record being deleted it is 13.8% correct against 96.3%.
+      //
+      // THE RECORD IS DECLARED, not guessed: `tr`, `li`, `dl`, `article`,
+      // `figure`, `fieldset` — the same set `_climbTo` uses for search_page's
+      // context (#47) and the observe-to-act signature. No class name, no size,
+      // no threshold. A control with no declared record in range carries
+      // nothing and behaves exactly as it does today.
+      //
+      // TEXT ONLY, and that is a measured refusal rather than an omission.
+      // Admitting ATTRIBUTE atoms raises coverage and mis-bound 4 of 120
+      // descriptors with NO mutation at all, because Angular Material's
+      // `id="mat-select-value-3"` is unique, looks declared, and is a PER-LOAD
+      // counter — and a two-load stability check does not catch it.
+      recordAtoms: (() => {
+        try {
+          let r = el.closest && el.closest('tr,li,dl,article,figure,fieldset');
+          if (!r || r === el) return null;
+          const out = [];
+          const w = document.createTreeWalker(r, NodeFilter.SHOW_TEXT);
+          let n, seen = 0;
+          while ((n = w.nextNode()) && seen < 40) {
+            const t = (n.nodeValue || '').replace(/\s+/g, ' ').trim();
+            // A letter or a digit in ANY script. The shortest strings on a page
+            // are often the answer (#29), so this is not a length test — it is
+            // what rejects punctuation and private-use icon glyphs.
+            if (!t || !/[\p{L}\p{N}]/u.test(t)) continue;
+            // Our own instrumentation must not become an atom.
+            if (out.indexOf(t) < 0) { out.push(t); seen++; }
+          }
+          for (const im of r.querySelectorAll('img[alt]')) {
+            const a = (im.getAttribute('alt') || '').trim();
+            if (a && out.indexOf(a) < 0 && out.length < 48) out.push(a);
+          }
+          return out.length ? out : null;
+        } catch (e) { return null; }
+      })(),
       // NEAREST PRECEDING HEADING. Five buttons all labelled "Launch demo modal" and all
       // section=main are indistinguishable by name or section; a benchmark agent picked
       // the right one using outside knowledge of the page, not anything we told it. The

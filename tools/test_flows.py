@@ -62,14 +62,14 @@ def check(name, ok, detail=""):
 
 def E(mmid, tag="button", role="", name="", type_="", placeholder="",
       section="", under="", value="", disabled=False, clickable=True,
-      editable=False, text="", href=""):
+      editable=False, text="", href="", atoms=None):
     """One collector entry, in the shape _collectInteractivePage(structured) emits."""
     return {
         "mmid": mmid, "tag": tag, "role": role, "name": name, "label": "",
         "type": type_, "placeholder": placeholder, "section": section,
         "underHeading": under, "value": value, "text": text,
         "disabled": disabled, "clickable": clickable, "editable": editable,
-        "href": href,
+        "href": href, "recordAtoms": atoms,
     }
 
 
@@ -156,6 +156,104 @@ def main():
     check("FD8d ...and the control: a step that recorded NO ordinal, because it "
           "was unique, still resolves against a single match",
           resolve(build(page[0], page), [page[0]]) == "1")
+
+    # ---- FA10: THE CONTENT WITNESS -----------------------------------------
+    # The ordinal's remaining hole, measured. #72 added the self+anchor witness
+    # and left 52.6% of ordinal-bearing descriptors with nothing; #83 measured
+    # a content witness over 39 frozen sites and found it takes coverage to
+    # 69.0% and cuts re-sort WRONG from 11.6% to 0.4%, and a DIFFERENT record
+    # being deleted from 13.8% correct to 96.3%.
+    #
+    # `recordAtoms` is the text of the DECLARED record a control sits in --
+    # `tr,li,dl,article,figure,fieldset`, the same set `_climbTo` uses (#47).
+    # Structured array only, so it costs the agent nothing.
+    # A refusal is a legitimate OUTCOME here, not a crash. Letting it propagate
+    # made the ablation unreadable: the old code refuses where the new one
+    # resolves, the suite aborted at that point, and the controls below never
+    # ran — so the arm could not show that they pass in BOTH arms, which is the
+    # only thing that makes them controls.
+    def _res(t, ents):
+        try:
+            return resolve(t, ents)
+        except Unresolved:
+            return "REFUSED"
+        except Exception as exc:                                  # noqa: BLE001
+            return f"RAISED {type(exc).__name__}"
+
+    def _row(n, num, firm):
+        at = [f"INV-{num}", firm, "Delete"]
+        return [E(n, "button", name="Delete", section="main", under="Invoices",
+                  atoms=at)]
+
+    inv = _row(10, 1001, "Acme") + _row(20, 1002, "Globex") + _row(30, 1003, "Initech")
+    t_at = build(inv[0], inv)
+    check("FA10 an ordinal records the text its own record carries, when that "
+          "text is unique within the crowd",
+          t_at.get("atoms") == ["Acme", "INV-1001"],
+          f"atoms={t_at.get('atoms')}")
+    # THE RE-SORT. Same elements, same declarations, same `of` -- the one
+    # mutation the crowd-check cannot see, and the one the ordinal gets wrong.
+    resorted = _row(30, 1003, "Initech") + _row(20, 1002, "Globex") + _row(10, 1001, "Acme")
+    check("FA10b a re-sorted crowd resolves to the element that was RECORDED, "
+          "not to the one now standing at the recorded position",
+          _res(t_at, resorted) == "10",
+          f"-> {_res(t_at, resorted)} (want 10; the ordinal would give 30)")
+    # A DIFFERENT RECORD DELETED. The crowd is now 2 where 3 were recorded, so
+    # the positional path refuses outright. Atoms never needed the crowd to be
+    # the same size.
+    dropped = _row(10, 1001, "Acme") + _row(30, 1003, "Initech")
+    check("FA10c a DIFFERENT record being removed does not cost a turn — the "
+          "witness names the member by its own content, not by crowd size",
+          _res(t_at, dropped) == "10",
+          f"-> {_res(t_at, dropped)}")
+    # INTERSECTION, NOT EQUALITY: one cell changing must not break the step.
+    edited = (_row(10, 1001, "Acme Ltd (renamed)") + _row(20, 1002, "Globex")
+              + _row(30, 1003, "Initech"))
+    check("FA10d one cell of the record changing does not break it — the other "
+          "atoms still name the member (equality would refuse on every edit)",
+          _res(t_at, edited) == "10", f"-> {_res(t_at, edited)}")
+    # THE CONTROLS. These are what stop "always resolve by atoms" and "record
+    # atoms for everything" from passing the four above.
+    check("FA10e CONTROL: an unchanged page resolves to the same element, so "
+          "this did not change the ordinary case",
+          _res(t_at, inv) == "10", f"-> {_res(t_at, inv)}")
+    gone = [E(10, "button", name="Delete", section="main", under="Invoices",
+              atoms=["INV-9999", "Umbrella", "Delete"]),
+            E(20, "button", name="Delete", section="main", under="Invoices",
+              atoms=["INV-1002", "Globex", "Delete"]),
+            E(30, "button", name="Delete", section="main", under="Invoices",
+              atoms=["INV-1003", "Initech", "Delete"])]
+    _got = _res(t_at, gone)
+    _refused = _got == "REFUSED"
+    # NOT A CONTROL, and labelling it one would have been wrong. It FAILS
+    # against the pre-fix resolver, because without atoms the positional path
+    # finds the crowd unchanged and binds position 0 — which is the mis-bind.
+    # So this is a third finding, not a both-arms invariant. Third time today a
+    # "control" turned out to be a finding on ablation (OR2, UI2b, this), which
+    # is the argument for ablating the controls and not only the fixes.
+    check("FA10f when the identifying text is GONE it REFUSES rather than "
+          "falling back to the ordinal — falling back would reinstate the "
+          "exact silent mis-bind the atoms exist to stop",
+          _refused, "refused" if _refused else f"bound to {_got}")
+    # A control with no DECLARED record carries nothing, and must behave today's
+    # way. Without this, "atoms for everything" would satisfy FA10-FA10d.
+    plain = [E(40, "button", name="Delete", section="main", under="Invoices"),
+             E(50, "button", name="Delete", section="main", under="Invoices")]
+    t_pl = build(plain[0], plain)
+    check("FA10g CONTROL: a control with no declared record records no atoms "
+          "and is resolved exactly as it is today",
+          t_pl.get("atoms") is None and t_pl.get("of") == 2
+          and _res(t_pl, plain) == "40",
+          f"atoms={t_pl.get('atoms')} of={t_pl.get('of')}")
+    # An atom SHARED across the crowd says which one? Nothing. It must not be
+    # recorded, for the same reason #72 requires the self+anchor witness to be
+    # unique: a field that looks like a safeguard and is not.
+    shared = [E(60, "button", name="Delete", atoms=["Delete", "Row"]),
+              E(70, "button", name="Delete", atoms=["Delete", "Row"])]
+    t_sh = build(shared[0], shared)
+    check("FA10h CONTROL: an atom every member shares is not recorded — it "
+          "cannot say which one was meant",
+          t_sh.get("atoms") is None, f"atoms={t_sh.get('atoms')}")
 
     # ---- FD20: the mutation the crowd-check CANNOT see ---------------------
     # Every FD8 case changes the crowd's COMPOSITION. A re-sorted table changes

@@ -293,6 +293,47 @@ def witness_map(entries: list[dict], crowd: list[dict]) -> dict:
     return out
 
 
+def atoms_map(crowd: list[dict]) -> dict:
+    """mmid -> the record-text atoms UNIQUE to that member of `crowd`.
+
+    WHY A CONTENT WITNESS AND NOT A BETTER ORDINAL. A step that can only say
+    "the 3rd Delete button" is correct until the list re-sorts, and then it
+    deletes the wrong invoice and reports PASSED. Measured on 39 frozen sites,
+    over the descriptors that HAVE one: under a re-sort the shipped self+anchor
+    witness is 11.6% WRONG and 23.4% refused, where a content witness is 0.4%
+    and 8.2%; when a DIFFERENT record is deleted it is 13.8% correct against
+    96.3%.
+
+    UNIQUE WITHIN THE CROWD, which is the same rule `build` applies to the
+    self+anchor witness and to `alt`. An atom two members share cannot say which
+    one was meant, so recording it would put a field in the file that looks like
+    a safeguard and is not.
+
+    SEPARATE FROM `witness`, deliberately. `build` tests the self+anchor witness
+    for uniqueness by comparing whole dicts; folding atoms in would make that
+    comparison trivially unique and silently delete the test.
+
+    TEXT ONLY, and that is a measured refusal rather than an omission. Admitting
+    ATTRIBUTE atoms raises coverage and mis-bound 4 of 120 descriptors with NO
+    mutation at all, because Angular Material's `id="mat-select-value-3"` is
+    unique, looks declared, and is a PER-LOAD counter -- and a two-load
+    stability check passes while that hazard stays.
+    """
+    have = {str(e.get("mmid")): set(e.get("recordAtoms") or []) for e in crowd}
+    out: dict = {}
+    for mm, mine in have.items():
+        if not mine:
+            continue
+        others: set = set()
+        for other, theirs in have.items():
+            if other != mm:
+                others |= theirs
+        uniq = mine - others
+        if uniq:
+            out[mm] = sorted(uniq)
+    return out
+
+
 def build(entry: dict, entries: Iterable[dict]) -> dict:
     """Describe `entry` as cheaply as it can be described unambiguously.
 
@@ -358,6 +399,14 @@ def build(entry: dict, entries: Iterable[dict]) -> dict:
     if mine and sum(1 for e in hits
                     if wm.get(str(e.get("mmid"))) == mine) == 1:
         out["witness"] = mine
+    # THE CONTENT WITNESS, recorded beside the positional one rather than instead
+    # of it. A step with atoms is decided by them at replay and never falls back
+    # to the ordinal -- falling back would reinstate exactly the silent mis-bind
+    # they exist to stop.
+    am = atoms_map(hits)
+    a = am.get(str(entry.get("mmid")))
+    if a:
+        out["atoms"] = a
     if alt:
         out["alt"] = alt
     return out
@@ -493,6 +542,53 @@ def _resolve_recorded(target: dict, entries: list[dict],
     # #10/#11/#12 family, reached by an ordering mistake rather than a
     # measurement one. The crowd-check therefore runs FIRST whenever the step
     # recorded a crowd, exactly as the gate checks Pause before UNGATED_OPS.
+    # ATOMS FIRST, AND THAT ORDERING IS SAFE FOR THE REASON THE BLOCK BELOW IS
+    # NOT. Everything below tests the crowd's COMPOSITION and then its ORDER,
+    # and it has to, because an ordinal means nothing once either has moved. A
+    # content witness makes no positional claim at all: it names the member by
+    # text its own record carries, so neither a re-sort nor a row being added or
+    # removed touches it. That is where the measured difference lives -- when a
+    # DIFFERENT record is deleted the positional path is 13.8% correct and 85.6%
+    # refused, where this one is 96.3% correct, because it never needed the
+    # crowd to still be the same size.
+    #
+    # INTERSECTION, NOT EQUALITY. One cell of a row changing (a status flipping,
+    # a total being recalculated) must not break a step whose other atoms still
+    # name it; requiring the whole set to match would refuse on every edit. The
+    # atoms were UNIQUE within the crowd when recorded, so a single carrier is
+    # the member that was recorded.
+    #
+    # AND IT NEVER FALLS BACK TO THE ORDINAL. Zero or several carriers means the
+    # thing that identified this element is gone or is no longer its alone --
+    # and the position is not evidence of anything in either case. Falling
+    # through to `nth` there would reinstate precisely the silent mis-bind the
+    # atoms exist to stop, so this refuses and names the candidates instead.
+    atoms = target.get("atoms")
+    if atoms:
+        want_a = set(atoms)
+        cand = [e for e in hits if want_a & set(e.get("recordAtoms") or [])]
+        if len(cand) != 1:
+            raise Unresolved(
+                f"{len(hits)} element(s) match {_describe(desc)}, and {len(cand)} of "
+                f"them carry the text that identified this one when the flow was "
+                f"recorded ({', '.join(repr(x) for x in atoms[:3])}"
+                f"{', …' if len(atoms) > 3 else ''}). Exactly one must. Its record "
+                f"was removed, its text changed, or another record now carries the "
+                f"same text — and the recorded position is not evidence of which "
+                f"element was meant in any of those cases",
+                _candidates(hits))
+        if nth is not None and 0 <= nth < len(hits) \
+                and str(cand[0].get("mmid")) != str(hits[nth].get("mmid")):
+            # Resolved, and NOT where it was recorded. Deterministic, but the
+            # list moved under the flow and the caller has to be able to say so
+            # — the same reason the href fallback reports itself (#61).
+            if notes is not None:
+                notes.append({"via": "atoms",
+                              "was": dict(desc), "nth": nth,
+                              "now": hits.index(cand[0]),
+                              "mmid": str(cand[0].get("mmid"))})
+        return str(cand[0].get("mmid"))
+
     if want is not None and nth is not None:
         if len(hits) != want:
             raise Unresolved(
