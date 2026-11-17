@@ -44,17 +44,17 @@ which landmark owns a record and a way to print several at once.
 
 ## Tier 1 — a wrong answer reaches the user
 
-> **IN FLIGHT as of 2026-11-17.** Five parallel audits are running against the
-> state at commit `1d22811`, none of them permitted to edit `extension/`,
-> `core/` or `mcp_server.py` — every one proposes diffs so the merges are
-> serialised through one hand. They are: the **non-regex pattern surface**
-> (~789 sites `audit_patterns.py` cannot see, #71 measured its coverage at 26%);
-> **live out-of-sample generality** (the frozen corpus all informed development,
-> so it can only show absence of regression — #16, #25); **readiness
-> adversarially**, both error directions (item 5); the **observe→act guard**
-> (item 1); and **flow replay fragility** (item 2's unwitnessed 59.4%).
-> Findings land in `docs/research/`. If you are reading this and those documents
-> exist, read them before re-deriving anything here.
+> **FIVE PARALLEL AUDITS LANDED 2026-11-17 — see `CLAUDE.md` #82 and the
+> working papers in `docs/research/`.** Read those before re-deriving anything
+> below. What shipped from them: a FALSE QUIET in the readiness signal (a
+> ShadowRoot has no `parentElement`, so direct appends into one were
+> unattributable), a lone UTF-16 surrogate that KILLED the server process, a
+> one-character logographic query that could not reach its own control, and a
+> `data-*` state marker that now names its source. What was measured and
+> REJECTED: per-landmark readiness attribution (item 5), and ResizeObserver for
+> the observe→act guard (item 1). The headline is a negative result —
+> `lost_identities` = 0 across 40 live out-of-sample sites — with its sample
+> bias stated in #82 rather than buried.
 
 
 ### 0. Reachability by name — MEASURED at 0.9996, residual is ONE element — CLOSED
@@ -112,7 +112,7 @@ left is one element, and it is the intended behaviour.**
 
 
 
-### 1. The observe→act gap is unguarded `IN FLIGHT`
+### 1. The observe→act gap is unguarded `MEASURED, NOT APPLIED`
 We re-measure refs at click time but never compare what is there **now** against
 what was **observed**. The model turn in between is ~3.6s (#38), which is the
 whole exposure window.
@@ -951,7 +951,7 @@ cannot say which record each belongs to, and that containment is the only thing
 telling them apart. A trade a parameter does not name is one the caller cannot
 weigh. C20e pins it and fails pre-fix with the old sentence quoted.
 
-### 5. SPA readiness, the remaining half `IN FLIGHT`
+### 5. SPA readiness, the remaining half `MEASURED — DON'T BUILD (a)`
 The mutation-recency signal (#70) separates "still building" from "ready but
 chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:
 - ~~**scoped attribution.**~~ **BUILT (#76).** A scoped read now scopes the

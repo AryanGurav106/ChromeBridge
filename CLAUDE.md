@@ -8260,6 +8260,170 @@ granted in the side panel is refused with the same message the agent gets.
     subframe controls, all passing in both arms).
 
 
+82. **FIVE PARALLEL AUDITS, AND THE HEADLINE IS A NEGATIVE RESULT.** The brief
+    was to settle whether the DOM representation and its filtering are general
+    on any site at any stage. Five agents ran against commit `1d22811`, none
+    permitted to edit `extension/`, `core/` or `mcp_server.py` — every finding
+    came back as a diff so the merges serialise through one hand, which is the
+    only way five concurrent audits do not corrupt a 16,000-line file. Working
+    papers in `docs/research/`.
+
+    **THE NUMBER THIS PROJECT NEVER HAD: `lost_identities` = 0 on 40 LIVE,
+    OUT-OF-SAMPLE SITES.** Every corpus figure here comes from 106 sites that
+    all informed development, which #16 and #25 say can only show absence of
+    regression. The one out-of-sample number was Mind2Web, and #79 measured that
+    corpus as switching OFF two of the collector's eight admitting signals.
+    `tools/audit_generality_live.py` refuses to run if any host appears in the
+    frozen corpus or in `bench_turns`/`bench_flows`.
+
+    | | |
+    |---|---|
+    | light-DOM arm | **0 of 6,193 controls lost** |
+    | piercing open + closed shadow roots and same-origin frames (1,451 roots walked) | **0 of 6,441 lost** |
+    | declared arm (ARIA role / tabindex / contenteditable / onclick) | 23 of 274 — **all 23 are `<iframe tabindex=0 aria-label="Advertisement">` ad slots**, ledger reason `iframe-contents-listed-instead`, which is permitted |
+    | non-iframe declared losses | **0 of 251** |
+    | drop reasons outside `test_ledger`'s `SPEC_DELETES` | **none** |
+
+    Zero in every script row too: Thai (939 controls), Hindi (794), Vietnamese
+    (789), Hebrew RTL (701), Greek (554), Korean (312), Arabic RTL (93),
+    Traditional Chinese (182).
+
+    **THE SAMPLE IS SKEWED AND THAT IS NOT A FOOTNOTE.** Only 40 of 76
+    candidates rendered at least 10 controls. Government, bank, insurance,
+    ticketing and several non-Latin targets were **bot-blocked or timed out in
+    headless Chromium** — the agent did not spoof a user agent, the sandbox
+    refused when it began to, and it backed off — so those are UNMEASURED, not
+    passed. No true legacy enterprise UI survived; four man-page/doc sites stand
+    in and they are not enterprise forms. 25 of the 40 are English. It is one
+    static read per page at first paint plus 2s, with no clicks, so logged-in
+    states, open menus, pickers and dialogs are untested. And `lost_identities`
+    by construction says nothing about whether the right name is on the right
+    element (#74) or whether a model would pick it (#75).
+
+    **A FALSE QUIET IN THE READINESS SIGNAL, one line, and the test that existed
+    could not see it.** `rec()` in `listener_tag.js` resolved a MutationRecord's
+    target as `nodeType === 1 ? target : target.parentElement`. A ShadowRoot is a
+    DocumentFragment whose `parentNode` is null — it hangs off `host` — so a
+    direct append INTO a shadow root stored a record with **no target**, and a
+    SCOPED read could never attribute it. Measured: a read scoped to `main`
+    while a shadow root painted 400 rows reported `since=4032, structural=0`,
+    i.e. QUIET, against a true recency of 7ms. That is the normal Lit/Shoelace
+    shape. R25 could not see it because its fixture mutates an Element INSIDE
+    the root, whose `parentElement` resolves fine. **R25c fails pre-fix; R25d is
+    the control that resolving every record to SOMETHING would satisfy R25c
+    while making every scoped read report churn.**
+
+    **The adversarial matrix, and what it licenses.** 18 hostile shapes, four
+    offsets, 72 unscoped reads plus a scoped read of each, with the two error
+    directions counted separately because they are opposite failures: **3 false
+    quiets unscoped** (a skeleton with a late timer paint, and a late
+    cross-origin iframe), **6 steady-state false busies** (a `textContent`
+    ticker, a live-value grid, both at 3500ms+ on content that never changes
+    again). **Per-landmark attribution for an UNSCOPED read — `READINESS.md`
+    §5b's designed-not-built half — is now answered with a number instead of an
+    argument: DO NOT BUILD.** It fixes 3 of the 6 steady-state false busies,
+    leaves every false quiet untouched, costs **3.0–3.6ms per read against
+    0.002–0.006ms today**, and forces an ownership rule for records whose target
+    was garbage-collected — which is exactly the judgement the design exists to
+    avoid. The recovery that works is `ref_id`.
+
+    **A LONE UTF-16 SURROGATE KILLED THE SERVER PROCESS.** Found in the 75% of
+    the pattern surface `audit_patterns.py` cannot see — it reads regex literals
+    only, 294 risky sites of 860 non-regex ones. A JS string is UTF-16 and may
+    legally hold an unpaired surrogate; Chromium preserves them in `textContent`
+    and `document.title`; `JSON.stringify` emits the escape and `json.loads`
+    reconstructs it faithfully. Then **everything downstream refuses to encode
+    it** — `TextContent.model_dump_json()` raises `PydanticSerializationError`,
+    `json.dumps(ensure_ascii=False).encode()` raises `UnicodeEncodeError` — and
+    over real stdio the server dies in its TaskGroup, so the NEXT `tools/call`
+    is never answered. **The C23 rule that forbids `ensure_ascii=True` is what
+    lets it through.** Scrubbed to U+FFFD at the ingress, the one door every
+    message comes through, rather than at the ~21 bounded-string cut sites —
+    #71 fixed the fold-label slicer for this class already and none of that
+    covers a page that simply CONTAINS one. U+FFFD rather than deletion, because
+    dropping the unit shortens the string silently (#22). **Two ablations,
+    because the failure modes differ: with the CALLS removed and the helper
+    intact only C41e fails, which is why the wiring check exists (#19/#30).**
+
+    **`find` DROPPED A WHOLE WORD FOR BEING ONE CHARACTER LONG.** `find("猫")`
+    returned NO CONFIDENT MATCH against a button literally named 猫, and
+    `find("车 票")` returned "No elements matched" against a 车票 button; a Latin
+    control worked throughout, which located it in the tokeniser rather than the
+    scorer. The cut is right in a spaced script and wrong wherever a character
+    IS a word — and **the rule that separates them already existed eight lines
+    down**, inside `_hit`, as the character class deciding which scripts have no
+    word boundaries. Hoisted to one constant both use (PRINCIPLE 17) rather than
+    written a second time. Hangul stays OUT deliberately: Korean uses spaces and
+    widening that is a separate decision with its own evidence (F41e).
+
+    **A `data-*` ATTRIBUTE IS NOT A DECLARATION, four lines under the comment
+    saying so.** `activeHint` read `data-active="true"` as `(active)` and
+    `data-current="true"` as `(current)`, in silence, directly below a comment
+    arguing that a class name is not a declaration because *"a WRONG (current)
+    tells the agent not to click the thing it needs"*. HTML defines `data-*` as
+    custom data private to the page with **no meaning to user agents**. Kept
+    rather than deleted on #23's `data-testid` precedent — better than nothing
+    where nothing else is declared — and ATTRIBUTED, so `(current — from
+    data-*)` can be discounted where a bare `(current)` cannot. Priced on the
+    frozen corpus for what the code actually tests: `data-active="true"` on 8 of
+    106 sites (29 elements), `data-current="true"` on 1.
+
+    **THE OBSERVE-TO-ACT GAP, MEASURED FOR THE FIRST TIME** (`OPEN.md` item 1;
+    arXiv:2603.00476 reports all 10 evaluated browser agents vulnerable at a
+    100% trigger ratio). 18 fixtures driven through the real `_rectForPage`
+    pre-flight and a real trusted click. **Already refused** for a ref click: a
+    banner covering the target, a toast, a modal with backdrop, a removed
+    target, a `display:none` target, a node replaced with the same tag and name.
+    **Correctly ignored**: a cookie banner pushing the page down, a lazy image
+    reflowing, a re-sort that moves nodes (the ref follows the record). **Harm
+    nothing refuses today**: a label flipping in place (`Save` becomes
+    `Publish`, and the click publishes); a re-sort that REUSES nodes
+    React-unkeyed, so the click deletes INV-3 where the read showed INV-1 —
+    #72's 94.4%-WRONG hazard one layer over; and a handler swapped on the same
+    node with no DOM change, which no signal catches. Design priced at **0 extra
+    round trips, 0.5–1.4ms to stamp up to 150 entries, 3–43µs to compare**, with
+    **ResizeObserver REJECTED on the numbers** (its delta is below the A/A drift
+    floor at every size) and re-deriving via the collector rejected at
+    15–510ms. Identity-diff false-positive rate on 36 settled frozen sites:
+    **0.29%**. NOT APPLIED — it gates irreversible actions and that deserves a
+    live pass, which the extension reload gates.
+
+    **A CORRECTION TO #71, AND IT IS A BEHAVIOUR DECISION I HAVE NOT MADE.**
+    #71 recorded that Chrome resolves `role="BUTTON"` to `button`. On Chrome 153
+    it does **not**: `BUTTON` and `Combobox` come out as `text` in the AX tree,
+    while token lists and leading whitespace ARE honoured. So `_roleHit`'s
+    `.toLowerCase()` over-admits what Chrome ignores. #71 also measured 0 of
+    6,632 real `role=` attributes in that shape, so this is a spec divergence
+    with no observed instance either way. Recorded, not changed.
+
+    **MY OWN MISTAKE, AND IT IS THE ONE THIS LOG KEEPS RECORDING.** Pricing the
+    `data-*` deletion, my first grep returned **0 occurrences on all three
+    patterns** — a corpus-wide zero, which is exactly the too-clean number #16
+    says to re-derive. The HARs hold HTML as JSON-escaped strings and my pattern
+    matched neither quoting. The real figures are above.
+
+    **STILL OPEN from this round, each with its evidence:** the option picker
+    rejects any candidate row whose text exceeds 80 UTF-16 units (three forced
+    copies, reproduced at 70 units picking and 90 failing — a fixed threshold
+    deciding whether an option can be picked at all, which bites long labels and
+    agglutinative languages); `_triggerEvidencePage.marked` and the collector's
+    `_phMarked` have DIVERGED while a comment claims they are kept in step
+    (PRINCIPLE 17, reproduced); `synthLabel` refuses a name over 40/80/40 units
+    so a long `::before` label becomes `(unlabeled-icon)` where Chrome names it;
+    and a same-origin ad frame's declared `aria-label` is discarded when its
+    contents are listed instead, so an agent sees an unlabelled link and cannot
+    tell it is an ad.
+
+    Suites: 1,448 checks. New — R25c/R25d (a direct append into a shadow root,
+    with the settled-sibling control), C41–C41e (the surrogate scrub, two
+    controls plus the wiring check that only fires when the CALLS are removed),
+    F41–F41e (one-character logographic queries, with the Latin and Hangul
+    controls), W16d/W16e (the data-* attribution, with the declared-state
+    control). Probes — `tools/audit_generality_live.py`,
+    `tools/audit_pattern_surface.py`, `tools/audit_readiness_adversarial.py`,
+    `tools/audit_observe_act_gap.py`.
+
+
 ## Debugging starting points
 
 | Symptom | Where to look |
