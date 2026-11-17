@@ -8152,6 +8152,114 @@ granted in the side panel is refused with the same message the agent gets.
     R-TENSE/R-TENSE2, C35/C35b, NB2/NB2b, CT1c, CT2/CT2b, FP11–FP11d,
     FR24–FR24c, R-BOUND–R-BOUND4.
 
+81. **A HEAD-TO-HEAD CAME BACK A TIE, AND THE REASON WAS A GUARD I HAD SHIPPED
+    HOURS EARLIER.** Eval 9: eight public-site two-hop tasks, tasks written
+    blind, ground truth re-derived by a headless referee, one independent agent
+    per (task, arm), arms in different browsers so cross-arm contamination is
+    impossible. Harness, pre-registration and nine dated amendments in
+    `tools/bench_turns/eval9/`; `python analyse.py` reproduces the table.
+
+    | | |
+    |---|---|
+    | H1 (paired sign test on tool calls) | **4/7 decided pairs to CB, p = 1.0000** |
+    | best p achievable at n=7 | 0.0156 — the bar was reachable and was not met |
+    | pre-registered bar | p < 0.05 |
+    | totals, scored pairs | CB **58** v CIC **68** (14.7%) |
+    | falsifier (correctness vs the referee) | **0 wrong of 16** |
+
+    **The totals lean our way and that is not the result.** 14.7% is a hair
+    outside the 12–14% rerun floor arXiv:2608.06171 measures for this kind of
+    A/B, and the sign test is what was pre-registered — precisely because it is
+    immune to one blow-out pair. Evals 5 and 7 cleared; this one does not, and
+    quoting the totals instead would be choosing the statistic after seeing the
+    data. Three of eleven authored tasks never ran: the referee dropped T1 and T2
+    (the author's answer is not in the rendered text) and T4 (openlibrary.org
+    refused the connection) before any agent existed, which is the instrument
+    working rather than a loss.
+
+    **`analyse.py` COUNTS the cause rather than asserting it: 5 of our 7 scored
+    runs lost calls to `computerOp`'s dead-click guard.** It reports `NO EFFECT`
+    when a click was delivered and the page did not move, and its own comment
+    claimed that requiring `_delivered === true` established *"same document"*.
+    It does not. The delivery probe lives on the OLD document's `window` and the
+    readback is ONE `executeScript` round trip after `mouseReleased` — a click
+    on a link has not committed by then, so the probe is alive, answers `true`,
+    and both effect snapshots are taken against the page being LEFT. Identical,
+    every time. **A comment asserting a guarantee the code does not have, inside
+    the guard written to stop tools claiming what they have not checked** (C15's
+    class, which is why C15 cannot catch it: the sentence is in a comment).
+    On T6, T7 and T11 the one-to-two wasted calls are the whole margin.
+
+    **Fixed by asking rather than inferring, which is #51's move one probe
+    over.** `onBeforeNavigate` lands in the worker the moment a navigation
+    STARTS, whether or not the old document is still painting, so *did this tab
+    start a main-frame navigation since the click* is a counter comparison
+    against a FACT. `_navState` alone cannot answer it — a fast navigation can
+    start AND settle between dispatch and readback and leave that map empty at
+    both ends — so `_navSeq` counts STARTS per tab. Only equality is compared,
+    so one navigation bumping it twice (`onBeforeNavigate` and `onCommitted`
+    both route through `_navStart`) does not matter. Cleared on tab removal and
+    never on settle, which would reset it under a caller mid-comparison.
+
+    **THE DEFECT BOUGHT A COMPARISON A WIN WOULD NOT HAVE.** Both products are
+    currently wrong about what a click did, in OPPOSITE directions. Ours
+    over-warns: it says NO EFFECT and the page moved, and the agent spends a
+    round trip finding out it was fine. Theirs under-warns: T9 `ref clicks
+    reported SUCCESS and never navigated`, ~5 calls, recovered only by
+    abandoning the ref for a coordinate; T11 the same shape. **An over-warn
+    costs a re-check; a false success costs the agent its belief about which
+    page it is standing on, and every observation after it is about the wrong
+    document.** Ours is the better failure and is still a defect.
+    **One thing is NOT resolved in our favour:** T11/cb's agent wrote that
+    clicks *"reported success or NO EFFECT without navigating"* and did not
+    separate the two, so a false success on our side is possible. It is recorded
+    as `cb-false-success?` with the question mark, because deciding an ambiguity
+    in the home arm's favour is the one move a scorer does not get to make.
+
+    **MY OWN SCORER HAD THE BUG IT WAS MEASURING.** The defect tally first
+    grepped my own free-text notes and scored the other arm at 1 when T11/cic
+    plainly has one too — `"never navigat"` does not match `"did not navigate"`.
+    A grep over prose I wrote myself is a detector that cannot fire, which is the
+    class this project keeps finding in other people's code. It reads an explicit
+    column now. Two smaller ones: `runs.tsv`'s header had been appended LAST, and
+    the closeout labelled T7 `debian release history` when it is `rfc-editor.org`.
+
+    **AND MY FIRST VERSION OF THE NEW CHECK PASSED FOR THE WRONG REASON.** `fire`
+    is declared locally per test in `test_ops.js` and I did not declare one, so
+    the stubs threw a `ReferenceError`, `runInTab`'s catch swallowed it,
+    `_delivered` stayed `null`, and ID9 went green over a guard that had never
+    run. **ID9c and ID9d failing is the only reason I looked** — which is the
+    whole argument for a control that must pass in both arms.
+
+    **Amendment 8 — an href READ OFF A PAGE is navigation; a recalled URL is
+    not.** Written once rather than decided per task (#21). The line is
+    PROVENANCE: Amendment 5 excludes a pair where the agent typed a deep URL it
+    recalled, because that measures prior knowledge; an href read off a page the
+    agent navigated TO is the page's own declared destination and could not have
+    been known without reaching that page with the tools under test. It favours
+    us in practice — our listing carries `href` at `brief` detail (#61) and eval
+    7 recorded the other arm's `find` omitting it — so every row where it
+    happened says so in the note, in both arms. **It then fired on the other arm
+    unprompted:** T11/cic reached its last hop by the Macleod link's own href,
+    the same move as T11/cb two rows up.
+
+    **NOT LIVE-VERIFIED YET, and #43 makes that non-optional.** The fix is
+    fixtured and ablated; the loaded extension still runs the pre-fix build and
+    an extension reload is the user's action. The same is true of the consent
+    gate: Amendment 3 armed `ALLOW_ALL_ORIGINS` for this eval and committed to a
+    probe rather than a file read, and the probe says the restore has NOT landed
+    — `read_page` on an ungranted `kubernetes.io` tab returned a listing with the
+    worker 11 minutes older than the restore. **Restored in the repository, NOT
+    in the browser**, which is #47's measurement reproducing exactly: a live MV3
+    worker does not pick up a flag change while our own persistent WebSocket
+    keeps it from being evicted.
+
+    Suites: 1,434 checks. New — ID9 (a click that STARTED a navigation is not
+    reported as having no effect; FAILS against the pre-fix guard with the live
+    symptom verbatim), ID9b/ID9c/ID9d (the genuinely-dead-click, other-tab and
+    subframe controls, all passing in both arms).
+
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -8230,6 +8338,7 @@ granted in the side panel is refused with the same message the agent gets.
 | A flow passed once and fails on the next run with a bigger count | Working as designed, and #54 made it say so. A flow that CREATES something changes the count it recorded, so replaying in place leaves the app one row further on each time. Replay against a reset fixture (`run_flows.py --playground` resets before every run), or record a flow that cleans up after itself. The message lists this as one of three causes — the data changing underneath and a genuine regression are the others, and they need different answers |
 | A flow recorded against an SPA fails every replay on one assertion | Fixed in #55 — the recorder captures what the agent observed, which is necessarily after the agent took a moment; the runner asked INSTANTLY. A postcondition now gets a bounded window (6s, polled) to BECOME true. It is not weakened — it must still become true — and a genuine failure still fails, just later. Server-rendered fixtures never show this, which is why a year of playground flows did not |
 | `computer` click reports success and the page gets nothing, with the debugger attached | Measured on saucedemo's /inventory.html (#55) and NOT yet explained: `elementFromPoint` at the clicked coordinate IS the target, dpr 1, no scroll, no zoom, `debug_targets` says attached with one frame — and three raw coordinate clicks produce ZERO events at a capturing document listener, while `Runtime.evaluate` works and `el.click()` drives the page correctly. The LOGIN page of the same origin in the same browser accepts input normally. #12's signature; its `ensureInputReady` fix does not cover this case. Instrument the PAGE before theorising |
+| `computer` click says `NO EFFECT` on a click that plainly worked | Fixed in #81 — the guard required `_delivered === true` and its comment claimed that meant "same document". It does not: the probe lives on the OLD document and the readback is one `executeScript` round trip after `mouseReleased`, so a link click has not committed yet and both snapshots are taken against the page being left. Eval 9 measured 5 of 7 of our runs losing calls to it. It now asks `_navSeq` whether the TAB started a main-frame navigation since the click — a fact from Chrome's own announcement, not an inference. If it recurs, check that `_navSeqB` is still read BEFORE the dispatch loop; read after, it can never differ |
 | `computer` click says `*** NOT DELIVERED ***` | Working as designed since #56 — Chrome ACCEPTED the input command and the page recorded no event, so nothing was clicked. The tab's trusted-input channel is dead. It is not ours (Playwright's own mouse fails identically on that tab) and it survives detach+re-attach, a forced focus-emulation re-apply, and a mouse release. VERIFIED recovery: a NEW TAB. `read_page`, `get_page_text`, `search_page`, `query_elements`, `fill_form`, `form_input` and `javascript_tool` all keep working on the dead tab |
 | `computer(type)` says "into whatever holds editing focus" | By design since #56 — `Input.insertText` targets the EDITING context, not `document.activeElement`. Measured: with an `<h1 tabindex=-1>` focused, the text still landed in a previously focused `<input>`. Pass a ref and the message names it, because then we focused it ourselves |
 | `record_flow(stop)` warns that an assertion was ALREADY TRUE | By design since #57 — the check had that same value the last time the agent observed it, so the step did not move what it measures and the flow would pass even if the step did nothing. Usually the step silently failed (a required field left unfilled is the one that caused this twice). A warning, not a refusal: an idempotent step legitimately leaves state alone |
