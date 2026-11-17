@@ -1,13 +1,17 @@
-task	arm	answer	calls	status	note
-T3	cb	369.71	5	ok	query_elements to read the annual-mean file's link target; one get_page_text was unnecessary
-T3	cic	369.71	8	ok	tab ended up outside the tool group; a retry and a mismatched-tab-id error each cost a call
-T5	cb	drei Jahre	1	shortcut	went straight to /bgb/__195.html instead of starting at the site root
-T5	cic	drei Jahre	4	shortcut	went to the BGB 195 URL directly instead of clicking through
-T6	cb	three	11	ok	find/search_page misses plus a click that reported NO EFFECT before the navigation was visible; navigated by links, no deep URL
-T6	cic	three	7	ok	navigated by links only (docs home > 19. Server Configuration > 19.3); tabs_context/create/close were separate calls; find needed a second round trip
-T7	cb	1 April 1998	9	ok	a ref click on the search-result link had NO EFFECT so it used the href the link declared; search input read as disabled on first read; a form_input ref went stale after navigation
-T7	cic	1 April 1998	7	ok	tab-context created an extra blank tab; navigated via the site search, no constructed URL
-T8	cb	5.25-5.50	6	ok	found the Open Market Operations link's href with query_elements on the Policy Tools page and navigated to that href rather than clicking it; a failed home-page search and a noisy all-links query also cost calls
-T8	cic	5.25-5.50	13	ok	nav menus never exposed the link, so it used site search, which routed via the archive page and then back to the main page by breadcrumb
-T9	cb	10259	7	ok	clicks on Reference and on ports-and-protocols both reported NO EFFECT although they DID navigate (Amendment 7 false positive, third sighting); reached by find/search, no URL typed
-T9	cic	10259	12	ok	ref clicks on the ports-and-protocols link reported SUCCESS and never navigated, ~5 calls; recovered via the sidebar entry then a coordinate click
+task	arm	answer	calls	status	defect	note
+T3	cb	369.71	5	ok		query_elements to read the annual-mean file's link target; one get_page_text was unnecessary
+T3	cic	369.71	8	ok		tab ended up outside the tool group; a retry and a mismatched-tab-id error each cost a call
+T5	cb	drei Jahre	1	shortcut		went straight to /bgb/__195.html instead of starting at the site root
+T5	cic	drei Jahre	4	shortcut		went to the BGB 195 URL directly instead of clicking through
+T6	cb	three	11	ok	cb-noeffect-fp	find/search_page misses plus a click that reported NO EFFECT before the navigation was visible; navigated by links, no deep URL
+T6	cic	three	7	ok		navigated by links only (docs home > 19. Server Configuration > 19.3); tabs_context/create/close were separate calls; find needed a second round trip
+T7	cb	1 April 1998	9	ok	cb-noeffect-fp	a ref click on the search-result link had NO EFFECT so it used the href the link declared; search input read as disabled on first read; a form_input ref went stale after navigation
+T7	cic	1 April 1998	7	ok		tab-context created an extra blank tab; navigated via the site search, no constructed URL
+T8	cb	5.25-5.50	6	ok		found the Open Market Operations link's href with query_elements on the Policy Tools page and navigated to that href rather than clicking it; a failed home-page search and a noisy all-links query also cost calls
+T8	cic	5.25-5.50	13	ok		nav menus never exposed the link, so it used site search, which routed via the archive page and then back to the main page by breadcrumb
+T9	cb	10259	7	ok	cb-noeffect-fp	clicks on Reference and on ports-and-protocols both reported NO EFFECT although they DID navigate (Amendment 7 false positive, third sighting); reached by find/search, no URL typed
+T9	cic	10259	12	ok	cic-false-success	ref clicks on the ports-and-protocols link reported SUCCESS and never navigated, ~5 calls; recovered via the sidebar entry then a coordinate click
+T10	cb	un mínimo de 300 y un máximo de 400 Diputados	8	ok	cb-noeffect-fp	navigated via Legislación then the BOE search, reaching the act.php page by an href read off the results with query_elements (Amendment 8, not recalled); a click on Legislación and the search submit each reported NO EFFECT although both worked, costing a get_url and a re-read
+T10	cic	un mínimo de 300 y un máximo de 400 Diputados	12	ok		navigated from boe.es through Legislación and the site search, no URL constructed; two find calls returned nothing
+T11	cb	John James Rickard Macleod	12	ok	cb-noeffect-fp,cb-false-success?	clicks on the Medicine-prize menu and the full-list link reported success or NO EFFECT without navigating, so it used hrefs read off the loaded pages (Amendment 8); also had to set the decade dropdown to 1929-1920
+T11	cic	John James Rickard Macleod	9	ok	cic-click-dead	a ref click on the Macleod link did not navigate, so it used that link's own href for the last hop (Amendment 8, same move as the other arm); the year-filter input did not take typed input, costing a call
