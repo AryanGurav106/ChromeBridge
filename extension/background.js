@@ -6483,8 +6483,31 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         // `(disabled)`, where 18 Bootstrap rows were flagged inert and one was
         // clicked to prove otherwise. W16c is now the deletion gate.
       }
-      if (el.getAttribute('data-active') === 'true') return 'active';
-      if (el.getAttribute('data-current') === 'true') return 'current';
+      // ATTRIBUTED, NOT SILENT -- and the comment directly above is the whole
+      // argument. It says a class name is not a declaration because `active` is
+      // equally an animation state or a current-user marker, and that a WRONG
+      // (current) tells the agent NOT to click the thing it needs. A `data-*`
+      // attribute is weaker evidence still: HTML defines it as "custom data
+      // private to the page" with "no meaning to user agents", so reading one as
+      // a state declaration is reading something the spec says has no defined
+      // meaning. These two lines did exactly that, in silence, four lines under
+      // the argument against it.
+      //
+      // KEPT RATHER THAN DELETED, on #23's precedent for `data-testid` presented
+      // as an accessible name: better than nothing where nothing else is
+      // declared, so keep using it and SAY WHERE IT CAME FROM. An agent reading
+      // `(current — from data-*)` can discount it; one reading a bare `(current)`
+      // cannot. Measured on the frozen corpus for what this code actually tests:
+      // `data-active="true"` on 8 of 106 sites (29 elements), `data-current="true"`
+      // on 1 (1 element) -- rare enough that the attribution costs nothing, common
+      // enough that deleting it outright would lose real markers. Whether those 29
+      // are genuinely selected controls is the MEASURE FIRST in OPEN.md; it needs
+      // the collector, not a grep.
+      //
+      // These run LAST, after every ARIA state and after the role-gated tab
+      // block, so they only ever speak where the page declared nothing.
+      if (el.getAttribute('data-active') === 'true') return 'active \u2014 from data-*';
+      if (el.getAttribute('data-current') === 'true') return 'current \u2014 from data-*';
     } catch (e) {}
     return '';
   };
@@ -12799,7 +12822,14 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
         }
       } catch (e) {}
       L.push(`  - ${_seen.map((s) => `(${s})`).join('/') || '(current)'} — already active;`
-             + ` don't re-click unless deselecting.`);
+             + ` don't re-click unless deselecting.`
+             // The marker names its own source when the source is not a spec
+             // signal, so the legend explains the one notation that is a guess.
+             + (_seen.some((s) => s.indexOf('from data-*') >= 0)
+                ? ` "from data-*" means the page declared no ARIA state and this`
+                  + ` was read off an author-defined data- attribute, which HTML`
+                  + ` says has no meaning to user agents — treat it as a hint.`
+                : ''));
     }
     if (has(e => e.required))    L.push(`  - (required) — must be filled for submission.`);
     if (has(e => e.constraints)) L.push(`  - pattern=/min=/max=/step=/maxlength=/format=… — what the field ACCEPTS, declared by the page. format= is the wire format the HTML spec fixes for that input type, which is NOT always what the widget displays (a date shown 29.08.2026 still takes 2026-08-29).`);

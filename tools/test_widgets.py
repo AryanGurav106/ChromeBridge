@@ -784,6 +784,42 @@ async def main():
               _act.get("C-one") == "" and _act.get("C-two") == "",
               f"C-one={_act.get('C-one')!r} C-two={_act.get('C-two')!r}"
               f" (both must be empty; the declared tabsets A and B are W16/W16b)")
+
+        # W16d/W16e — A `data-*` ATTRIBUTE IS NOT A DECLARATION EITHER, and the
+        # marker now says so. HTML defines data-* as "custom data private to the
+        # page" with "no meaning to user agents", so reading `data-active="true"`
+        # as selected state is reading something the spec gives no meaning. It is
+        # KEPT rather than deleted (#23's precedent for `data-testid` as a name:
+        # better than nothing where nothing else is declared) and ATTRIBUTED, so a
+        # reader can discount it. A bare `(current)` cannot be discounted, and a
+        # wrong one tells an agent not to click the thing it needs.
+        await tp2.goto("about:blank")
+        await tp2.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<button data-active=true style='width:90px;height:26px'>D-one</button>"
+            "<button data-current=true style='width:90px;height:26px'>D-two</button>"
+            "<div role=tab aria-selected=true style='width:90px;height:26px'>E-one</div>"
+            "<button style='width:90px;height:26px'>D-plain</button></body>")
+        await tp2.wait_for_timeout(120)
+        _t2 = await tp2.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        _a2 = {}
+        for e in _t2:
+            lab = (e.get("label") or e.get("name") or "").strip()
+            if lab[:2] in ("D-", "E-"):
+                _a2[lab] = e.get("active") or ""
+        check("W16d a state read off a data-* attribute NAMES its source, so the "
+              "one notation that is a guess is distinguishable from the ones that "
+              "are declarations",
+              "from data-*" in _a2.get("D-one", "")
+              and "from data-*" in _a2.get("D-two", "")
+              and _a2.get("D-one", "").startswith("active")
+              and _a2.get("D-two", "").startswith("current"),
+              f"D-one={_a2.get('D-one')!r} D-two={_a2.get('D-two')!r}")
+        check("W16e CONTROL: a DECLARED aria-selected still gets the bare marker, "
+              "so the attribution marks the guess and not every state",
+              _a2.get("E-one") == "selected" and _a2.get("D-plain") == "",
+              f"E-one={_a2.get('E-one')!r} D-plain={_a2.get('D-plain')!r}")
         await tp2.close()
 
         # ---- W21: writing to something that cannot hold text ---------------------
