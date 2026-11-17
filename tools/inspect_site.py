@@ -62,7 +62,7 @@ def _permitted_deletes():
     src = (ROOT / "tools" / "test_ledger.py").read_text(encoding="utf-8")
     body = src[src.index("SPEC_DELETES = {"):]
     body = body[:body.index("}")]
-    names = set(re.findall(r'"([a-z][a-z0-9-]+)"', body))
+    names = set(re.findall(r'"([A-Za-z][A-Za-z0-9-]+)"', body))   # [A-Za-z]: `checkVisibility-false` has a capital V; [a-z] dropped it and raised a false "rule started deleting" alarm (found by generality_live)
     if not names:
         raise SystemExit("could not read SPEC_DELETES from test_ledger.py — did it move?")
     return names

@@ -230,7 +230,20 @@
         ts[s] = t;
         kd[s] = r.type === 'childList' ? 1 : (r.type === 'characterData' ? 2 : 3);
         an[s] = r.attributeName || null;
-        const el = r.target && r.target.nodeType === 1 ? r.target : (r.target && r.target.parentElement);
+        // A ShadowRoot HAS NO parentElement, and that made every direct append
+        // into one unattributable. A ShadowRoot is a DocumentFragment (nodeType
+        // 11) whose `parentNode` is null -- it hangs off `host`, not off a
+        // parent -- so the fallback resolved to null, the record was stored with
+        // no target, and a SCOPED read could never attribute it. Measured: a
+        // read scoped to `main` while a shadow root painted 400 rows directly
+        // into itself reported `since=4032, structural=0`, i.e. QUIET, against a
+        // true recency of 7ms. That is a FALSE QUIET, which is the worst
+        // direction this signal can fail in, on the normal Lit/Shoelace shape.
+        // R25 could not see it: its fixture mutates an Element INSIDE the root,
+        // whose parentElement resolves fine. Open and closed roots alike (#31's
+        // attachShadow wrap is what lets us observe a closed one at all).
+        const el = r.target && r.target.nodeType === 1 ? r.target
+          : (r.target && (r.target.parentElement || r.target.host || null));
         try { tg[s] = el ? new WeakRef(el) : null; } catch (e) { tg[s] = null; }
         n++; wrote++;
       }

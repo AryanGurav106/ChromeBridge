@@ -743,6 +743,50 @@ let q=0; setInterval(()=>{sr.getElementById('sh').textContent='s'+(q++);}, 120);
         check("R25b ...and contains() genuinely cannot see it, so the composed "
               "walk is earning its keep rather than restating the easy answer",
               native is False, f"host.contains(shadowChild)={native}")
+
+        # R25c — THE CASE R25 CANNOT REACH, AND IT IS A FALSE QUIET.
+        # R25's host mutates an Element INSIDE its shadow root, so the record's
+        # target is a text node whose `parentElement` is that Element and the
+        # attribution works. The shape that breaks is a direct append INTO the
+        # root: there the MutationRecord's target IS the ShadowRoot, which is a
+        # DocumentFragment with `parentNode === null` and therefore
+        # `parentElement === null`. The record was stored with NO target, and a
+        # scoped read could never attribute it. That is the normal Lit/Shoelace
+        # shape -- a component rendering its own children -- so a scoped read of
+        # a region containing one reported QUIET while it painted.
+        #
+        # THE SCOPE MUST HOLD SOME OTHER HISTORY or this cannot detect the bug:
+        # with nothing attributable at all, #77's branch correctly answers
+        # UNKNOWN, which is safe. The false QUIET needs a scope whose `since` is
+        # a real but STALE number, which is what `#settled` provides.
+        DIRECT = """<!doctype html><meta charset=utf-8><body>
+<div id=wrap mmid="1">
+  <div id=settled>done</div>
+  <div id=host2></div>
+</div>
+<div id=calm mmid="2"><p>nothing happens here</p></div>
+<script>
+const sr2 = document.getElementById('host2').attachShadow({mode:'open'});
+let m=0; setInterval(()=>{ const d=document.createElement('div');
+  d.textContent='r'+(m++); sr2.appendChild(d); }, 120);
+</script></body>"""
+        pg2 = await tagged_page(DIRECT)
+        # Past the 3000ms window, so the page's own parse is outside it and the
+        # only thing inside is the shadow root's ongoing paint.
+        await pg2.wait_for_timeout(4000)
+        r_wrap = await probe_scoped(pg2, "1")
+        r_calm = await probe_scoped(pg2, "2")
+        check("R25c a scope containing a shadow root that is appending DIRECTLY "
+              "into itself is never reported quiet — a ShadowRoot has no "
+              "parentElement, so those records were unattributable",
+              r_wrap["mut"]["structural"] > 0 and r_wrap["mut"]["since"] < 500,
+              f"struct={r_wrap['mut']['structural']} since={r_wrap['mut']['since']}")
+        check("R25d CONTROL: a genuinely settled sibling scope is still reported "
+              "quiet — without this, resolving every record to SOMETHING would "
+              "pass R25c while making every scoped read report churn",
+              r_calm["mut"]["structural"] == 0 and r_calm["mut"]["text"] == 0,
+              f"struct={r_calm['mut']['structural']} text={r_calm['mut']['text']} "
+              f"since={r_calm['mut']['since']}")
         check("R26 the probe reports WHICH question it answered",
               r_doc.get("scoped") is False and r_content.get("scoped") is True
               and r_doc.get("scopeMiss") is False and r_content.get("scopeMiss") is False,
