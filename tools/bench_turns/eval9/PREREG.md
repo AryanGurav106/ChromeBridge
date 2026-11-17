@@ -201,3 +201,28 @@ everything in one round trip there is nothing left for the representation to
 differ about"* — and it costs n. Every exclusion is named in the closeout with
 the agent's own words, and if n falls below 6 the achievable p is stated beside
 the result.
+
+## AMENDMENT 6 — the navigation instruction, added from wave 2 on
+
+Amendment 5 excluded T5 because both arms reached the answer by recalling a
+deep URL. Rather than keep discarding pairs, waves 2–4 carry one extra
+sentence, **byte-identical in both arms**:
+
+> reach the answer by NAVIGATING from the start page — follow links, use the
+> site's own search, open its menus. Do not type a deep URL you recalled from
+> prior knowledge, even though you may know one. If you do end up constructing
+> a URL rather than navigating, say so plainly in your NOTES line.
+
+**What this costs, stated rather than buried.** Wave 1 (T3, T5) ran WITHOUT it,
+so absolute call counts are not comparable across waves and will not be summed
+into a single total. H1 is a paired sign test within a task, and both arms of
+every task got the same instruction as each other, so each PAIR remains sound —
+which is the only thing the sign test reads.
+
+**And it is a mandate, which is the thing #45 warns about.** Eval 4's headline
+had to be withdrawn because its prompt mandated the behaviour it measured. The
+difference here is what is mandated: this constrains the ROUTE both arms must
+take, not how either should use its tools — it says nothing about batching,
+call counts, or which tool to reach for. If a wave-2+ result diverges sharply
+from wave 1 in absolute terms, this sentence is the first suspect and the
+closeout says so.
