@@ -133,7 +133,17 @@ touching the DOM is invisible to a ref check, and `(occluded/blocked)` is
 computed at listing time, not action time), and observation **through** the
 model turn rather than at step boundaries.
 
-### 2. 59.4% of ordinal-bearing descriptors cannot be witnessed `ACCEPTED`
+### 2. 52.6% of ordinal-bearing descriptors cannot be witnessed `MEASURED CANDIDATE`
+> **Re-measured in #83 on 39 sites against #72's 24.** The unwitnessed share is
+> **52.6%**, not 59.4%, and the shipped witness covers 47.4%. #72's claim that
+> the shipped witness is ~11.6% WRONG on a re-sort is mostly #72's own mutation:
+> under a FAITHFUL whole-record move it was 0 of 112 WRONG on Hacker News.
+> A candidate now exists with numbers — the record's own rendered TEXT, taking
+> shipped-OR-record coverage to **69.0%** and cutting re-sort WRONG from 11.6%
+> to 0.4%. Attribute atoms raise coverage further and are REJECTED: Angular
+> Material mis-bound 4 of 120 with no mutation at all, on a per-load generated
+> `id` that a two-load stability check does not catch. Not applied — it changes
+> what a flow stores and wants a live record-and-replay pass.
 The re-sort mis-bind is **closed on the `resort` arm, for the witnessed
 minority** (#72): `resort` on a witnessed descriptor is **0.0% WRONG at 94.3%
 CORRECT**, for +0.2pp refusals on the six pre-existing mutations. What remains
@@ -144,7 +154,7 @@ before and no better.
 **Two corrections to how that was written down**, both checkable and both now
 carried in `FLOWS-FAILURE-SURFACE.md` 3.3a. The witnessed set is a **minority**,
 not a majority — 212 of 558 (38.0%) on resort, 238 of 586 (40.6%) on reorder,
-which is the same fact as the 59.4% in this heading. And the closure number is
+which is the same fact as the 52.6% in this heading. And the closure number is
 from the `resort` arm alone: on the adversarial `reorder` arm a **witnessed**
 descriptor is **71.4% WRONG** (#72's own table; re-derived at 55.6% on a
 different 6-site sample). An anchor-only witness stays put while its element

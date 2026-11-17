@@ -6979,7 +6979,11 @@ granted in the side panel is refused with the same message the agent gets.
     at its new index. Refusal cost on the six pre-existing mutations: **+0.2pp**,
     all of it on `rename-neighbour` (99.5% → 99.3%). `base` unchanged at 100%.
 
-    **THE RESIDUE, STATED RATHER THAN BURIED: 59.4% of ordinal-bearing
+    **THE RESIDUE, STATED RATHER THAN BURIED — and both of this paragraph's
+    numbers are SUPERSEDED by #83, which measured them on 39 sites against
+    this entry's 24: the unwitnessed share is 52.6%, and the shipped
+    witness's 'WRONG on a re-sort' figure was mostly an artefact of the
+    mutation used here. 59.4% of ordinal-bearing
     descriptors have nothing to witness them** — crowds identical in every
     declared field AND in their surroundings. Nothing the collector emits
     separates those; the ordinal is taken exactly as before, no worse and no
@@ -8422,6 +8426,93 @@ granted in the side panel is refused with the same message the agent gets.
     control). Probes — `tools/audit_generality_live.py`,
     `tools/audit_pattern_surface.py`, `tools/audit_readiness_adversarial.py`,
     `tools/audit_observe_act_gap.py`.
+
+
+83. **THE FLOW AUDIT CORRECTED TWO OF #72'S OWN NUMBERS, AND FOUND THAT A
+    STABILITY CHECK CAN PASS WHILE THE HAZARD STAYS.** The fifth of the #82
+    fan-out, and the only one whose main yield is a correction rather than a
+    defect. Working paper: `docs/research/FLOW-UNBREAKABLE-2026-11.md`; probe:
+    `tools/audit_record_witness.py`, 41 frozen sites, 2,540 ordinal-bearing
+    descriptors.
+
+    **#72's 59.4% is 52.6%.** That entry measured 24 sites; this one measured
+    39, and the figure moves with the sample. The shipped self+anchor witness
+    covers **47.4%**, not 40.6%.
+
+    **#72's "shipped witness is 11.6% WRONG on a re-sort" is mostly ITS OWN
+    MUTATION.** On Hacker News the shipped witness was **0 of 112 WRONG** under a
+    faithful whole-record move, and 18 of 112 under moves that tear a record
+    apart. The shipped witness — and #72's synthetic `resort` arm — assume the
+    member sits LAST in its record, and nothing declares that. On a faithful move
+    it held in this sample, so it is a stated caveat rather than the defect #72
+    implied. **#72's own lesson, applied to #72: an ablation measures the code
+    against the sample, and a mutation set is a sample.**
+
+    **THE CANDIDATE, MEASURED.** A record's own rendered text as the witness:
+    take the lowest common ancestor of a tied crowd, a member's record is the
+    child of that ancestor containing it, and the witness is the text atoms
+    unique to that member at record time. No tag list, no class name, no
+    threshold, and it applies only to steps that already carry an ordinal.
+
+    | | share of ordinal-bearing descriptors |
+    |---|---|
+    | shipped witness | 47.4% |
+    | record text unique | 43.9% |
+    | record text OR attribute unique | 60.4% |
+    | **shipped OR record** | **69.0%** |
+    | no record isolable at all | 36.4% |
+
+    Under a real re-sort of the live DOM (not a permuted entry array), on
+    descriptors that HAVE a record witness so both resolvers face the same
+    targets: shipped **11.6% WRONG / 23.4% refused**, record-text **0.4% WRONG /
+    8.2% refused**. On a different record being deleted, shipped is 13.8%
+    correct and 85.6% refused where record-text is **96.3% correct**.
+
+    **ATTRIBUTE ATOMS ARE A TRAP, AND THE WAY THEY ARE A TRAP IS THE FINDING.**
+    Admitting attributes raises coverage to 60.4% and resolves better — and
+    Angular Material mis-bound **4 of 120 descriptors with NO mutation at all**,
+    because `id="mat-select-value-3"` is unique, looks declared, and is a
+    PER-LOAD COUNTER. **It did not recur in run 2.** So a two-load stability
+    check — exactly the arm `audit_href_rung.py` uses and #61 relied on — can
+    pass while the hazard is still there. Text atoms only.
+
+    **REJECTED, each with its number:** a neighbour-window witness (24.9% WRONG
+    against the record's 20.7%, and 72.7% against 78.2% correct on a deleted
+    record); `aria-rowindex`/`aria-posinset` (**3.8% present**, 97 of 2,540, and
+    positional so it carries no information under a sort); geometry (87.3%
+    unique and refused in #72 because it drifts); `id`/`data-testid` as a new
+    collector field (6.8% / 2.5%, already rejected in #61 and not re-proposed).
+
+    **WHAT THE PRIOR ART HAS THAT WE DO NOT.** Playwright's row-scoping —
+    `row.filter({hasText})` and then search inside — is the documented community
+    answer to precisely the failure #72 measured, and is **genuinely ahead of
+    us**. And ReUseIt (IUI '26) synthesises its guards by re-running variations,
+    paying 15–52 minutes of model time per task family; `build()` and the
+    mutation set already exist here and run in milliseconds with no model, so
+    the same per-step CORRECT/REFUSED/WRONG report could appear in the recording
+    diff. Parity or worse than ours: the Chrome Recorder's selector alternatives,
+    Cypress retry, workflow-use's self-heal. **Nothing in the space does
+    preconditions, promoted postconditions or an ordinal witness.**
+
+    **THE CORPUS GAP IS THE LIMIT, and it is #25 for the third time this
+    session.** The frozen sites are component demos and landing pages. There are
+    no admin tables, invoice lists or order grids in them — which is exactly
+    where a repeated-record witness would live and exactly the shape a re-sort
+    breaks. Quote the per-site medians (record-text rescues 50%) beside the
+    pooled figures, and do not treat either as the number for the apps this
+    feature actually runs against.
+
+    **NOT APPLIED.** The candidate is measured and the patch is a diff in the
+    working paper. It changes what a recorded flow stores, so it wants a live
+    record-and-replay pass, which the extension reload gates.
+
+    **AND FOUR OF MY OWN BACKGROUND WAITERS COULD NEVER HAVE FINISHED.** The
+    agent launched `until ! pgrep -f audit_record_witness; do sleep 5; done` —
+    and `pgrep -f` matches full command lines, so each waiter matched itself.
+    Verified before stopping them that no probe process was running and the
+    file had last been written twelve minutes earlier. It is PRINCIPLE 15
+    pointed the other way: not a detector that cannot fire, a waiter whose
+    condition can never clear.
 
 
 ## Debugging starting points
