@@ -8518,9 +8518,20 @@ granted in the side panel is refused with the same message the agent gets.
     pooled figures, and do not treat either as the number for the apps this
     feature actually runs against.
 
-    **NOT APPLIED.** The candidate is measured and the patch is a diff in the
-    working paper. It changes what a recorded flow stores, so it wants a live
-    record-and-replay pass, which the extension reload gates.
+    **SHIPPED AND LIVE-VERIFIED IN BOTH DIRECTIONS — see the end of #84 and the
+    pair below.** Recorded against three list rows identical in every declared
+    field AND in their surroundings (the unwitnessed shape), then the list was
+    re-sorted underneath the flow:
+
+    | | result |
+    |---|---|
+    | with atoms | **PASSED**, deleted **INV-1001**, and SAID `step 2 computer ref (0 -> 2) ... bound to it because what identifies it still names exactly one element` |
+    | atoms stripped from the same file | deleted **INV-1003** — the wrong invoice — and the postcondition caught it |
+
+    The second row is what the feature is for, and it understates the danger:
+    that step happened to carry an assertion naming the invoice. A step with no
+    postcondition — and the recorder reports that about 23% of recorded steps
+    have none — would have deleted the wrong record and reported PASSED.
 
     **AND FOUR OF MY OWN BACKGROUND WAITERS COULD NEVER HAVE FINISHED.** The
     agent launched `until ! pgrep -f audit_record_witness; do sleep 5; done` —
