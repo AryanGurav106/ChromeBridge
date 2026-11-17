@@ -226,3 +226,28 @@ take, not how either should use its tools — it says nothing about batching,
 call counts, or which tool to reach for. If a wave-2+ result diverges sharply
 from wave 1 in absolute terms, this sentence is the first suspect and the
 closeout says so.
+
+## AMENDMENT 7 — a defect of MINE, shipped hours ago, found inside the eval
+
+`T6:cb` reported *"a click that reported NO EFFECT before the navigation was
+visible"*. That token comes from the dead-click guard I made reachable in
+`computerOp` EARLIER TODAY, and this is a false positive.
+
+The mechanism, and it is the gap in my own gate: the guard fires on
+`_delivered === true` — probe survived, event received — with the effect
+fingerprint unchanged. A click that navigates is supposed to destroy the probe
+and return `null`, which claims nothing (ID3). But between dispatching the
+event and reading the probe back, a navigation that has STARTED but not yet
+COMMITTED leaves the old document alive: the probe answers `true`, the
+fingerprint is unchanged because the new page has not arrived, and the guard
+says "the page did not react" about a click that is in the middle of reacting.
+
+**Consequence for this eval, stated now rather than at closeout:** the
+chromebridge arm is running a build with a defect introduced today, and on T6
+it cost calls. T6 is scored as it ran — rewriting the build mid-eval would be
+worse than a confounded pair — and T6 is flagged as affected.
+
+**Not fixed during the run.** The fix is to require the document to still be
+the same one at readback, which `await_navigation`'s own state already knows.
+It goes in after the runs, with its own check, and the eval is re-read
+afterwards to see whether any other pair carries the same note.
