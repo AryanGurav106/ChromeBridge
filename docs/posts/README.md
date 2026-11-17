@@ -4,7 +4,7 @@ The brief was to post REGULARLY so people get the idea, "not just numbers".
 One draft is not a cadence, so this is the pipeline: each post below is already
 backed by an artefact in this repo, so writing it is an hour, not a project.
 
-**Nine are drafted now (001, 002, 003, 004, 006, 009, 010, 013, 014).** At one a week that is over a
+**Eleven are drafted now (001, 002, 003, 004, 006, 009, 010, 013, 014, 015, 016).** At one a week that is over a
 month of cadence already sitting in the repo, which was the point of building a
 queue rather than writing one post well.
 
@@ -40,6 +40,8 @@ thing being shown, which is why 001 leaves the head-to-head out entirely.
 | 012 | The same task, re-rendered through a different date picker, 65 times | CLAUDE.md #79, `tools/measure_wpb_variants.py` | material complete |
 | 013 | A drawer you cannot see took the whole page, and two agents found it independently | CLAUDE.md #80, commit `b01478a`, `tools/bench_turns/eval6/`, CT2/CT2b | **DRAFTED**, needs sending |
 | 014 | We ran 16 head-to-head tasks and tied. Here is why it was worth it. | `tools/bench_turns/eval7/` — prereg + 5 amendments, score.py, CLOSEOUT.md | **DRAFTED**, needs sending |
+| 015 | Record and replay against a real staging app | `flows/`, CLAUDE.md #59-#61 | **DRAFTED**, needs sending |
+| 016 | I lost my own benchmark to a comment I'd written that morning | `tools/bench_turns/eval9/` — prereg + 9 amendments, analyse.py, CLOSEOUT.md; CLAUDE.md #81; PRINCIPLES 18 | **DRAFTED**, needs sending |
 
 ## What each post must NOT do
 
@@ -52,6 +54,12 @@ thing being shown, which is why 001 leaves the head-to-head out entirely.
   witness and are unchanged (#72).
 - **Imply the head-to-head says anything about the consent model.** The gate was
   armed for the run and the pre-registration says so explicitly.
+- **Lead with eval 9's totals.** 58 v 68 is outside the noise floor and it is
+  NOT the result: the pre-registered test is a sign test and it says 4/7,
+  p = 1.0. Post 016 says so explicitly and any other post touching eval 9 must
+  too. Switching to totals after seeing the data is choosing the statistic.
+- **Claim the eval-9 click fix is verified live.** At the time of drafting it
+  is fixtured and ablated and the extension has not been reloaded.
 - **Present a pre-registered subset we FAILED as a win.** H4, the
   interaction-heavy subset, is 7/9 and does not clear. It was named as a test we
   might fail before any data existed and it gets the same prominence.
