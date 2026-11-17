@@ -2712,6 +2712,45 @@ function _readinessPage(scopeMmid) {
       } catch (e) { return false; }
     }).length;
   } catch (e) {}
+  // A FRAME WE CANNOT SEE INTO, counted so a QUIET verdict can say what it did
+  // not cover. Everything above reads the top document and same-origin frames;
+  // a CROSS-ORIGIN frame is opaque to all of it, so a page whose content paints
+  // inside one reports quiet while it is still building. The adversarial
+  // readiness audit measured exactly that, at two offsets on one of its shapes.
+  //
+  // PRICED BEFORE SHIPPING, because the obvious objection is that this would
+  // appear on every page carrying an ad or an embedded video -- the always-on
+  // warning #15 priced and #43 deleted `readyState` for. Measured on the frozen
+  // corpus: a RENDERED cross-origin frame of at least 30px is present on
+  // 6.9% of pages, so the note discriminates rather than fires always. The
+  // caveat is stated where the number is: those HARs are captured AFTER consent
+  // (#78), so CMP and ad frames are under-represented and this is a floor.
+  //
+  // CROSS-ORIGIN IS TESTED, NOT INFERRED FROM `src`. An `about:blank`, a
+  // `srcdoc` and a same-site subdomain all read as "different" by string and are
+  // perfectly readable; `contentDocument` throwing is the fact.
+  // The 30px bound is `_frameShellsPage`'s own, reused rather than re-chosen, so
+  // the two frame passes agree about which frames are worth naming (#30 found
+  // two such passes disagreeing once already).
+  try {
+    let blind = 0;
+    for (const f of document.querySelectorAll('iframe,frame')) {
+      let vis = true;
+      try {
+        vis = !f.checkVisibility ||
+              f.checkVisibility({ opacityProperty: true, visibilityProperty: true });
+      } catch (e) {}
+      if (!vis) continue;
+      let opaque = false;
+      try { opaque = !f.contentDocument; } catch (e) { opaque = true; }
+      if (!opaque) continue;
+      try {
+        const r = f.getBoundingClientRect();
+        if (r.width >= 30 && r.height >= 30) blind++;
+      } catch (e) {}
+    }
+    o.blindFrames = blind;
+  } catch (e) {}
   return o;
 }
 
@@ -2789,6 +2828,34 @@ async function readinessNote(tabId, scopeMmid) {
     // newline: the existing notes already end in one, so `note + '\n' + f`
     // leaves a blank line and the regex stops there, peeling only the first.
     return f ? (note ? note + f : f) : note;
+  };
+  // WHAT A QUIET VERDICT DID NOT COVER. Everything this probe reads comes from
+  // the top document and same-origin frames; a CROSS-ORIGIN frame is opaque to
+  // all of it. So a page whose content paints inside one reports quiet while it
+  // is still building -- measured at two offsets by the adversarial readiness
+  // audit, and the one false-quiet shape recency cannot reach.
+  //
+  // ON THE QUIET PATHS ONLY, and that scope is the whole reason this is not
+  // noise. A verdict already saying the DOM is changing needs no caveat: the
+  // caller is not about to conclude absence from it. This exists because a
+  // QUIET answer can be wrong, so it rides exactly those.
+  //
+  // PRICED FIRST: a rendered cross-origin frame of at least 30px is present on
+  // 6.9% of frozen-corpus pages, so 93% pay nothing. Those HARs are captured
+  // after consent (#78), so CMP and ad frames are under-represented and that
+  // figure is a floor -- stated rather than rounded away.
+  //
+  // STATES THE FACT AND NAMES NO CAUSE (PRINCIPLE 6). We cannot tell a frame
+  // that finished from one still painting, and saying which would be the guess
+  // #33 removed from three other notes.
+  const _withBlind = (note, rr) => {
+    const n = rr && rr.blindFrames;
+    if (!n) return note;
+    const b = `*** ${n} cross-origin frame(s) are rendered here and this check `
+      + `cannot see inside them, so the verdict above covers the top document `
+      + `and same-origin frames only. If what you are waiting for lives in an `
+      + `embed, a checkout or a consent sheet, this does not say it has arrived. ***\n`;
+    return note ? note + b : b;
   };
   let r = null;
   try { r = await runInTab(tabId, _readinessPage, [scopeMmid === undefined ? null : scopeMmid]); } catch (e) {}
@@ -2981,15 +3048,16 @@ async function readinessNote(tabId, scopeMmid) {
       // #33's class, in the banner being rewritten to fix #33's class. Whether
       // this read is good enough depends on what the caller is looking for, and
       // the caller knows that and we do not.
-      return _withFade(`*** DOM STABLE${r.scoped ? ' IN THE SUBTREE YOU SCOPED TO' : ''}` +
+      return _withBlind(_withFade(`*** DOM STABLE${r.scoped ? ' IN THE SUBTREE YOU SCOPED TO' : ''}` +
              `${r.scopeMiss ? ' (page-wide: the ref you scoped to did not resolve)' : ''}` +
              `, NETWORK BUSY. No DOM change for ${m.since}ms; separately ` +
              `${bits.join('; ')}. What is rendered now is not being rewritten — whether ` +
-             `MORE will arrive is what those requests decide. ***\n`, r);
+             `MORE will arrive is what those requests decide. ***\n`, r), r);
     }
-    return _withFade('', r);   // quiet DOM, quiet network: say nothing at all.
+    return _withBlind(_withFade('', r), r);   // quiet DOM, quiet network: say nothing at all
+                                              // -- unless a frame we cannot read is rendered.
   }
-  if (!bits.length) return _withFade('', r);
+  if (!bits.length) return _withBlind(_withFade('', r), r);
   // Says "any coordinate" rather than "box() coordinates": box() is opt-in now
   // (`geometry=true`), so naming it would describe a field most reads do not
   // contain, while the warning still applies to a screenshot coordinate or one
