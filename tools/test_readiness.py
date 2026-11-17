@@ -978,6 +978,79 @@ let i = 0;
               f"saturated={ev['mut']['saturated']} total={ev['mut']['total']}")
         await pg.close()
 
+        # R34 — A QUIET VERDICT MUST SAY WHAT IT COULD NOT SEE. Every signal this
+        # probe reads comes from the top document and same-origin frames, so a
+        # page whose content paints inside a CROSS-ORIGIN frame reports quiet
+        # while it is still building. Recency cannot reach it: the frame is
+        # opaque to all of it. Measured at two offsets by the adversarial
+        # readiness audit, and the one false-quiet shape nothing else covers.
+        #
+        # CROSS-ORIGIN IS TESTED, NOT INFERRED FROM `src` -- an about:blank, a
+        # srcdoc and a same-site subdomain all read as "different" by string and
+        # are perfectly readable -- so the fixture serves a frame from a genuinely
+        # different host and the probe asks `contentDocument`.
+        xp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await xp.add_init_script(TAG)
+        await xp.route("**/host-a", lambda r: r.fulfill(
+            status=200, content_type="text/html",
+            body="<!doctype html><meta charset=utf-8><body style='margin:0'>"
+                 "<main><h1>Outer</h1>"
+                 "<iframe src='http://b.test/host-b' style='width:400px;height:300px'></iframe>"
+                 "</main>"))
+        await xp.route("**/host-b", lambda r: r.fulfill(
+            status=200, content_type="text/html",
+            body="<!doctype html><meta charset=utf-8><body>inner</body>"))
+        await xp.goto("http://a.test/host-a", wait_until="domcontentloaded")
+        await xp.wait_for_timeout(3400)        # past the window: the DOM is QUIET
+        xr = await probe(xp)
+        check("R34 the probe counts a RENDERED cross-origin frame it cannot read "
+              "into — the one false-quiet shape recency cannot reach",
+              (xr or {}).get("blindFrames") == 1,
+              f"blindFrames={(xr or {}).get('blindFrames')!r}")
+        await xp.close()
+
+        # R34b/R34c THE CONTROLS, and they are what stop this from becoming the
+        # always-on warning #15 priced and #43 deleted readyState for. A
+        # SAME-ORIGIN frame is readable, so it is not blind; a page with no frame
+        # at all counts nothing. Priced on the corpus at 6.9% of pages, but a
+        # measurement is not a guarantee and these two are.
+        #
+        # HOW EACH WAS PROVEN, because a NEW FIELD cannot be ablated the usual
+        # way: against the pre-fix collector `blindFrames` is undefined, so every
+        # check here fails and none of them is a control in that arm. The
+        # meaningful ablation is of the RULE. Counting any RENDERED frame instead
+        # of only the opaque ones leaves R34 passing and makes **R34b fail**,
+        # which is exactly what a control is for. Both arms were run.
+        sp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await sp.add_init_script(TAG)
+        await sp.route("**/same-a", lambda r: r.fulfill(
+            status=200, content_type="text/html",
+            body="<!doctype html><meta charset=utf-8><body style='margin:0'>"
+                 "<main><h1>Outer</h1>"
+                 "<iframe src='http://a.test/same-b' style='width:400px;height:300px'></iframe>"
+                 "</main>"))
+        await sp.route("**/same-b", lambda r: r.fulfill(
+            status=200, content_type="text/html",
+            body="<!doctype html><meta charset=utf-8><body>inner</body>"))
+        await sp.goto("http://a.test/same-a", wait_until="domcontentloaded")
+        await sp.wait_for_timeout(300)
+        sr = await probe(sp)
+        check("R34b CONTROL: a SAME-ORIGIN frame is readable, so it is not "
+              "counted — otherwise this would fire on any page with a frame",
+              (sr or {}).get("blindFrames") == 0,
+              f"blindFrames={(sr or {}).get('blindFrames')!r}")
+        await sp.close()
+
+        np_ = await tagged_page(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<main><h1>No frames here</h1><p>plain</p></main>")
+        await np_.wait_for_timeout(300)
+        nr = await probe(np_)
+        check("R34c CONTROL: a page with no frame at all counts none",
+              (nr or {}).get("blindFrames") == 0,
+              f"blindFrames={(nr or {}).get('blindFrames')!r}")
+        await np_.close()
+
         await browser.close()
 
     passed = sum(1 for x in results if x)
