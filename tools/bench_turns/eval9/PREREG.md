@@ -121,3 +121,32 @@ Origins the run needs:
 
 Wave 1 (T3, T5) is **not scored**: neither arm's number means anything when one
 of them never reached a page. Both will be re-run once the origins are granted.
+
+---
+
+## AMENDMENT 3 — `ALLOW_ALL_ORIGINS` armed for this run, by the user, 2026-11-17
+
+Asked and answered before touching anything: the user chose "Arm
+ALLOW_ALL_ORIGINS for the run" over granting the 8 origins by hand or reporting
+the eval blocked. Same treatment as eval 4's Amendment 5 and eval 7's
+Amendment 2.
+
+**Scope.** For the duration of eval 9's runs only, and restored immediately
+after, verified three ways: the flag back to `false`, `git diff` empty, and
+`node tools/test_permissions.js` reporting a full pass with **no "gate off"
+caveat** — a suite that cannot exercise the consent half is not evidence for
+it, which is why the caveat is the thing checked rather than the exit code.
+
+**Known hazard, from eval 7's own notes:** a live MV3 worker does not
+necessarily pick up a flag change, because our persistent WebSocket stops it
+being evicted. Eval 7 measured the arming taking effect without a reload and
+the RESTORE not taking effect for minutes. So the arming is VERIFIED by probing
+a refused origin, and the restore will be verified the same way rather than
+assumed from the file.
+
+**What this run therefore cannot say.** Per-origin consent is a one-time cost
+per site, not a per-task turn cost, so counting it would charge us eight times
+for a safety property the other arm does not have. But with the gate off, this
+eval says NOTHING about the cost of the consent model and must never be quoted
+as though it did. That is the same sentence eval 7 recorded, and it is repeated
+here because the temptation to quote it is exactly as strong.
