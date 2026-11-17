@@ -150,3 +150,25 @@ for a safety property the other arm does not have. But with the gate off, this
 eval says NOTHING about the cost of the consent model and must never be quoted
 as though it did. That is the same sentence eval 7 recorded, and it is repeated
 here because the temptation to quote it is exactly as strong.
+
+## AMENDMENT 4 — the build the runs actually execute against
+
+Caught by the user, not by me. I armed the flag, probed one refused origin, saw
+it load, and took that as proof the environment was current. It proved only
+that the FLAG had landed. Everything else changed in `background.js` today —
+the record-climb intersection fix, the `keepForFind` deletion, the dead-click
+guard in `computerOp`, the aria-hidden advice — and `mcp_server.py` had been
+reported STALE by `sw_info` for hours, so the subagents would have driven an
+old server.
+
+Verified before the runs rather than assumed, both halves:
+
+```
+sw 5dsnvt, ageSec 23          -> extension freshly reloaded
+bridge_ms_total 16.7          -> the stdio server respawned, not just re-handshook
+server_code_changed_since_start: absent -> the server IS the code on disk
+```
+
+`bridge_ms_total` resetting is the load-bearing one: a `/mcp` that re-handshakes
+without restarting the process leaves it non-zero, which is exactly how eval 8's
+runner fix was found not to be live.
