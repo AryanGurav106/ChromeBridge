@@ -1488,6 +1488,65 @@ def main() -> int:
           'if "OMITTED BUT ACTIONABLE" in out or "listing capped at" in out:' in _srv3,
           "gated on the cap")
 
+    # C36 — A LONE SURROGATE KILLED THE SERVER PROCESS. A JS string is UTF-16 and
+    # may legally hold an unpaired surrogate; Chromium preserves them in
+    # `textContent` and `document.title`; `JSON.stringify` emits the escape and
+    # Python's `json.loads` reconstructs it faithfully. Then everything
+    # downstream refuses to encode it -- `TextContent.model_dump_json()` raises
+    # `PydanticSerializationError` and the stdio server dies in its TaskGroup,
+    # so the NEXT tools/call is never answered. One scrub at the single door
+    # every message comes through, not at the ~21 bounded-string sites, because
+    # none of those covers a page that simply CONTAINS one.
+    import importlib.util as _ilu
+    _bs = _ilu.spec_from_file_location(
+        "_bsrv", os.path.join(ROOT, "core", "bridge", "server.py"))
+    _bm2 = _ilu.module_from_spec(_bs)
+    _bs.loader.exec_module(_bm2)
+    _scrub = _bm2.ExtensionBridge._scrub_surrogates
+
+    def _ser(x):
+        try:
+            __import__("json").dumps(x, ensure_ascii=False).encode("utf-8")
+            return True
+        except Exception:
+            return False
+
+    _dirty = {"result": "ab\ud83c", "nested": [{"t": "a\udc00b"}], "ok": "fine"}
+    _clean = _scrub(_dirty)
+    check("C41 an unpaired surrogate anywhere in a bridge message is replaced, "
+          "so the result can be serialised instead of killing the process",
+          _ser(_clean) and not _ser(_dirty)
+          and "\ufffd" in _clean["result"]
+          and "\ufffd" in _clean["nested"][0]["t"],
+          repr(_clean))
+    check("C41b ...and it REPLACES rather than drops, so no offset the caller "
+          "already holds moves (the silent-shortening class, #22)",
+          len(_clean["result"]) == len(_dirty["result"])
+          # ...and it must have actually CHANGED, or "return the string
+          # untouched" satisfies the length equality for free. Caught by
+          # ablating the helper to the identity: this check passed.
+          and _clean["result"] != _dirty["result"],
+          f"{len(_dirty['result'])} -> {len(_clean['result'])}")
+    # THE TWO CONTROLS. Without them "mangle every string" would pass C36.
+    check("C41c CONTROL: a VALID astral pair survives byte-identical",
+          _scrub("a\U0001F600b") == "a\U0001F600b"
+          and _scrub({"k": "\U0001F1EF\U0001F1F5"})["k"] == "\U0001F1EF\U0001F1F5",
+          "emoji intact")
+    check("C41d CONTROL: non-Latin text survives byte-identical, including "
+          "combining marks and CJK",
+          _scrub("\u6771\u4eac \u0636\u0651 \uc0bc\uc131 \u0915\u093e") ==
+          "\u6771\u4eac \u0636\u0651 \uc0bc\uc131 \u0915\u093e",
+          "non-latin intact")
+    # AND THE WIRING. #19/#30: the helper is not the caller. This is what catches
+    # a third parse site being added without one, or the call being removed while
+    # the helper stays and every check above still passes.
+    _srv4 = read("core/bridge/server.py")
+    _loads = [ln for ln in _srv4.splitlines() if "json.loads(" in ln]
+    check("C41e every json.loads at the bridge ingress is scrubbed — the helper "
+          "existing is not the same as it being called",
+          len(_loads) >= 2 and all("_scrub_surrogates(" in ln for ln in _loads),
+          " | ".join(x.strip()[:60] for x in _loads))
+
     print(f"\n{passed} passed, {failed} failed, {passed + failed} total checks")
     if failures:
         print("failing: " + ", ".join(failures))

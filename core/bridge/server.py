@@ -253,6 +253,51 @@ class ExtensionBridge:
             logger.debug(f"[bridge] op={op} dt={self.last_call_ms:.0f}ms")
         return result
 
+    # ---- ingress sanitation ------------------------------------------------
+    @staticmethod
+    def _scrub_surrogates(obj):
+        """Replace UNPAIRED UTF-16 surrogates with U+FFFD, everywhere, once.
+
+        A LONE SURROGATE IN ANY TOOL RESULT KILLED THIS PROCESS. Measured end to
+        end: a JS string is UTF-16 and may legally hold an unpaired surrogate, a
+        page keeps them (`textContent` and `document.title` both preserve
+        `\ud83d` in Chromium), `JSON.stringify` emits the escape, and Python's
+        `json.loads` faithfully reconstructs it. Then every downstream encoder
+        refuses: `TextContent.model_dump_json()` raises
+        `PydanticSerializationError`, `json.dumps(..., ensure_ascii=False)`
+        raises `UnicodeEncodeError`, and over real stdio the failure surfaces as
+        `ExceptionGroup: unhandled errors in a TaskGroup` -- the server dies and
+        the next `tools/call` is never answered.
+
+        HERE, NOT AT THE CUT SITES. #71 fixed the fold-label slicer for exactly
+        this class (backing off one UTF-16 code unit at a time can terminate
+        inside a pair) and there are ~21 other bounded-string sites, but none of
+        that covers the PAGE-NATIVE case: the page simply contains one. One
+        scrub at the single door every message comes through does, and it cannot
+        be forgotten by a new cut site.
+
+        U+FFFD RATHER THAN DELETION, deliberately. Dropping the code unit would
+        shorten the string silently, which is the class #22 removed from this
+        codebase; the replacement character makes the damage visible and keeps
+        every offset the caller may already hold.
+
+        The fast path is a plain `encode` that allocates nothing on success, so
+        a clean listing pays one UTF-8 encode. A VALID astral pair round-trips
+        byte-identical (checked), as does every non-Latin string.
+        """
+        if isinstance(obj, str):
+            try:
+                obj.encode("utf-8")
+                return obj
+            except UnicodeEncodeError:
+                return obj.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+        if isinstance(obj, dict):
+            return {ExtensionBridge._scrub_surrogates(k):
+                    ExtensionBridge._scrub_surrogates(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [ExtensionBridge._scrub_surrogates(v) for v in obj]
+        return obj
+
     # ---- connection handler ----------------------------------------------
     async def _handle(self, ws: ServerConnection) -> None:
         # Handshake, in this order:
@@ -262,7 +307,7 @@ class ExtensionBridge:
         # protocol version it failed to match.
         try:
             hello_raw = await asyncio.wait_for(ws.recv(), timeout=10.0)
-            hello = json.loads(hello_raw)
+            hello = self._scrub_surrogates(json.loads(hello_raw))
             if not isinstance(hello, dict):
                 raise ValueError("hello frame is not an object")
         except Exception as e:
@@ -341,7 +386,7 @@ class ExtensionBridge:
         try:
             async for raw in ws:
                 try:
-                    msg = json.loads(raw)
+                    msg = self._scrub_surrogates(json.loads(raw))
                 except Exception as e:
                     logger.warn(f"bridge: malformed message: {e}")
                     continue
