@@ -8406,17 +8406,29 @@ granted in the side panel is refused with the same message the agent gets.
     says to re-derive. The HARs hold HTML as JSON-escaped strings and my pattern
     matched neither quoting. The real figures are above.
 
-    **STILL OPEN from this round, each with its evidence:** the option picker
-    rejects any candidate row whose text exceeds 80 UTF-16 units (three forced
-    copies, reproduced at 70 units picking and 90 failing — a fixed threshold
-    deciding whether an option can be picked at all, which bites long labels and
-    agglutinative languages); `_triggerEvidencePage.marked` and the collector's
-    `_phMarked` have DIVERGED while a comment claims they are kept in step
-    (PRINCIPLE 17, reproduced); `synthLabel` refuses a name over 40/80/40 units
-    so a long `::before` label becomes `(unlabeled-icon)` where Chrome names it;
-    and a same-origin ad frame's declared `aria-label` is discarded when its
-    contents are listed instead, so an agent sees an unlabelled link and cannot
-    tell it is an ad.
+    **THREE OF THE FOUR REMAINING DEFECTS WERE CLOSED IN THE SAME SESSION**, and
+    all three turned out to be one shape — a chosen number deciding whether
+    something EXISTS:
+    - the option picker rejected any candidate row past 80 UTF-16 units, and
+      **the defect was worse than reported**: the harvest needs two sibling
+      candidates before it calls something an options list, so a two-option
+      dropdown with one long label came back with NO options at all. Found by
+      ablating a CONTROL that was supposed to pass in both arms and did not
+      (OR1–OR4).
+    - `synthLabel`'s `::before` branch accepted a name only to 40 units, so a
+      48-unit authored label made the control `(unlabeled)` — an identity
+      deleted by a threshold. Fixed for that branch only: the other two bounds
+      in that function are container-vs-leaf proxies and are a different
+      question (UI2/UI2b).
+    - `_triggerEvidencePage`'s `marked` and the collector's `_phMarked` had
+      DIVERGED while a comment three lines above promised they were kept in
+      step; measured, they answered differently about one element at one instant
+      (MC4/MC4b).
+
+    **STILL OPEN, with its evidence:** a same-origin ad frame's declared
+    `aria-label` is discarded when its contents are listed instead, so an agent
+    sees an unlabelled link and cannot tell it is an ad. Low: context loss, not
+    identity loss, and the 23 instances the live audit found are all this shape.
 
     Suites: 1,448 checks. New — R25c/R25d (a direct append into a shadow root,
     with the settled-sibling control), C41–C41e (the surrogate scrub, two
