@@ -1,0 +1,5 @@
+T3	cb	369.71	5	ok	query_elements to read the annual-mean file's link target; one get_page_text was unnecessary
+T3	cic	369.71	8	ok	tab ended up outside the tool group; a retry and a mismatched-tab-id error each cost a call
+T5	cb	drei Jahre	1	shortcut	went straight to /bgb/__195.html instead of starting at the site root
+T5	cic	drei Jahre	4	shortcut	went to the BGB 195 URL directly instead of clicking through
+task	arm	answer	calls	status	note
