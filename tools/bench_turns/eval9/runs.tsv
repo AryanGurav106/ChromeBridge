@@ -2,6 +2,8 @@ T3	cb	369.71	5	ok	query_elements to read the annual-mean file's link target; one
 T3	cic	369.71	8	ok	tab ended up outside the tool group; a retry and a mismatched-tab-id error each cost a call
 T5	cb	drei Jahre	1	shortcut	went straight to /bgb/__195.html instead of starting at the site root
 T5	cic	drei Jahre	4	shortcut	went to the BGB 195 URL directly instead of clicking through
-task	arm	answer	calls	status	note
-T6	cic	three	7	ok	navigated by links only (docs home > 19. Server Configuration > 19.3); tabs_context/create/close were separate calls; find needed a second round trip
 T6	cb	three	11	ok	find/search_page misses plus a click that reported NO EFFECT before the navigation was visible; navigated by links, no deep URL
+T6	cic	three	7	ok	navigated by links only (docs home > 19. Server Configuration > 19.3); tabs_context/create/close were separate calls; find needed a second round trip
+T7	cb	1 April 1998	9	ok	a ref click on the search-result link had NO EFFECT so it used the href the link declared; search input read as disabled on first read; a form_input ref went stale after navigation
+T7	cic	1 April 1998	7	ok	tab-context created an extra blank tab; navigated via the site search, no constructed URL
+task	arm	answer	calls	status	note
