@@ -172,3 +172,32 @@ server_code_changed_since_start: absent -> the server IS the code on disk
 `bridge_ms_total` resetting is the load-bearing one: a `/mcp` that re-handshakes
 without restarting the process leaves it non-zero, which is exactly how eval 8's
 runner fix was found not to be live.
+
+## AMENDMENT 5 — the two-hop requirement, and how a shortcut is handled
+
+Written while wave 1 was still running, before any pair was scored.
+
+Both arms on T5 reported reaching the answer by constructing the deep URL from
+prior knowledge rather than navigating from the start page:
+
+- `T5:cic` — *"I guessed the paragraph URL directly (after loading the start
+  page) instead of clicking through the site."*
+- `T5:cb` — *"I went straight to the /bgb/__195.html URL inside one
+  browser_batch … instead of starting at the site root."*
+
+Both then READ the answer off a real page, so neither answered from memory —
+the brief's rule held. But a task solved that way measures URL recall, not
+navigation, and this eval exists to compare how two representations let an
+agent find things on a page.
+
+**Rule, fixed now rather than at closeout: a pair in which EITHER agent reports
+bypassing the navigation is marked SHORTCUT and excluded from H1.** It is not
+scored for either side. A 1-call "win" earned by remembering a URL is not a
+property of a DOM representation, and including it would flatter whichever arm
+happened to guess.
+
+This is eval 3's instrument ceiling arriving early — *"when both sides solve
+everything in one round trip there is nothing left for the representation to
+differ about"* — and it costs n. Every exclusion is named in the closeout with
+the agent's own words, and if n falls below 6 the achievable p is stated beside
+the result.
