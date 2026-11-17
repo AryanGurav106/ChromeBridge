@@ -46,6 +46,7 @@ fix it.
 | `EVALS.md` | The head-to-head protocol and the results index |
 | `OPEN.md` | The single ranked list of open questions, each with its evidence |
 | `SHOWCASE.md` | Content written for posting, with the claims it is not allowed to make |
+| `research/` | **Dated audits and surveys.** One file per investigation, named `<TOPIC>-<YYYY-MM>.md`. These are the working papers a `CLAUDE.md` entry cites; they hold the full matrix, the per-site rows and the rejected candidates that an entry only summarises. They are NOT superseded when the entry is written — the entry is the claim, this is the evidence |
 
 ## Documents at the repo root (older, still current)
 
@@ -65,7 +66,12 @@ fix it.
 
 ## How to add to this literature
 
-1. **A finding goes in `CLAUDE.md` first**, chronologically, with its evidence
+0. **A long investigation writes its working paper in `docs/research/` as it
+   goes**, dated, with the full matrix and every candidate it rejected and the
+   number that rejected it. An entry in `CLAUDE.md` summarises; the working
+   paper is what someone re-deriving the result actually needs, and it is the
+   difference between a claim and evidence.
+1. **A finding goes in `CLAUDE.md`**, chronologically, with its evidence
    and with what you got wrong on the way. That entry is the citation.
 2. **Then update the topical page**, pointing at the new entry number.
 3. **`OPEN.md` is a working list, not an archive** — when something closes,
