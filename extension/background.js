@@ -3579,7 +3579,7 @@ function _pickOptionPage(text, triggerSel) {
       containers.sort((a, b) => zOf(a) - zOf(b));   // stable: ties keep DOM order
       const pop = containers[containers.length - 1];
       const harvest = (requireClickable) => {
-        const rows = Array.from(pop.querySelectorAll('div, li, span, button, a')).filter(r => {
+        let rows = Array.from(pop.querySelectorAll('div, li, span, button, a')).filter(r => {
           if (r === pop) return false;
           let cs;
           try { cs = getComputedStyle(r); } catch (e) { return false; }
@@ -3593,8 +3593,21 @@ function _pickOptionPage(text, triggerSel) {
                            || r.hasAttribute('data-value') || r.hasAttribute('aria-selected');
             if (!clickable) return false;
           }
+          // dup:optionrow — A LENGTH IS NOT A ROW TEST. This was
+          // `t.length > 80`, a chosen number deciding whether an option can be
+          // PICKED AT ALL. Reproduced: a 41-unit row picks, a 96-unit row comes
+          // back `no option matched "<the text of the option that is right
+          // there>"`. It bites long labels (a full delivery address, a legal
+          // clause) and agglutinative languages hardest, and the message it
+          // produces is false about the page.
+          // The question the number was proxying for is "is this a ROW or the
+          // CONTAINER holding the rows", because a container's innerText is all
+          // its rows concatenated and is therefore long. That is decidable:
+          // a candidate CONTAINING another candidate is a container. Applied as
+          // a second pass below, since a .filter() cannot see its own output.
+          // Byte-identical across three injected copies (pinned by OR1).
           const t = (r.innerText || '').trim();
-          if (!t || t.length < 1 || t.length > 80) return false;
+          if (!t) return false;
           const rect = r.getBoundingClientRect();
           if (rect.width < 8 || rect.height < 8) return false;
           // Skip the search input wrapper, headers, close buttons — these have
@@ -3602,6 +3615,10 @@ function _pickOptionPage(text, triggerSel) {
           // share the same parent. Options come in batches; chrome doesn't.
           return true;
         });
+        // dup:optionrow-leaf — the second pass the comment above describes.
+        // A candidate that CONTAINS another candidate is the container, not a
+        // row. Byte-identical across the three copies (OR1).
+        rows = rows.filter(r => !rows.some(o => o !== r && r.contains(o)));
         // Group by parent; the parent with the MOST candidate children is the
         // options list. This filters out lone buttons (Close, Done) automatically.
         const byParent = new Map();
@@ -4021,7 +4038,7 @@ function _countVisibleOptionsPage(triggerSel) {
   containers.sort((a, b) => zOf(a) - zOf(b));
   const pop = containers[containers.length - 1];
   const countRows = (requireClickable) => {
-    const rows = Array.from(pop.querySelectorAll('div, li, span, button, a')).filter(r => {
+    let rows = Array.from(pop.querySelectorAll('div, li, span, button, a')).filter(r => {
       if (r === pop) return false;
       let cs;
       try { cs = getComputedStyle(r); } catch (e) { return false; }
@@ -4032,11 +4049,28 @@ function _countVisibleOptionsPage(triggerSel) {
                        || r.hasAttribute('data-value') || r.hasAttribute('aria-selected');
         if (!clickable) return false;
       }
+          // dup:optionrow — A LENGTH IS NOT A ROW TEST. This was
+      // `t.length > 80`, a chosen number deciding whether an option can be
+      // PICKED AT ALL. Reproduced: a 41-unit row picks, a 96-unit row comes
+      // back `no option matched "<the text of the option that is right
+      // there>"`. It bites long labels (a full delivery address, a legal
+      // clause) and agglutinative languages hardest, and the message it
+      // produces is false about the page.
+      // The question the number was proxying for is "is this a ROW or the
+      // CONTAINER holding the rows", because a container's innerText is all
+      // its rows concatenated and is therefore long. That is decidable:
+      // a candidate CONTAINING another candidate is a container. Applied as
+      // a second pass below, since a .filter() cannot see its own output.
+      // Byte-identical across three injected copies (pinned by OR1).
       const t = (r.innerText || '').trim();
-      if (!t || t.length > 80) return false;
+      if (!t) return false;
       const rect = r.getBoundingClientRect();
       return rect.width >= 8 && rect.height >= 8;
     });
+        // dup:optionrow-leaf — the second pass the comment above describes.
+    // A candidate that CONTAINS another candidate is the container, not a
+    // row. Byte-identical across the three copies (OR1).
+    rows = rows.filter(r => !rows.some(o => o !== r && r.contains(o)));
     // sibling-cluster heuristic
     const byParent = new Map();
     for (const r of rows) {
@@ -4789,7 +4823,7 @@ async function fillDropdown(tabId, selector, text) {
         };
         containers.sort((a, b) => zOf(a) - zOf(b));
         const pop = containers[containers.length - 1];
-        const rows = Array.from(pop.querySelectorAll('div, li, span, button, a')).filter(r => {
+        let rows = Array.from(pop.querySelectorAll('div, li, span, button, a')).filter(r => {
           if (r === pop) return false;
           let cs; try { cs = getComputedStyle(r); } catch (e) { return false; }
           const clickable = cs.cursor === 'pointer' || r.tagName.toLowerCase() === 'button'
@@ -4797,11 +4831,28 @@ async function fillDropdown(tabId, selector, text) {
                          || _hasHandlerProp(r)
                          || r.hasAttribute('data-value') || r.hasAttribute('aria-selected');
           if (!clickable) return false;
+          // dup:optionrow — A LENGTH IS NOT A ROW TEST. This was
+          // `t.length > 80`, a chosen number deciding whether an option can be
+          // PICKED AT ALL. Reproduced: a 41-unit row picks, a 96-unit row comes
+          // back `no option matched "<the text of the option that is right
+          // there>"`. It bites long labels (a full delivery address, a legal
+          // clause) and agglutinative languages hardest, and the message it
+          // produces is false about the page.
+          // The question the number was proxying for is "is this a ROW or the
+          // CONTAINER holding the rows", because a container's innerText is all
+          // its rows concatenated and is therefore long. That is decidable:
+          // a candidate CONTAINING another candidate is a container. Applied as
+          // a second pass below, since a .filter() cannot see its own output.
+          // Byte-identical across three injected copies (pinned by OR1).
           const t = (r.innerText || '').trim();
-          if (!t || t.length > 80) return false;
+          if (!t) return false;
           const rect = r.getBoundingClientRect();
           return rect.width >= 8 && rect.height >= 8;
         });
+        // dup:optionrow-leaf — the second pass the comment above describes.
+        // A candidate that CONTAINS another candidate is the container, not a
+        // row. Byte-identical across the three copies (OR1).
+        rows = rows.filter(r => !rows.some(o => o !== r && r.contains(o)));
         const byParent = new Map();
         for (const r of rows) {
           const p = r.parentElement; if (!p) continue;

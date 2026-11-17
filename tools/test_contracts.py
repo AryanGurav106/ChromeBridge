@@ -1294,6 +1294,28 @@ def main() -> int:
           not _mc2, f"singletons={_mc2}" if _mc2
           else ", ".join(f"{k}x{len(v)}" for k, v in sorted(_dup.items())))
 
+    # MC3 — THE THREE OPTION-ROW COPIES. `_pickOptionPage`, `_countVisibleOptionsPage`
+    # and `fillDropdown`'s sampleOptions each harvest option rows out of a popover,
+    # and all three are injected separately so they lose their closure — the
+    # duplication is FORCED and what was missing was enforcement (#21). They used
+    # to reject any candidate whose text ran past 80 UTF-16 units, a chosen number
+    # deciding whether an option could be picked at all; the replacement is the
+    # structural question it was proxying for, and it has to stay one rule.
+    _leaf = [l.strip() for l in _oc_lines
+             if "rows = rows.filter(r => !rows.some(" in l]
+    check("MC3 all three option-row harvests apply the SAME leaf rule, so a "
+          "container cannot be offered as an option in one path and not another",
+          len(_leaf) == 3 and len(set(_leaf)) == 1,
+          f"{len(_leaf)} cop(ies), {len(set(_leaf))} distinct")
+    check("MC3b ...and no copy still gates an option on a LENGTH — the number is "
+          "gone from every one of them, not from the one that was reported",
+          # CODE lines only. The three comments explaining the removal quote
+          # the old gate verbatim, and a check that cannot tell a quotation from
+          # the thing it quotes would fire on its own documentation.
+          not [l for l in _oc_lines
+               if "t.length > 80" in l and not l.lstrip().startswith("//")],
+          "no length gate on option rows")
+
     # ---------------------------------------------------------------- C31 ---
     # THE BANNER'S PROTECTION IS POSITIONAL, AND NOTHING SAID SO UNTIL IT BROKE.
     # `_split_banner` matches ANCHORED, and `_truncate` leans on it to peel the

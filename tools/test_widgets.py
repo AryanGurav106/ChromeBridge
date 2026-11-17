@@ -547,6 +547,89 @@ async def main():
         await ap.wait_for_timeout(60)
         _ae = await ap.evaluate(
             "(function(){ " + PICK + "; return _pickOptionPage('Medium', '#trig'); })()")
+        # OR1-OR3 — A LENGTH IS NOT A ROW TEST. The harvest rejected any candidate
+        # whose text ran past 80 UTF-16 units, which is a chosen number deciding
+        # whether an option can be PICKED AT ALL. Reproduced before fixing: a
+        # 41-unit row picks and a 96-unit row comes back `no option matched
+        # "<the text of the option that is right there>"` — a message that is
+        # false about the page. It bites long labels (a delivery address, a legal
+        # clause) and agglutinative languages hardest.
+        # The question the number proxied for is "row or CONTAINER", because a
+        # container's innerText is its rows concatenated and is therefore long.
+        # That is decidable without a number: a candidate CONTAINING another
+        # candidate is a container.
+        _LONG = ("Standard delivery to a residential address in the contiguous "
+                 "United States, 5 to 7 business days")
+        assert len(_LONG) > 80, "the fixture must exceed the OLD cutoff or it proves nothing"
+        await ap.goto("about:blank")
+        await ap.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<div id=trig2 role=combobox aria-expanded=true tabindex=0"
+            " style='width:400px;height:32px;border:1px solid #999'>Choose</div>"
+            "<div id=portal2 style='position:absolute;top:40px;left:0;width:400px;"
+            "z-index:1050'><div>"
+            "<div style='width:400px;height:26px;cursor:pointer'>Pickup in store</div>"
+            "<div style='width:400px;height:26px;cursor:pointer'>Express</div>"
+            f"<div style='width:400px;height:26px;cursor:pointer'>{_LONG}</div>"
+            "</div></div></body>")
+        await ap.wait_for_timeout(140)
+        _lr = await ap.evaluate(
+            "(function(){ " + PICK + "; return _pickOptionPage(" + repr(_LONG) + ", '#trig2'); })()")
+        check("OR1 an option whose label runs past the old 80-unit cutoff can be "
+              "picked — a length was deciding whether an option EXISTS",
+              # `actual` is a BOUNDED echo of the chosen row (#24 keeps a
+              # generous marked bound on unbounded content), so the invariant is
+              # that the pick SUCCEEDED and the echo is that option's own text,
+              # not that the echo is the whole string.
+              bool(_lr.get("ok"))
+              and _LONG.startswith(str(_lr.get("actual") or "").split("\u2026")[0]),
+              f"ok={_lr.get('ok')} actual={str(_lr.get('actual'))[:40]!r}")
+        _sr = await ap.evaluate(
+            "(function(){ " + PICK + "; return _pickOptionPage('Pickup in store', '#trig2'); })()")
+        check("OR2 CONTROL: a short sibling in the same list still picks, so this "
+              "did not simply widen the harvest into matching anything",
+              bool(_sr.get("ok")) and _sr.get("actual") == "Pickup in store",
+              f"ok={_sr.get('ok')} actual={str(_sr.get('actual'))[:40]!r}")
+        # OR3 — THE CONTROL FOR THE RULE THAT REPLACED THE NUMBER. The wrapper
+        # <div> holding both rows has the longest text on the page and is itself a
+        # candidate; it must not be offered as an option. Without this, deleting
+        # the length test outright would pass OR1 and OR2 while making every
+        # container pickable.
+        _wrap = await ap.evaluate(
+            "()=>document.querySelector('#portal2 > div').innerText.replace(/\s+/g,' ').trim()")
+        _cr = await ap.evaluate(
+            "(function(){ " + PICK + "; return _pickOptionPage(" + repr(_wrap) + ", '#trig2'); })()")
+        check("OR3 CONTROL: the wrapper CONTAINING the rows is not itself pickable "
+              "— a candidate holding another candidate is a container, not a row",
+              _cr.get("ok") is False,
+              f"ok={_cr.get('ok')} wrapper={_wrap[:48]!r}")
+
+        # OR4 — THE GATE DID NOT JUST HIDE ONE OPTION, IT COULD HIDE THE LIST.
+        # Found by ablating OR2 and asking why a control failed: the harvest needs
+        # at least TWO sibling candidates to call something an options list, so a
+        # two-option dropdown with one long label dropped to one candidate and
+        # came back with NO options at all. The long row is not the only casualty
+        # of a length test; its neighbours are.
+        await ap.goto("about:blank")
+        await ap.set_content(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<div id=trig3 role=combobox aria-expanded=true tabindex=0"
+            " style='width:400px;height:32px;border:1px solid #999'>Choose</div>"
+            "<div id=portal3 style='position:absolute;top:40px;left:0;width:400px;"
+            "z-index:1050'><div>"
+            "<div style='width:400px;height:26px;cursor:pointer'>Pickup</div>"
+            f"<div style='width:400px;height:26px;cursor:pointer'>{_LONG}</div>"
+            "</div></div></body>")
+        await ap.wait_for_timeout(140)
+        _tr = await ap.evaluate(
+            "(function(){ " + PICK + "; return _pickOptionPage('Pickup', '#trig3'); })()")
+        check("OR4 a two-option list keeps BOTH options when one label is long — "
+              "the old cutoff dropped it below the two-sibling minimum and the "
+              "SHORT option became unpickable too",
+              bool(_tr.get("ok")) and _tr.get("actual") == "Pickup",
+              f"ok={_tr.get('ok')} actual={str(_tr.get('actual'))[:40]!r} "
+              f"msg={str(_tr.get('msg'))[:60]!r}")
+
         check("W17c when the real list has NOT rendered, the answer is 'no options',"
               " never the page's own navigation",
               _ae.get("ok") is False

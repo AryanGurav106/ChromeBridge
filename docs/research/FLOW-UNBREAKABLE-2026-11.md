@@ -16,7 +16,7 @@ CLAUDE.md #49/#50/#54-#62/#72/#78.
 ## 0. The one-paragraph answer
 
 The locator is not where this feature will break next. What is left is (a) the
-**ordinal** — a positional claim — which is protected for only about 40-57% of
+**ordinal** — a positional claim — which is protected for only ~47% (39-site sample; 38-41% in #72's) of
 the descriptors that make one, and where the shipped witness (the controls
 *preceding* the target) has never seen the thing a human actually uses, the
 **other content of the record**; (b) a family of leaves that share one shape —
@@ -47,12 +47,12 @@ leaves that document does not list.
 | link name is live data (`Records 43`) | M — href alternate, links only (#61, FA1–FA9b); a button with a badge still pauses |
 | tied crowd, composition changes | H — `len(hits) != of` refuses (FD8) |
 | tied crowd, **re-sorted**, shipped witness present | H on the aligned-record arms (FD20…, #72) — see §3.3 for the caveat that the witness assumes member-LAST records |
-| tied crowd, re-sorted, **no witness** (43-60% of ordinal-bearing) | **O** — §3, proposal P1 |
+| tied crowd, re-sorted, **no witness** (52.6% of ordinal-bearing in a 39-site sample; 59.4% in #72) | **O** — §3, proposal P1 |
 | control not rendered yet | H — settle window (#59, FR13/FR13b) |
 | responsive layout lacks the control | M — width named as a cause (#57, FVP2b) |
 | page localised | M — `lang` recorded and compared (model.py `lang`, runner `_lang_note`); a cause is named, descriptors still all fail |
 | **(new)** descriptor derivation changes under the flow's feet | **O** — `schema` in the file is the *file* schema (model.py:318). The collector's name derivation is part of every descriptor: #28 N5 changed AccName 2F separators (`49秒39`), #37 stopped hidden-subtree text donating names (eBay −24.9%), #67 named svgs. Every one of those silently re-keyed `name`. A recorded flow on disk across such an upgrade refuses with "no element matches" and nothing says the cause is *our own upgrade*. §4.P2 |
-| **(new)** virtualised / windowed lists and grids | **O** — `of`/`nth` count *rendered* rows. A different scroll position renders a different crowd: composition-change refusal (safe) **or**, worse, the target row is simply not rendered and "no element matches" reads as drift. The page does declare `aria-rowcount`/`aria-rowindex`, but only 7.1% of ordinal-bearing descriptors in the pilot sample carry either (§3.2), and rowindex is positional (travels with the sort) so it cannot witness a re-sort — it helps only with the *virtualisation* leaf |
+| **(new)** virtualised / windowed lists and grids | **O** — `of`/`nth` count *rendered* rows. A different scroll position renders a different crowd: composition-change refusal (safe) **or**, worse, the target row is simply not rendered and "no element matches" reads as drift. The page does declare `aria-rowcount`/`aria-rowindex`, but only 7.1% of ordinal-bearing descriptors in the 39-site sample carry either (§3.2), and rowindex is positional (travels with the sort) so it cannot witness a re-sort — it helps only with the *virtualisation* leaf |
 | **(new)** controls inside cross-origin frames | **O, unmeasured** — mmids are `f<frameId>:<n>`; `section`/`under` are computed per frame; the descriptor has no frame identity (grep: `frame` appears once in descriptor.py, nowhere in runner/recorder). Two identical consent iframes, or an embedded checkout that re-mounts under a new frame id, are not addressable. Not measured because the frozen corpus HARs are captured *after* consent (#78 item 7's own note) |
 | two overlays stacked (modal over drawer) | M — `section=dialog` is rung 2; nested dialogs share it |
 
@@ -225,7 +225,74 @@ Arms: `base` · `resort` (reverse the record containers) · `resort-last` /
 start of its record) · `shuffle` · `edit-cell` (one atom changes) ·
 `bump-digits` (all digit runs +1) · `drop-other` (a different record removed).
 
-PILOT_BLOCK
+**Run**: `python tools/audit_record_witness.py --sites 50 --no-win` — 41 frozen
+sites loaded, 39 contribute ordinal-bearing descriptors, **2,540 descriptors**
+(≤120 per site). Three sites (github, select2, kayak) fail the mmid-ruler
+validity check and have their mutation arms skipped, not scored. Full output is
+reproduced in the findings below; `temp/descriptors/record_witness.json` holds
+the raw rows.
+
+**Coverage** (of ordinal-bearing descriptors):
+
+| | n | share |
+|---|---|---|
+| shipped witness (self + preceding controls) | 1,203 | **47.4%** |
+| record TEXT unique (child-of-LCA) | 1,116 | 43.9% |
+| record/member ATTR unique | 1,108 | 43.6% |
+| text OR attr (`rec`) | 1,533 | 60.4% |
+| text only (`txt`) | 1,116 | 43.9% |
+| shipped OR `rec` | 1,752 | **69.0%** |
+| no record could be isolated at all | 925 | 36.4% |
+| `aria-rowindex` / `aria-posinset` present | 97 | 3.8% |
+
+**Unwitnessed by the shipped witness: 1,337 = 52.6%** (59.4% in #72's 24-site
+sample; the figure moves with the sample). Of those, `rec` rescues **41.1%**
+(per-site median 50.0% over 38 sites) and `txt` rescues **23.0%** (per-site
+median 13.5%). The remaining ~36% of all descriptors sit in crowds with no
+isolable record (a row of identical toolbar buttons): the page declares nothing
+about them in any form this probe reads, and **no content witness exists for
+them**. That is the honest floor of this idea, and it is large.
+
+**Resolution under real DOM mutation.** The table that matters is the one that
+compares both resolvers on the *same targets* — descriptors that actually HAVE a
+record witness (otherwise both columns are diluted toward the ordinal):
+
+| arm | resolver | n | CORRECT | REFUSED | **WRONG** |
+|---|---|---|---|---|---|
+| resort (containers) | shipped | 883 | 60.2% | 22.8% | **17.0%** |
+| | record witness `rec` | 883 | 91.7% | 7.8% | **0.5%** |
+| resort-last (member ends record) | shipped | 867 | 59.1% | 23.2% | 17.8% |
+| | `rec` | 867 | 90.7% | 9.2% | 0.1% |
+| resort-first (member opens record) | shipped | 883 | 55.3% | 26.3% | 18.5% |
+| | `rec` | 883 | 88.2% | 11.6% | 0.2% |
+| shuffle | shipped | 881 | 57.4% | 19.2% | 23.4% |
+| | `rec` | 881 | 92.5% | 6.2% | **1.2%** |
+| drop-other (composition changes) | shipped | 276 | 9.4% | 90.2% | 0.4% |
+| | `rec` | 276 | 97.5% | 2.5% | 0.0% |
+| edit-cell (one atom changes) | shipped | 338 | 51.5% | 48.5% | 0.0% |
+| | `rec` | 338 | 70.4% | 29.6% | 0.0% |
+| bump-digits (every counter) | shipped | 1,364 | 71.7% | 28.2% | 0.1% |
+| | `rec` | 1,364 | 75.5% | 24.3% | 0.2% |
+| base (no mutation) | both | 1,487 | 99.9% | 0.1% | 0.0% |
+
+Text-only (`txt`, 758-759 descriptors with a text witness): resort 0.4% WRONG,
+shuffle 1.4%, bump-digits **0.6%** WRONG (vs `rec` 0.2%), drop-other 0.0%.
+
+Over the whole sample, including descriptors with no record witness (which fall
+back to the ordinal and stay exposed), the shipped resolver is **22.8% WRONG**
+under `resort` and `rec` is **8.3%** — the residual is entirely the ~36% with
+nothing to witness, which is why §3.4's last bullet matters more than the table.
+
+*Caveat on the shipped column:* it includes descriptors the shipped witness
+already covers; on a **faithful** whole-record move (`resort-first` on Hacker
+News, whose vote arrow opens its record) the already-witnessed subset was 0/112
+WRONG. The 17-18% is overwhelmingly the unwitnessed half. See §3.4.
+
+**Rejected variant `win`** (text of both neighbouring sibling runs), first
+41-site run: covers more (63.3% any) but `resort` WRONG on the unwitnessed
+population 24.9% vs `rec` 20.7%, and `drop-other` 72.7% vs 78.2% correct.
+Neighbours' atoms collide.
+
 
 ### 3.4 Reading it — and what I got wrong on the way (#16)
 
@@ -244,14 +311,34 @@ PILOT_BLOCK
   *edit*, not by a re-sort.
 * **`win` (the symmetric neighbour window) is worse than `rec` on every arm**
   (more atoms are neighbours', so more collisions) and is **rejected**.
-* **The price is real and is on content volatility**: under `bump-digits` the
-  record witness refuses more (counters and timestamps are atoms). It is a trade
-  of *refusals on volatile rows* for *silent mis-binds on re-sorts*, and
-  refusing is the designed direction (#24).
-* #25 applies in both directions: the corpus is mostly landing pages, a handful
-  of component-demo sites contribute most crowds (the tool prints the top
-  contributors), and per-site medians are far below the pooled rescue rate. Do
-  **not** quote a pooled rescue number without the per-site one next to it.
+* **Content volatility is not a cost of the witness in this sample** (bump-digits
+  refuses 24.3% with it vs 28.2% without, because the set-intersection rule
+  survives a counter that moves in only some atoms); **edit-cell** is the arm
+  that hurts both resolvers equally (a step whose only unique atom is the one
+  that changes). The one thing atoms *do* cost is an `id` they cannot trust:
+* **ATTR atoms contain a trap, and run 1 showed it live.** In the first full run
+  Angular Material resolved **4 of 120 descriptors to the WRONG element with no
+  mutation applied at all**: `id=mat-select-value-3` is unique, looks declared,
+  and is a per-load counter. It did not recur in run 2 (load-order dependent),
+  which is the point — a stability arm of two loads can pass and the hazard
+  stay. `txt` (text only) cannot be fooled this way and costs coverage: `rec`
+  rescues 41.1% of the unwitnessed, `txt` 23.0%. **Ship `txt`; admit an attribute
+  atom only after a stability check that does not exist yet** (an `id` that is
+  identical across two reads is the only kind worth trusting, and the recorder
+  cannot reload the page — so: never, until P2-style measurement says otherwise).
+* #25 applies in both directions: the corpus is mostly landing pages and
+  component-demo sites (top contributors: mui_autocomplete, hn, shoelace,
+  mui_datepicker, vuetify at the 120 cap each); there is **no admin table, invoice
+  list or order grid** in it, which is precisely where this witness would live.
+  Per-site medians (rec 50%, txt 13.5%) are far below what the pooled number
+  suggests for `txt`. Quote the per-site figure beside the pooled one.
+* **The honest ceiling is 69.0%** (shipped OR `rec`) and **~56% with `txt`**:
+  about a third of tied crowds have no record the page declares. For those the
+  only defences left are P4 (say so at record time, measured) and refusal-by-default
+  — which #72 rejected on a 14% pause rate and which this sample prices at
+  *52.6% × 22.8%* of ordinal-bearing steps being silently wrong under a re-sort.
+  That arithmetic is the argument for re-opening #72's decision for the
+  *no-witness-available* class only, with `run_flow` pausing instead of binding.
 
 ---
 
@@ -262,6 +349,9 @@ number it has, or the exact probe that would settle it.
 
 ### P1. Record-content witness for ordinals — number in §3
 
+**Ship text atoms only (`txt`).** Numbers: of the descriptors that HAVE one,
+resort 0.4% WRONG / 8.2% refused against the shipped resolver's 11.6% WRONG /
+23.4% refused on the same targets; drop-other 96.3% correct against 13.8%.
 `descriptor.py`: add `witness["atoms"]` (sorted list) beside `self`/`after`;
 `witness_map` gains an in-page structural pass; `_resolve_recorded` checks atoms
 *first* when present, by set intersection, ignoring `of` (a content witness that
@@ -270,8 +360,9 @@ uniquely identifies the member makes a composition change survivable: the
 collector field per entry in the structured array (`record_atoms`, computed only
 for members of a crowd, so zero tokens — the array is never printed). Policy
 for the existing witness: keep both, atoms decide when present.
-*Cost*: refusals on volatile rows (see §3.4). *Guard*: `FD20h` fires on the
-`resort-*` arms; the `bump-digits` arm is its negative control.
+*Cost*: one new collector field; edit-cell is unchanged (both resolvers refuse
+when a step's only unique atom is the one that moves). *Guard*: a check named
+after the `resort-*` arms; `bump-digits` and `base` are its negative controls.
 
 ### P2. Stamp the derivation, not just the file — MEASURE FIRST (cheap)
 
@@ -374,16 +465,15 @@ lacks (captured after consent); build 5 fixtures first.
 
 | candidate | number | verdict |
 |---|---|---|
-| neighbour-window atoms (`win`) as the witness | WRONG higher than `rec` on `resort`, `resort-first`, `shuffle`; rescues fewer (see §3) | rejected — neighbours' atoms collide |
-| `aria-rowindex`/`aria-posinset` as a re-sort witness | present on 7.1% of ordinal-bearing descriptors in the pilot; **positional**, so it travels with the position and is information-free under a sort | rejected as a witness; kept as the *only* declared handle for the virtualisation leaf |
+| neighbour-window atoms (`win`) as the witness | covers 63% but 24.9% WRONG vs `rec` 20.7% on the unwitnessed set; drop-other 72.7% vs 78.2% correct | rejected — neighbours' atoms collide |
+| `aria-rowindex`/`aria-posinset` as a re-sort witness | present on 3.8% of ordinal-bearing descriptors (97 of 2,540); **positional**, so it travels with the position and is information-free under a sort | rejected as a witness; kept as the *only* declared handle for the virtualisation leaf |
 | geometry as a witness | 87.3% unique (#72) | already refused: drifts (#23, #25) |
 | `id` / `data-testid` | 6.8% / 2.5% coverage (#61) | not re-proposed; note the record-attr atoms in this probe **do** include `id`s on the record root, so they come along for free where they exist without a new collector field |
 | a model-ranked heal | ReUseIt judge κ=0.528; workflow-use "really bad" | out of scope by rule 3 |
 
 ## 6. What I could not establish
 
-* **The pilot sample is a handful of component-demo sites**; the 50-site run's
-  headline is in §3.3. Real business apps (admin tables, invoices) are not in the frozen corpus (#25).
+* **The sample is component-demo and landing pages**, not business apps (no admin table, invoice list or order grid); the headline numbers are in §3.3 and the per-site medians are far lower than the pooled ones for `txt`.
 * **The `resort-first`/`resort-last` split models record alignment by sibling
   stride**; it is a model, and a record that is not a run of equal-length
   siblings (a masonry grid, a flex-wrap card list) is skipped, not scored.
