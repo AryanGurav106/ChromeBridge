@@ -695,7 +695,18 @@ class Run:
                     exc.path = path
                     raise
                 for n in notes:
-                    if n["via"] == "position":
+                    # TWO FAMILIES, and this `else` used to assume there was
+                    # only one of each. A note is either "the recorded target,
+                    # found at a DIFFERENT INDEX" -- which both witnesses
+                    # produce, by different evidence -- or "matched on a
+                    # different KEY than the one recorded", which is the href
+                    # alternate. When the content witness was added it emitted
+                    # `via: "atoms"`, fell into the else, and raised
+                    # `KeyError: 'alt'` INSIDE a replay. Caught on the first
+                    # live run, not by any fixture: every check drove
+                    # `resolve()` directly and none came back through here,
+                    # which is #19/#30's untested link one layer over.
+                    if n["via"] in ("position", "atoms"):
                         # The crowd was re-sorted and the recorded witness
                         # still names exactly one member, so the step bound
                         # correctly at a DIFFERENT index. Deterministic, and
@@ -703,11 +714,26 @@ class Run:
                         # flow, and the ordinal in the file is now wrong.
                         self.moved.append({"step": self.i, "name": step.name,
                                            "path": path, "was": n["nth"],
-                                           "now": n["now"]})
-                    else:
+                                           "now": n["now"], "via": n["via"]})
+                    elif n["via"] == "href":
+                        # The other family: matched on a different KEY than the
+                        # one recorded. NAMED rather than left to the else --
+                        # it worked only because href notes happen to carry
+                        # `alt`, which is the same luck the atoms note did not
+                        # have. FD21 pins every kind the descriptor emits
+                        # against this dispatch.
                         self.drifted.append({"step": self.i, "name": step.name,
                                              "path": path, "via": n["via"],
-                                             "was": n["was"], "alt": n["alt"]})
+                                             "was": n.get("was"),
+                                             "alt": n.get("alt")})
+                    else:
+                        # `.get`, not `[...]`: a variant this consumer has not
+                        # been taught should degrade to a reported drift, not
+                        # take the whole replay down.
+                        self.drifted.append({"step": self.i, "name": step.name,
+                                             "path": path, "via": n["via"],
+                                             "was": n.get("was"),
+                                             "alt": n.get("alt")})
                     self._propose_patch(step, path, ref, entries)
             set_ref(inp, path, f"ref_{ref}")
         return inp, healed

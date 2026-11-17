@@ -419,8 +419,17 @@ def unwitnessed_ordinal(target: dict) -> bool:
     moment the answer is cheap to act on: adding any distinguishing control to
     the row, or scoping the step differently, costs nothing while the agent is
     still driving and costs a re-record afterwards.
+
+    EITHER WITNESS COUNTS, and leaving `atoms` out of this test made the warning
+    LIE. Caught on the first live recording after atoms shipped: a step that had
+    recorded `["Acme Ltd", "INV-1001"]` was still told it "is pinned by POSITION
+    alone", which is the class C15 exists for -- a message asserting something
+    the code can check and did not. The two witnesses answer the same question
+    by different evidence (the surroundings, versus the record's own content),
+    so either one answers it.
     """
-    return target.get("of") is not None and not target.get("witness")
+    return (target.get("of") is not None
+            and not target.get("witness") and not target.get("atoms"))
 
 
 def _alt_of(entry: dict, pool: list[dict]) -> Optional[dict]:

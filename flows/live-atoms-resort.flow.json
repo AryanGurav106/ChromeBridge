@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "name": "live-atoms-resort",
+  "origin": "http://localhost:8787",
+  "recorded_at": "2026-11-17T23:00:42",
+  "viewport": {
+    "width": 1512,
+    "height": 868
+  },
+  "lang": "en",
+  "steps": [
+    {
+      "name": "navigate",
+      "input": {
+        "url": "http://localhost:8787/"
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "javascript_tool",
+      "input": {
+        "action": "javascript_exec",
+        "text": "(function(){ const rev = localStorage.getItem('rev') === '1'; let rows = [['INV-1001','Acme Ltd'],['INV-1002','Globex'],['INV-1003','Initech']]; if (rev) rows = rows.slice().reverse(); document.body.innerHTML = '<main><h1>Invoices</h1><ul id=l>' + rows.map(r => `<li><p>${r[0]}</p><p>${r[1]}</p><p>Standard terms apply.</p><p>Ready to process.</p><button style=\"width:90px;height:28px\">Delete</button></li>`).join('') + '</ul><p id=log>deleted: none</p></main>'; document.querySelectorAll('#l li').forEach(li => { li.querySelector('button').onclick = () => { document.getElementById('log').textContent = 'deleted: ' + li.querySelector('p').textContent; li.remove(); }; }); return 'order ' + (rev ? 'REVERSED' : 'normal') + ': ' + rows.map(r=>r[0]).join(','); })()"
+      },
+      "expect": {
+        "path": "/",
+        "query": {
+          "selector": "#l li",
+          "count": 3
+        }
+      },
+      "on_fail": "ask",
+      "review": [
+        "unproven: query '#l li' was first observed AFTER this step, so nothing here says it would have failed before",
+        "unevidenced: every check on this step is hollow or unproven, so none of them is known to be able to fail"
+      ]
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click"
+      },
+      "targets": {
+        "ref": {
+          "level": 3,
+          "desc": {
+            "tag": "button",
+            "role": "",
+            "type": "",
+            "name": "Delete",
+            "section": "main",
+            "under": "Invoices",
+            "near": ""
+          },
+          "nth": 0,
+          "of": 3,
+          "atoms": [
+            "Acme Ltd",
+            "INV-1001"
+          ]
+        }
+      },
+      "expect": {
+        "search": {
+          "pattern": "deleted: INV-1001",
+          "min": 1,
+          "observed": 1
+        },
+        "query": {
+          "selector": "#l li",
+          "count": 2
+        }
+      },
+      "on_fail": "ask",
+      "review": [
+        "unproven: search 'deleted: INV-1001' was first observed AFTER this step, so nothing here says it would have failed before",
+        "unscoped: this step had to be disambiguated from similar elements, and none of what identifies it ('Delete', 'Invoices') appears in its assertions -- so they would also pass if the action landed on one of its neighbours. Assert something that names THIS record, not just that something changed",
+        "positional: ref is one of 3 controls that are identical in every declared field AND in their surroundings, so this step is pinned by POSITION alone — and it does not take a user to break it. A re-sort moves them, but so does CHURN: a recency list that gains one row at the top and drops its oldest leaves the count and the order identical while every index shifts by one, so nothing here can notice. Measured on 20 frozen sites with a churn arm: the unwitnessed half bound to the WRONG element 100% of the time with 0% refusals. An inbox, an audit log or a Latest-invoices table churns between two CI runs on its own"
+      ]
+    }
+  ]
+}

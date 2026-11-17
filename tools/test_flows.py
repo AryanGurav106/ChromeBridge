@@ -30,7 +30,7 @@ except Exception:
     pass
 
 from core.flows.descriptor import (  # noqa: E402
-    ALT, FULL, LEVELS, Unresolved, build, fields, resolve,
+    ALT, FULL, LEVELS, Unresolved, build, fields, resolve, unwitnessed_ordinal,
 )
 from core.flows import model as FM  # noqa: E402
 from core.flows.model import Flow, Step  # noqa: E402
@@ -254,6 +254,38 @@ def main():
     check("FA10h CONTROL: an atom every member shares is not recorded — it "
           "cannot say which one was meant",
           t_sh.get("atoms") is None, f"atoms={t_sh.get('atoms')}")
+
+    # FA10i — THE WARNING MUST NOT LIE ABOUT THE FIX. `unwitnessed_ordinal`
+    # drives the record-time note, and it only looked at `witness`. Caught on
+    # the FIRST live recording after atoms shipped: a step carrying
+    # ["Acme Ltd", "INV-1001"] was still told it "is pinned by POSITION alone".
+    # That is C15's class -- a message asserting something the code can check
+    # and did not -- and it was mine, hours old.
+    check("FA10i a step with atoms is NOT reported as pinned by position alone",
+          not unwitnessed_ordinal(t_at), f"atoms={t_at.get('atoms')}")
+    check("FA10j CONTROL: a step with NEITHER witness still is, so this did not "
+          "simply silence the warning",
+          unwitnessed_ordinal({"of": 3, "nth": 0}), "no witness, no atoms")
+
+    # FD21 — EVERY `via` THE DESCRIPTOR EMITS MUST BE HANDLED BY THE RUNNER.
+    # The consumer branched on `via == "position"` and treated EVERYTHING else
+    # as an href-alternate note, reading `n["alt"]`. When the content witness
+    # added `via: "atoms"` that raised `KeyError: 'alt'` INSIDE a replay — and
+    # no fixture caught it, because every check drove `resolve()` directly and
+    # none came back through the runner. #19/#30's untested link, one layer
+    # over, so the guard is the FD19 shape: pin the producer against the file
+    # that consumes it.
+    _desc_src = (ROOT / "core" / "flows" / "descriptor.py").read_text("utf-8")
+    _run_src = (ROOT / "core" / "flows" / "runner.py").read_text("utf-8")
+    _vias = set(re.findall(r'"via":\s*"([a-z]+)"', _desc_src))
+    _unhandled = sorted(v for v in _vias if f'"{v}"' not in _run_src)
+    check("FD21 every note kind descriptor.py emits is named in runner.py — a "
+          "new one must not fall into an else that reads a key it lacks",
+          _vias and not _unhandled,
+          f"emits={sorted(_vias)} unhandled={_unhandled}")
+    check("FD21b CONTROL: the detector finds the kinds at all, so 'no unhandled' "
+          "is not vacuous",
+          len(_vias) >= 2, f"found {sorted(_vias)}")
 
     # ---- FD20: the mutation the crowd-check CANNOT see ---------------------
     # Every FD8 case changes the crowd's COMPOSITION. A re-sorted table changes

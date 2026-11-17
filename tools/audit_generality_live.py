@@ -628,6 +628,7 @@ PROBE2 = r"""
       for (const el of list) {
         if (--budget < 0) return;
         if (key === 'declared' && el.matches(CORE)) continue;   // core already asked
+        if (key === 'declared' && el.tagName === 'IFRAME') continue;   // ad-slot artefact, #82 defect 3
         const id = key + (el.__abSeen = el.__abSeen || ++window.__abSeenN);
         let r; try { r = el.getBoundingClientRect(); } catch (e) { continue; }
         if (r.width < 2 || r.height < 2) continue;
@@ -718,7 +719,7 @@ def _measure_js():
             " const listing = _collectInteractivePage(false, null, 'compact', false, false, 'tree');"
             " const ents = _collectInteractivePage(true, null, 'compact', false, false, 'tree');"
             " const led = _collectInteractivePage(true, null, 'compact', true);"
-            " const blob = JSON.stringify(ents);"
+            " const blob = (typeof ents === 'string') ? ents : JSON.stringify(ents);"
             " const core = (" + IS.PROBE.strip() + ")(String(listing), blob);"
             " const more = (" + PROBE2.strip() + ")(String(listing), blob);"
             " return {listing: String(listing), ents: ents, dropped: (led && led.dropped) || [],"
@@ -731,6 +732,8 @@ def _summ(res):
     """Reduce one raw measurement to the numbers the report uses."""
     listing = res["listing"]
     ents = res["ents"] or []
+    if isinstance(ents, str):          # structured mode returns a JSON STRING
+        ents = json.loads(ents)
     drops = res["dropped"] or []
     reasons = collections.Counter((d.get("rule") or d.get("why") or "?") for d in drops)
     unexpected = {k: v for k, v in reasons.items() if k not in PERMITTED}
@@ -903,7 +906,9 @@ def report(paths, nonenglish_only=False):
     for p in paths:
         rs += json.loads(Path(p).read_text(encoding="utf-8"))["sites"]
     ok = [r for r in rs if usable(r)]
-    def fam(a): return a.split("-")[0] + ("-" + a.split("-")[1] if a.startswith(("legacy", "government-", "ticketing-", "university-")) else "")
+    def fam(a):
+        x = a.split("-")
+        return x[0] if len(x) == 1 or x[0] not in ("legacy", "government", "ticketing", "university") else x[0] + "-" + x[1]
     def split_loss(r, key):
         # declared losses that are <iframe> are the known ad-slot artefact (#82 defect 1)
         return sum(1 for l in r["lost"] if l["arm"] == key and not (key == "declared" and l["tag"] == "iframe"))
@@ -961,14 +966,21 @@ async def _selftest():
         r = await pg.evaluate(js)
         core = await pg.evaluate("(" + IS.PROBE.strip() + ")('', '[]')")
         r2 = await pg.evaluate("(" + PROBE2.strip() + ")('Alpha InShadow Declared-D', '[]')")
+        # by-reference skip (wave 2 found it dead): a control whose mmid appears in the blob
+        # as an entry is NOT lost even if its probe-name (title-first) matches nothing.
+        await pg.set_content("<a href='#' mmid='7' title='go to Zed'>Zed</a>")
+        byref_ok = await pg.evaluate("(" + PROBE2.strip() + ")('', '[{\"mmid\": \"7\", \"label\": \"Zed\"}]')")
+        byref_dead = await pg.evaluate("(" + PROBE2.strip() + ")('', JSON.stringify(JSON.stringify([{mmid: '7'}])))")
         await b.close()
+    byref_pass = (not byref_ok["deep"]["lost"]) and bool(byref_dead["deep"]["lost"])
     deep = sorted(x["name"] for x in r["deep"]["lost"])
     decl = sorted(x["name"] for x in r["declared"]["lost"])
     cor = sorted(x["name"] for x in core["lost"])
     ok = (deep == ["Alpha", "InShadow"] and decl == ["Declared-D"] and cor == ["Alpha"]
-          and not r2["deep"]["lost"] and not r2["declared"]["lost"])
+          and not r2["deep"]["lost"] and not r2["declared"]["lost"] and byref_pass)
     print("selftest", "PASS" if ok else "FAIL", {"core": cor, "deep": deep, "declared": decl,
-          "with_names_supplied": [len(r2["deep"]["lost"]), len(r2["declared"]["lost"])]})
+          "with_names_supplied": [len(r2["deep"]["lost"]), len(r2["declared"]["lost"])],
+          "byref_skip_alive_and_double_encoding_detected": byref_pass})
     return 0 if ok else 1
 
 
