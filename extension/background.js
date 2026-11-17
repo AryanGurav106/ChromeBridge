@@ -1059,6 +1059,31 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // Returns the viewport-relative center point of `selector` (CSS px).
 function _rectForPage(selector) {
+  // dup:obssig — BYTE-IDENTICAL to the copy in _collectInteractivePage, pinned
+  // by OB1. Both are injected separately so neither can call the other: a free
+  // sibling identifier in an injected function throws a ReferenceError that
+  // every try/catch swallows, which is the C11 class that left three readiness
+  // signals dead in production for a release (#30).
+  //
+  // WHAT IT COMPARES, and why each field is here: everything is a DECLARATION
+  // (PRINCIPLES 1 and 4) — the tag, the ARIA role, the accessible-ish name, the
+  // declared disabled state, the destination, and a hash of the nearest DECLARED
+  // RECORD's text (`tr,li,dl,article,figure,fieldset` — the same record notion
+  // `_climbTo` uses, #47). No size, no class name, no wordlist.
+  //
+  // DELIBERATELY NOT the rect. Measured across 18 hostile fixtures: a cookie
+  // banner pushing the page down, a lazy image reflowing a column and a re-sort
+  // that MOVES a node are all harmless — the ref follows the record — so a rect
+  // comparison fires on three cases where nothing is wrong.
+  const _obsSig = (el) => {
+    const norm = (x) => (x || '').replace(/\s+/g, ' ').trim();
+    const h = (x) => { let v = 5381; for (let i = 0; i < x.length; i++) v = ((v << 5) + v + x.charCodeAt(i)) | 0; return v; };
+    let rec = null; try { rec = el.closest('tr,li,dl,article,figure,fieldset'); } catch (e) {}
+    return { tag: (el.tagName || '').toLowerCase(), role: el.getAttribute('role') || '',
+      name: norm(el.getAttribute('aria-label') || el.innerText || el.value || el.title || el.alt || ''),
+      dis: !!((el.matches && el.matches(':disabled')) || el.getAttribute('aria-disabled') === 'true'),
+      href: el.href || '', rec: rec ? h(norm(rec.innerText)) : 0 };
+  };
   const q = (s) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(s || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(s); };
   const el = q(selector);
   if (!el) return null;
@@ -1144,11 +1169,31 @@ function _rectForPage(selector) {
       break;
     }
   } catch (e) {}
+  // THE OBSERVE-TO-ACT GAP. We re-measure a ref at click time and never asked
+  // whether what is THERE now is what the agent READ — and the model turn in
+  // between is ~3.6s (#38), the whole exposure window.
+  // `null` means MATCHES **or** nothing was stamped, i.e. UNKNOWN, and an unknown
+  // claims nothing — the same rule #56's delivery probe needed (ID3). Nothing is
+  // stamped until a read has run, so a first action after a navigation is
+  // correctly silent rather than alarming.
+  let observed = null;
+  try {
+    const was = window.__mmidSig && window.__mmidSig.get(el);
+    if (was) {
+      const now = _obsSig(el);
+      const d = {};
+      for (const k of ['tag', 'role', 'name', 'dis', 'href', 'rec']) {
+        if (was[k] !== now[k]) d[k] = [was[k], now[k]];
+      }
+      if (Object.keys(d).length) observed = d;
+    }
+  } catch (e) {}
   return {
     x: px + (r.width * kx) / 2, y: py + (r.height * ky) / 2,
     w: r.width * kx, h: r.height * ky,
     visible: r.width > 0 && r.height > 0,
     blockedBy,
+    observed,
     dsx: Math.round(_dsx), dsy: Math.round(_dsy),
   };
 }
@@ -1173,6 +1218,41 @@ function _rectForPage(selector) {
 // effect", where the input was genuinely dispatched). This marks only the
 // branch where `ok` is false.
 const NOT_DONE = 'NOT DONE: ';
+
+// THE ONE SENTENCE A CALLER OWES THE AGENT WHEN WHAT IT ACTED ON IS NOT WHAT IT
+// READ. Runs in the WORKER, not the page, so it is one copy and needs no dup tag.
+//
+// A NOTE, NEVER A REFUSAL, and that half is deliberate. The research arm measured
+// an identity diff on 0.29% of 1,707 entries across 36 settled frozen sites — but
+// on DECLARED SUBMITS, the irreversible case worth refusing, it saw 0 of 10, and
+// the rule of three bounds that at roughly 30%. A refusal shipped on an unbounded
+// false-refusal rate would convert a live counter (#59: `Records 38` -> `43`) into
+// a dead tool. So this reports and the caller still acts; the refusal half waits
+// on a live pass that can price it.
+//
+// STATES THE FACT AND NAMES NO CAUSE (PRINCIPLE 6). A name can change because the
+// page re-rendered, because a counter ticked, or because the control was swapped
+// for a different one — three causes needing three different responses, and this
+// cannot tell them apart.
+function _observedNote(observed) {
+  if (!observed) return '';
+  const q = (v) => (v === true ? 'yes' : v === false ? 'no' : JSON.stringify(String(v)));
+  const parts = [];
+  // The record hash is printed as a FACT about the record, never as the number:
+  // a hash tells the reader nothing it can act on.
+  if (observed.rec) parts.push("the surrounding record's text changed");
+  for (const k of ['tag', 'role', 'name', 'dis', 'href']) {
+    if (!observed[k]) continue;
+    const nm = k === 'dis' ? 'disabled' : k;
+    parts.push(`${nm} ${q(observed[k][0])} -> ${q(observed[k][1])}`);
+  }
+  if (!parts.length) return '';
+  return ` *** THIS ELEMENT CHANGED SINCE YOU READ IT: ${parts.join('; ')}. `
+    + `The action was still performed on the ref you named. `
+    + `A re-render, a live counter and a control being swapped for a different one `
+    + `all look like this and need different answers, so re-observe before relying `
+    + `on what you think you acted on. ***`;
+}
 
 function _scrollNote(rect) {
   if (!rect) return "";
@@ -1358,7 +1438,7 @@ async function clickTrusted(tabId, selector, frameIdOverride = null) {
   await cdpSend(tabId, "Input.dispatchMouseEvent",
     { type: "mouseReleased", x, y, button: "left", clickCount: 1, buttons: 0 });
   return { ok: true, msg: `Clicked ${selector} via TRUSTED input at (${Math.round(x)},${Math.round(y)}).`
-                          + _scrollNote(rect) };
+                          + _observedNote(rect.observed) + _scrollNote(rect) };
 }
 
 // --------------------- MCP `computer` op (CDP mouse/keyboard) ---------------
@@ -1485,7 +1565,10 @@ async function _computerPoint(tabId, params) {
     // The selector path SCROLLS (scrollIntoView inside `_rectForPage`), so it owes
     // the caller the same note scroll_to does. The coordinate path below does not
     // scroll and carries nothing.
-    return { x, y, note: _scrollNote(rect) };
+    // The observe-to-act note rides the SELECTOR path only, for the same reason
+    // the scroll note does: a bare coordinate names no element, so there is
+    // nothing to have been read and nothing to compare.
+    return { x, y, note: _observedNote(rect.observed) + _scrollNote(rect) };
   }
   // default: viewport center (used by scroll without coordinates)
   const vp = await runInTab(tabId, () => ({ w: innerWidth, h: innerHeight }));
@@ -10745,6 +10828,47 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       if (_prior) { for (const m of _now) _prior.add(m); } else { window.__abSeenMmids = _now; }
     } catch (e) {}
   }
+  // STAMP WHAT THE AGENT IS ABOUT TO READ, so the action path can ask whether
+  // what it acts on is what was read. Before the structured/string split,
+  // because an agent acts on refs from EITHER format.
+  //
+  // dup:obssig — BYTE-IDENTICAL to the copy in _rectForPage, pinned by OB1.
+  // Both are injected separately so neither can call the other: a free sibling
+  // identifier in an injected function throws a ReferenceError that every
+  // try/catch swallows, which is the C11 class that left three readiness
+  // signals dead in production for a release (#30).
+  //
+  // WHAT IT COMPARES, and why each field is here: everything is a DECLARATION
+  // (PRINCIPLES 1 and 4) — the tag, the ARIA role, the accessible-ish name, the
+  // declared disabled state, the destination, and a hash of the nearest DECLARED
+  // RECORD's text (`tr,li,dl,article,figure,fieldset` — the same record notion
+  // `_climbTo` uses, #47). No size, no class name, no wordlist.
+  //
+  // DELIBERATELY NOT the rect. Measured across 18 hostile fixtures: a cookie
+  // banner pushing the page down, a lazy image reflowing a column and a re-sort
+  // that MOVES a node are all harmless — the ref follows the record — so a rect
+  // comparison fires on three cases where nothing is wrong.
+  const _obsSig = (el) => {
+    const norm = (x) => (x || '').replace(/\s+/g, ' ').trim();
+    const h = (x) => { let v = 5381; for (let i = 0; i < x.length; i++) v = ((v << 5) + v + x.charCodeAt(i)) | 0; return v; };
+    let rec = null; try { rec = el.closest('tr,li,dl,article,figure,fieldset'); } catch (e) {}
+    return { tag: (el.tagName || '').toLowerCase(), role: el.getAttribute('role') || '',
+      name: norm(el.getAttribute('aria-label') || el.innerText || el.value || el.title || el.alt || ''),
+      dis: !!((el.matches && el.matches(':disabled')) || el.getAttribute('aria-disabled') === 'true'),
+      href: el.href || '', rec: rec ? h(norm(rec.innerText)) : 0 };
+  };
+  try {
+    const _S = (window.__mmidSig = window.__mmidSig || new WeakMap());
+    const _reg = window.__mmidReg;
+    if (_reg) {
+      for (const _e of out) {
+        try {
+          const _n = _reg.get(String(_e && _e.mmid));
+          if (_n && _n.isConnected) _S.set(_n, _obsSig(_n));
+        } catch (e) {}
+      }
+    }
+  } catch (e) {}
   if (structured) {
     try {
       out.forEach((e) => {

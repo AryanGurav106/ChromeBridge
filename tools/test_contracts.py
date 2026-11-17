@@ -1347,6 +1347,37 @@ def main() -> int:
           len(_ph) == 2 and all("-placeholder$/" in v for v in _ph.values()),
           "both exclude text-/bg-/border-placeholder")
 
+    # OB8 — THE TWO SIGNATURE COPIES. `_collectInteractivePage` stamps and
+    # `_rectForPage` compares, and both are injected separately so neither can
+    # call the other: a free sibling identifier in an injected function throws a
+    # ReferenceError that every try/catch swallows, which is the C11 class that
+    # left three readiness signals dead in production for a release. The
+    # duplication is FORCED; what was missing everywhere else was enforcement.
+    # If these two drift, the guard compares a stamp against a different question
+    # and reports a change on a settled page -- the false-positive direction that
+    # makes a warning worth ignoring.
+    _ob = {}
+    for _i, _l in enumerate(_oc_lines):
+        if "dup:obssig" in _l:
+            _body = []
+            for _j in range(_i + 1, min(_i + 30, len(_oc_lines))):
+                _t = _oc_lines[_j].strip()
+                if _t.startswith("//") or not _t:
+                    continue
+                _body.append(_t)
+                if _t.startswith("};"):
+                    break
+            _ob[_i] = "\n".join(_body)
+    check("OB8 both copies of the observe-to-act signature are identical, so the "
+          "stamp and the comparison cannot ask different questions",
+          len(_ob) == 2 and len(set(_ob.values())) == 1,
+          f"{len(_ob)} cop(ies), {len(set(_ob.values()))} distinct")
+    check("OB8b ...and neither compares GEOMETRY — a cookie banner, a lazy image "
+          "and a re-sort that MOVES a node are all harmless, so a rect in the "
+          "signature would fire on three cases where nothing is wrong",
+          len(_ob) == 2 and not any("getBoundingClientRect" in v for v in _ob.values()),
+          "no rect in the signature")
+
     # ---------------------------------------------------------------- C31 ---
     # THE BANNER'S PROTECTION IS POSITIONAL, AND NOTHING SAID SO UNTIL IT BROKE.
     # `_split_banner` matches ANCHORED, and `_truncate` leans on it to peel the

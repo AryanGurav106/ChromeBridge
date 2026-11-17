@@ -46,6 +46,7 @@ def extract(name: str) -> str:
 
 
 COLLECT = extract("_collectInteractivePage")
+RECTP = extract("_rectForPage")
 PICK = extract("_pickOptionPage")
 CLICKP = extract("_clickPage")
 EFFECT = extract("_clickEffectPage")
@@ -2554,6 +2555,84 @@ async def main():
         ui = str(await uip.evaluate(
             "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
         _rows = [l for l in ui.splitlines() if "(unlabeled" in l and "|" in l]
+        # OB1-OB6 — THE OBSERVE-TO-ACT GAP. We re-measure a ref at click time and
+        # never asked whether what is THERE now is what the agent READ; the model
+        # turn in between is ~3.6s (#38), the whole exposure window. The external
+        # evidence is that all 10 browser agents one study evaluated were
+        # vulnerable at a 100% trigger ratio (arXiv:2603.00476).
+        #
+        # THE CONTROLS ARE HALF THE POINT. A guard that fires on every reflow is
+        # the noise #15 priced and #43 deleted `readyState` for, and three of the
+        # six cases below are shapes that MUST stay silent — the ref follows the
+        # record, so a page moving under it is not a hazard.
+        _OB = [
+            ("OB1 a label that flips in place is reported — the agent read Save "
+             "and would publish",
+             "<main><button id=t style='width:120px;height:30px'>Save</button></main>",
+             "document.getElementById('t').textContent='Publish';", True, "name"),
+            ("OB2 a re-sort that REUSES nodes is reported — the row moved under "
+             "the button, so the ref resolves to a different record (#72's hazard "
+             "one layer over)",
+             "<main><table><tbody>"
+             "<tr><td>INV-1</td><td><button id=t style='width:90px;height:30px'>Delete</button></td></tr>"
+             "<tr><td>INV-2</td><td><button style='width:90px;height:30px'>Delete</button></td></tr>"
+             "</tbody></table></main>",
+             "const c=document.querySelectorAll('td:first-child');"
+             "const a=c[0].textContent;c[0].textContent=c[1].textContent;c[1].textContent=a;",
+             True, "rec"),
+            ("OB3 a control that became disabled is reported", 
+             "<main><button id=t style='width:120px;height:30px'>Save</button></main>",
+             "document.getElementById('t').disabled=true;", True, "dis"),
+            ("OB4 CONTROL: a settled page says nothing — without this, 'always "
+             "report' would pass OB1-OB3 and the note would mean nothing",
+             "<main><button id=t style='width:120px;height:30px'>Save</button></main>",
+             "", False, None),
+            ("OB5 CONTROL: a banner pushing the whole page down says nothing — "
+             "the ref follows the element, so a layout shift is not a hazard",
+             "<main><button id=t style='width:120px;height:30px'>Save</button></main>",
+             "const b=document.createElement('div');b.style.height='80px';"
+             "b.textContent='cookies';document.body.insertBefore(b,document.body.firstChild);",
+             False, None),
+            ("OB6 CONTROL: a lazy image reflowing the column above says nothing",
+             "<main><div id=ph style='height:10px'></div>"
+             "<button id=t style='width:120px;height:30px'>Save</button></main>",
+             "document.getElementById('ph').style.height='200px';", False, None),
+        ]
+        obp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await obp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        for _name, _html, _mut, _want, _field in _OB:
+            await obp.goto("about:blank")
+            await obp.set_content(
+                "<!doctype html><meta charset=utf-8><body style='margin:0'>" + _html)
+            await obp.wait_for_timeout(120)
+            # The READ is what stamps; without it the comparison is UNKNOWN and
+            # correctly claims nothing, which is why this line is not optional.
+            await obp.evaluate(
+                "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+            if _mut:
+                await obp.evaluate("()=>{" + _mut + "}")
+                await obp.wait_for_timeout(60)
+            _r = await obp.evaluate(
+                "(function(){ " + RECTP + "; return _rectForPage(\"#t\"); })()")
+            _obs = (_r or {}).get("observed") or {}
+            check(_name,
+                  bool(_obs) == _want and (not _field or _field in _obs),
+                  f"observed={sorted(_obs)} expected={'a diff' if _want else 'silence'}")
+        # OB7 — UNKNOWN IS NOT A DIFF. Nothing is stamped until a read has run, so
+        # the first action after a navigation must be silent rather than alarming.
+        # Same rule #56's delivery probe needed (ID3).
+        await obp.goto("about:blank")
+        await obp.set_content("<!doctype html><meta charset=utf-8><body style='margin:0'>"
+                              "<main><button id=t style='width:120px;height:30px'>Save</button></main>")
+        await obp.wait_for_timeout(120)
+        _r7 = await obp.evaluate(
+            "(function(){ " + RECTP + "; return _rectForPage(\"#t\"); })()")
+        check("OB7 with no read beforehand the answer is UNKNOWN and claims "
+              "nothing — a first action after a navigation is silent",
+              (_r7 or {}).get("observed") is None,
+              f"observed={(_r7 or {}).get('observed')!r}")
+        await obp.close()
+
         # UI2/UI2b — A CHOSEN NUMBER DELETED AN AUTHORED NAME. The CSS
         # ::before branch of synthLabel accepted a name only if it ran to 40
         # UTF-16 units or fewer. Measured on the pre-fix collector: a 39-unit
