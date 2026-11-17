@@ -8531,6 +8531,74 @@ granted in the side panel is refused with the same message the agent gets.
     condition can never clear.
 
 
+84. **LIVE-VERIFIED, ALL OF IT, AND THE PROBE FOUND ONE MORE THING.** #43's rule
+    makes a live pass non-optional and #81–#83 all shipped without one, because
+    the extension could not be reloaded. After the reload (worker `6n182f`, age
+    12s, `bridge_ms_total` reset to 4.1 — so the stdio process respawned rather
+    than the client re-handshaking) every fix was driven through the real
+    extension, the real bridge and the real op router against a granted local
+    origin.
+
+    | fix | what the live run returned |
+    |---|---|
+    | consent gate restored (#81) | `kubernetes.io` refused at `assertOpAllowed` — the same origin that returned a listing an hour earlier |
+    | the dead-click guard (#81) | a click that NAVIGATED produced **no** `NO EFFECT` warning |
+    | the lone-surrogate crash (#82) | `"title": "canary ab\ufffd"`, server alive |
+    | the ShadowRoot false quiet (#82) | scoped read: `45 structural INSIDE THE SUBTREE YOU SCOPED TO` |
+    | the `::before` name cap (#82) | `button "Download the signed quarterly statement as a PDF"` |
+    | the option-row length gate (#82) | a 96-character option picked |
+    | `data-*` attribution (#82) | `(active — from data-*)` plus its legend line |
+    | the one-character `find` (#82) | `find("猫")` → `Found 1 element(s)` |
+    | the observe-to-act note (new) | `name "Publish" -> "Archive everything"` |
+
+    **The surrogate test is the one worth describing, because it is the only
+    check here that could have ended the session.** The page was given a genuine
+    unpaired high surrogate in `document.title` via `String.fromCharCode(0xD83C)`
+    — constructed IN THE PAGE rather than sent in the payload, since embedding
+    one in the JS would itself have had to survive the outbound trip. `get_url`
+    then returned normally with the character replaced. Pre-fix that call raises
+    `PydanticSerializationError` inside FastMCP's TaskGroup and the next
+    `tools/call` is never answered.
+
+    **AND THE RESTORE REVEALED WHAT THE ARMED FLAG HAD BEEN HIDING: the grant
+    table in this profile is EMPTY.** `http://localhost:8787` — the fixture the
+    flow suite replays against — was refused too. So for the whole period
+    `ALLOW_ALL_ORIGINS` was true, "default deny, per origin" was not merely
+    bypassed for the eval's eight origins; there was nothing underneath it at
+    all. One grant in the side panel unblocked the entire verification, which is
+    the consent model working exactly as specified and is also the measurement
+    Amendment 3 would never have produced from a file read.
+
+    **TWO THINGS THE RUN CORRECTED ABOUT MY OWN FIXTURE, not the product.**
+    `form_input` on the combobox first came back `NOT DONE: pick reported OK but
+    the trigger label did not change` — my fake combobox had no click handler, so
+    nothing could land, and the picker refused to claim otherwise. That is #23's
+    BEFORE/AFTER verification and #66's `NOT DONE:` token both behaving
+    correctly on a dead fixture. And the first scoped readiness read came back
+    QUIET because the shadow-root interval had already run its 400 iterations;
+    it reported churn the moment the churn was restarted. **A probe that has
+    stopped looks exactly like a settled page (#15), and both times the fixture
+    was what was wrong.**
+
+    **Also confirmed unasked, each from a different entry:** the batch settle
+    reporting `waited 1536ms and the DOM was STILL being rewritten ... This step
+    ran anyway, so do not conclude something is absent` (#51, and its honest
+    timeout branch); the readiness banner appearing ABOVE the `[scoped to the
+    subtree of ref_4]` header at `max_chars=600` (#77's ordering fix, which is
+    what made the signal visible on a scoped read at any normal budget);
+    `search_page` matching a literal `Day (per hr)` across a `<br>` and rendering
+    it `Day | (per hr)` (#52); `(just appeared)` on the newly created button and
+    on none of the eight that predated it (#31); and the scroll note reporting
+    29,707px (#30).
+
+    **NOT live-verified, stated rather than implied:** the `_phMarked` drift fix
+    (#82) needs a `fillDropdown` against a Tailwind-classed widget to exercise
+    the path that differed; it is pinned by MC4/MC4b and an offline probe shows
+    the two copies now agreeing on the element that used to split them. The
+    REFUSAL half of the observe-to-act guard and the flow record-text witness
+    are measured and deliberately unshipped.
+
+
 ## Debugging starting points
 
 | Symptom | Where to look |
