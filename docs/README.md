@@ -21,7 +21,8 @@ fix it.
 | You are… | Read, in order |
 |---|---|
 | **working anywhere in this repo** | `PRINCIPLES.md` — non-negotiable, 21 rules |
-| catching up on the most recent work | CLAUDE.md **#76–#81**, then `tools/bench_turns/eval9/CLOSEOUT.md` — the head-to-head that came back a TIE because of a guard shipped hours before it ran, and `eval9/PREREG.md`'s nine amendments, four of which record a mistake in the eval's own setup or scorer |
+| asking "does this work on sites we never tuned on" | `docs/research/GENERALITY-LIVE-2026-11.md` → CLAUDE.md **#85**. 260 live out-of-sample sites, 34,913 visible controls, **0 identities lost** — and 0 again in a state reached by OPENING a disclosure, which is the first measurement here of anything but first paint. Read its "still unmeasured" section before quoting it: real legacy enterprise UI is still absent, and 152 of 369 candidates never rendered |
+| catching up on the most recent work | CLAUDE.md **#76–#85**, then `tools/bench_turns/eval9/CLOSEOUT.md` — the head-to-head that came back a TIE because of a guard shipped hours before it ran, and `eval9/PREREG.md`'s nine amendments, four of which record a mistake in the eval's own setup or scorer. Then #82–#85: five parallel audits, eight defects, and the generality number above |
 | changing the DOM collector | `PRINCIPLES.md` → `REPRESENTATION.md` → CLAUDE.md #27, #28, #29, #37 |
 | changing what the listing *says* | `REPRESENTATION.md` → CLAUDE.md #13, #22, #24 (truncation and silence) |
 | touching readiness / settling | `READINESS.md` — this is the active open problem |

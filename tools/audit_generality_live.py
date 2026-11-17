@@ -585,7 +585,16 @@ PROBE2 = r"""
     + '[role=tab],[role=checkbox],[role=radio],[role=switch],[role=option],[role=combobox],[role=textbox],'
     + '[role=searchbox],[role=slider],[role=spinbutton],[role=treeitem],[role=gridcell],'
     + '[tabindex]:not([tabindex^="-"]),[contenteditable=""],[contenteditable="true"],[onclick]';
-  const res = { deep: {candidates: 0, lost: [], names: []}, declared: {candidates: 0, lost: []} };
+  const res = { deep: {candidates: 0, lost: [], names: []}, declared: {candidates: 0, lost: []},
+                strict: {candidates: 0, norow: [], norow_named: 0} };
+  // STRICT arm (wave 2): does the control own a ROW, decided by mmid alone. The name-substring
+  // test is LENIENT -- a container's concatenated label contains its descendants' names, so
+  // halving a real blob moved lost from ~18 expected to 1 (see doc). This arm cannot be
+  // satisfied by a neighbour's text.
+  const rowIds = new Set();
+  for (const m of BLOB.matchAll(/"mmid":\s*"([^"]+)"/g)) rowIds.add(m[1]);
+  for (const m of LISTING.matchAll(/\bref_(\w+:?\w*)/g)) rowIds.add(m[1]);
+  for (const m of LISTING.matchAll(/(?:^|[\s,(])(\d+):"/g)) rowIds.add(m[1]);
   const seen = new Set();
   let budget = 12000;
   function roots(root, acc, depth) {
@@ -636,6 +645,15 @@ PROBE2 = r"""
         if (hidden(el)) continue;
         res[key].candidates++;
         const nm = nameOf(el);
+        if (key === 'deep') {
+          res.strict.candidates++;
+          const mm0 = el.getAttribute('mmid');
+          if (!(mm0 && rowIds.has(mm0))) {
+            if (nm) res.strict.norow_named++;
+            if (res.strict.norow.length < 40) res.strict.norow.push({ tag: el.tagName.toLowerCase(), name: nm.slice(0, 60), mmid: mm0,
+              box: [Math.round(r.width), Math.round(r.height)], html: el.outerHTML.slice(0, 220) });
+          }
+        }
         if (!nm) continue;
         if (key === 'deep' && res.deep.names.length < 4000) res.deep.names.push(nm.slice(0, 60));
         const m = el.getAttribute('mmid');
@@ -715,11 +733,17 @@ OPEN_STATE = r"""
 
 
 def _measure_js():
+    # NOTE (wave 2): a page that defines Array.prototype.toJSON (Prototype.js era; kebhana.com)
+    # makes JSON.stringify(array) return a JSON STRING OF A STRING, so every `"<mmid>"` lookup in
+    # the blob silently misses. The probe neutralises it for the one stringify and restores it.
+    # The collector itself only stringifies strings, so it is unaffected (checked).
     return ("(function(){ " + COLLECT + ";"
             " const listing = _collectInteractivePage(false, null, 'compact', false, false, 'tree');"
             " const ents = _collectInteractivePage(true, null, 'compact', false, false, 'tree');"
             " const led = _collectInteractivePage(true, null, 'compact', true);"
+            " const _tj = Array.prototype.toJSON; try { delete Array.prototype.toJSON; } catch (e) {}"
             " const blob = (typeof ents === 'string') ? ents : JSON.stringify(ents);"
+            " if (_tj) Array.prototype.toJSON = _tj;"
             " const core = (" + IS.PROBE.strip() + ")(String(listing), blob);"
             " const more = (" + PROBE2.strip() + ")(String(listing), blob);"
             " return {listing: String(listing), ents: ents, dropped: (led && led.dropped) || [],"
@@ -754,6 +778,10 @@ def _summ(res):
         "shadow_roots": res["more"]["shadowRoots"],
         "frames": res["nframes"], "canvases": res["ncanvas"],
         "lost_core": len(res["core"]["lost"]),
+        "strict_candidates": res["more"]["strict"]["candidates"],
+        "strict_norow": len(res["more"]["strict"]["norow"]),
+        "strict_norow_named": res["more"]["strict"]["norow_named"],
+        "strict_examples": res["more"]["strict"]["norow"][:8],
         "lost_deep": len(res["more"]["deep"]["lost"]),
         "lost_declared": len(res["more"]["declared"]["lost"]),
         "modal_banner": "MODAL/DIALOG IS CURRENTLY OPEN" in listing,

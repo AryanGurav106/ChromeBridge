@@ -123,3 +123,99 @@ No collector defect that loses an element was found.
 - **Controls that the CSS hides but the page considers visible (clipped, 1px, offscreen via transform).** `checkVisibility` calls them visible only if they have a box, and the probe requires 2x2 px.
 - **The real extension.** Offline Playwright with `listener_tag.js` injected; any difference in how the MV3 content script is delivered is not tested.
 - **Generalisation claims about the web.** 40 sites, 25 English, mostly sites that tolerate headless Chromium. The honest statement is: on 40 live sites spanning 9 scripts and archetypes, with every admitting signal live, the collector lost no named, visible control, and found no rule outside the permitted set deleting anything.
+
+---
+
+# Second run, 2026-11-17: the sample gap, and the first post-interaction read
+
+Same probe, extended (`tools/audit_generality_live.py`): `SITES2` (369 new candidates, same exclusion guard against the frozen corpus, `bench_turns` and `bench_flows`; 14 candidates were removed by the guard before running), `--wave`, `--report`, and two new things below. Raw output: `temp/generality_live/{wave2,final,strict}/` (gitignored). Nothing in `extension/`, `core/` or `mcp_server.py` was touched. No user agent was changed, no automation hidden, no bot check worked around: a site that blocked is recorded as unusable below.
+
+## Result, again a negative result
+
+**`lost_identities` = 0 on 260 usable live sites (43 from the first run re-run, 217 new): 0 of 34,913 visible controls at first paint, 0 of 8,402 in the opened state.** Under a second, strictly harder definition (below) it is also 0, so the zero does not depend on how forgiving the first definition is. The collector ran verbatim from `background.js` with `listener_tag.js` at document_start. Drop reasons across all 260: not-interactive 345,743; not-visible 86,609; cursor-inherited-non-root 20,838; aria-hidden 17,118; inert 3,935; checkVisibility-false 608; iframe-contents-listed-instead 310. **No reason outside `test_ledger.SPEC_DELETES` on any site, at first paint or opened** (`UNEXPECTED_drop_reasons` empty everywhere; the set is read, not restated).
+
+### Two probe defects found and fixed (the first one would have published a false collector defect)
+
+1. **A page that defines `Array.prototype.toJSON` (Prototype.js era) double-encodes the probe's blob.** kebhana.com (a Korean bank) showed 33 "lost" identities, all on-screen `<a>` with no ledger entry. They were not lost: every one has an entry (mmid 2610, label "조회"). `JSON.stringify(array)` on that page returns a JSON string OF a string, so the by-reference lookup `'"' + mmid + '"'` never matched, and the name test failed because the probe takes `title` first ("조회로 이동") while the collector, correctly per AccName, names it from content ("조회"). The same defect sits in `inspect_site.PROBE`'s by-ref skip on any such page (not changed; it only ever makes that probe stricter). The probe now neutralises `Array.prototype.toJSON` for the one stringify; `--selftest` gained a control that fails if the by-ref skip is dead (`byref_skip_alive_and_double_encoding_detected`). The collector itself only stringifies strings (checked: every `JSON.stringify(` in `_collectInteractivePage` takes a string), so it is unaffected. After the fix kebhana reads 0.
+2. **The name-substring test is lenient, and the first run's zero was weaker than it sounded.** Ablation on wipo.int (180 entries, 37 candidates): remove every second entry from the blob and the name test still reports **1** lost control, because a surviving container's concatenated label contains its descendants' names. The same ablation on the new **strict arm** (the control must OWN a row, decided by mmid alone against the structured entries plus every `ref_N` and `N:"` form in the listing, so a neighbour's text cannot satisfy it) reports **21 of 38**, and 38 of 38 with an empty blob. The prior run's "0 lost" was therefore a statement about names being findable somewhere, not about every control having a row. Both definitions are 0 here.
+
+### Drift control
+
+`--compare` on all 267 sites in the final set (same source, two passes, back to back per site): 259 usable in both. Lost identities 0 in both passes (after the fix). Entries absolute drift 1,154 over 259 sites (about 4.5 per site); listing-chars drift median 0.0%, p90 0.6%. Live reach is the unstable thing, not the metric: 7 of the 224 sites that rendered in the screening pass did not render at all on the rerun (`w2_shanghai`, `w2_kathmandu`, `w2_stockholm`, `w2_cdmx`, `w2_iitb` timed out; `w2_alfabank` and `w2_worldcat` served under 10 controls). A third pass (the strict arm) was also 0/0.
+
+## The second read: opening ONE disclosure
+
+After first paint the probe picks one disclosure from DECLARATIONS ONLY, in this tier order, first visible, in-viewport, not aria-hidden/inert, not disabled, and not an `<a href>` or a submit (so it cannot leave the page): (1) `[aria-expanded=false][aria-haspopup]`, (2) `[aria-expanded=false][aria-controls]`, (3) `[role=combobox]` or `input[list]`, (4) closed `<details>` `<summary>`, (5) any `[aria-expanded=false]`. No class name, no label text. It clicks with a real pointer click, waits 900 ms, re-measures with the identical probe, and reports `lost_identities` for the opened state separately. A disclosure counts as **opened** only if the page's own declared state flipped (`aria-expanded` became `true`, or `details.open`), so a click that did nothing is not counted as an opened menu.
+
+| | count |
+|---|---|
+| sites with a declared disclosure candidate | 122 of 260 |
+| clicked (Playwright pointer click succeeded) | 96 (26 timed out at 4 s: something covered the target) |
+| navigated away (excluded by construction) | 0 |
+| **declared state flipped (a real opened state)** | **77** |
+| controls visible in the opened state | 8,402 |
+| NEW named controls that were not visible at first paint | **1,026** (on 68 sites) |
+| **lost_identities in the opened state** | **0** |
+| strict "no row" in the opened state | **0** |
+| of the 1,026 new controls: lost | **0** |
+
+Kinds that flipped: menu-popup 31, expandable-with-controls 26, expandable 17, details 2, combobox 1. Largest new surfaces: wipo.int 194, admin.ch 122, perldoc 93, nsw.gov.au 77, cityline 50, geico 37. The MODAL banner fired on 10 of the 77 opened states (first paint: 29 of 260, mostly consent walls), and in none of them did anything beneath it vanish unrecorded.
+
+**By script, opened state (sites flipped / controls / new controls):** latin-english 42 / 4,231 / 716; latin-other 17 / 1,367 / 193; han-trad 3 / 520 / 61; kana+han 5 / 834 / 16; hangul 2 / 459 / 8; cyrillic 2 / 126 / 12; arabic 2 / 196 / 3; hebrew 1 / 105 / 8; bengali 1 / 221 / 7; greek 1 / 343 / 2. **No opened state at all for Han-simplified, Devanagari, Thai or Vietnamese** (no site there offered a declared, clickable disclosure that the probe could safely open), so those scripts are first-paint only.
+
+## Sample (wave 2 alone, plus combined)
+
+369 wave-2 candidates attempted, **217 usable** (59%; at least 10 controls). Of the 152 that were not, in the screening pass: 112 served under 10 controls (consent wall or bot block; none was investigated or evaded), 20 goto timeouts, 9 network resets or HTTP/2 protocol errors, 4 DNS failures, 2 evaluate errors, plus the 7 flaky ones above.
+
+**Wave 2 by archetype** (first paint; opened columns are sites tried/flipped, opened controls, NEW controls):
+
+| archetype | sites | controls | entries | lost | no-row | opened | opened ctl | NEW | opened lost |
+|---|---|---|---|---|---|---|---|---|---|
+| bank | 30 | 2,919 | 5,935 | 0 | 0 | 18/9 | 866 | 72 | 0 |
+| government (national + municipal) | 42 | 4,005 | 13,025 | 0 | 0 | 22/18 | 2,015 | 275 | 0 |
+| insurance | 11 | 1,071 | 2,312 | 0 | 0 | 7/4 | 388 | 72 | 0 |
+| judicial | 10 | 891 | 1,750 | 0 | 0 | 3/1 | 112 | 4 | 0 |
+| legacy / table-era / framework-era | 27 | 2,884 | 4,245 | 0 | 0 | 7/4 | 266 | 33 | 0 |
+| library | 5 | 579 | 1,010 | 0 | 0 | 2/1 | 76 | 6 | 0 |
+| standards bodies | 16 | 7,455 | 8,814 | 0 | 0 | 7/5 | 482 | 221 | 0 |
+| ticketing (incl. transit) | 26 | 2,173 | 4,242 | 0 | 0 | 17/8 | 902 | 73 | 0 |
+| university (catalogue, registrar, home) | 50 | 5,393 | 11,169 | 0 | 0 | 20/11 | 1,092 | 81 | 0 |
+| **wave 2 total** | **217** | **27,370** | **52,502** | **0** | **0** | **103/61** | **6,199** | **837** | **0** |
+
+**Wave 2 by script:**
+
+| script | sites | controls | entries | lost | opened tried/flipped | opened ctl | NEW |
+|---|---|---|---|---|---|---|---|
+| latin-english | 113 | 16,747 | 25,951 | 0 | 54/30 | 2,633 | 543 |
+| latin-other (de fr es pt nl it pl cs sv no fi da hu ro tr id ca) | 46 | 3,708 | 9,178 | 0 | 30/17 | 1,367 | 193 |
+| kana+han (ja) | 13 | 1,582 | 3,437 | 0 | 6/5 | 834 | 16 |
+| han-simplified | 9 | 1,195 | 2,386 | 0 | 0/0 | 0 | 0 |
+| cyrillic (ru uk bg sr) | 8 | 1,034 | 2,055 | 0 | 2/2 | 126 | 12 |
+| han-traditional | 7 | 785 | 1,582 | 0 | 3/2 | 332 | 56 |
+| hangul | 6 | 518 | 895 | 0 | 1/1 | 143 | 0 |
+| hebrew (rtl) | 4 | 281 | 816 | 0 | 3/1 | 105 | 8 |
+| arabic (rtl, incl. fa) | 3 | 310 | 503 | 0 | 2/1 | 95 | 0 |
+| greek | 3 | 572 | 4,403 | 0 | 1/1 | 343 | 2 |
+| thai | 2 | 100 | 255 | 0 | 0/0 | 0 | 0 |
+| bengali | 2 | 337 | 695 | 0 | 1/1 | 221 | 7 |
+| devanagari | 1 | 201 | 346 | 0 | 0/0 | 0 | 0 |
+
+**Combined (wave 1 + wave 2): 260 sites, 138 English (53%, down from 25 of 40 = 62%), 122 non-English across 31 language codes and 13 script families.** Wave 2 alone is 104 of 217 non-English (48%). 95 wave-2 sites have an open or closed shadow root and 106 have an iframe; 14 sites across the sample carry canvas.
+
+Legacy is better represented than before but **not** in the way the ask wanted: 27 usable wave-2 sites in the legacy family, of which only 7-8 are genuine table-and-CGI-era pages (bls.gov CGI, uspto tsdr, nws forecast, debian packages, cpan, openbsd, netbsd, catb, ubc ssc, perseus, sacred-texts, onlinebooks, mit.edu) and the rest are JSF/GWT/ASP.NET/APEX/ExtJS/Kendo **framework demo sites** (omnifaces, myfaces, gwt, devexpress, telerik, apex.oracle.com, sencha, dhtmlx). Those are real legacy component trees but are showcases, not enterprise forms. **Every real government/registry form portal I tried returned zero controls** in headless: FAA registry, FMCSA SAFER, FCC ULS, California SOS bizfile, NY DOS (reset). See "still unmeasurable".
+
+## Ranked collector defects
+
+**None found that loses an element.** No on-screen, named, visible control was missing a row at first paint or after opening a declared disclosure, on 260 sites, under either definition. The earlier ad-slot label observation (Defect 1 above: a same-origin `<iframe aria-label="Advertisement">` has its label dropped while its contents are listed) recurs, now on fandango; it is a context loss with a proposed patch in the first section and is unchanged. The probe's declared arm now skips `<iframe>` (the artefact noted in the first run).
+
+## What this sample still cannot measure
+
+- **The government, bank, insurance, ticketing and court archetypes are only as represented as the sites that tolerate headless Chromium.** 152 of 369 candidates never gave a usable page, and these are disproportionately the highest-value targets: Bank of America, Mizuho, MUFG, Shinhan, State Farm, Liberty Mutual, Tokio Marine, Ticketmaster, StubHub, MTR, SBB, NYC, Seattle, gov.kr, courtlistener, FAA/FCC/FMCSA. They are unmeasured, not passed. A survivorship effect is likely: the sites that render for an unmodified headless browser are the ones with the least aggressive bot protection, which correlates with simpler front ends.
+- **True legacy enterprise UI** (an IRCTC-class ASP.NET WebForms booking form, a SAP portal, an intranet-style frameset app, a court e-filing front end) is **still unmeasured**. The legacy rows here are framework demos and table-era documentation sites.
+- **One disclosure, one read.** Only the FIRST declared, visible, in-viewport, non-navigating disclosure is opened; 28% of attempted clicks timed out on an overlay (a consent wall most likely), so pages with a blocking banner mostly contributed no opened state. Date pickers, native `<select>` menus (not in the DOM in headless), modal dialogs opened from a button, multi-step menus (a second level), drag, hover-only menus and anything needing text input are untested. The probe looks only in the top document's light DOM when choosing what to open.
+- **Scripts with no opened state:** Han-simplified, Devanagari, Thai, Vietnamese. First-paint only.
+- **Logged-in state, still.** No site was authenticated; every page is the logged-out front door.
+- **A visible control with no accessible name** is excluded from the name arm by definition; the strict arm counts it (it has no name to hide behind) and also found none without a row. That says a row exists, not that the row says anything useful (#74, #75).
+- **Cross-origin frames** and controls inside closed shadow roots in cross-origin frames: invisible to the probe and to the first-pass collector call.
+- **The headline is now two zeros that cannot be confused with success of the whole system**: presence and row-ownership are 0-loss; findability by name, success of an agent on these pages and correctness of the name attached to each row are not measured here.
+- **Hidden-but-intended controls.** `checkVisibility` plus a 2x2 box excludes a clipped or off-canvas control the page considers reachable; a collector that dropped such a control would not be seen by this metric.

@@ -132,7 +132,20 @@ async def inspect(site, url, out_dir):
                 " const listing = _collectInteractivePage(false);"
                 " const ents = _collectInteractivePage(true);"
                 " const led = _collectInteractivePage(true, null, 'compact', true);"
-                " const blob = JSON.stringify(ents);"
+                # A PAGE CAN BREAK THIS LINE, and one did. Prototype.js-era code
+                # (kebhana.com, a Korean bank) defines `Array.prototype.toJSON`,
+                # which makes `JSON.stringify(array)` return a JSON STRING OF A
+                # STRING -- so every `"<mmid>"` lookup inside the blob silently
+                # misses and the probe reports every control on the page as a lost
+                # identity. Measured: 33 phantom losses on one site, which is
+                # exactly the kind of damning number #16 says to re-derive. The
+                # COLLECTOR is unaffected (checked: every JSON.stringify in it
+                # takes a string), so this is a probe defect, not a product one.
+                # Neutralised for this one call and restored immediately.
+                " const _tj = Array.prototype.toJSON;"
+                " try { delete Array.prototype.toJSON; } catch (e) {}"
+                " const blob = (typeof ents === 'string') ? ents : JSON.stringify(ents);"
+                " if (_tj) Array.prototype.toJSON = _tj;"
                 " const probe = (" + PROBE.strip() + ")(String(listing), blob);"
                 " return {listing: String(listing), ents: ents, dropped: (led && led.dropped) || [],"
                 "         probe: probe}; })()")

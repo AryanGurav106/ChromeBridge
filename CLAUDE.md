@@ -8599,6 +8599,81 @@ granted in the side panel is refused with the same message the agent gets.
     are measured and deliberately unshipped.
 
 
+85. **GENERALITY, MEASURED AT 260 LIVE OUT-OF-SAMPLE SITES — AND FOR THE FIRST
+    TIME AFTER AN INTERACTION.** #82 reported `lost_identities` = 0 across 40
+    live sites and listed its own sample bias as the reason not to lean on it.
+    That bias is now largely closed, on a sample **6.5x larger**, and the answer
+    did not move. Re-derived from the raw output rather than taken from the
+    report, because a result this flattering is exactly what #16 is for.
+
+    | | first paint | after opening a disclosure |
+    |---|---|---|
+    | usable sites | **260** | 77 (of 122 that offered one) |
+    | visible controls | **34,913** | 8,402 |
+    | entries | 74,389 | 22,338 |
+    | shadow roots / frames walked | 2,066 / 532 | 1,272 / 141 |
+    | **identities lost** | **0** | **0** |
+    | controls owning no row (strict arm) | **0** | **0** |
+    | drop reasons outside `SPEC_DELETES` | none | none |
+
+    **THE OPENED-STATE COLUMN IS THE NEW THING.** Every metric this project has
+    ever had describes a page AT FIRST PAINT with nothing opened, which is not
+    how an agent uses one. The probe now opens ONE disclosure chosen from
+    DECLARATIONS ONLY — `aria-expanded=false` with `aria-haspopup`, then with
+    `aria-controls`, then `role=combobox`/`input[list]`, then a closed
+    `<details>` — skips links and submits, and counts it only when the page's own
+    declared state FLIPPED. **1,026 controls were new to the opened state and 0
+    were lost.** The MODAL banner fired on 10 of the 77 and nothing beneath it
+    vanished unrecorded.
+
+    **English is now 53% of the sample** (138 of 260) across **32 language codes
+    and 13 script families**, every row at 0 lost: Japanese 14 sites, German 10,
+    Simplified Chinese 9, Traditional Chinese 8, Korean 8, Thai 6, Hebrew RTL 6,
+    plus Arabic, Greek, Cyrillic, Bengali, Devanagari and Vietnamese.
+
+    **A PAGE CAN BREAK A PROBE, AND ONE DID.** `kebhana.com`, a Korean bank,
+    defines `Array.prototype.toJSON` (Prototype.js era) — so `JSON.stringify(array)`
+    returns a JSON STRING OF A STRING and every `"<mmid>"` lookup inside the blob
+    silently misses. It reported **33 phantom losses on one site**, which is the
+    shape #16 exists for pointed at a probe rather than at the product. **The
+    COLLECTOR is unaffected**, checked rather than assumed: every
+    `JSON.stringify` in `_collectInteractivePage` takes a string.
+    `tools/inspect_site.py` had the same latent weakness and now carries the same
+    guard, with the hazard and the fix proven in isolation (`"nope"` against
+    `[{"mmid":"7"}]`).
+
+    **AND THE EARLIER ZERO WAS WEAKER THAN IT READ.** #82's metric asked whether
+    a control's NAME appears anywhere in the listing blob, which is lenient: on
+    `wipo.int`, with half the entries deleted from the blob, it still reported
+    only 1 lost of 37. The strict arm requires the control to OWN a row by mmid
+    or `ref_N` — it reports 21 of 38 on that mutilated blob and 38 of 38 on an
+    empty one, so it discriminates. **Both definitions are 0 here**, but #82's
+    sentence meant "names were findable somewhere" and this one means "every
+    control had a row of its own".
+
+    **WHAT IS STILL UNMEASURED, and the first item has not moved.** True legacy
+    enterprise UI: of the 27 legacy rows only 7-8 are genuinely table-era pages;
+    the rest are JSF/GWT/ASP.NET/APEX/ExtJS/Kendo framework DEMOS. **Every real
+    government or registry form portal tried returned 0 controls in headless.**
+    152 of 369 wave-2 candidates never rendered — 112 behind a consent wall or
+    bot block (Bank of America, Mizuho, MUFG, Shinhan, State Farm, Ticketmaster,
+    StubHub, SBB, gov.kr, the FAA/FCC/FMCSA forms), 20 timeouts, 9 network
+    errors, 4 DNS. **No user-agent spoofing and no bot-check evasion was used,
+    deliberately** — a measurement that required evading a site's own controls is
+    not one this project would quote. That makes the sample survivorship-biased
+    toward simpler pages, and it is stated rather than discounted.
+    Also unmeasured: only ONE disclosure per page, in the light DOM of the top
+    document, so date pickers, native selects, dialogs opened from a button,
+    second-level and hover menus and text input are untested; logged-in states;
+    cross-origin frames; and whether the right name is on the right element
+    (#74) or a model would pick it (#75).
+
+    **Drift control:** 259 sites compared over two passes — entries differ by
+    ~4.5 per site, listing chars median 0.0% and p90 0.6%, 0 lost in both passes.
+    7 of 224 sites that rendered in screening failed on the rerun, which is the
+    live-web floor this corpus has (#16).
+
+
 ## Debugging starting points
 
 | Symptom | Where to look |
