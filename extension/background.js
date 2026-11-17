@@ -7191,7 +7191,23 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           let c = getComputedStyle(el, pseudo).content;
           if (c && c !== 'none' && c !== 'normal') {
             c = c.replace(/^["']|["']$/g, '').trim();
-            if (c && c.length <= 40 && /[\p{L}\p{N}]/u.test(c)) return c;   // any script, not just ASCII
+            // NO LENGTH BOUND. `<= 40` used to gate this and it DELETED AN
+            // IDENTITY: measured, a 39-unit `::before` label is kept and a
+            // 48-unit one makes the button `(unlabeled)` with no name at all,
+            // on a page whose author wrote a perfectly good label.
+            // The other two bounds in this function (the shadow-slotted 80 and
+            // the card-parent 40) are container-vs-leaf proxies -- they guard
+            // against a CONTAINER's assembled contents standing in for a name,
+            // which is a real question -- and they are left alone pending their
+            // own measurement. This branch has no such question: `content` is a
+            // single authored string with no descendants, so a long one is the
+            // author's label and not a subtree. #24's rule applies exactly: a
+            // field bounded by human authorship needs no cap, and the caller's
+            // max_chars is the one bound in the system.
+            // The letter-or-digit test stays -- it is what rejects a
+            // private-use icon glyph, and that is a fact about the character
+            // rather than a guess about length.
+            if (c && /[\p{L}\p{N}]/u.test(c)) return c;   // any script, not just ASCII
           }
         } catch (e) {}
       }

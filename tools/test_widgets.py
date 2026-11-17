@@ -2554,6 +2554,57 @@ async def main():
         ui = str(await uip.evaluate(
             "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
         _rows = [l for l in ui.splitlines() if "(unlabeled" in l and "|" in l]
+        # UI2/UI2b — A CHOSEN NUMBER DELETED AN AUTHORED NAME. The CSS
+        # ::before branch of synthLabel accepted a name only if it ran to 40
+        # UTF-16 units or fewer. Measured on the pre-fix collector: a 39-unit
+        # label is kept and a 48-unit one makes the button `(unlabeled)` with no
+        # name at all, on a page whose author wrote a perfectly good label.
+        # An icon-font ligature IS the label here (`content: "close"`), and a
+        # `content` string has no descendants, so there is no container-vs-leaf
+        # question behind the bound — unlike the other two bounds in that
+        # function, which are left alone pending their own measurement. #24's
+        # rule applies: a field bounded by human authorship needs no cap.
+        _XL = "Download the signed quarterly statement as a PDF"
+        assert len(_XL) > 40, "the fixture must exceed the OLD cutoff or it proves nothing"
+        await uip.goto("about:blank")
+        await uip.set_content(
+            "<!doctype html><meta charset=utf-8><style>"
+            "#s::before{content:'Close'} "
+            f"#x::before{{content:'{_XL}'}} "
+            "#pua::before{content:'\\e801'}"
+            "</style><main>"
+            "<button id=s style='width:40px;height:30px'></button>"
+            "<button id=x style='width:40px;height:30px'></button>"
+            "<button id=pua style='width:40px;height:30px'></button></main>")
+        await uip.wait_for_timeout(150)
+        _ui2 = await uip.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(true); })()")
+        _lab = {e.get("mmid"): (e.get("label") or "") for e in _ui2 if e.get("tag") == "button"}
+        _vals = [v for v in _lab.values()]
+        check("UI2 a long ::before label is kept — a length was deciding whether "
+              "a control has a NAME, and the author had written one",
+              _XL in _vals, f"labels={[v[:30] for v in _vals]}")
+        check("UI2b CONTROL: a short ::before still names its control, and a "
+              "PRIVATE-USE icon glyph still names nothing — the letter-or-digit "
+              "test is a fact about the character, not a guess about length",
+              # BY POSITION, NOT BY A COUNT OF EMPTIES. The first version
+              # asserted "exactly one label is empty", which the PRE-FIX arm
+              # breaks for a related reason (the long one is empty there too),
+              # so it failed in both arms and was no control at all. Same lesson
+              # OR2 taught an hour earlier: a control has to hold BY
+              # CONSTRUCTION. The three buttons are short / long / private-use
+              # glyph in document order.
+              len(_vals) == 3 and _vals[0] == "Close" and _vals[2] == "",
+              f"labels={[v[:30] for v in _vals]}")
+        await uip.goto("about:blank")
+        await uip.set_content(
+            "<main><button id=g style='width:32px;height:32px'>"
+            "<svg width=16 height=16><path d='M0 0h4v4H0z'/></svg></button>"
+            "<button id=e style='width:300px;height:60px'></button></main>")
+        await uip.wait_for_timeout(150)
+        ui = str(await uip.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _rows = [l for l in ui.splitlines() if "(unlabeled" in l and "|" in l]
         check("UI1 a control that really renders a glyph is called an icon",
               any("(unlabeled-icon)" in l for l in _rows), f"rows={_rows}")
         check("UI1b ...and one that renders nothing is not",
