@@ -36,9 +36,22 @@ measured, which was only catchable because that prompt file happened to survive.
 | #43 | 24 tasks | 15/20 pairs, p=0.0414 — and **weaker than its own baseline** (19/21, p=0.0002). #42's fixes narrowed the lead |
 | #47 | 9 tasks, ×2 | 7/7 then 9/9, p=0.0156 then p=0.0039 |
 | #48 | **19 tasks, 7 archetypes** | **15/17 pairs, p=0.0023. 117 turns vs 240. Wall clock 1,662s vs 3,674s, p=0.0007** |
+| eval 7 | 8 tasks, local benchmark | **tie.** 22 defects found, which was its yield |
+| eval 8 | local benchmark | **VOID before it started** — the other arm is not driving a browser on this machine (`localhost` gives an error page; its tab ids are a different range) |
+| **eval 9 (#81)** | **8 public two-hop tasks** | **TIE. 4/7 decided pairs, p = 1.0000**, against a reachable bar of p<0.05. Totals 58 v 68 (14.7%), a hair outside the published 12–14% rerun floor |
 
-**#48 is the one to quote**, and its own honest reading is not the flattering
-one. The archetype breakdown:
+**eval 9 is the one that matters most right now, and it is a loss.** 5 of our 7
+scored runs lost calls to a dead-click guard that had shipped hours before the
+run — it reported `NO EFFECT` on clicks that had navigated, because the probe it
+relied on outlives the click. On three pairs that was the whole margin. The
+cause and fix are CLAUDE.md #81; the closeout is
+`tools/bench_turns/eval9/CLOSEOUT.md`.
+**Do not quote eval 9's totals as a win.** The sign test is what was
+pre-registered, precisely because it ignores one blow-out pair, and switching to
+totals after seeing the data is choosing the statistic.
+
+**#48 is the one to quote for a published number**, and its own honest reading
+is not the flattering one. The archetype breakdown:
 
 | archetype | CB/CIC turns | ratio |
 |---|---|---|

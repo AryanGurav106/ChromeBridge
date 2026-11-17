@@ -20,8 +20,8 @@ fix it.
 
 | You are… | Read, in order |
 |---|---|
-| **working anywhere in this repo** | `PRINCIPLES.md` — non-negotiable, 20 rules |
-| catching up on the most recent work | CLAUDE.md **#76–#80**, then `tools/bench_turns/eval7/CLOSEOUT.md` — the head-to-head that came back a TIE and produced 22 defects, and `tools/bench_turns/eval7/PREREG.md`'s five amendments, three of which record a mistake in the eval's own setup |
+| **working anywhere in this repo** | `PRINCIPLES.md` — non-negotiable, 21 rules |
+| catching up on the most recent work | CLAUDE.md **#76–#81**, then `tools/bench_turns/eval9/CLOSEOUT.md` — the head-to-head that came back a TIE because of a guard shipped hours before it ran, and `eval9/PREREG.md`'s nine amendments, four of which record a mistake in the eval's own setup or scorer |
 | changing the DOM collector | `PRINCIPLES.md` → `REPRESENTATION.md` → CLAUDE.md #27, #28, #29, #37 |
 | changing what the listing *says* | `REPRESENTATION.md` → CLAUDE.md #13, #22, #24 (truncation and silence) |
 | touching readiness / settling | `READINESS.md` — this is the active open problem |
@@ -29,7 +29,7 @@ fix it.
 | adding or changing a measurement | `MEASUREMENT.md` — **read this before you quote a number** |
 | asking whether the listing is *enough*, not just complete | `SUFFICIENCY.md` → `tools/measure_sufficiency.py` |
 | asking whether an element can be REACHED, not just whether it survived | `tools/measure_findability.py` → CLAUDE.md #74, #75. Nearly every ruler here scores PRESENCE; #74 found 118 elements present in all of them and unreachable by their own printed label |
-| running a head-to-head | `EVALS.md` → `tools/bench_turns/` → **read eval7's PREREG.md amendments before designing one**: a generator that merges a task file must be read against the harness that normally consumes it, and both arms can read the other's server instructions |
+| running a head-to-head | `EVALS.md` → `tools/bench_turns/` → **read eval7's AND eval9's PREREG amendments before designing one.** eval7: a generator that merges a task file must be read against the harness that normally consumes it, and both arms can read the other's server instructions. eval9: fix the bar before any data exists and do not move it; a task both arms can shortcut by recalling a URL is excluded, not scored; and the scorer is as capable of a detector-that-cannot-fire as the product is |
 | about to claim the representation is COMPLETE | **you cannot, from any ruler in this repo.** Every one scores PRESENCE — presence, `lost_identities`, Mind2Web recall, sufficiency DS, findability. `docs/OPEN.md` 4l is a control whose two buttons were present, listed, named, clickable and carried OPPOSITE meanings, and `measure_findability` scores it a hit at 0.9996. Live agents are the only thing that has ever caught that class |
 | about to claim something is general | `PRINCIPLES.md` §I → `tools/audit_patterns.py` |
 
@@ -37,7 +37,7 @@ fix it.
 
 | File | What it holds |
 |---|---|
-| `PRINCIPLES.md` | The 20 invariant rules, each with the failure that earned it |
+| `PRINCIPLES.md` | The 21 invariant rules, each with the failure that earned it |
 | `REPRESENTATION.md` | What the listing is: existence, identity, state, presentation, and every number with its ruler |
 | `READINESS.md` | "Accurate at any stage" — the one open structural gap, its evidence and the design |
 | `FLOWS.md` | Record and replay: descriptors, assertions, the oracle problem, the runtime |

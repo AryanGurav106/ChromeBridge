@@ -219,11 +219,33 @@ had four copies. Injected functions lose their closure so duplication is
 *forced*; what was missing was enforcement. `P2` requires every definition
 tagged `i18n:<concept>` to be byte-identical to its siblings. — #21
 
+### 18. A comment that asserts a guarantee the code does not have
+
+Principle 6 governs what the system says to the AGENT. This governs what it says
+to the next person reading it, and it is more dangerous, because a reviewer who
+reads the comment stops checking the claim.
+
+`computerOp`'s dead-click guard reported `NO EFFECT` when a click was delivered
+and the page had not changed, and its comment said that requiring
+`_delivered === true` established *"same document"*. It does not: the delivery
+probe lives on the OLD document's `window` and the readback is one
+`executeScript` round trip after `mouseReleased`, so a link click has not
+committed yet and both effect snapshots are taken against the page being left.
+Eval 9 measured the cost at **5 of 7 of our scored runs** losing calls to the
+token firing on clicks that had worked, and on three pairs that was the whole
+margin.
+
+`C15` cannot catch this class — it scans emitted STRINGS, and a comment is not
+emitted. The only defence is the same one principle 11 gives: write the check
+that fails against the current code, and if it passes, find out why before
+believing it. A guarantee in a comment is a claim; it needs the same evidence as
+a claim in a message. — #81
+
 ---
 
 ## IV. What the system optimises for
 
-### 18. The lever is turns, not tokens
+### 19. The lever is turns, not tokens
 
 Measured by differencing so the model turn cancels: model turn ~3.6s
 (**92–97% of a tool call**), bridge round trip ~162ms (~4%), DOM collection
@@ -237,7 +259,7 @@ This is why `browser_batch` exists, why a page change stops only the steps that
 *name a ref*, and why a 0.80ms navigation-settle lookup is asked
 unconditionally while a listing is kept viewport-scoped.
 
-### 19. Default deny, per origin
+### 20. Default deny, per origin
 
 `assertOpAllowed` runs before every op. Storage is read on **every** gated op —
 never cached, because a revoke has to take effect on the very next one. Grants
@@ -248,7 +270,7 @@ tab's current origin.
 Connected is not allowed, and the first op on a new origin is *supposed* to
 fail. — Permission model
 
-### 20. Never steal the user's focus
+### 21. Never steal the user's focus
 
 A trusted click in a background tab works via
 `Emulation.setFocusEmulationEnabled` + `Page.setWebLifecycleState('active')`.
