@@ -4249,7 +4249,22 @@ function _triggerEvidencePage(sel) {
         if (a.name.indexOf('data-') === 0 && /(^|[\s,_-])placeholder([\s,_-]|$)/.test(a.value)) return true;
       }
       const cn = typeof n.className === 'string' ? n.className : (n.className && n.className.baseVal) || '';
-      return /(^|[\s_-])placeholder([\s_-]|$)/.test(cn);
+      // dup:phmarked — BYTE-IDENTICAL to _phMarked's class test, pinned by MC4.
+      // This copy had DRIFTED: it was `/(^|[\s_-])placeholder([\s_-]|$)/.test(cn)`,
+      // the form _phMarked carried before the utility-class exclusion, so a
+      // Tailwind `text-placeholder` (which says what COLOUR the text is, not
+      // that a hint is showing) made this say placeholder while the collector
+      // correctly read value="Ontario". Reproduced: the two disagreed about the
+      // same element at the same instant, three lines under a comment promising
+      // they were kept in step. The consequence is a false FAILED from
+      // fillDropdown on a pick that landed — and #23 measured a retry there
+      // toggling a multi-select back off.
+      for (const tok of String(cn).split(/\s+/)) {
+        if (!/(^|[_-])placeholder$|^placeholder([_-]|$)/.test(tok)) continue;
+        if (/^(text|bg|border|fill|stroke|ring|shadow|from|via|to|decoration|outline|caret|accent)-placeholder$/.test(tok)) continue;
+        return true;
+      }
+      return false;
     };
     hasPlaceholderAttr = marked(el);
     if (!hasPlaceholderAttr) {
@@ -7348,6 +7363,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         if (a.name.indexOf('data-') === 0 && /(^|[\s,_-])placeholder([\s,_-]|$)/.test(a.value)) return true;
       }
       const cn = typeof n.className === 'string' ? n.className : (n.className && n.className.baseVal) || '';
+      // dup:phmarked — BYTE-IDENTICAL to _triggerEvidencePage's copy, MC4.
       // CSS-property utility classes (Tailwind-style `text-placeholder`,
       // `bg-placeholder`) are STYLING, not state — they say what colour the thing
       // is, not that a hint is showing. Matching them marked a combobox reading

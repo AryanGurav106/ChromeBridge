@@ -1316,6 +1316,37 @@ def main() -> int:
                if "t.length > 80" in l and not l.lstrip().startswith("//")],
           "no length gate on option rows")
 
+    # MC4 — THE PLACEHOLDER CLASS TEST, TWICE. `_phMarked` (the collector) and
+    # `_triggerEvidencePage`'s local `marked` ask the same question about the same
+    # element, and `_triggerEvidencePage` is injected separately so the duplication
+    # is FORCED. They had drifted: the evidence copy kept the form `_phMarked`
+    # carried BEFORE the utility-class exclusion, so a Tailwind `text-placeholder`
+    # made it say "placeholder" while the collector read value="Ontario".
+    # Reproduced live before fixing -- the two disagreed about the same element at
+    # the same instant, three lines under a comment promising they were kept in
+    # step. The cost is a false FAILED from fillDropdown on a pick that landed.
+    _ph = {}
+    for _i, _l in enumerate(_oc_lines):
+        if "dup:phmarked" in _l:
+            # the body is the token loop that follows the comment block
+            _body = []
+            for _j in range(_i + 1, min(_i + 24, len(_oc_lines))):
+                _t = _oc_lines[_j].strip()
+                if _t.startswith("//"):
+                    continue
+                _body.append(_t)
+                if _t == "return false;":
+                    break
+            _ph[_i] = "\n".join(_body)
+    check("MC4 both copies of the placeholder class test are identical, so the "
+          "listing and the write-verification cannot disagree about one element",
+          len(_ph) == 2 and len(set(_ph.values())) == 1,
+          f"{len(_ph)} cop(ies), {len(set(_ph.values()))} distinct")
+    check("MC4b ...and both carry the utility-class exclusion, which is the "
+          "clause the drifted copy was missing",
+          len(_ph) == 2 and all("-placeholder$/" in v for v in _ph.values()),
+          "both exclude text-/bg-/border-placeholder")
+
     # ---------------------------------------------------------------- C31 ---
     # THE BANNER'S PROTECTION IS POSITIONAL, AND NOTHING SAID SO UNTIL IT BROKE.
     # `_split_banner` matches ANCHORED, and `_truncate` leans on it to peel the
