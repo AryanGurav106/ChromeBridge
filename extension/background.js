@@ -12686,15 +12686,32 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     // case: text "3", label "search (3)", and printing the text alone gave
     // `a "3"` for a messages menu, which is the failure the icon lookup exists to
     // prevent and could not reach.
+    // THROUGH JSON.stringify, LIKE EVERY OTHER FIELD ABOVE. These three were the
+    // only identities emitted by raw interpolation, so a label containing a
+    // double quote produced a row the reader cannot parse back: the first quoted
+    // run ends at the label's OWN quote and the rest of the name is silently
+    // dropped. Measured over 85 live sites and 34,534 printed rows: 264 rows
+    // unparseable (0.765% of rows, 99.6% of the bare rows that contain the
+    // character), and the CONTROL is what makes it a defect in the emission path
+    // rather than a fact about the character -- the same character is met 246
+    // times on the name=/value=/near= path and parses back 246/246.
+    //
+    // IT IS AN i18n DEFECT, which is the part nobody predicted: it concentrates
+    // in HEBREW, where the gershayim in an abbreviation is a plain ASCII quote.
+    // Standard orthography, not an edge case. One site carried 202 of the 264 --
+    // 9.9% of its rows -- with `"נדל\"ן"` arriving as `"נדל"`.
+    //
+    // #21's one-concept-two-spellings, in agent-facing OUTPUT. Costs two
+    // characters on a row that contains the character and nothing on any other.
     if (!identity && e.text) {
       identity = (e.label && e.label.length > e.text.length && e.label.indexOf(e.text) >= 0)
-        ? ` "${e.label}"` : ` "${e.text}"`;
+        ? ` ${JSON.stringify(e.label)}` : ` ${JSON.stringify(e.text)}`;
     }
     // See the collector: "icon" is only printed when the element actually renders
     // graphics. Everything else that reaches here is a control with no resolvable
     // name, which is all the row can honestly claim.
     if (!identity && e.iconOnly) identity = e.iconGraphic ? " (unlabeled-icon)" : " (unlabeled)";
-    else if (!identity && e.label) identity = ` "${e.label}"`;
+    else if (!identity && e.label) identity = ` ${JSON.stringify(e.label)}`;
     // near= is ALWAYS a supplement, never a replacement — an earlier ordering
     // bug let it suppress the element's own visible text (lobste.rs tag "web"
     // rendered as just near="<story title>", unfindable by its label).

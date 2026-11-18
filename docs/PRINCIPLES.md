@@ -203,6 +203,15 @@ exist (`extension/sidepanel.js` — the file is `panel.js`), and a `--check-only
 flag that validated zero files and exited 0 are the same shape. — #30, #39, #66,
 #67
 
+**And a detector that CAN fire will catch its own author, repeatedly.** C45
+(no backslash inside an f-string expression — a SyntaxError before 3.12, while
+`pyproject.toml` advertises >=3.10) was added after that construct broke CI,
+and then caught the person who added it **three times in the same session**,
+always on the identical shape: a check message interpolating a test for a
+QUOTED string. The lesson is not "remember the rule". It is that the rule is
+not learnable at the speed it is violated, and a check that runs every time
+costs nothing to keep. — #86, #93
+
 **Its sibling is a WAITER that can never finish**, and it has now caught two
 different agents in one session, the second of whom had just read the first's
 account of it: `until ! pgrep -f <pattern>; do sleep; done`, where the pattern

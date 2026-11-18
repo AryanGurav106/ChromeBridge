@@ -321,6 +321,26 @@ precisely to resolve `assignedNodes({flatten:true})` — is never reached from
 It is **not only slots**: `<button><span style="display:contents">Label</span></button>`
 loses its name the same way, and `display:contents` is ordinary modern CSS.
 
+**THIS IS NOT AN IDENTITY LOSS IN #89'S SENSE, AND THAT IS THE WHOLE REASON BOTH NUMBERS
+ARE TRUE AT ONCE.** #89 measures `lost_identities` — a visible control whose name appears
+**nowhere** in the listing — and reports 0 across 255 sites. These 301 rows do not
+contradict it: the control still owns a row, so the STRICT arm is satisfied, and the words
+usually survive somewhere in the listing, so the LENIENT arm is too. What is lost is that
+they stop being **this element's NAME**, which is the field `find` scores against and the
+one the legend calls identity.
+
+Verified on the fixture rather than asserted, pre-fix rows verbatim:
+
+```
+ref_6 | button (unlabeled)                       ← the slotted button itself: no words at all
+ref_8 | button (unlabeled) near="Sign in"        ← its NEIGHBOUR picked up ref_6's words
+```
+
+So the surviving text can be on a **different row**, attributed to a different control.
+A lenient listing-wide substring test cannot tell that from the words being in the right
+place. **A presence ruler and a correctness ruler can both be right and still disagree
+about whether a page is fine**, which is the argument for this probe existing.
+
 **Verdict: Chrome is right, and this is ours.** AccName computes the name from the
 **flattened** tree; `_deepText` already agrees.
 
@@ -655,11 +675,39 @@ replicated and driven against **both** arms: **all pass in both**. The `display:
 exemption sits *after* `_NAME_SKIP` and still asks `visibility`, so `visibility:hidden` is
 still rejected, and `alt || title` only reorders a pair where both exist.
 
-**Stated rather than implied: `test_widgets.py` itself was NOT run against the candidate**,
-because the suites extract from `extension/background.js` and this work does not modify it.
-The replication above is evidence for a proposal, not a substitute for running the suite
-once the diff lands — and the whole suite is green against the shipped collector
-(21 suites, 1,567 checks).
+**Both diffs have since been applied to `extension/background.js` by the coordinator, and
+the real suite confirms the replication: `test_widgets.py` 258/258 with both in**, with
+NR1–NR2c, TA1–TA1c and SH1/SH1b all green. Regression guards were added at the same time:
+**NR3** (a slotted label names its host), **NR3b** (a `display:contents` wrapper does too),
+**NR3c** (CONTROL: a `visibility:hidden` `display:contents` wrapper still contributes
+nothing — the fix exempts the BOX test, not the visibility test), **TA2** (`alt` beats
+`title` on one element) and **TA2b** (CONTROL: with no `alt`, `title` is still used).
+
+**A fixture for this defect is vacuous unless it asserts the ROW SHAPE, and three attempts
+in this one session got it wrong in three different ways.** Asserting `"Sign in" in
+listing` passes PRE-fix, because the words reach the listing through the `near=` fallback;
+asserting the quoted `"Sign in"` passes too, because `near="Sign in"` contains that
+substring; and asserting `name="Sign in"` **fails in BOTH arms**, because the recovered
+name arrives through name-from-content and the row prints it as the bare-text identity.
+The rows, dumped rather than reasoned about:
+
+```
+PRE-FIX   ref_5 | button (unlabeled)
+SHIPPED   ref_5 | button "Sign in"
+```
+
+`(unlabeled)` versus the quoted identity is the only thing that separates them — the same
+fact as the `lost_identities` reconciliation above, arriving from the fixture side.
+
+**This probe's own A/B arms survive the merge.** `_collector_src` carries BOTH anchors and
+decides the direction from the source, so `--candidate-ab` reconstructs the pre-fix arm now
+that the fix has shipped — MEASUREMENT.md's rule for a source-patching probe, which
+`audit_retext_tier.py` and `audit_retext_prevalence.py` are recorded as having failed hours
+earlier. **The first bidirectional version was wrong in exactly the way that rule warns
+about**: it matched the shipped `display:contents` rule by *my* spelling of it, which the
+shipped version does not use, so it silently decided the source was pre-fix and handed back
+the SHIPPED collector as the baseline. It detects the block's SHAPE now and asserts each
+marker is on the side it belongs to; nothing but checking the output caught it.
 
 **Verified on a fixture, three improvements and three controls:**
 
@@ -733,9 +781,51 @@ ref_383 | a "หญิงวัย 40 พบ "ไตวายระยะสุ�
 ```
 
 All 881 are that one case. The checker now accepts either form, and the characterisation
-pass reports a clean figure. **A small finding falls out of it**: that row cannot be parsed
-back unambiguously, because one function uses two quoting conventions for the same
-slot — #21's shape, in output rather than in logic.
+pass reports a clean figure. **A real finding falls out of it, and it is measured rather
+than left as an anecdote — see the next section.**
+
+## A row whose label contains a double quote cannot be parsed back
+
+`_fmtLine` uses **two quoting conventions for the same slot**: `name=` / `value=` /
+`placeholder=` / `near=` / `href=` / `src=` go through `JSON.stringify`, while the
+bare-text identity is built by raw interpolation (`` ` "${e.text}"` ``). A reader pulling
+the identity out of a printed row gets a silently truncated string.
+
+`--quoting` measures it by **parsing each row back the way a consumer would** — the first
+JSON-style quoted run after the `ref_N | tag` prefix — and comparing the result to the
+identity the collector meant to print. 89 sites (every 3rd of the pool), 85 usable, two
+stages each:
+
+| | |
+|---|---|
+| rows printing an identity | **34,534** (28,420 bare-text, 6,114 JSON-quoted) |
+| identities containing a `"` or `\` | 265 bare, **246 JSON-quoted** |
+| parse back: ok / truncated / wrong / absent | 34,269 / **264** / 0 / 1 |
+| **unparseable-back** | **264 = 0.765% of printed rows, 0.93% of bare rows** |
+| …as a share of the bare rows that contain the character | **264 / 265 = 99.6%** |
+| **CONTROL: the 246 JSON-quoted rows carrying the same character** | **246 / 246 parse back correctly** |
+| sites affected | **11 of 85** |
+
+**The control is what makes this a defect in the emission path rather than a fact about
+the character**: the identical character is met 246 times on the other path and costs
+nothing there.
+
+**It is an i18n defect, not a curiosity, and that is the part I would not have predicted.**
+It concentrates in Hebrew, where the gershayim in an abbreviation is written as a plain
+ASCII `"` — standard orthography, not an edge case. `he_ynet` alone carries **202 of the
+264** (≈9.9% of its 2,044 rows); the rest are `w2_leumi` 22, `w2_oebb` 12,
+`w2_generali` 6, `vi_vnexpress` 6.
+
+```
+meant  "נדל\"ן"                                     reader gets  "נדל"
+meant  "הבורסה בת\"א עולה בכ-1.5%, מניית קסטרו מזנקת"   reader gets  "הבורסה בת"
+meant  "לפיד בשיחה סגורה: \"אסור שנתניהו יהיה רה\"מ…"   reader gets  "לפיד בשיחה סגורה: "
+```
+
+The fix is one convention: emit the bare-text identity through `JSON.stringify` like every
+other field. It is #21's one-concept-two-spellings, in agent-facing OUTPUT rather than in
+logic, and the cost is two characters on rows that contain the character and nothing on
+any other row.
 
 ### 2. The `new` population collected every unnamed row BY CONSTRUCTION
 

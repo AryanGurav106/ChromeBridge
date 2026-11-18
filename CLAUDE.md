@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1572 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1575 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1572 checks, ~151s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1575 checks, ~152s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -9307,6 +9307,54 @@ granted in the side panel is refused with the same message the agent gets.
     zero, per #34), the ~180 consent- and bot-walled candidates inherited from
     #85/#89, 97 of 251 sites offering nothing to interact with, one path per
     site.
+
+    **A THIRD DEFECT, FOUND BY ASKING FOR THE NUMBER BEHIND AN ANECDOTE, AND IT
+    IS AN i18n ONE.** The agent's own `fmt_drift` artefact had surfaced that
+    `_fmtLine` emits `name=`/`value=`/`near=`/`href=` through `JSON.stringify`
+    but the BARE-TEXT identity by raw interpolation. Asked for a measurement
+    rather than a sentence, it built `--quoting`, which parses each printed row
+    back the way a consumer would. 85 live sites, **34,534 printed rows: 264
+    unparseable — 0.765% of rows and 99.6% of the bare rows that contain the
+    character**, on 11 sites.
+    **THE CONTROL IS WHAT MAKES IT A DEFECT IN THE EMISSION PATH rather than a
+    fact about the character: the same character is met 246 times on the `name=`
+    path and parses back 246/246.** And it concentrates in **HEBREW**, where the
+    gershayim in an abbreviation is a plain ASCII `"` — standard orthography,
+    not an edge case. One site carried **202 of the 264, 9.9% of its rows**:
+    `"נדל\"ן"` arrives as `"נדל"`, and a headline is cut at its first quote.
+    Fixed by using `JSON.stringify` like every other field — #21's
+    one-concept-two-spellings, in agent-facing OUTPUT. QT1 fails pre-fix; QT1b
+    (the same quote on the `name=` path) and QT1c (an ordinary label is
+    unchanged) pass in both arms.
+
+    **AND THE `near=` RECONCILIATION IS SHARPER THAN I STATED IT.** I told the
+    agent the slot defect is not an identity LOSS because the words survive in
+    `near=`. It verified rather than relaying, and the pre-fix dump is worse:
+    `ref_6 | button (unlabeled)` beside `ref_8 | button (unlabeled)
+    near="Sign in"` — **the surviving text lands on a DIFFERENT row, attributed
+    to a different control.** That is how #89's zero and these 301 `ours-empty`
+    rows are both true at once: the control still owns a row (strict arm
+    satisfied), the words are somewhere in the listing (lenient arm satisfied),
+    and what is lost is that they stop being THIS element's name — the field
+    `find` scores against.
+
+    **THE VACUOUS-FIXTURE TRAP CAUGHT THREE DIFFERENT ASSERTIONS IN ONE
+    SITTING**, which is worth recording as a shape rather than three incidents:
+    asserting the words passes pre-fix (they survive in `near=`); asserting the
+    QUOTED words also passes (`near="Sign in"` contains that substring); and the
+    agent's own replica asserting `name="Sign in"` failed in BOTH arms, because
+    the recovered name arrives through name-from-content and prints as the
+    bare-text identity. **Only `(unlabeled)` versus the quoted identity
+    separates the arms.**
+
+    **AND THE PROBE'S OWN ARMS WOULD HAVE EXPIRED ON MERGE** — `MEASUREMENT.md`'s
+    rule about an A/B that patches a source anchor, in a probe written the same
+    day that entry was read. It carries BOTH anchors now and decides the
+    direction from the source. Its first bidirectional version failed in exactly
+    the way that rule warns about: it matched the shipped `display:contents`
+    block by ITS OWN spelling, which is not the one that shipped, so it silently
+    handed back the SHIPPED collector as the baseline. Nothing but printing both
+    arms caught it.
 
     **Whether revealed controls are named WORSE is NOT settled** and the agent
     said so rather than banking it: 0.6628 vs 0.7370 on the full sample, but

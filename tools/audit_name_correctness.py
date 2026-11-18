@@ -166,27 +166,40 @@ DECLS_JS = r"""
 CANDIDATES = [
     (
         "alt-before-title",
-        # HTML-AAM: for <img>/<area>/<input type=image> the `alt` attribute is step 3 of the
-        # name computation and `title` is step 4. We read them the other way round, so an
-        # image carrying BOTH is named after its tooltip instead of its alt text.
-        "const _titleAlt = ((!hasText ? (el.getAttribute('title') || el.getAttribute('alt')) : '') || '').trim();",
-        "const _titleAlt = ((!hasText ? (el.getAttribute('alt') || el.getAttribute('title')) : '') || '').trim();",
+        # HTML-AAM maps `alt` to AccName 1.2 step 2E (host-language label) and `title` to
+        # step 2I (tooltip), whose own note says a tooltip is used "only if nothing else,
+        # including subtree content, has provided results". Reading them the other way
+        # round named 21 oebb images after the photographer's copyright credit.
+        r"el\.getAttribute\('title'\) \|\| el\.getAttribute\('alt'\)",   # WITHOUT the fix
+        r"el\.getAttribute\('alt'\) \|\| el\.getAttribute\('title'\)",   # WITH the fix
+        "el.getAttribute('title') || el.getAttribute('alt')",
+        "el.getAttribute('alt') || el.getAttribute('title')",
     ),
     (
         "contents-is-not-invisible",
         # `display: contents` generates NO BOX, so checkVisibility() is false for it while
-        # its CHILDREN render normally -- and a <slot> is display:contents by default. So
-        # _namable rejected every slot before _deepText's slot branch (which exists exactly
-        # to resolve assignedNodes) could ever be reached. `visibility` is still asked,
+        # its CHILDREN render normally -- and a <slot> is display:contents by default, so
+        # this rejected every slot before _deepText's slot branch (which exists exactly to
+        # resolve assignedNodes) could ever be reached. `visibility` is still asked,
         # because visibility IS inherited and does hide the children.
-        "      if (n.checkVisibility && !n.checkVisibility({ visibilityProperty: true })) return false;",
-        "      let _disp = ''; try { _disp = getComputedStyle(n).display; } catch (e) {}\n"
-        "      if (_disp === 'contents') {\n"
-        "        try { return getComputedStyle(n).visibility !== 'hidden'; } catch (e) { return true; }\n"
-        "      }\n"
-        "      if (n.checkVisibility && !n.checkVisibility({ visibilityProperty: true })) return false;",
+        #
+        # THE "WITH THE FIX" SIDE IS A REGEX, not my exact text. The shipped version is
+        # worded and laid out differently from the one this probe proposed, and matching my
+        # own spelling silently failed to detect it -- so the reverse arm returned the
+        # SHIPPED collector while calling itself the baseline, and the forward arm would
+        # have inserted a second copy of the rule. Detect the SHAPE, not the prose.
+        r"^(?P<i>[ \t]*)if \(n\.checkVisibility && !n\.checkVisibility\(\{ visibilityProperty: true \}\)\) return false;",
+        r"^[ \t]*let _disp = '';?[^\n]*\n(?:.*\n)*?[ \t]*if \(_disp === 'contents'\) \{\n(?:.*\n)*?[ \t]*\}\n",
+        None,
+        None,
     ),
 ]
+
+_CONTENTS_BLOCK = (
+    "      let _disp = ''; try { _disp = getComputedStyle(n).display; } catch (e) {}\n"
+    "      if (_disp === 'contents') {\n"
+    "        try { return getComputedStyle(n).visibility !== 'hidden'; } catch (e) { return true; }\n"
+    "      }\n")
 
 
 def _collector_src(with_fix):
@@ -198,31 +211,64 @@ def _collector_src(with_fix):
     the next reader who wants to re-derive the number finds an AssertionError instead.
     `audit_retext_tier.py` and `audit_retext_prevalence.py` are recorded as having expired
     exactly that way, in this repo, hours before this probe was written. So each candidate
-    carries BOTH anchors and the direction is decided from the source."""
+    carries BOTH anchors and the direction is decided from the source.
+
+    THE RESULT IS ASSERTED, not assumed: the two arms must differ, and each marker must be
+    on exactly the side it belongs to. The first bidirectional version matched the shipped
+    `display:contents` rule by my own spelling of it, which the shipped version does not
+    use -- so it silently decided the source was pre-fix and handed back the SHIPPED
+    collector as the baseline. Nothing but checking the output caught it."""
     src = AGL.COLLECT
-    for name, pre, post in CANDIDATES:
-        has_pre, has_post = src.count(pre), src.count(post)
+    for name, pre_re, post_re, pre_txt, post_txt in CANDIDATES:
+        has_pre = len(re.findall(pre_re, src, re.M))
+        has_post = len(re.findall(post_re, src, re.M))
+        if name == "contents-is-not-invisible":
+            # The unfixed line survives INSIDE the fixed block, so presence of the block is
+            # what decides the direction rather than presence of the line.
+            if has_post == 1:
+                if not with_fix:
+                    src = re.sub(post_re, "", src, count=1, flags=re.M)
+            elif has_pre == 1:
+                if with_fix:
+                    src = re.sub(pre_re, lambda m: _CONTENTS_BLOCK + m.group(0), src,
+                                 count=1, flags=re.M)
+            else:
+                raise AssertionError("candidate %r: pre=%d post=%d -- the patch would "
+                                     "measure a build nobody runs" % (name, has_pre, has_post))
+            continue
         if has_pre == 1 and has_post == 0:
             if with_fix:
-                src = src.replace(pre, post)          # patch FORWARD onto an unfixed source
+                src = src.replace(pre_txt, post_txt)
         elif has_post == 1 and has_pre == 0:
             if not with_fix:
-                src = src.replace(post, pre)          # reconstruct the pre-fix arm
+                src = src.replace(post_txt, pre_txt)
         else:
-            raise AssertionError(
-                "candidate %r: neither anchor is uniquely present (pre=%d post=%d) -- the "
-                "patch would measure a build nobody runs" % (name, has_pre, has_post))
+            raise AssertionError("candidate %r: pre=%d post=%d -- the patch would measure "
+                                 "a build nobody runs" % (name, has_pre, has_post))
+    want = {
+        "alt-before-title": "el.getAttribute('alt') || el.getAttribute('title')",
+        "contents-is-not-invisible": "if (_disp === 'contents')",
+    }
+    for name, marker in want.items():
+        present = marker in src
+        assert present == bool(with_fix), (
+            "arm with_fix=%s came back %s the %r marker" % (with_fix,
+                                                            "WITH" if present else "WITHOUT",
+                                                            name))
     return src
 
 
-CANDIDATE = False
+# The MAIN measurement always runs the SHIPPED collector, whatever side of the fix the
+# source is on. It used to run `_collector_src(False)`, which was the same thing while the
+# fix was unmerged and became "silently measure the UNFIXED build" the moment it landed --
+# the arm-expiry trap one step along. `_collector_src` is for the A/B and nothing else.
 RECHECK = False
 
 
 def _collect_js():
     """The shipped collector, structured + compact, exactly as audit_generality_live calls
     it. Array.prototype.toJSON is neutralised for the one stringify (#85's kebhana.com)."""
-    return ("(function(){ " + _collector_src(CANDIDATE) + ";"
+    return ("(function(){ " + AGL.COLLECT + ";"
             " const ents = _collectInteractivePage(true, null, 'compact', false, false, 'tree');"
             " const _tj = Array.prototype.toJSON; try { delete Array.prototype.toJSON; } catch (e) {}"
             " const blob = (typeof ents === 'string') ? ents : JSON.stringify(ents);"

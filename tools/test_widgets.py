@@ -2533,6 +2533,48 @@ async def main():
               "visibility test",
               "Ghost" not in nr4, f"leaked={'Ghost' in nr4}")
 
+        # ---- QT1: A LABEL CONTAINING A DOUBLE QUOTE MUST PARSE BACK ---------
+        # The bare-text identity was the ONLY one emitted by raw interpolation
+        # while `name=`, `value=`, `near=`, `href=` and the rest all go through
+        # JSON.stringify. So a label containing a double quote produced a row a
+        # reader cannot parse back: the first quoted run ends at the label's OWN
+        # quote and the rest of the name is dropped in silence.
+        #
+        # IT IS AN i18n DEFECT, which is the part nobody predicted. It
+        # concentrates in HEBREW, where the gershayim in an abbreviation is a
+        # plain ASCII `"` -- standard orthography, not an edge case. Measured
+        # over 85 live sites and 34,534 printed rows: 264 unparseable, 99.6% of
+        # the bare rows containing the character, and ONE site carried 202 of
+        # them (9.9% of its rows).
+        #
+        # QT1b IS THE CONTROL AND IT IS WHAT MAKES THIS A DEFECT IN THE EMISSION
+        # PATH rather than a fact about the character: the same quote on the
+        # `name=` path parsed back correctly 246/246 live, and must keep doing so.
+        await nrp.set_content(
+            "<main>"
+            "<button id=q1>\u05e0\u05d3\u05dc\"\u05df</button>"
+            "<button id=q2 aria-label='\u05e8\u05d4\"\u05de Netanyahu'>x</button>"
+            "<button id=q3>plain label</button>"
+            "</main>")
+        await nrp.wait_for_timeout(150)
+        nr6 = str(await nrp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        import json as _json
+        _want_bare = _json.dumps("\u05e0\u05d3\u05dc\"\u05df", ensure_ascii=False)
+        _want_attr = _json.dumps("\u05e8\u05d4\"\u05de Netanyahu", ensure_ascii=False)
+        check("QT1 a bare-text identity containing a double quote is emitted "
+              "ESCAPED, so the row can be parsed back — it was the only identity "
+              "field using raw interpolation",
+              _want_bare in nr6, f"escaped={_want_bare in nr6}")
+        check("QT1b CONTROL: the same character on the name= path was already "
+              "correct and still is — that control is what makes this a defect "
+              "in the emission path, not a fact about the character",
+              _want_attr in nr6, f"name= escaped={_want_attr in nr6}")
+        _qt1c = '"plain label"' in nr6
+        check("QT1c CONTROL: a label with no quote in it is unchanged, so this "
+              "costs nothing on any ordinary row",
+              _qt1c, f"plain={_qt1c}")
+
         # ---- TA2: `alt` OUTRANKS `title` ON THE SAME ELEMENT -----------------
         # `accessibleName` read `(title || alt)`. HTML-AAM maps `alt` to AccName
         # 1.2's step 2E (host-language label) and `title` to 2I (tooltip), and
