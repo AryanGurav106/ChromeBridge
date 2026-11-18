@@ -1194,6 +1194,20 @@ function _rectForPage(selector) {
     visible: r.width > 0 && r.height > 0,
     blockedBy,
     observed,
+    // DOES THE DOCUMENT CALL THIS A SUBMIT? The same declaration #24's submit
+    // picker reads -- `type="submit"`, or HTML's implicit submit (a <button>
+    // with no type inside a real <form>) -- and nothing else. Not a label, not
+    // a class, not the word "Save". It is here so a caller can decide whether
+    // an action is irreversible without a second round trip to ask.
+    isSubmit: (() => {
+      try {
+        const tag = (el.tagName || '').toLowerCase();
+        const ty = (el.getAttribute('type') || '').toLowerCase();
+        return (tag === 'input' && (ty === 'submit' || ty === 'image'))
+            || (tag === 'button' && ty === 'submit')
+            || (tag === 'button' && !ty && !!(el.closest && el.closest('form')));
+      } catch (e) { return false; }
+    })(),
     dsx: Math.round(_dsx), dsy: Math.round(_dsy),
   };
 }
@@ -1608,7 +1622,17 @@ async function _computerPoint(tabId, params) {
     // The observe-to-act note rides the SELECTOR path only, for the same reason
     // the scroll note does: a bare coordinate names no element, so there is
     // nothing to have been read and nothing to compare.
-    return { x, y, note: _observedNote(rect.observed) + _scrollNote(rect) };
+    // THE SECOND IRREVERSIBLE CASE. The research arm named three actions worth a
+    // refusal rather than a note: fill_form's submit, a CLICK on a control the
+    // DOCUMENT declares a submit, and a WebMCP tool declaring readOnlyHint:false.
+    // The first shipped with the measurement; this is the second, on the same
+    // evidence and the same rule -- identity only, never `rec`, because a form's
+    // own contents changing is normal and refusing on it would refuse on a user
+    // having filled the form in.
+    const _sdrift = (rect.isSubmit && rect.observed)
+      ? Object.keys(rect.observed).filter((k) => k !== 'rec') : [];
+    return { x, y, refuse: _sdrift.length ? _sdrift : null, rect,
+             note: _observedNote(rect.observed) + _scrollNote(rect) };
   }
   // default: viewport center (used by scroll without coordinates)
   const vp = await runInTab(tabId, () => ({ w: innerWidth, h: innerHeight }));
@@ -2133,6 +2157,24 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
   if (clickKinds[action]) {
     const [button, count] = clickKinds[action];
     const pt = await _computerPoint(t.id, params);
+    // CLICKING A CONTROL THE DOCUMENT DECLARES A SUBMIT IS IRREVERSIBLE, so it
+    // gets the same refusal fill_form's submit gets, on the same measurement
+    // (0 of 54 declared submits moved across a real model turn) and the same
+    // rule: IDENTITY only, never the surrounding record's text, because a form
+    // whose fields have been filled in has legitimately changed its record.
+    // Every other click still reports the change and proceeds.
+    if (pt && pt.refuse && pt.refuse.length) {
+      const o = pt.rect.observed;
+      const q = (v) => (v === true ? 'yes' : v === false ? 'no' : JSON.stringify(String(v)));
+      const was = pt.refuse.map((k) =>
+        `${k === 'dis' ? 'disabled' : k} ${q(o[k][0])} -> ${q(o[k][1])}`).join('; ');
+      // The fact, and no cause: a re-render, a live counter and a swapped
+      // control all look identical here (PRINCIPLE 6).
+      return `REFUSED: ${params.selector || 'that control'} is declared a SUBMIT `
+        + `by this page, and it is not the control you read — ${was}. NOTHING was `
+        + `clicked. Re-read and act on the ref you see now. An ordinary click `
+        + `reports the same change and proceeds; a submit cannot be taken back.`;
+    }
     // BEFORE dispatch, and AFTER the attach+settle above, which is the only moment
     // the answer is true: fix #10's ordering exists because the infobar shifts the
     // page on attach, so a hit test taken any earlier describes a layout that no

@@ -500,6 +500,51 @@ const FIELDS3 = () => ([
       r && r.ok !== false, JSON.stringify(r).slice(0, 120));
   });
 
+  // SB4-SB6 — THE SECOND IRREVERSIBLE CASE. The research arm named three actions
+  // worth a refusal rather than a note: fill_form's submit, a CLICK on a control
+  // the DOCUMENT declares a submit, and a WebMCP tool declaring
+  // readOnlyHint:false. SB1-SB3 cover the first; this is the second, on the same
+  // measurement and the same rule.
+  await test("a drifted click on a DECLARED submit", async () => {
+    const rect = (observed, isSubmit) => () => ({
+      x: 10, y: 10, w: 40, h: 20, visible: true, blockedBy: "",
+      observed, isSubmit, dsx: 0, dsy: 0 });
+    const base = { _hitTestPage: () => null, _inputProbePage: () => true,
+                   _clickEffectPage: () => ({ n: 1, txt: 1, st: "" }) };
+
+    resetState();
+    setStubs(Object.assign({}, base,
+      { _rectForPage: rect({ name: ["Save", "Delete account"] }, true) }));
+    let r = await callOp("computer", { tabId: 1, action: "left_click", selector: "[mmid='9']" });
+    check("SB4 a click on a DECLARED submit whose identity moved is REFUSED, and "
+      + "nothing is clicked",
+      r.ok && /REFUSED/.test(String(r.result))
+      && /"Save" -> "Delete account"/.test(String(r.result)),
+      String(r.result).slice(0, 150));
+
+    // THE CONTROL THAT KEEPS IT SCOPED. The same drift on a control the document
+    // does NOT call a submit must still click -- otherwise this is "refuse on any
+    // drift", which the 1.491% all-controls rate says would be noise.
+    resetState();
+    setStubs(Object.assign({}, base,
+      { _rectForPage: rect({ name: ["Save", "Delete account"] }, false) }));
+    r = await callOp("computer", { tabId: 1, action: "left_click", selector: "[mmid='9']" });
+    check("SB5 CONTROL: the same drift on a NON-submit still clicks and reports — "
+      + "the refusal is scoped to what the document declares irreversible",
+      r.ok && !/REFUSED/.test(String(r.result))
+      && /CHANGED SINCE YOU READ IT/.test(String(r.result)),
+      String(r.result).slice(0, 150));
+
+    // AND THE STRUCTURAL CONTROL AGAIN: a form whose fields were just filled has
+    // legitimately changed its record text, so that must not refuse a submit.
+    resetState();
+    setStubs(Object.assign({}, base, { _rectForPage: rect({ rec: [1, 2] }, true) }));
+    r = await callOp("computer", { tabId: 1, action: "left_click", selector: "[mmid='9']" });
+    check("SB6 CONTROL: the surrounding RECORD's text changing does not refuse a "
+      + "submit — filling the form is what changed it",
+      r.ok && !/REFUSED/.test(String(r.result)), String(r.result).slice(0, 130));
+  });
+
   await test("fill_form happy path", async () => {
     resetState();
     let snapI = 0;
