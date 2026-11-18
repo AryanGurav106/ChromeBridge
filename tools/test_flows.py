@@ -2131,6 +2131,68 @@ async def record_and_replay():
           all(u[3] is True for u in _up if u[0] == 0),
           f"unproven={_up}")
 
+    # ---- FW13: THE NEWEST CHECK KIND WAS INVISIBLE TO THE WITNESS ANALYSIS --
+    # `path` arrived in #80 and `_check_items` predates it, so the function that
+    # decides whether a step's assertions can fail saw `url`, `search` and
+    # `query` and not the fourth. Two consequences, and the quiet one is worse.
+    # Loudly: a step whose path check is the ONLY one that witnesses anything
+    # was reported "every check on this step is hollow or unproven, so none of
+    # them is known to be able to fail" -- pointing the reviewer away from the
+    # soundest line on the step. Found on a real six-step recording and then
+    # FALSIFIED: a `--vars` override made that flow fail on exactly the check
+    # the review had called incapable of failing.
+    async def _pathstep(before_url, after_url, extra_after=True):
+        _fb = FakeBridge([E(70, "button", name="Sort")])
+        _r = Recorder("p", _fb.entries_fn)
+        _r.after("read_page", {"tabId": 1}, f"Current URL: {before_url}\nref_70 | button\n", {})
+        _i = {"ref": "ref_70", "tabId": 1}
+        _t = await _r.before("computer", _i)
+        _r.after("computer", _i, "clicked", _t)
+        _r.after("read_page", {"tabId": 1}, f"Current URL: {after_url}\nref_70 | button\n", {})
+        if extra_after:
+            # first seen AFTER the action, so unproven on its own
+            _r.after("query_elements", {"selector": "tr", "tabId": 1},
+                     "3 element(s) match 'tr'", {})
+        return _r.compile()
+
+    _fpa, _rpa = await _pathstep("/invoices?sort=id", "/invoices?sort=amount")
+    _steps = _fpa.steps or []
+    _rev = (_steps[0].review if _steps else []) or []
+    check("FW13 a step whose PATH check changed is not reported as a step that "
+          "cannot fail — the path was the newest check kind and the witness "
+          "analysis could not see it",
+          bool(_steps) and _steps[0].expect.get("path") == "/invoices?sort=amount"
+          and not any(r.startswith("unevidenced") for r in _rev),
+          f"expect={_steps[0].expect if _steps else None} review={_rev}")
+
+    # THE QUIET HALF, and the whole purpose of #57: a path check that really IS
+    # hollow — the same location before and after — went unflagged entirely.
+    _fpb, _rpb = await _pathstep("/invoices", "/invoices", extra_after=False)
+    _hb = _rpb.get("hollow") or []
+    check("FW13b ...and a path check that did NOT change IS flagged hollow, "
+          "which before this was never reported at all",
+          len(_hb) == 1 and _hb[0][0] == 0, f"hollow={_hb}")
+
+    # ONE FACT, TWO SPELLINGS. An earlier `get_url` and a later `read_page` are
+    # looking at the same thing, so they have to compare: under two keys the
+    # second reads as never-before-seen and an UNCHANGED location passes as
+    # witnessed. Both reduce to pathname+search, the way the runner reduces
+    # get_url, because comparing a whole url against a path makes an unchanged
+    # location look changed — which loses the warning above.
+    _fbc = FakeBridge([E(70, "button", name="Sort")])
+    _rc = Recorder("pc", _fbc.entries_fn)
+    _rc.after("get_url", {"tabId": 1}, '{"url": "https://app.test/invoices?sort=id"}', {})
+    _ic = {"ref": "ref_70", "tabId": 1}
+    _tc = await _rc.before("computer", _ic)
+    _rc.after("computer", _ic, "clicked", _tc)
+    _rc.after("read_page", {"tabId": 1}, "Current URL: /invoices?sort=id\nref_70 | button\n", {})
+    _fpc, _rpc = _rc.compile()
+    _hc = _rpc.get("hollow") or []
+    check("FW13c a url observed BEFORE and a path asserted AFTER are compared as "
+          "ONE fact, so an unchanged location is caught rather than reading as "
+          "a change of a check nobody had seen",
+          len(_hc) == 1 and _hc[0][0] == 0, f"hollow={_hc}")
+
     # FW4 -- THE PARTIAL CASE, which is the one #63 found. Since a step may
     # carry several checks, one hollow check no longer means the step is
     # unwitnessed: a a real CRM drill-down folded in a url that a side panel cannot
@@ -2150,9 +2212,9 @@ async def record_and_replay():
              "1 element(s) match '[role=dialog]'", {})
     _fp2, _rp2 = rp.compile()
     _hp = _rp2.get("hollow") or []
-    check("FW4 a step whose url check is hollow but whose OTHER check witnesses it "
-          "is reported as partial, not as a flow that cannot fail",
-          len(_hp) == 1 and "url" in _hp[0][1] and _hp[0][2] is False,
+    check("FW4 a step whose location check is hollow but whose OTHER check witnesses "
+          "it is reported as partial, not as a flow that cannot fail",
+          len(_hp) == 1 and _hp[0][2] is False and len(_hp[0][1].split(", ")) == 1,
           f"hollow={_hp}")
 
     # THE CONTROL THAT MAKES IT WORTH HAVING. A check that CHANGED because of the

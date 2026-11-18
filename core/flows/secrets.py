@@ -107,8 +107,10 @@ def resolve(obj):
 def missing_message(names: list) -> str:
     uniq = sorted(set(names))
     plural = "s" if len(uniq) > 1 else ""
+    verb = "are" if len(uniq) > 1 else "is"
     return (
-        f"this step needs secret{plural} that are not set: {', '.join(uniq)}. "
+        f"this step needs {len(uniq)} secret{plural} that {verb} not set: "
+        f"{', '.join(uniq)}. "
         f"The flow records WHICH secret a password field needs, never the value "
         f"— export the variable{plural} and run it again. Refusing rather than "
         f"typing an empty string, because a blank password submits and then "

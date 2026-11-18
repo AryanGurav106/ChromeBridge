@@ -31,6 +31,7 @@ import json
 import re
 import time
 from typing import Any, Callable, Optional
+from urllib.parse import urlsplit
 
 from .descriptor import build, unwitnessed_ordinal
 from . import secrets
@@ -1144,9 +1145,10 @@ class Recorder:
 
     @staticmethod
     def _drop_check(exp: dict, key) -> None:
-        kind, which = key[0], key[1]
-        if kind == "url":
+        kind, which = key[0], key[1] if len(key) > 1 else None
+        if kind == "location":
             exp.pop("url", None)
+            exp.pop("path", None)
             return
         cur = exp.get(kind)
         if cur is None:
@@ -1163,8 +1165,31 @@ class Recorder:
     def _check_items(exp: dict) -> dict:
         """Each check as key -> answer, so two looks at one thing are comparable."""
         out: dict = {}
-        if "url" in exp:
-            out[("url",)] = exp["url"]
+        # `url` AND `path` ARE ONE FACT, SO THEY SHARE ONE KEY (rule 17).
+        # `path` is the newest check kind (#80) and this function predates it,
+        # so it saw neither -- with two consequences, and the quiet one is the
+        # worse. Loudly: a step whose path check is the only one that WITNESSES
+        # anything was reported "every check on this step is hollow or
+        # unproven, so none of them is known to be able to fail", which tells
+        # the reviewer to distrust the soundest line on the step. Measured on a
+        # six-step recording whose filter step carried exactly that shape, and
+        # then falsified -- a `--vars` override made that run FAIL on precisely
+        # the check the review had called incapable of failing. Quietly: a path
+        # check that really IS hollow was never flagged at all, which is the
+        # whole purpose of #57.
+        #
+        # Keyed together rather than separately because an earlier step that
+        # read the URL and a later one that read the PATH are looking at the
+        # same thing, and under two keys the second reads as never-before-seen.
+        # Both reduce to pathname+search -- what `path` already is, and what
+        # the runner reduces `get_url` to -- because comparing a whole url
+        # against a path makes an UNCHANGED location look changed, which loses
+        # a `hollow` warning. `_checks` drops `path` when `url` is present, so
+        # the two never both appear on one step and nothing is overwritten.
+        for _k in ("url", "path"):
+            if _k in exp:
+                _u = urlsplit(exp[_k])
+                out[("location",)] = _u.path + (f"?{_u.query}" if _u.query else "")
         sv = exp.get("search")
         for s in (sv if isinstance(sv, list) else [sv] if sv else []):
             out[("search", s.get("pattern"))] = (s.get("absent"), s.get("observed"))
