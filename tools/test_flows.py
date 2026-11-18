@@ -3619,7 +3619,7 @@ async def record_and_replay():
     _KNOWN_UNDISPATCHABLE = set()
     _und = _undispatchable_mutators()
     check("FD25 no NEW mutating tool can be recorded that the runner cannot "
-          "dispatch — the two known ones are named, and the set may only shrink",
+          "dispatch — the permitted set may only shrink",
           _und <= _KNOWN_UNDISPATCHABLE,
           f"undispatchable={sorted(_und)} known={sorted(_KNOWN_UNDISPATCHABLE)}")
 

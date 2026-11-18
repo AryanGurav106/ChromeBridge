@@ -17,8 +17,8 @@ and one of them had disarmed a guard the failure surface lists as CLOSED.
 | | |
 |---|---|
 | verdicts | `SILENT` (acted wrongly, reported a pass) · `DETECTED` (failed honestly) · `REFUSED` (declined and named candidates) · `BOUNDED` (cannot be fixed; announced) · `INHERENT` |
-| new checks | 22 in `tools/test_flows.py`, each shown to FAIL against `git archive HEAD` |
-| controls | 22, which pass in BOTH arms — without them "warn always" or "drop always" would satisfy the positives and delete the feature |
+| new checks | 23 in `tools/test_flows.py`, each shown to FAIL against the tree as it was before the fixes (`53e9cef^`) |
+| controls | 21, which pass in BOTH arms — without them "warn always" or "drop always" would satisfy the positives and delete the feature |
 | suite | 297/297 green; `run_flows.py --playground --local-only` 12/12; `--check-only` 30/30 |
 
 ---
@@ -76,6 +76,7 @@ and one of them had disarmed a guard the failure surface lists as CLOSED.
 | **S5** | A flow replayed against a **localised** app | BOUNDED, already closed | `Flow.lang` + `_lang_note`; `FLOWS-FAILURE-SURFACE` 3.8 still says OPEN and is stale |
 | **S6** | A flow that spans tabs via **`tabs_create_mcp`** | works | #58 for the runner; `FT7` is the recorder's half of the same rule |
 | **S7** | **Drag and drop** | `BOUNDED` | there is nothing to describe: `coordinate` is a point. Now MARKED (C6) rather than silently literal |
+| **M4** | **`upload_image(imageId=…)`** | was `SILENT`, REPRODUCED, now FIXED | a later session resolved the recorded id to a different image and uploaded it, returning success; the id is content-addressed now — see M4 |
 | **S8** | **`file_upload(paths=…)`** | `DETECTED` | absolute machine-specific paths, recorded verbatim; replay elsewhere errors honestly. No warning added — it would fire on every upload (#15) |
 
 ### Index — every shape the brief named, and where it landed
@@ -301,7 +302,25 @@ MCP session where the agent has been looking at the page is routinely in the
 silent one.
 
 Content-addressing the id (a hash of the png) makes a stale id MISS instead,
-which is the honest failure. That is `mcp_server.py` and is §6 item 3.
+which is the honest failure.
+
+**FIXED in `mcp_server.py`**: the id is a sha256 prefix of the png and `_IMG_SEQ`
+is deleted rather than left dead. `C46` fails pre-fix with the symptom above.
+
+**The argument that decided it was not the defect, it was the blast pattern**:
+`run_flows.py` takes no screenshots, so the suite is permanently in the loud arm
+while a real MCP session is routinely in the silent one — **CI structurally
+cannot catch this**. That generalises past this bug, and it is worth carrying:
+the thing that cannot fail is the thing nobody checks.
+
+**And a control was mislabelled, caught by the ablation.** "Identical bytes share
+an id" was written as a CONTROL and FAILS pre-fix (a counter mints a new id for
+the same bytes on every call), so it was a second assertion about the new scheme
+rather than something holding in both arms. The real control is "an id minted in
+THIS session still resolves, to its own bytes" — without which "resolve nothing"
+would satisfy the positive while deleting the feature. Principle 11 is usually
+quoted about a fixture that passes when it should fail; this is the other
+direction, and only running both arms separates them.
 
 ### M3 — `MUTATES` and `_BATCHABLE` had drifted
 
@@ -466,9 +485,9 @@ timed-out click was dropped as an error and the flow saved as one `navigate`.
 
 ---
 
-## 6. Owed to `mcp_server.py` (not edited; another agent holds it)
+## 6. Owed to `mcp_server.py` — two landed, one deliberately not built
 
-Three one-line changes, in order of value:
+Three one-line changes. **Two are done; the third is deliberately not built, with its design recorded.**
 
 **Item 1 is DONE** — see M3. `call_page_tool` went into the
 `_BATCHABLE.update({…})` literal; `dismiss_dialog` is registered beside its own
@@ -476,15 +495,27 @@ definition, because it is declared below that literal and putting it in the
 table raises `NameError` at import. `_KNOWN_UNDISPATCHABLE` is now `set()`.
 **Item 3's reproduction is in M4**, so it is no longer MEASURE FIRST.
 
-```python
-# 2. _flow_entries — return WHICH tab was read, so the recorder can see a popup
-#    that stole `active` even when no call names a tabId (C1's residue, §4.2).
-#    Today it answers with a bare list and the resolved tab is discarded.
+**Item 2 is DELIBERATELY NOT BUILT**, and the reason is better than the feature.
+Making `_flow_entries` report its resolved tab is a PRODUCER; with no consumer in
+the recorder it is a declared field nothing reads — the half-contract this
+project has deleted five times (`origin` #54, `viewport` #57, `on_fail:"heal"`
+#62, `delta` #30, the `pause`/`resume` pair #70). Both halves or neither.
+Recorded WITH its design as `docs/OPEN.md` item 16 so nobody re-derives it: when
+`tabId is None` — exactly the ambiguous case — call the ungated worker-side
+`get_active_tab` first and return a `list` SUBCLASS carrying `.tab`, so every
+`isinstance(ents, list)` and all list usage keep working; one extra round trip at
+the ~24ms bridge leg rather than a ~3,600ms model turn, and only when ambiguous.
+The consumer is a review line when the resolved tab differs from the flow's
+starting tab. The close condition is both halves in one change, with a fixture
+that fails pre-fix (a recording whose active tab moves under it) and the control
+that a flow whose tab never moves acquires none.
 
-# 3. IMAGES / _store_image — `img_<n>` is a per-session SEQUENTIAL counter, so a
-#    replay in a session that happens to have taken more screenshots resolves a
-#    recorded id to a DIFFERENT image and uploads it successfully. A content
-#    hash makes a stale id MISS instead, which is the honest failure.
+```python
+
+# 3. IMAGES / _store_image — DONE. The id is a sha256 prefix of the png and
+#    _IMG_SEQ is deleted. Reproduced first (M4), because an inelegance is not a
+#    defect: session B resolved the recorded 'img_2' to its own second
+#    screenshot and uploaded it, returning 'uploaded'.
 ```
 
 ---
@@ -507,10 +538,11 @@ python tools/test_flows.py                            # 297 checks
 python tools/run_flows.py --playground --local-only   # the live CI suite, 12/12
 python tools/run_flows.py --check-only                # every file, no browser, 30/30
 
-# the ablation that makes the 22 new checks worth anything
-git archive HEAD | tar -x -C /tmp/ablate
+# the ablation that makes the 23 new checks worth anything. The fixes landed in
+# 53e9cef, so that is the arm to build -- `HEAD` now contains them.
+git archive 53e9cef^ | tar -x -C /tmp/ablate
 cp tools/test_flows.py /tmp/ablate/tools/
-cd /tmp/ablate && python tools/test_flows.py          # 275/297
+cd /tmp/ablate && python tools/test_flows.py          # 274/297
 ```
 
 The live record→replay probes used a lab harness that starts the real bridge,
