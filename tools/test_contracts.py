@@ -967,12 +967,21 @@ def main() -> int:
     # headline still read as absence -- measured live on the jQuery UI slider
     # demo, where read_page surfaced the frame's controls as ordinary refs and
     # this tool, moments later on the same page, reported no match.
+    # THE STUB RETURNED A STRING WHERE THE REAL OP RETURNS A DICT, and that is
+    # why this check was GREEN over a feature that never ran. `b.call` hands
+    # back `{"rows": [...], "total": N}`; the "N element(s) match" sentence is
+    # built in Python AFTERWARDS. The production code regexed `str(result)` for
+    # that sentence, so `_frames` was always 0 and the notice below has never
+    # rendered since it shipped -- while this test fed it the sentence and
+    # passed. #19's "test stubs that share your assumptions test nothing",
+    # verbatim, found by driving the real tool against a real cross-origin
+    # frame (it reported a partial count and warned about nothing).
     class _FBF(_FBQ):
         async def call(self, op, **kw):
             if op == "page_readiness":
                 return ""
             if kw.get("selector") == "iframe, frame":
-                return "2 element(s) match 'iframe, frame'"
+                return {"rows": [], "total": 2}
             return self.payload
 
     _ms.STATE["bridge"] = _FBF({"rows": [], "total": 0})

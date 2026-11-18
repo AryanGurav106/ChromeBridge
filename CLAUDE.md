@@ -9467,15 +9467,46 @@ granted in the side panel is refused with the same message the agent gets.
     AccName; and it had no `aria-hidden`/`inert` exclusion. The tell was
     arithmetic — the weaker arm losing 7x the stronger one is impossible.
 
-    **Still unfixed, with evidence, and ranked:** a click into a cross-origin
-    frame LANDS and reports `*** NOT DELIVERED ***` (the input probe is armed in
-    the top document, so the frame's events never reach it — the control is a
-    top-document click in the same tab at the same instant reporting correctly);
-    frame rows are unreachable by `find`/`search_page`, and `query_elements`
-    **reported 1 where the DOM holds 2** with its frame notice gated on the
-    zero-match path; the frame serializer drops 21 transferable element facts;
-    and `(REPLACES the whole page)` was written FOR cross-frame rows and cannot
-    appear on one.
+    **THREE OF THE FOUR RESIDUALS FIXED, and the third found a dead feature.**
+
+    **A click into a cross-origin frame LANDED and reported `*** NOT DELIVERED
+    ***`.** The probe counts events on the document it was installed in, and a
+    frame's events do not cross the boundary — it was armed in the TOP document
+    and read zero. Armed in the frame now; `_clickEffectPage` likewise, and with
+    the STRIPPED selector, since `f6:5` is not a selector any document
+    understands (the NO EFFECT guard was dead on this path entirely). Live:
+    cross-frame `NOT DELIVERED: False`, top-document control also `False`.
+
+    **`query_elements` reported 1 where the DOM held 2, silently.** Counting is
+    that tool's whole purpose (#32) and the frame caveat only rendered on the
+    ZERO path — yet a partial count is worse than zero, because `No element
+    matches` prompts a second look and `1 element(s) match` does not. Now in the
+    headline, asked only when there is a match to qualify.
+
+    **AND CHASING THAT FOUND THE NOTICE HAD NEVER RENDERED AT ALL.** `b.call`
+    returns a **dict**; both blocks regexed `str(result)` for `"N element(s)
+    match"` — a sentence Python builds LATER IN THAT SAME FUNCTION. So the
+    zero-path frame line has been dead since it shipped, and the cause it was
+    written to promote into the headline stayed buried in a list of four.
+    **C19b was GREEN over it the whole time**, because its stub returned the
+    STRING where the real op returns the dict: #19's *"test stubs that share
+    your assumptions test nothing"*, verbatim, in a check written to catch
+    exactly this class. The stub returns a dict now and C19b fails pre-fix.
+    Found only by driving the real tool against a real cross-origin frame.
+
+    **Live-verified in the user's own Chrome** after a reload and reconnect:
+    `1 element(s) match 'button': (COUNT MAY BE PARTIAL: this page contains 1
+    frame(s)...)` on a page whose DOM holds two, and `read_page` returning
+    `ref_f11549:16` … `ref_f11549:24` — so the promise that notice makes is true
+    rather than aspirational.
+
+    **Still unfixed, with evidence:** the frame serializer drops 21 transferable
+    element facts (`readonly`, `href`, `type`, constraints, `options`,
+    `help=`/`error=`) because it is a second `_fmtLine` and `_fmtLine` is nested
+    inside the injected collector; and `(REPLACES the whole page)` was written
+    FOR cross-frame rows and cannot appear on one. Frame rows remain
+    unreachable by `find`/`search_page`, which ask for the structured array
+    while the frame block is string-only.
 
 
 ## Debugging starting points

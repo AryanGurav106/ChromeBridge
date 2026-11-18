@@ -2204,8 +2204,20 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
       { type: "mouseMoved", x: pt.x, y: pt.y, button: "none", modifiers: bits });
     let _hh = null;
     try { _hh = await runInTab(t.id, _hitTestPage, [pt.x, pt.y, params.selector || null]); } catch (e) {}
+    // ARM AND READ IN THE FRAME THE SELECTOR NAMES. The probe counts events on
+    // the document it was installed in, and a cross-origin frame's events do
+    // NOT cross the boundary -- so a click that LANDED inside a frame was read
+    // in the TOP document, found zero, and reported `*** NOT DELIVERED ***`.
+    // Measured through the real extension: the click reached
+    // `leaf.html?s1`, and the control is a top-document click in the same tab
+    // at the same instant reporting correctly. A false NOT DELIVERED is the
+    // #10/#11/#12 family pointed the other way -- the tool disbelieving an
+    // action that worked -- and it is worse than silence, because the agent
+    // retries an irreversible thing.
+    const _fRef = resolveFrameSelector(params.selector || '');
+    const _probeFrame = _fRef.frameId;
     let _armed = false;
-    try { _armed = !!(await runInTab(t.id, _inputProbePage, [true])); } catch (e) {}
+    try { _armed = !!(await runInTab(t.id, _inputProbePage, [true], _probeFrame)); } catch (e) {}
     // THE DEAD-CLICK GUARD HAD TO BE REACHABLE, AND IT WAS NOT.
     // `NO EFFECT: ` is a TOKEN the flow recorder keys on to tell "this step did
     // something" from "this step did nothing" -- and it existed in exactly ONE
@@ -2221,7 +2233,13 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
     // click addressed BY REF: a coordinate click has no element to compare.
     const _wantFx = params.selector && clickKinds[action];
     let _fxB = null;
-    if (_wantFx) { try { _fxB = await runInTab(t.id, _clickEffectPage, [params.selector]); } catch (e) {} }
+    // SAME FRAME, AND THE STRIPPED SELECTOR. `f6:5` is not a selector any
+    // document understands -- the frame's own document knows `[mmid='5']` --
+    // so the effect probe was handed a ref that matches nothing AND run in the
+    // wrong document. The NO EFFECT guard was dead on this path entirely.
+    if (_wantFx) {
+      try { _fxB = await runInTab(t.id, _clickEffectPage, [_fRef.selector], _probeFrame); } catch (e) {}
+    }
     // Read BEFORE the dispatch. See the guard below for why `_delivered` alone
     // cannot tell a click that navigated from one that did nothing.
     const _navSeqB = navSeq(t.id);
@@ -2236,7 +2254,7 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
     // nothing. Only a probe that is still present and saw nothing is a report.
     let _delivered = null;
     if (_armed) {
-      try { _delivered = await runInTab(t.id, _inputProbePage, [false, 'mouse']); } catch (e) {}
+      try { _delivered = await runInTab(t.id, _inputProbePage, [false, 'mouse'], _probeFrame); } catch (e) {}
     }
     const _dead = _delivered === false ? _notDeliveredNote('mouse') : "";
     // DELIVERED AND NOTHING CHANGED is the one branch this marks. A click that
@@ -2267,7 +2285,7 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
     // leave that map empty at both ends.
     if (_wantFx && _fxB && _delivered === true && navSeq(t.id) === _navSeqB) {
       let _fxA = null;
-      try { _fxA = await runInTab(t.id, _clickEffectPage, [params.selector]); } catch (e) {}
+      try { _fxA = await runInTab(t.id, _clickEffectPage, [_fRef.selector], _probeFrame); } catch (e) {}
       // The fields `_clickEffectPage` actually returns: {n, txt, st}. My first
       // version compared `.url` and `.t`, neither of which exists -- so every
       // comparison was undefined === undefined and the branch fired on every

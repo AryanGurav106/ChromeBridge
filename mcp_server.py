@@ -2522,11 +2522,18 @@ async def query_elements(
         # Recorded as E4-D2.
         _frames = 0
         try:
+            # THE OP RETURNS A DICT, not the rendered sentence. This regexed
+            # `str(_fr)` for "N element(s) match", which Python builds LATER in
+            # this very function -- so it never matched and `_frames` was always
+            # 0. The frame line below has therefore NEVER rendered since it
+            # shipped, and the cause it was written to promote stayed buried in
+            # the list of four it was meant to lead. #30's class: a feature dead
+            # behind a green suite, found only by driving it (the live probe
+            # reported `warned about frames=False` on a page with a frame).
             _fr = await b.call("query_elements", tabId=tabId,
                                selector="iframe, frame", maxResults=1,
                                includeText=False)
-            _m = re.search(r"(\d+)\s+element\(s\) match", str(_fr) or "")
-            _frames = int(_m.group(1)) if _m else 0
+            _frames = (_fr.get("total") or 0) if isinstance(_fr, dict) else 0
         except Exception:
             _frames = 0
         _frame_line = (
@@ -2561,9 +2568,35 @@ async def query_elements(
         _vnote = (f"  ({_vis} of them RENDERED; {total - _vis} match the selector but are "
                   f"not visible -- hidden, collapsed, or inside a closed container. A count "
                   f"assertion built on the total alone cannot tell those apart.)")
+    # A PARTIAL COUNT IS WORSE THAN ZERO, AND THE FRAME NOTICE WAS GATED ON
+    # ZERO. This query runs in the TOP document, so a page with a cross-origin
+    # frame can hold matches it never sees -- and a caller reading `1 element(s)
+    # match` has no reason to doubt it, where `No element matches` at least
+    # prompts a second look. Measured through the real extension: it reported
+    # **1 where the DOM across all frames holds 2**, and said nothing, because
+    # the frame line below only ever rendered on the miss path.
+    #
+    # Counting is this tool's whole purpose (#32), so an unreachable population
+    # belongs in the HEADLINE, the way #35 put a declared-vs-rendered mismatch
+    # there. Asked only when there IS a match to qualify -- the zero path has
+    # its own, fuller notice -- and it costs one extra call on a page that has
+    # frames at all.
+    _xf = 0
+    if total:
+        try:
+            _fr2 = await b.call("query_elements", tabId=tabId,
+                                selector="iframe, frame", maxResults=1,
+                                includeText=False)
+            _xf = (_fr2.get("total") or 0) if isinstance(_fr2, dict) else 0
+        except Exception:
+            _xf = 0
+    _fnote = (f"  (COUNT MAY BE PARTIAL: this page contains {_xf} frame(s), and THIS QUERY "
+              f"DID NOT LOOK INSIDE THEM -- a cross-origin frame is a separate document, so "
+              f"matches in one are not in this number. `read_page` does reach them; their "
+              f"refs look like ref_f<frameId>:<n>.)" if _xf else "")
     out = [f"{total} element(s) match {selector!r}"
            + (f", showing the first {len(rows)}:" if total > len(rows) else ":")
-           + _vnote]
+           + _vnote + _fnote]
     for r in rows:
         ref = f' ref_{r["ref"]}' if r.get("ref") else ""
         # JSON-QUOTED, not raw-quoted. A text containing a double quote used to
