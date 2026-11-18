@@ -36,45 +36,86 @@ def _norm(s: str) -> str:
 
 
 async def drive(page, t) -> tuple[bool, str]:
-    """Each scenario's interaction path, written from its prompt alone."""
+    """Each scenario's interaction path, written from its prompt alone.
+
+    REWRITTEN WHEN THE TASK SET WAS REPLACED, and that is the point: the first
+    version still encoded the previous scenarios' sites, so it kept "confirming"
+    two and failing three while measuring nothing about the new ones. A ruler
+    that does not match the question answers a different one confidently.
+    """
     tid = t["id"]
-    await page.goto(t["start"], wait_until="domcontentloaded", timeout=40000)
+    await page.goto(t["start"], wait_until="domcontentloaded", timeout=45000)
     await page.wait_for_timeout(1500)
 
     if tid in ("S4", "S5"):
         seq = re.search(r"begins ([\d,\s]+)\.", t["prompt"])
         if not seq:
             return False, "could not read the sequence out of the prompt"
-        q = seq.group(1).strip().rstrip(".")
         box = page.locator("input[name='q']").first
-        await box.fill(q)
+        await box.fill(seq.group(1).strip().rstrip("."))
         await box.press("Enter")
         await page.wait_for_timeout(2500)
         txt = await page.evaluate("document.body.innerText")
-        return (_norm(t["answer"]) in _norm(txt)), "search results"
+        return (_norm(t["answer"]) in _norm(txt)), "search -> results"
+
+    if tid == "S1":
+        # examples index -> Basic Initialisation -> Zero configuration -> ...
+        # The intermediate section click is in the PROMPT and my first driver
+        # skipped it, which read as the task being unreachable rather than as my
+        # driver being wrong.
+        try:
+            await page.get_by_role("link", name=re.compile("Basic initialisation", re.I)).first.click(timeout=8000)
+            await page.wait_for_timeout(1500)
+        except Exception:
+            pass
+        await page.get_by_role("link", name=re.compile("Zero configuration", re.I)).first.click(timeout=15000)
+        await page.wait_for_timeout(2500)
+        try:
+            await page.locator("select[name$='_length'], select.dt-input").first.select_option("25")
+        except Exception:
+            pass
+        await page.wait_for_timeout(600)
+        await page.locator("input[type='search'], .dt-search input").first.fill("Software Engineer")
+        await page.wait_for_timeout(1500)
+        txt = await page.evaluate("document.body.innerText")
+        return (_norm(t["answer"]) in _norm(txt)), "filtered table"
+
+    if tid == "S2":
+        await page.get_by_role("link", name=re.compile(r"^\s*Mystery", re.I)).first.click()
+        await page.wait_for_timeout(1800)
+        try:
+            await page.get_by_role("link", name=re.compile("next", re.I)).first.click()
+            await page.wait_for_timeout(1800)
+        except Exception:
+            return False, "no page 2 in Mystery"
+        # open the book the prompt names, then read its UPC from the table
+        try:
+            await page.get_by_role("link", name=re.compile("Silkworm", re.I)).first.click()
+            await page.wait_for_timeout(1800)
+        except Exception:
+            return False, "target book not on page 2"
+        txt = await page.evaluate("document.body.innerText")
+        return (_norm(t["answer"]) in _norm(txt)), "book detail page"
 
     if tid == "S3":
-        # The sun page: search the city, then set month and year.
-        box = page.locator("input[type='search'], input[name='query'], input#query").first
+        # home -> Sandbox -> Oscar Winning Films. Same omission as S1.
         try:
-            await box.fill("Reykjavik")
-            await box.press("Enter")
-            await page.wait_for_timeout(2500)
-        except Exception as e:                                    # noqa: BLE001
-            return False, f"city search unreachable: {str(e)[:60]}"
-        txt = await page.evaluate("document.body.innerText")
-        return (_norm(t["answer"]) in _norm(txt)), "after city search (month/year not yet set)"
-
-    # S1/S2: reach the calculator from the HOME page, which is the step the
-    # author's curl could not check.
-    link = page.locator("a[href*='/date/']").first
-    try:
-        await link.click()
+            await page.get_by_role("link", name=re.compile("Sandbox", re.I)).first.click(timeout=8000)
+            await page.wait_for_timeout(1500)
+        except Exception:
+            pass
+        await page.get_by_role("link", name=re.compile("Oscar", re.I)).first.click(timeout=15000)
         await page.wait_for_timeout(2000)
-    except Exception as e:                                        # noqa: BLE001
-        return False, f"no date-calculator link reachable from home: {str(e)[:60]}"
-    txt = await page.evaluate("document.body.innerText")
-    return False, f"reached {page.url} — form not driven, answer not confirmed"
+        for yr in ("2010", "2013"):
+            try:
+                await page.get_by_role("link", name=re.compile(rf"^\s*{yr}\s*$")).first.click()
+                await page.wait_for_timeout(2500)   # the table arrives by AJAX
+            except Exception:
+                return False, f"year link {yr} unreachable"
+        txt = await page.evaluate("document.body.innerText")
+        return (_norm(t["answer"]) in _norm(txt)), "2013 table loaded"
+
+    return False, "no driver written for this id"
 
 
 async def main() -> int:
