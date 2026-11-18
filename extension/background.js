@@ -7115,7 +7115,35 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
             const _d = _deepText(n);
             if (_d && _d.trim().length > t.trim().length) t = _d;
           }
-          if (t.trim()) parts.push(' ' + t + ' ');
+          // SEPARATE ON BOX GENERATION, NOT UNCONDITIONALLY. #28 added a space
+          // between every element child citing the spec; AccName 1.2 step 2F.4
+          // is "Append the result to the accumulated text" -- no separator --
+          // and an unconditional one manufactures words the screen does not
+          // show (`Save changes` for `<span>Save</span><span>changes</span>`).
+          //
+          // BUT #28 WAS RIGHT ABOUT THE SITE AND WRONG ABOUT THE RULE, which
+          // only the oracle showed. Asked of Chrome's own AX tree on four
+          // shapes:
+          //   <span>4</span><span>9秒39…</span>                -> "49秒39…"
+          //   <span style=display:inline-block>4</span><span>…  -> "4 9秒39…"
+          //   <div>Line one</div><div>Line two</div>            -> "Line one Line two"
+          //   <span>Save</span><span>changes</span>             -> "Savechanges"
+          // Baidu's rank badge is the SECOND shape, so #28's defect was real --
+          // and its fixture encoded the FIRST, which is markup Baidu does not
+          // use. The space it added was right on the live page and wrong on its
+          // own test.
+          //
+          // A child that generates its own box is visually separate, and that
+          // is a DECLARATION (computed `display`), not a threshold -- the same
+          // source #39 reads to decide a search-context boundary. `inline` is
+          // the only value that continues the run; `inline-block`, `block`,
+          // `flex`, `grid`, `table` and the rest all separate. This matches
+          // Chrome on all four shapes above.
+          if (t.trim()) {
+            let _d = '';
+            try { _d = getComputedStyle(n).display; } catch (e) {}
+            parts.push(_d === 'inline' ? t : ' ' + t + ' ');
+          }
         }
       }
       return parts.join('').replace(/\s+/g, ' ').trim();

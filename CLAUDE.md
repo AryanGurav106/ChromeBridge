@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1575 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1576 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1575 checks, ~152s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1576 checks, ~153s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -9267,7 +9267,38 @@ granted in the side panel is refused with the same message the agent gets.
     a name. "Regressed" 83 — all 83 where Chrome has NO name at all. Rows where
     a correct name is broken: 0.** Entries unchanged, **+0.15% listing chars.**
 
-    **#28'S PREMISE IS WRONG, and it is recorded rather than fixed.** #28 added
+    **#28 WAS RIGHT ABOUT THE SITE AND WRONG ABOUT THE RULE — FIXED, and only
+    the oracle could tell those apart.** #28 added a space between every element
+    child citing *"per the spec each child contribution is space-delimited"*;
+    AccName 1.2 step 2F.4 is **"Append the result to the accumulated text"**, no
+    separator. Asked of Chrome's own AX tree on four shapes:
+
+    | markup | Chrome | ours before |
+    |---|---|---|
+    | `<span>4</span><span>9秒39…</span>` | `49秒39…` | `4 9秒39…` ✗ |
+    | `<span style=display:inline-block>4</span><span>…` | **`4 9秒39…`** | `4 9秒39…` ✓ |
+    | `<div>Line one</div><div>Line two</div>` | `Line one Line two` | ✓ |
+    | `<span>Save</span><span>changes</span>` | `Savechanges` | `Save changes` ✗ |
+
+    **Baidu's rank badge is the SECOND shape, so #28's defect was real — and its
+    fixture encoded the FIRST, which is markup Baidu does not use.** The space
+    was right on the live page and wrong on its own test, and the test is what
+    the next reader would have trusted. An unconditional separator also
+    manufactures words the screen never showed (`Save changes`).
+    Chrome separates on BOX GENERATION, so that is the rule: a child whose
+    computed `display` is anything but `inline` is visually separate. A
+    declaration, not a threshold, and the same source #39 reads to decide a
+    search-context boundary. Matches Chrome on all four shapes.
+    **N5 was rewritten to its invariant** — it asserted that a space is
+    inserted, which encoded the implementation; it now pins that the name
+    matches what the page RENDERS, and **passes in both arms**, which makes it
+    the control that this is not "delete the separator". **N5d is the new
+    finding** and fails pre-fix with `'Save changes'`. **CU1 had the same
+    disease**: it asserted the spaced `"[ 1 ]"` for a citation whose inline
+    spans render `[1]`, so #28's defect was baked into a second fixture one
+    entry later (#30's TR8d case, twice in one file).
+
+    **The ORIGINAL framing, kept because it was how this was found:** #28 added
     an unconditional space between element children on the stated grounds that
     *"per the spec each child contribution is space-delimited"*. **AccName 1.2
     step 2F.4 is "Append the result to the accumulated text"** — no space.

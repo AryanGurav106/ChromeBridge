@@ -265,7 +265,7 @@ async def main():
         _curows = [l for l in _cul.splitlines() if "ref_" in l and "|" in l]
         check("CU1 a citation's bracket spans are parts of the link, not three rows",
               len([l for l in _curows if '"["' in l or '"]"' in l]) == 0
-              and any('[ 1 ]' in l for l in _curows),
+              and any('"[1]"' in l for l in _curows),
               " / ".join(r.strip()[:38] for r in _curows[:4]))
         check("CU2 ...while a delegating container's children stay distinct targets,"
               " because activating a <div> promises nothing",
@@ -1511,12 +1511,27 @@ async def main():
         await rg.close()
 
         # ---- N5: AccName's inter-child separator -------------------------------
-        # Per AccName 1.2 step 2F each child's contribution is appended WITH A
-        # SEPARATOR. We concatenated, and on a spaceless script the seam is invisible
-        # and the result is a wrong NUMBER: Baidu's hot-search row is
-        # <a><span>4</span><span>9秒39!…</span></a> -- rank 4, a 9.39-second record --
-        # reported as "49秒39", i.e. 49.39 seconds. In English the seam shows and a
-        # reader recovers; in Chinese it reads as one natural token.
+        # REWRITTEN TO ITS INVARIANT, and the rewrite is the finding. #28 added a
+        # space between EVERY element child, citing "per the spec each child
+        # contribution is space-delimited". AccName 1.2 step 2F.4 is "Append the
+        # result to the accumulated text" -- no separator -- so the premise was
+        # wrong, and an unconditional space manufactures words the screen does
+        # not show (`Save changes` for `<span>Save</span><span>changes</span>`).
+        #
+        # BUT #28 WAS RIGHT ABOUT THE SITE AND WRONG ABOUT THE RULE, and only an
+        # oracle could tell those apart. Chrome's own AX tree, four shapes:
+        #     <span>4</span><span>9秒39…</span>                 -> "49秒39…"
+        #     <span style=display:inline-block>4</span><span>…   -> "4 9秒39…"
+        #     <div>Line one</div><div>Line two</div>             -> "Line one Line two"
+        #     <span>Save</span><span>changes</span>              -> "Savechanges"
+        # Baidu's rank badge is the SECOND shape -- so the defect #28 reported
+        # was real, and THIS FIXTURE ENCODED THE FIRST, which is markup Baidu
+        # does not use. The space was right on the live page and wrong on its own
+        # test, and the test is what the next reader would have trusted.
+        #
+        # The invariant is not "a space is inserted". It is that the name matches
+        # what the page RENDERS, which is decided by whether the child generates
+        # its own box -- a declaration (computed `display`), not a threshold.
         nm = await browser.new_page(viewport={"width": 900, "height": 700})
         await nm.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
         # add_init_script only affects documents created AFTER it, and set_content
@@ -1525,7 +1540,9 @@ async def main():
         await nm.goto("about:blank")
         await nm.set_content(
             "<!doctype html><meta charset=utf-8><body style='margin:0'>"
-            "<a href=/a id=cjk><span>4</span><span>9秒39！中国机器人</span></a>"
+            "<a href=/a id=cjk><span style='display:inline-block'>4</span>"
+            "<span>9秒39！中国机器人</span></a>"
+            "<a href=/a id=run><span>Save</span><span>changes</span></a>"
             "<button id=plain>Save</button>"
             "<label id=lw>Country <select id=sel><option>France</option></select></label>"
             "</body>")
@@ -1534,6 +1551,7 @@ async def main():
                                + "; return _collectInteractivePage(true,null,'compact',false,false); })()")
         _ids = await nm.evaluate(
             "()=>({cjk:document.getElementById('cjk').getAttribute('mmid'),"
+            "run:document.getElementById('run').getAttribute('mmid'),"
             "plain:document.getElementById('plain').getAttribute('mmid'),"
             "sel:document.getElementById('sel').getAttribute('mmid')})")
 
@@ -1541,8 +1559,16 @@ async def main():
             e = next((x for x in _n if str(x.get("mmid")) == str(_ids[k])), None)
             return (e.get("name") or e.get("label") or e.get("text") or "") if e else ""
 
-        check("N5 sibling element children are space-separated, not fused into one number",
+        check("N5 a child that generates its OWN BOX is separated — Baidu's rank "
+              "badge is inline-block, and fusing it makes rank 4 + 9.39s read as "
+              "49.39s in a script with no visible seam",
               _nm("cjk").startswith("4 9秒39"), repr(_nm("cjk")))
+        # THE CONTROL #28 DID NOT HAVE, and the one that makes this a rule rather
+        # than a preference: a continuous INLINE run must NOT gain a space, or we
+        # invent a word the screen never showed. Chrome agrees: "Savechanges".
+        check("N5d CONTROL: a continuous inline run is NOT separated — an "
+              "unconditional space manufactures words the page does not render",
+              _nm("run") == "Savechanges", repr(_nm("run")))
         # Negative controls: a pure text node must not gain spaces, and the wrapping
         # label must still EXCLUDE the control's own subtree.
         check("N5b ...a single text node is untouched", _nm("plain") == "Save", repr(_nm("plain")))
