@@ -223,6 +223,42 @@ recorder warns at record time instead, and the step carries a `review` line.
 **Flows recorded before #72 carry no witness** and keep the old behaviour until
 re-recorded.
 
+**THE VIRTUALISED SUB-CASE: measured and DON'T BUILD.** #90's one remaining
+silently-wrong case is a crowd that IS a rendered window — its size does not
+change when it scrolls, so `len(hits) != of` can never fire. The recorder
+already warns (`positional:` names the scrolling window and says the
+composition check cannot fire there); what is missing is a REFUSAL at replay.
+
+The candidate was the page's own geometry: a declared `overflow: auto|scroll`
+ancestor whose content is taller than its box is a WINDOW onto something
+larger, which is exactly when an ordinal means a screen position.
+`tools/audit_scroll_window.py`, 96 frozen sites:
+
+| | |
+|---|---|
+| tied crowds | 854 |
+| unwitnessed (the population #72 left on position) | **135** |
+| …inside a declared scroller with overflowing content | **8** |
+| …as a share of unwitnessed | **5.9%**, on 6 of 96 sites |
+
+A refusal keyed on it reaches **5.9% of ~14% of all descriptors, i.e. under 1%**,
+in exchange for three halves of plumbing — a collector field, a descriptor
+field and a runner branch. Not worth it, and the recorder's warning already
+covers the artefact.
+
+**AND THE FIRST READING SAID THE OPPOSITE, which is the part worth keeping.**
+At 19 sites it was **3 of 18 = 16.7%**, which would have justified building.
+The full corpus is 5.9%. A small-n reading that flatters a change you already
+want to make is the exact shape #16 exists for, and the only thing that caught
+it was running wider before acting.
+
+**What would reopen it:** not another geometric signal. The corpus does contain
+a little of the shape — `syncfusion_grid` and `adminlte` contribute 2 each — so
+this is not "the sample lacks the population" (#25) but "the population is
+genuinely rare here". A corpus of the internal admin tools this feature
+actually runs against could move it, and that is the same corpus `OPEN.md`
+item 2's main entry already asks for. Measure once, for both.
+
 What would close it: a declared per-member discriminator the collector does not
 currently emit. Geometry would do it (87.3% coverage, measured) and is refused —
 it drifts, so the safeguard would fire on every reflow.
