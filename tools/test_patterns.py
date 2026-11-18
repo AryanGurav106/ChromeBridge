@@ -249,8 +249,13 @@ def main() -> int:
             _missing.append(rel)                 # (audit_patterns.py scanned a file
             continue                             #  that did not exist for entries)
         b = p.read_bytes()
-        if b.count(b"\r\n"):
-            _crlf.append(f"{rel}({b.count(b'\r\n')})")
+        # HOISTED OUT OF THE f-STRING. A backslash inside an f-string's
+        # EXPRESSION part is a SyntaxError before Python 3.12 (PEP 701 lifted
+        # it), and pyproject.toml advertises >=3.10 -- so this file would not
+        # parse at all on the 3.10 leg CI runs for exactly that reason. C45.
+        _nl = b.count(b"\r\n")
+        if _nl:
+            _crlf.append(f"{rel}({_nl})")
         bad = [(i, x) for i, x in enumerate(b) if x < 9 or 13 < x < 32]
         if bad:
             _ctrl.append(f"{rel}@{bad[0][0]}=0x{bad[0][1]:02x}")

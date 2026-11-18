@@ -1204,6 +1204,37 @@ On OpenStreetMap the same ref reported clicks 1,097px apart, and a missed click
 hits the map, so there is no symptom. Refs re-measure and are safe; the printed
 coordinate is not.
 
+### 16. `_flow_entries` does not say WHICH tab it read `MEASURE FIRST`
+> The residue of #90's popup case: a tab the PAGE opened steals `active`, and a
+> flow step that names no `tabId` then reads it. The explicit half is closed
+> (recorded tabIds are checked at compile) and the declared half is closed
+> (`target="_blank"` is read off the collector's own output). What is left is a
+> popup that steals focus while **no call names a tab at all**, which
+> `core/flows` structurally cannot see — it hands `tabId=None` down and gets a
+> list back.
+>
+> **NOT BUILT, and the reason is the shape rather than the cost.** Making
+> `_flow_entries` report its resolved tab is a PRODUCER; without a consumer in
+> the recorder it is a declared field nothing reads, which is the half-contract
+> this project has now deleted five times (`origin` #54, `viewport` #57,
+> `on_fail:"heal"` #62, `delta` #30, the `pause`/`resume` pair in #70). Both
+> halves or neither.
+>
+> **The design, so it is not re-derived.** `get_interactive_elements` returns a
+> bare array, so the resolved tab is not in the response and adding it is an
+> extension change plus a protocol shape change. The cheap route needs neither:
+> when `tabId is None` — which is EXACTLY the ambiguous case — call the ungated,
+> worker-side `get_active_tab` first and return a `list` subclass carrying
+> `.tab`, so every existing `isinstance(ents, list)` and all list usage keep
+> working. One extra round trip, only in the case that is ambiguous, at the
+> ~24ms the bridge leg costs (#38) rather than the ~3,600ms of a model turn.
+> The consumer is a review line when the resolved tab differs from the flow's
+> starting tab.
+>
+> **What would close it:** both halves in one change, with a fixture that fails
+> pre-fix (a recording whose active tab moves under it) and the control that a
+> flow whose tab never moves acquires no review line.
+
 ### 9. Three unreproducible 30s+ stalls `OPEN`
 > **A FOURTH, CAUGHT LIVE 2026-11-18 WITH THE EVIDENCE #50 BUILT FOR IT.**
 > Previous sightings were memories. This one arrived with its op and its

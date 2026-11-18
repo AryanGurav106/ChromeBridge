@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1560 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1565 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1560 checks, ~149s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1565 checks, ~152s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -9047,6 +9047,71 @@ granted in the side panel is refused with the same message the agent gets.
 
     Ablation vs `git archive HEAD`: **22 new checks fail pre-fix, 22 controls
     pass in both arms.** Flow suite 253 → 297.
+
+
+91. **TWO MORE SILENT WRONG ANSWERS, AND A THIRD CI BREAK AT THE OTHER END OF
+    THE SUPPORTED RANGE.** Follow-ups to #90, each re-derived before it was
+    acted on.
+
+    **`imageId` WAS A SESSION COUNTER, so a stale id RESOLVED instead of
+    missing.** `_IMG_SEQ` started at 0 on module load and incremented per
+    screenshot, so the Nth screenshot of EVERY process was `img_N` — not a
+    collision risk, the scheme. Reproduced rather than inferred, with two module
+    instances (which is what a server restart is, the registry being module
+    state) and a stub bridge capturing the payload: a replay of `imageId='img_2'`
+    reported `uploaded` while the bytes on the wire were the new session's
+    unrelated second capture. **The silent condition is exact** — the replay
+    session has taken AT LEAST as many screenshots as the recording had before
+    its upload; below that it raises, which is loud and fine.
+    **AND CI STRUCTURALLY CANNOT CATCH IT, which is the better finding.**
+    `run_flows.py` takes no screenshots at all (they are observations, dropped
+    at compile), so the suite is permanently in the LOUD arm, while an MCP
+    session where the agent has been looking at the page is routinely in the
+    silent one. A green build says nothing there — the same shape as #87's stale
+    extension, where the thing that cannot fail is the thing nobody checks.
+    Content-addressed on a sha256 prefix now, so a stale id MISSES, which is the
+    honest failure and the direction #24 chose everywhere else.
+
+    **A THIRD CI BREAK, AND TWO OF THE THREE OFFENDING SITES WERE MINE, WRITTEN
+    THAT HOUR.** `SyntaxError: f-string expression part cannot include a
+    backslash` — legal only from 3.12 (PEP 701), while `pyproject.toml`
+    advertises `>=3.10` and CI runs the unit group on 3.10 AND 3.13 for exactly
+    that reason. #86 closed the 3.13 end; this is the 3.10 end, and **the author
+    of that check wrote two new violations of the mirror-image rule the same
+    day**. C45 scans `ast.FormattedValue` nodes and reads each expression's own
+    source segment, so a backslash in the LITERAL part — legal at every version —
+    cannot be mistaken for one in the expression. C45b plants one.
+
+    **I MISLABELLED A CONTROL AND THE ABLATION CAUGHT IT.** C46b was written as
+    "identical bytes share an id — CONTROL" and FAILS pre-fix, because a counter
+    gives the same bytes a new id every call. That makes it a second assertion
+    about the new scheme, not something holding in both arms. It is C46c now,
+    and the real control is "an id minted in THIS session still resolves, to its
+    own bytes" — without which *"resolve nothing"* would satisfy C46 while
+    deleting the feature.
+
+    **AND ONE THING DELIBERATELY NOT BUILT.** `_flow_entries` reporting its
+    resolved tab would close #90's popup residue, and is a PRODUCER: without a
+    consumer in the recorder it is a declared field nothing reads, which is the
+    half-contract this project has deleted five times (`origin` #54, `viewport`
+    #57, `on_fail:"heal"` #62, `delta` #30, the `pause`/`resume` pair in #70).
+    Both halves or neither. `OPEN.md` item 16 carries the design — a `list`
+    subclass with `.tab`, filled from the ungated worker-side `get_active_tab`
+    only when `tabId is None`, which is exactly the ambiguous case — so it is
+    not re-derived.
+
+    **A measured historical claim, checked rather than accepted.** #90 says
+    `FLOWS-FAILURE-SURFACE` 1.1 "has only ever been true for the fill family",
+    which is a statement about a contract's whole history. Challenged, it came
+    back with three measurements: the probe run against a `computer`-shaped
+    result, `git log -S` on the predicate returning **exactly one commit** (the
+    one that created the file), and `git show` of that same commit showing
+    `computer` already returned a list. Both halves held on day one and neither
+    moved.
+
+    Suites: 1565 checks. New — C45/C45b (no backslash in an f-string
+    expression), C46/C46c/C46b (content-addressed images, with the real
+    control). All fail pre-fix except the control.
 
 
 ## Debugging starting points

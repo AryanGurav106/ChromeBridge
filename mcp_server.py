@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import inspect
+import hashlib
 import io
 from collections import deque
 import json
@@ -149,7 +150,6 @@ LAST_READ: dict[int, dict[str, Any]] = {}
 
 # imageId -> png bytes (screenshots / zooms captured this session)
 IMAGES: dict[str, bytes] = {}
-_IMG_SEQ = 0
 
 # GIF recorder state (server-side; frames are PIL Images)
 GIF: dict[str, Any] = {"recording": False, "frames": [], "labels": []}
@@ -666,9 +666,33 @@ def _ref_to_selector(ref: Union[str, int]) -> str:
 
 
 def _store_image(png: bytes) -> str:
-    global _IMG_SEQ
-    _IMG_SEQ += 1
-    image_id = f"img_{_IMG_SEQ}"
+    """CONTENT-ADDRESSED, because a session counter made a stale id RESOLVE.
+
+    `_IMG_SEQ` started at 0 on module load and incremented per screenshot, so
+    the Nth screenshot of EVERY process was `img_N`. That is not a collision
+    risk, it is the scheme: a recorded flow storing `img_2` and replayed in a
+    session that has taken two screenshots of anything uploads THAT session's
+    second screenshot, silently.
+
+    REPRODUCED rather than reasoned about, with two module instances (which is
+    what a server restart is, since the registry is module state) and a stub
+    bridge capturing the payload: a replay of `imageId='img_2'` reported
+    `uploaded` while the bytes on the wire were the unrelated second capture of
+    the new session. The silent condition is exact -- the replay session has
+    taken AT LEAST as many screenshots as the recording had before its upload.
+    Below that it raises `unknown imageId`, which is loud and fine.
+
+    AND CI STRUCTURALLY CANNOT CATCH IT. `run_flows.py` takes no screenshots at
+    all (they are observations, dropped at compile), so the suite is ALWAYS in
+    the loud arm, while an MCP session where the agent has been looking at the
+    page is routinely in the silent one. A green build says nothing here.
+
+    A digest makes a stale id MISS instead, which is the honest failure and the
+    direction this codebase chooses everywhere else (#24's refuse-and-name over
+    guess). Identical bytes share an id, which is correct: the same screenshot
+    IS the same screenshot, and uploading it twice is the same upload.
+    """
+    image_id = "img_" + hashlib.sha256(png).hexdigest()[:16]
     IMAGES[image_id] = png
     return image_id
 

@@ -1804,10 +1804,13 @@ async def main():
               "modal, and geometry must not overrule a declaration",
               "A MODAL/DIALOG IS CURRENTLY OPEN" not in _mv5,
               "banner present" if "A MODAL/DIALOG IS CURRENTLY OPEN" in _mv5 else "no banner")
+        # hoisted: a backslash in an f-string EXPRESSION is a SyntaxError before
+        # 3.12, and pyproject.toml advertises >=3.10 (C45).
+        _mv5_buy, _mv5_alpha = '"Buy"' in _mv5, '"Alpha"' in _mv5
         check("MV5c ...and the page behind it is still listed, which is what the "
               "banner was costing",
-              '"Buy"' in _mv5 and '"Alpha"' in _mv5,
-              f"buy={'\"Buy\"' in _mv5} alpha={'\"Alpha\"' in _mv5}")
+              _mv5_buy and _mv5_alpha,
+              f"buy={_mv5_buy} alpha={_mv5_alpha}")
         await mv.set_content(DLG.format(tag="div", attr="role=dialog aria-label='Consent'"))
         await mv.wait_for_timeout(120)
         _mv5b = await mv.evaluate("(function(){ " + COLLECT

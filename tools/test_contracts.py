@@ -1804,6 +1804,92 @@ def main() -> int:
           "rather than an empty loop",
           _fired, f"caught by {_how}")
 
+    # ---- C45: THE OTHER END OF THE SUPPORTED RANGE ------------------------
+    # C42 catches what 3.13 refuses. This catches what 3.10 and 3.11 refuse: a
+    # BACKSLASH inside an f-string's EXPRESSION part, which PEP 701 only made
+    # legal in 3.12. `pyproject.toml` advertises >=3.10 and CI runs the unit
+    # group on 3.10 AND 3.13 for exactly that, so a file with one does not
+    # PARSE on the 3.10 leg -- the suite dies at import with
+    # `SyntaxError: f-string expression part cannot include a backslash`.
+    #
+    # FOUND ON CI, NOT HERE, which is the whole reason this exists: the version
+    # I develop on accepts it, so the construct is invisible locally in both
+    # directions. Three sites when first run, and TWO OF THEM WERE WRITTEN THAT
+    # HOUR by the author of C42 -- a check-message f-string interpolating
+    # `'\"Buy\"' in _mv5`. A rule that lives only in prose is a rule a human
+    # has to remember, and this one was forgotten by the person who had just
+    # written the rule for the opposite version.
+    #
+    # EXACT, not a regex over source. `ast` gives the FormattedValue nodes and
+    # `get_source_segment` gives each expression's own text, so a backslash in
+    # the LITERAL part (which is legal at every version) cannot be mistaken for
+    # one in the expression.
+    _fstr = []
+    for _py in _pys:
+        if "__pycache__" in _py.parts:
+            continue
+        try:
+            _src = _py.read_text(encoding="utf-8")
+            _t = _ast.parse(_src)
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for _n in _ast.walk(_t):
+            if isinstance(_n, _ast.FormattedValue):
+                _seg = _ast.get_source_segment(_src, _n.value) or ""
+                if "\\" in _seg:
+                    _fstr.append(f"{_py.relative_to(_rt)}:{_n.lineno}")
+    check("C45 no f-string in the project puts a backslash in its EXPRESSION "
+          "part — legal only from 3.12, and pyproject.toml advertises >=3.10",
+          not _fstr, f"offenders={_fstr}")
+    # THE DETECTOR SHOWN FIRING. Planted in memory; the construct parses here
+    # (3.12+) and would not on 3.10, which is precisely why a scan is needed
+    # rather than relying on the file failing to import.
+    _planted_f = _ast.parse('x = 1\ny = f"{chr(92) and \'a\\\\b\' in \'z\'}"\n')
+    _pf = [1 for _n in _ast.walk(_planted_f)
+           if isinstance(_n, _ast.FormattedValue)
+           and "\\" in (_ast.get_source_segment(
+               'x = 1\ny = f"{chr(92) and \'a\\\\b\' in \'z\'}"\n', _n.value) or "")]
+    check("C45b CONTROL: the same scan fires on a planted backslash, so the "
+          "clean result above is evidence rather than an empty loop",
+          len(_pf) == 1, f"planted hits={len(_pf)}")
+
+    # ---- C46: AN imageId MUST NOT RESOLVE IN A SESSION THAT DID NOT MAKE IT --
+    # `_store_image` used a module-level counter, so the Nth screenshot of EVERY
+    # process was `img_N`. A recorded flow storing `img_2`, replayed in a session
+    # that had taken two screenshots of anything, uploaded THAT session's second
+    # capture and reported success. Reproduced with two module instances -- which
+    # is what a server restart is, the registry being module state -- and a stub
+    # bridge capturing the payload.
+    #
+    # CI STRUCTURALLY CANNOT CATCH IT, which is why a fixture has to: `run_flows`
+    # takes no screenshots (they are observations, dropped at compile) so the
+    # suite is always in the LOUD arm, while an MCP session where the agent has
+    # been looking at the page is routinely in the silent one.
+    _msA = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_msA)
+    _msB = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_msB)
+    _a1, _a2 = _msA._store_image(b"A-SHOT-1"), _msA._store_image(b"A-SHOT-2")
+    _b1, _b2 = _msB._store_image(b"B-SHOT-1"), _msB._store_image(b"B-SHOT-2")
+    check("C46 an id minted in one session does not resolve to a DIFFERENT "
+          "image in another — content-addressed, so a stale id MISSES instead "
+          "of uploading the wrong file silently",
+          _msB.IMAGES.get(_a2) is None and _a2 != _b2,
+          f"A2={_a2[:14]}… B2={_b2[:14]}… cross-resolves={_msB.IMAGES.get(_a2) is not None}")
+    # NOT A CONTROL, and it was labelled one for ten minutes. It FAILS pre-fix
+    # too (a counter gives the same bytes a new id every call), so it is a
+    # second assertion about the new scheme rather than something that holds in
+    # both arms. The ablation is what said so.
+    check("C46c identical bytes share an id, so this is ADDRESSING and not just "
+          "a longer counter — the same screenshot is the same screenshot",
+          _msA._store_image(b"A-SHOT-1") == _a1 and _msB._store_image(b"A-SHOT-1") == _a1,
+          "same bytes, same id, across two module instances")
+    # THE ACTUAL CONTROL: an id minted in THIS session still resolves, and to
+    # its own bytes. Without it, "never resolve anything" would satisfy C46
+    # while deleting the feature.
+    check("C46b CONTROL: an id minted in this session still resolves, to its "
+          "own bytes — the fix must not be 'resolve nothing'",
+          _msA.IMAGES.get(_a1) == b"A-SHOT-1" and _msB.IMAGES.get(_b2) == b"B-SHOT-2",
+          "both sessions resolve their own ids correctly")
+
     print(f"\n{passed} passed, {failed} failed, {passed + failed} total checks")
     if failures:
         print("failing: " + ", ".join(failures))
