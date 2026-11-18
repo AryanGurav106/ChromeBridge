@@ -4,7 +4,7 @@ The brief was to post REGULARLY so people get the idea, "not just numbers".
 One draft is not a cadence, so this is the pipeline: each post below is already
 backed by an artefact in this repo, so writing it is an hour, not a project.
 
-**Eleven are drafted now (001, 002, 003, 004, 006, 009, 010, 013, 014, 015, 016).** At one a week that is over a
+**Twelve are drafted now (001, 002, 003, 004, 006, 009, 010, 013, 014, 015, 016, 017).** At one a week that is over a
 month of cadence already sitting in the repo, which was the point of building a
 queue rather than writing one post well.
 
@@ -42,6 +42,7 @@ thing being shown, which is why 001 leaves the head-to-head out entirely.
 | 014 | We ran 16 head-to-head tasks and tied. Here is why it was worth it. | `tools/bench_turns/eval7/` — prereg + 5 amendments, score.py, CLOSEOUT.md | **DRAFTED**, needs sending |
 | 015 | Record and replay against a real staging app | `flows/`, CLAUDE.md #59-#61 | **DRAFTED**, needs sending |
 | 016 | I lost my own benchmark to a comment I'd written that morning | `tools/bench_turns/eval9/` — prereg + 9 amendments, analyse.py, CLOSEOUT.md; CLAUDE.md #81; PRINCIPLES 18 | **DRAFTED**, needs sending |
+| 017 | My own tool refused to save my password, and it was right to | `flows/acme-invoices-drilldown.flow.json`, CLAUDE.md #86, FW13/FW13b/FW13c, C42/C42b | **DRAFTED**, needs sending |
 
 ## What each post must NOT do
 
@@ -50,10 +51,16 @@ thing being shown, which is why 001 leaves the head-to-head out entirely.
   173 actions, excluding 13 the benchmark wrongly called absent. Quote ~95%,
   never a point estimate, and never the superseded 96.0%.
 - **Quote eval 4's zero-wrong on flow descriptors without its qualifier.** That
-  zero is for WITNESSED descriptors on a realistic re-sort. 59.4% have no
-  witness and are unchanged (#72).
+  zero is for WITNESSED descriptors on a realistic re-sort. The unwitnessed
+  share is **52.6%**, re-measured in #83 on 39 sites against #72's 24, and the
+  52.6% is what is LEFT after the content witness shipped — do not quote #72's
+  59.4%, and do not say the witness is a candidate: it shipped in #83 and
+  `flows/live-atoms-resort.flow.json` carries one.
 - **Imply the head-to-head says anything about the consent model.** The gate was
   armed for the run and the pre-registration says so explicitly.
+- **Present post 017's flow as evidence about real websites.** It runs against
+  `tools/saas_playground.py`, a fixture in this repo that I wrote. The draft
+  says so and any reuse of its numbers must too.
 - **Lead with eval 9's totals.** 58 v 68 is outside the noise floor and it is
   NOT the result: the pre-registered test is a sign test and it says 4/7,
   p = 1.0. Post 016 says so explicitly and any other post touching eval 9 must
