@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1513 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1560 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1513 checks, ~149s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1560 checks, ~149s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -8911,6 +8911,142 @@ granted in the side panel is refused with the same message the agent gets.
     passes in both arms (#30's TR8d case). And the controls were proven
     non-vacuous by breaking the rule two ways: "ANY node is Text" fails R35c and
     R35d, "addedNodes only" fails R35c.
+
+
+89. **"AT ANY STAGE" FINALLY HAS A NUMBER, AND BOTH DEFECTS IT FOUND ARE IN THE
+    LAYER THAT DESCRIBES THE PAGE RATHER THAN THE ONE THAT READS IT.** Every
+    generality figure this project held describes a page AT FIRST PAINT. #85's
+    260 sites is one static read plus at most one disclosure. "Works on any site
+    at any stage" is our own claim and only the first half had evidence.
+    `tools/audit_stage_generality.py`, `docs/research/STAGE-GENERALITY-2026-11.md`.
+
+    | | |
+    |---|---|
+    | usable sites (of 265 candidates) | **255** |
+    | reads / **post-interaction** reads | 580 / **325** |
+    | compounding interactions per site | up to **4** |
+    | visible controls / entries | 73,274 / 161,442 |
+    | **identities lost — lenient** | **0** |
+    | **identities lost — STRICT (owns its own row)** | **0** |
+    | controls that existed ONLY because of an interaction | **2,106 — 0 lost** |
+    | drop reasons outside `SPEC_DELETES` | **0** of 225,413 |
+
+    Zero in all 14 script families. 153 sites opened something, **80 reached a
+    second interaction on top of the first**, 53 a third, 39 the fourth. Drift
+    control: 67 sites twice, identical stage count 65/65, listing chars median
+    0.0% / p90 0.72%. Interactions are chosen from DECLARATIONS ONLY and counted
+    only when the page's own declared state flipped — #85's rule, kept.
+
+    **THE PROBE WAS PROVEN ABLE TO FIRE, TWICE, and the second arm priced
+    something #85 asserted and never measured.** A planted missing control in a
+    fixture, then live mutilation of real listings at the deepest stage, which
+    raised both arms on 5/5 sites. On `gov_au`, deleting 67 of 133 entries moves
+    **lenient by 1 and strict by 27**. The lenient metric alone is nearly
+    worthless as a guarantee; **strict is what carries the result**, and every
+    earlier "0 lost" headline that quoted only the lenient arm was weaker than
+    it read.
+
+    **D1 — A MODAL BANNER ON A NON-MODAL `<dialog>`, because geometry overruled
+    a declaration.** `<wa-popover>` renders a native `<dialog>` in its shadow
+    root, opens it with `show()` — so `:modal` is **false** — and sizes it to the
+    full viewport as a top-layer positioning container for a small popover. All
+    three "dominates the viewport" conditions passed, so an ordinary popover
+    raised `*** A MODAL/DIALOG IS CURRENTLY OPEN ***` and told the agent to
+    ignore rows outside that subtree, on a page fully interactive behind it.
+    **The declaration was already in hand**: `:modal` is tested four lines above
+    and returned false. The fallback exists for an element that declares
+    NOTHING. Priced both-arms-same-page-load over the 45 banner sites, 91 reads:
+    **2 verdicts change, 68 banners kept, 82 → 92 rows restored.**
+
+    **D2 — the aria-hidden note asserted the dialog as the cause and promised a
+    recovery that does not work.** Measured on the same page, per stage:
+    controls with a hidden ancestor are **50 before the dialog, 50 during, 49
+    after**. They are decorative `<wa-icon>`s that are `aria-hidden`
+    permanently. The note said a focus trap hid them and that dismissing it
+    brings the page back; it brings back one element. The comment TWELVE LINES
+    ABOVE that branch says to state the fact and never assert an unverified
+    recovery, and the SIBLING branch already does it right. Folded into the
+    general branch, so a dialog is EVIDENCE FOR a cause rather than the cause,
+    and one concept has one spelling. PRINCIPLE 6 / #33's class, third instance,
+    and **C15 cannot catch it because the sentence is declarative.**
+
+    **MY OWN FIXTURE WAS VACUOUS AND ONLY THE ABLATION SAID SO — the eighth in
+    this project and the first I wrote myself this session.** MV5 PASSED against
+    the pre-fix collector: a `<dialog>` carries `width: fit-content` from the UA
+    stylesheet, so `inset:0` alone leaves it **52x21, ratio 0.002 against a 0.5
+    threshold**. Measured rather than reasoned (52x21 as written, 900x700 with
+    an explicit size, `:modal` false in both). **That is the identical mistake
+    MV1's own comment twenty lines above records** ("320x120 in a corner … the
+    fixture proved nothing"), made again in the same block. MV5/MV5c now fail
+    pre-fix with the live symptom — banner present, and `buy=False alpha=False`,
+    the page behind suppressed.
+
+    **Three corrections the agent made to its OWN measurement**, which is the
+    behaviour that makes the headline worth anything: its click marker was a DOM
+    mutation, so the readiness probe reported churn before every
+    post-interaction read (#70's lesson rebuilt by someone who had read #70);
+    "0 unexpected drop reasons" was **unfalsifiable from the saved data** until
+    all 225,413 drops were persisted; and a control reported a FALSE failure
+    because an inline `<script>` is a non-hidden sibling.
+
+    **The sample's limits are not small and are in the paper:** 10 of 265 never
+    rendered, it inherits #85's screening so ~180 consent- and bot-walled
+    candidates are absent before it starts, one path per site, hover-only menus
+    are structurally unpickable (a CSS `:hover` submenu declares no state flip),
+    and the strict arm covers CORE tags only. **#74's question — whether the
+    right name is on the right ELEMENT — is untouched by any of it.**
+
+90. **THREE OF FIFTEEN CONCEPTUAL BREAKS LET A REPLAY ACT WRONGLY AND REPORT A
+    PASS.** `docs/research/FLOWS-CONCEPTUAL-BREAKS-2026-11.md`. A silent wrong
+    answer is the worst thing this feature can produce, and these were it.
+
+    - **A step performed in a tab the PAGE opened** — `target="_blank"`, the
+      payment and OAuth shape. Measured: a click recorded in tab 9, replayed in
+      tab 7, **PASSED 3/3 against a different document**. Dropped at compile
+      now, naming both tabs; the implicit half is caught from the DECLARED
+      `target="_blank"` the collector already emits.
+    - **`Recorder.after` discarded the result of every `computer` call.** It
+      stored `result if isinstance(result, str) else ""`, and `computer` — every
+      click — answers with a LIST of content objects. So #56's
+      `*** NOT DELIVERED` stored `''`, `refused()` returned `None`, and the step
+      compiled in under `dropped: 0 failed call(s)`. **`FLOWS-FAILURE-SURFACE`
+      1.1 has only ever held for the fill family.**
+    - **A flow with zero steps reported `passed 0/0`.** Reachable without a hand
+      edit — four rules drop steps — and seen live when recording a Delete
+      behind a `confirm()` saved a navigate-only flow.
+
+    **AND ONE I RE-DERIVED BEFORE FIXING, because it is the kind of claim that
+    deserves it:** `set(MUTATES) - set(_BATCHABLE)` was exactly
+    `['call_page_tool', 'dismiss_dialog']`, and `_flow_call` raises *"flow step
+    names 'x', which is not a runnable tool"* for anything missing. So **a flow
+    driving a WebMCP tool has recorded cleanly and been unreplayable since
+    WebMCP shipped.** `dismiss_dialog` is defined BELOW the `_BATCHABLE` table,
+    so adding it to that literal raises `NameError` at import and kills every
+    suite that imports `mcp_server` — it is registered beside its own definition
+    instead. FD25's permitted set is **empty rather than deleted**, so the next
+    gap is still reported with its name.
+
+    **STILL SILENTLY WRONG, UNFIXED, and recorded with its measurement rather
+    than patched: a VIRTUALISED list.** 200 records, a ten-row window, recorded
+    `REC-1003`, replayed `REC-1053`, **no refusal**. The crowd IS the window,
+    whose size is constant, so `len(hits) != of` — the check that catches
+    add/remove — **can never fire**, and `recordAtoms` is `None`. Not fixable
+    from declarations: the scroller is not an entry and `aria-setsize` is on
+    3.8% of controls. A sub-case of `OPEN.md` item 2. **The same page WITH
+    per-row text is safe** and refuses after the scroll.
+
+    **COULD NOT REPRODUCE, stated rather than banked:** `dismiss_dialog` against
+    a genuinely blocking dialog. With Playwright owning the dialog the click
+    times out, `get_url` answers instantly (#51 working), and `dismiss_dialog`
+    times out too — **not attributable**, because Playwright holds its own CDP
+    session with `Page` enabled on that tab.
+
+    **Measured sound, no change:** open AND closed shadow roots, same-origin
+    iframes (descriptors re-resolve across new frameIds), tab spanning,
+    localisation. Two stale `FLOWS-FAILURE-SURFACE` entries corrected on the way.
+
+    Ablation vs `git archive HEAD`: **22 new checks fail pre-fix, 22 controls
+    pass in both arms.** Flow suite 253 → 297.
 
 
 ## Debugging starting points
