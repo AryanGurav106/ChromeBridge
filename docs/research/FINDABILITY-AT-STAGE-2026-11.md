@@ -509,3 +509,46 @@ path through a site (the driver follows one chain, and 101 of 254 sites offered 
 nothing), and whether an agent handed a *blanked* container's row can work out what to
 query instead — which is a prose question this probe turns into a descendant lookup
 because that is what it can measure.
+
+## Why this reads 1.0000 at first paint where `measure_findability` reads 0.9774/0.9797
+
+**MEASURED, not inferred, and the measurement is what this section is for.** The
+first version of this paragraph argued from `OPEN.md` item 0's classification —
+53 of its 54 strict misses are the label-plus-badge shape, and that shape IS
+`subtreeName && !subtreeNameSole`, the exact condition this probe routes to the
+blanked arm. That is a reading of someone else's classification, not a result,
+and `--dump` could not settle it: the `desc_hit` branch incremented and moved
+on without recording, so the descendant-credited population was invisible.
+
+One line added to that branch, then `measure_findability.py --n 84 --dump`:
+
+| | |
+|---|---|
+| records dumped | 45 |
+| descendant-credited | 43 |
+| **…carrying `subtreeName && !subtreeNameSole`** | **43/43 = 1.0000** |
+| strict misses | 2 |
+| …carrying the same shape | 2/2 |
+
+**45 of 45.** The prediction was ~0.98 and the answer is 1.0000, so the two
+figures are ONE system measured with those rows **inside** the strict
+denominator (`measure_findability`) and **beside** it (this probe). Examples are
+the shape exactly: `span "Search Cmd+K"`, and three `body`/`div` shells carrying
+a whole page's concatenated text.
+
+Four differences separate the numbers, in descending order of effect:
+1. blanked rows are in that denominator and beside this one;
+2. different corpora — 84 frozen sites against 254 live out-of-sample ones;
+3. this probe skips a printed identity over 300 characters and counts it (257
+   of them) where the frozen ruler asks it;
+4. sampling — 40 head-sliced entries per site there, 24 stride-sampled per
+   stage here.
+
+**Quote neither number as an improvement on the other.** Folding the arms back
+together is refused: the fold's value would be set by this probe's caps rather
+than by the page.
+
+**The falsifier, stated because it did not fire:** had the descendant-credited
+population NOT been dominated by blanked rows, this reconciliation would be
+wrong and the two numbers would differ for a reason nobody has found. It is
+1.0000, so it is not that.

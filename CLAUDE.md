@@ -9185,6 +9185,22 @@ granted in the side panel is refused with the same message the agent gets.
     AS a floor — what it establishes is that the driver and sample are stable
     enough for the result to mean something.
 
+    **THE TWO FINDABILITY NUMBERS ARE ONE POPULATION, AND THAT IS NOW MEASURED
+    RATHER THAN INFERRED.** This probe reads 1.0000 at first paint where
+    `measure_findability` reads 0.9774/0.9797, and the first explanation argued
+    from `OPEN.md` item 0's classification — 53 of its 54 strict misses are the
+    label-plus-badge shape, which IS the blanking condition. That is a reading
+    of a classification, not a result, and `--dump` could not settle it because
+    the `desc_hit` branch incremented without recording. One line added there,
+    then `--n 84 --dump`: **43 of 43 descendant-credited records carry
+    `subtreeName && !subtreeNameSole`, and so do both strict misses — 45 of 45.**
+    Predicted ~0.98, measured 1.0000. So the frozen ruler's residual and this
+    probe's blanked arm are the same rows counted INSIDE one denominator and
+    BESIDE the other. **Quote neither as an improvement on the other**, and the
+    falsifier is stated because it did not fire: a descendant-credited
+    population NOT dominated by blanked rows would have meant the two numbers
+    diverge for a reason nobody has found.
+
     **Not measured, stated not passed:** 11 of 265 sites (8 navigation timeouts,
     3 under five probeable rows), the ~180 consent- and bot-walled candidates
     inherited from #85/#89, one path per site, hover-only menus, cross-origin
