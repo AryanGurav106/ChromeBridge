@@ -1886,6 +1886,7 @@ def main() -> int:
     # the LITERAL part (which is legal at every version) cannot be mistaken for
     # one in the expression.
     _fstr = []
+    _skipped = []          # a file this scanner could not read is not a clean file
     for _py in _pys:
         if "__pycache__" in _py.parts:
             continue
@@ -1893,6 +1894,15 @@ def main() -> int:
             _src = _py.read_text(encoding="utf-8")
             _t = _ast.parse(_src)
         except (SyntaxError, UnicodeDecodeError):
+            # NAMED, NOT SWALLOWED. This `continue` is why C45 could never have
+            # seen `audit_descriptors.py` (#96): on 3.10 the offending file does
+            # not parse, so the one version able to detect that class is the one
+            # that skips it. The GATE for that is CI's `compileall` step on the
+            # floor -- a second gate here would be one concept with two
+            # spellings (#21) -- but a scanner reporting "offenders=[]" while
+            # silently having read fewer files than it was given is a clean
+            # result that is not evidence. So the count travels with the answer.
+            _skipped.append(str(_py.relative_to(_rt)))
             continue
         for _n in _ast.walk(_t):
             if isinstance(_n, _ast.FormattedValue):
@@ -1901,7 +1911,10 @@ def main() -> int:
                     _fstr.append(f"{_py.relative_to(_rt)}:{_n.lineno}")
     check("C45 no f-string in the project puts a backslash in its EXPRESSION "
           "part — legal only from 3.12, and pyproject.toml advertises >=3.10",
-          not _fstr, f"offenders={_fstr}")
+          not _fstr,
+          f"offenders={_fstr}"
+          + (f" — NOTE {len(_skipped)} file(s) could not be parsed on this"
+             f" interpreter and were NOT scanned: {_skipped}" if _skipped else ""))
     # THE DETECTOR SHOWN FIRING -- AND THIS CONTROL ONCE BROKE EXACTLY THE WAY
     # THE CHECK ABOVE EXISTS TO PREVENT. The planted source is parsed with the
     # RUNNING interpreter, and on 3.10/3.11 that raises SyntaxError before any
