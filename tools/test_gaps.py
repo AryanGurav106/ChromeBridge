@@ -197,8 +197,26 @@ async def main():
         # failure as D8, which went vacuous when a rename emptied the phrase it
         # matched on: a check keyed to wording tracks the wording, not the behaviour.
         gridcell_lines = [ln for ln in listing.split("\n") if "role=gridcell" in ln]
-        one_line = [ln for ln in listing.split("\n")
-                    if 'ref:"label"' in ln or "cells as mmid:label" in ln]
+        # ...AND THEN IT WAS KEYED TO WORDING AGAIN, ONE PHRASE OVER. The filter
+        # above used to keep only lines carrying the literal `ref:"label"` — a
+        # HEADER that the cross-parent fold prints and the POSITIONAL fold does
+        # not. The datepicker folds positionally, so this matched a different
+        # fold entirely (the 8x anchors), found none of the calendar's refs in
+        # it, and reported "42 of 42 cell refs are NOT in the listing —
+        # compaction lost actionability" on every run. Every one of those 42 is
+        # present and actionable: `#1 span: 48:"June 1, 2026" 56:"June 8, 2026"`.
+        # A standing false PARTIAL is worse than none — it is the noise #15
+        # priced, and it hides a real one. So ask the property directly: is this
+        # ref MENTIONED anywhere a reader could act on it, in any fold shape,
+        # present or future. No header phrase appears below.
+        _fold = [ln for ln in listing.split("\n")
+                 if re.match(r"\s*#\d+ ", ln) or re.search(r"\d+[x\u00d7] ", ln)
+                 or "PROBABLY DECORATION" in ln]
+        _mentioned = set(re.findall(r"ref_(\d+)", listing))
+        _mentioned |= set(re.findall(r"(?<![\d.])(\d+):\"", listing))
+        for _ln in _fold:                      # bare refs: unlabelled fold members
+            _mentioned |= {t for t in re.findall(r"(?<![\w.])(\d+)(?![\w.:\"])", _ln)}
+        one_line = _fold
         # The load-bearing question is actionability: is every cell reachable by ref
         # from the listing, without paying a row each?
         _refs = {str(e["mmid"]) for e in cells if e.get("mmid")}
@@ -208,10 +226,8 @@ async def main():
         # rather than the fold. They are still reachable by ref — that is the whole
         # point of demoting instead of deleting — and a scanner that reads only the
         # fold reports 12 phantom losses. Found by this check firing on its first run.
-        _decor = [ln for ln in listing.split("\n") if "PROBABLY DECORATION" in ln]
-        _shown = {r for r in _refs
-                  if any(f"{r}:" in ln for ln in one_line)
-                  or any(f"ref_{r} " in ln or f"ref_{r})" in ln for ln in _decor)}
+        # (Those lines are inside `_fold` above now, so there is no separate list.)
+        _shown = {r for r in _refs if r in _mentioned}
         if not cells:
             report("G7 datepicker gridcells", "MISSED", "tabindex=-1 cursor:pointer cells dropped entirely")
         elif one_line and not gridcell_lines and len(_shown) == len(_refs):

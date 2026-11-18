@@ -112,7 +112,7 @@ left is one element, and it is the intended behaviour.**
 
 
 
-### 1. The observe→act gap — NOTE live, REFUSAL shipped but not yet run in a browser
+### 1. The observe→act gap — BOTH HALVES LIVE-VERIFIED (#84 NOTE, #87 REFUSAL)
 > **NOTE half, #84.** A click on a control whose identity moved since the read
 > reports it and acts. Live-verified.
 >
@@ -125,15 +125,25 @@ left is one element, and it is the intended behaviour.**
 > figure: it is the surrounding record's text, and `fill_form` fills the form
 > before submitting, so refusing on it would refuse on success.
 >
-> **NOT LIVE-VERIFIED, and that is now a READ rather than a thing to remember.**
-> The refusal was committed at 13:22; the service worker running in the user's
-> Chrome started 23:33 the previous night, so this guard is shipped, fixtured,
-> headed CLOSED, and has never executed in a browser. #43's rule is that
-> fixtures encode what you thought of. `sw_info` now reports
-> `extension_code_changed_since_worker_start`, so the next reader does not have
-> to work this out from commit times — and a `/mcp` reconnect does NOT fix it,
-> only a reload at chrome://extensions does. **The NOTE half IS live (#84); the
-> REFUSAL half is pending that reload.**
+> **IT WAS UNVERIFIABLE FOR A WHILE, AND THAT GAP IS WHY `sw_info` NOW REPORTS
+> THE EXTENSION'S AGE.** The refusal was committed at 13:22 while the service
+> worker running in the user's Chrome had started 23:33 the previous night, so
+> for several hours it was shipped, fixtured, headed CLOSED, and had never
+> executed in a browser. A `/mcp` reconnect does NOT fix that; only a reload at
+> chrome://extensions does, and nothing said so. `sw_info` now reports
+> `extension_code_changed_since_worker_start` so the next reader does not have
+> to work it out from commit times (#87).
+>
+> **BOTH HALVES ARE NOW LIVE, each in both directions.** The NOTE half in #84.
+> The REFUSAL half in #87, after the reload: on the fixture's login page with
+> the submit's label changed between the read and the click, `REFUSED:
+> [mmid='24'] is declared a SUBMIT by this page, and it is not the control you
+> read — name "Sign in" -> "Delete everything". NOTHING was clicked.` With the
+> stamp refreshed and nothing drifted, the same click PROCEEDED — which is the
+> control, since a guard that refuses everything would satisfy the first half
+> alone. #81's dead-click guard then reported `NO EFFECT` honestly on that
+> second click, because HTML validation blocked the empty form and the page
+> genuinely did not react: two guards verified in one call.
 >
 > It lives in `clickTrusted` as an opt-in, because the rect it needs is already
 > in hand there. The first attempt took a second `_rectForPage` round trip from
@@ -1216,7 +1226,7 @@ here before it could ship rather than after. FLG4 is that control.
 
 A flow recorded before this existed carries `""` and makes no claim (FLG5).
 
-### 7. Page-level scans and the iframe boundary `MEASURE FIRST`
+### 7. Page-level scans and the iframe boundary `MEASURED -- DON'T BUILD`
 **HALF THIS ITEM WAS WRONG and is corrected (#78).** Same-origin frames ARE
 reached: `dialogOpen` queries `_allComposed`, which iterates `mmidReg`, and the
 collection walk stamps mmids across same-origin frame boundaries; `_readinessPage`
@@ -1254,6 +1264,41 @@ cookies cleared so the CMP shape exists, or a live pass. If it is ever built, th
 design the cost data points at is zero-round-trip: have the existing per-frame
 call return each frame's verdict and feed it back before the banner is built.
 Probe: `tools/audit_frames.py` (`--fixtures` serves the 9 shapes from two ports).
+
+**MEASURED 2026-11-18, AND THE ANSWER IS DON'T BUILD -- the shape exists and is
+COMMON, and the gap does not occur.** `tools/audit_cmp_frames.py` ran the live
+pass this entry asked for: 203 candidates, **143 measured**, fresh throwaway
+profile, consent never given, through the real extension. **95 of 143 sites
+(66.4%) render a cross-origin frame -- 710 frames -- and 0 of them carry a
+dialog a frame-aware `dialogOpen` would fire on.** Blocking: 0. The gap itself
+(a trigger with no banner): **0**, against a bar of >=5% of sites or >=20% of
+sheet-showing sites fixed before the data was complete.
+
+**The reason is architectural, which is why the zero is worth more than a
+count.** 18 cross-origin frames DO block the page, and **17 of the 18 are
+wrapped by a `role=dialog aria-modal` container in the TOP document** -- the
+Sourcepoint shape, so the page-level scan already sees them and all 17 raise the
+banner today. The consent CONTENT is behind the boundary; the dialog SEMANTICS
+are in front of it. The 18th is an empty PerimeterX anti-bot overlay (0
+characters, 0 controls), not a sheet.
+
+**Geo is not what produced the zero:** 55 of 143 sites showed a visible sheet
+(38.5%) from a non-EEA vantage point, so the conditional rate is **0 of 55**.
+And the residue of sheets that get NO banner today -- 18 sites -- is **entirely
+SAME-ORIGIN**, mostly bottom bars under the modality threshold. So what is
+actually missing banners is a modality question in the top document, which this
+change would not touch.
+
+**And the fix is not free:** every incidental trigger is a page whose listing the
+banner suppresses (#80 lost 150 of 150 entry slots on that mechanism), so a
+change buying 0 real banners can only lose rows.
+
+Drift: the 24 blocking sites re-measured in a second session, **24/24 identical
+verdicts, 0 triggers**. What would reopen it: an EEA/UK vantage point, a vendor
+that declares its dialog INSIDE the frame (none of the families sampled does),
+or the shape appearing after an interaction (this is one read at first paint).
+Full numbers, the probe-defect incident that produced a false zero before it was
+caught, and the unmeasured set: `docs/research/CMP-FRAMES-2026-11.md`.
 
 ### 8. Coordinate trust on canvas-dominated pages `ACCEPTED`
 On OpenStreetMap the same ref reported clicks 1,097px apart, and a missed click

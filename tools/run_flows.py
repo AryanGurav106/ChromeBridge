@@ -218,6 +218,7 @@ async def main() -> int:
 
     if args.check_only:
         bad, ok = [], 0
+        n_steps = n_assert = n_unev = n_hollow = 0
         for pth in paths:
             try:
                 f = flow_load(pth)
@@ -243,6 +244,14 @@ async def main() -> int:
             # support. It says which lines need a human's eye.
             notes = [(i, r) for i, st in enumerate(f.steps)
                      for r in (st.review or [])]
+            n_steps += len(f.steps)
+            n_assert += sum(1 for s_ in f.steps if s_.expect)
+            n_unev += sum(1 for s_ in f.steps
+                          for r in (s_.review or [])
+                          if r.startswith('unevidenced'))
+            n_hollow += sum(1 for s_ in f.steps
+                            for r in (s_.review or [])
+                            if r.startswith('hollow'))
             print(f"  OK    {f.name:<32} {len(f.steps)} step(s), "
                   f"{sum(1 for s_ in f.steps if s_.expect)} asserted"
                   + (f", {len(notes)} to review" if notes else ""))
@@ -251,6 +260,29 @@ async def main() -> int:
         for line in bad:
             print(line)
         print(f"\n  {ok}/{len(paths)} flow file(s) valid")
+        # THE PER-STEP LINES ABOVE ARE THE DATA; THIS IS THE ONLY PLACE IT IS
+        # READABLE. Thirty files of review lines scroll past and nothing said
+        # how much of the corpus they covered, so "13% of asserted steps have
+        # nothing known to be able to fail" was computable and unstated --
+        # the same count-is-not-an-inventory shape as #64's tool swap and
+        # #67's README table. Still NOT a failure (#68): an unevidenced
+        # assertion is not a wrong one. It is the number that says where the
+        # corpus is weakest, and a rise in it is a recording getting lazier.
+        # HOLLOW AND UNPROVEN ARE NOT THE SAME FACT and a single figure that
+        # adds them is the conflation this repo keeps removing (#70's kind
+        # split, #37's help= vs error=). HOLLOW is measured: the check had
+        # that value BEFORE the step, so the step could do nothing and it
+        # would still pass. UNPROVEN is an absence of evidence: the recorder
+        # never observed it beforehand, which says nothing about whether it
+        # would have failed -- a validation message asserted after a bad
+        # submit is unproven and is also one of the strongest checks in the
+        # corpus. Reporting one number made 13% look like 13% junk when the
+        # measured-vacuous count was 1.
+        if n_steps:
+            print(f"  {n_steps} step(s), {n_assert} asserted "
+                  f"({n_assert / n_steps:.0%}); "
+                  f"{n_hollow} HOLLOW (measured: could pass doing nothing), "
+                  f"{n_unev} with no witness either way")
         return 0 if not bad else 1
 
     # THE PLAYWRIGHT GATE BELONGS BELOW --check-only, NOT ABOVE IT. It used to

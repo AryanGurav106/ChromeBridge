@@ -668,6 +668,41 @@ def main() -> int:
     _tr = read("tools/README.md")
     _documented = set(re.findall(r"^\| `([a-z_0-9]+)` \|", _tr, re.M))
     _undoc = sorted(_suites - _documented)
+
+    # ---- C47: docs/README.md ROUTES TO EVERY RESEARCH PAPER. Same class as
+    # C28 one directory over, and it had already drifted further: 9 of 16
+    # papers under docs/research/ had no row at all, so a reader hardening
+    # record/replay was routed to FLOWS-CONCEPTUAL-BREAKS and never to
+    # FLOW-FRAGILITY or FLOW-UNBREAKABLE, which are the two that rank the
+    # failure modes and measure the ordinal witness. docs/README.md itself
+    # calls research/ "one file per investigation" and the brief asks for
+    # hierarchical documentation, so a paper nothing points at is a paper
+    # nobody finds. Discovered from the FILESYSTEM, never from a list here,
+    # for the same reason C28 is: a restated inventory is the thing that
+    # drifts (PRINCIPLES 17).
+    _papers = {f.name for f in (_Path(ROOT) / "docs" / "research").glob("*.md")}
+    _docidx = read("docs/README.md")
+    _routed = set(re.findall(r"research/([A-Za-z0-9\-\.]+\.md)", _docidx))
+    _unrouted = sorted(_papers - _routed)
+    # The firing demonstration. A completeness check whose "0 findings" has
+    # never been shown to be reachable asserts that nothing is wrong while
+    # being unable to say otherwise (PRINCIPLES 15, and #21's rule for
+    # audit_patterns.py). Planting a name that cannot be in the index proves
+    # the set difference is what decides it.
+    _c47_fires = bool({"ZZ-PLANTED-NOT-IN-INDEX.md"} - _routed)
+
+    # ---- C47c: THE "MOST RECENT WORK" POINTER NAMES THE MOST RECENT WORK.
+    # That row read #76-#85 while the log ran to #94, so a new reader was
+    # routed to a nine-entry-old view of the project by the one row whose
+    # entire job is to be current. Found by hand in the same file as the nine
+    # unrouted papers above -- two drift instances in one document, which is
+    # what earns a check rather than another resolution to remember. Decidable:
+    # the row claims to be the latest, so it must name the highest entry.
+    _entries = [int(m) for m in re.findall(r"^(\d+)\.", read("CLAUDE.md"), re.M)]
+    _head = max(_entries) if _entries else 0
+    _catchup = next((l for l in _docidx.splitlines()
+                     if l.startswith("| catching up on the most recent work")), "")
+    _names_head = bool(_catchup) and str(_head) in _catchup
     # ---- C29: NO PRIVATE ORIGIN IN A TRACKED FILE. The flow files recorded
     # against a private staging app are excluded from git on purpose, and the
     # EVAL RESULTS table carried its hostname anyway — three rows of it, in a
@@ -770,6 +805,23 @@ def main() -> int:
           not _undoc,
           f"UNDOCUMENTED: {', '.join(_undoc)}" if _undoc
           else f"{len(_suites)} suites, all documented")
+
+    check("C47 docs/README.md routes to every paper in docs/research/",
+          not _unrouted,
+          f"UNROUTED: {', '.join(_unrouted)}" if _unrouted
+          else f"{len(_papers)} papers, all routed")
+
+    check("C47b the route check FIRES on a paper the index does not name "
+          "(a completeness check that cannot fire also asserts nothing is wrong)",
+          _c47_fires,
+          "planted name reported as unrouted" if _c47_fires
+          else "PLANTED NAME WENT UNREPORTED — the set difference is not deciding this")
+
+    check("C47c docs/README.md's catch-up row names the newest CLAUDE.md entry",
+          _names_head,
+          f"row does not mention #{_head}" if _catchup and not _names_head
+          else ("catch-up row not found in docs/README.md" if not _catchup
+                else f"names #{_head}"))
 
     check("C11 every function injected via runInTab is self-contained "
           "(executeScript stringifies only that function)",

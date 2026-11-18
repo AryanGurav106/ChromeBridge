@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1577 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1580 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1577 checks, ~153s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1580 checks, ~153s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -9571,6 +9571,125 @@ granted in the side panel is refused with the same message the agent gets.
     TOP-DOCUMENT selector, so a scoped search stays in the top document.
     Extending it into frames would silently widen a scope the caller chose.
 
+
+95. **THE LAST OPEN ITEM IN THE DOM REPRESENTATION CLOSED AS A MEASURED
+    DON'T BUILD — the shape is COMMON, the gap is ZERO, and the reason is
+    architectural.** `docs/OPEN.md` item 7 said a cross-origin consent sheet
+    raises no MODAL banner, because `collectCrossFrames` runs AFTER the banner
+    is built. Nine constructed fixtures proved the correctness gap. What was
+    never known is FREQUENCY, and the item said why: the frozen corpus reports
+    **0 of 128 frames** declaring a page-level trigger because its HARs were
+    captured AFTER consent was given. That zero is real for that corpus and says
+    nothing about the web. So the item carried its own instruction — **do not
+    build on this evidence** — and the close condition was a live pass, not a
+    fix. `tools/audit_cmp_frames.py`, `docs/research/CMP-FRAMES-2026-11.md`.
+
+    | | |
+    |---|---|
+    | candidates / **measured** | 203 / **143** |
+    | UNMEASURED, each NAMED (bot wall, nav/gate failure) | 46 + 14 |
+    | **sites with >=1 cross-origin frame** | **95 (66.4%) — 710 frames** |
+    | **frames a page-level scan WOULD fire on** | **0 (0.0%)** |
+    | blocking, of those | **0** |
+    | **CONTROL: sites raising the MODAL banner today** | **37 (25.9%)** |
+    | sites showing a visible sheet at all | 55 (38.5%) |
+
+    Bar fixed before the data was complete: >=5% of sites, or >=20% of
+    sheet-showing sites. Measured **0 of 143, and 0 of 55** conditional on a
+    sheet being shown, so geography is not what produced it.
+
+    **THE MECHANISM IS WHY A ZERO IS WORTH MORE THAN A COUNT HERE.** 18
+    cross-origin frames DO block the page, and **17 of the 18 are wrapped by a
+    `role=dialog aria-modal` container in the TOP document** — Sourcepoint and
+    its white-labelled hosts put the consent CONTENT behind the boundary and the
+    dialog SEMANTICS in front of it. Measured element by element: the top
+    wrapper is 1280x1000, `frac 1.00`, **`innerText` length 0** (its only child
+    is the iframe), while the frame holds 1,774–2,121 characters, 9–14 controls
+    and **zero dialog nodes**. All 17 raise the banner today. The 18th is an
+    empty PerimeterX anti-bot overlay (0 characters, 0 controls), not a sheet.
+    So the page-level scan is blind to the frame and never needed to see it.
+
+    **AND THE RESIDUE POINTS SOMEWHERE ELSE ENTIRELY.** 18 sites show a sheet
+    and get NO banner today, and **every one of them is SAME-ORIGIN** — almost
+    all bottom bars under the modality threshold (`frac` 0.06–0.35). What is
+    actually missing banners is a modality question in the top document, which
+    item 7 would not have touched. A change priced at 0 real banners can only
+    LOSE rows, since every incidental trigger suppresses the listing beneath it
+    (#80 measured exactly that mechanism taking all 150 entry slots).
+
+    **THE FIRING PROOF RAN IN FOUR DIRECTIONS AND WAS RE-RUN BY HAND**, because
+    a zero from a detector nobody has seen fire is worth nothing (PRINCIPLES 5).
+    Four local fixtures on two ports, through the real extension: **P** a
+    cross-origin blocking sheet FIRES, is classified BLOCKING, and **gets no
+    banner — the gap, live**; **N** an ordinary cross-origin frame is SILENT;
+    **I** a corner chat frame fires and is INCIDENTAL, not blocking; and **C**
+    the SAME sheet served SAME-ORIGIN **does** raise the banner, which is the
+    control that the variable really is the boundary rather than the fixture.
+
+    **A PASSING FIRING PROOF DOES NOT ESTABLISH THAT THE PROBE WORKED ON THE RUN
+    THAT PRODUCED THE NUMBERS — that is the new lesson and it is sharper than
+    the rule it extends.** The probe resolved its Playwright handle ONCE PER RUN,
+    and losing that race leaves every MCP-side field healthy — navigate commits,
+    the listing is real, the banner is real — while `page.frames` is empty, which
+    reports as **zero cross-origin frames**, pointing exactly at the conclusion.
+    It poisoned **56 rows**. The selftest could have caught it and did not,
+    because the race is a per-run coin flip the selftest won every time. Caught
+    by the DRIFT CONTROL instead, which is a second full run — the one instrument
+    that re-asks the same question on a fresh roll. Fixed by resolving the handle
+    per site against the landing host, and **a handle that is not this page now
+    makes the row UNMEASURED rather than a zero**, which is #77's rule (I could
+    not see is not there is nothing to see) applied to a measurement tool. A
+    second defect in the same probe: `_is_blocking` required `position:fixed` on
+    the iframe and so missed **every real CMP frame**, which is `static`
+    100%x100% inside a `fixed` wrapper.
+
+    **THE DOCS INDEX HAD ROTTED IN TWO PLACES AT ONCE, in the one file whose job
+    is routing a reader to the evidence.** `docs/README.md` routed to **7 of 16**
+    papers under `docs/research/`, so someone hardening record/replay was sent to
+    FLOWS-CONCEPTUAL-BREAKS and never to FLOW-FRAGILITY or FLOW-UNBREAKABLE —
+    the two that rank the failure modes and measure the ordinal witness. And its
+    "catching up on the most recent work" row named **#76–#85 while the log ran
+    to #94**, nine entries stale, in the row whose entire purpose is being
+    current. Two drift instances in one document is what earns a check rather
+    than another resolution to remember (#30's rule, and the same
+    count-is-not-an-inventory shape as #64's tool swap that kept the total at 31
+    and #66's auditor scanning a file that does not exist). **C47** discovers
+    papers from the FILESYSTEM, never a restated list, exactly as C28 does for
+    suites; **C47c** pins the catch-up pointer. **C47 caught the measurement
+    agent on the day it was written**, for the paper above.
+
+    **A STANDING FALSE PARTIAL, AND IT IS THE SAME DEFECT THE PROBE'S OWN COMMENT
+    WARNS ABOUT, ONE PHRASE OVER.** `test_gaps.py` reported *"42 of 42 cell refs
+    are NOT in the listing — compaction lost actionability"* on every run. All 42
+    are present and actionable: `#1 span: 48:"June 1, 2026" 56:"June 8, 2026"`.
+    It filtered to lines carrying the literal `ref:"label"` — a header the
+    CROSS-PARENT fold prints and the POSITIONAL fold does not — so it matched a
+    different fold entirely (the 8x anchors) and found none of the calendar in
+    it. The comment three lines above says *"a check keyed to wording tracks the
+    wording, not the behaviour"*; it had been fixed once for
+    `"cells as mmid:label"` and reintroduced on the next phrase. It asks the
+    property now, in any fold shape, and was ablated to confirm it still reports
+    a real loss (fold removed -> 0 of 42). Gaps reads **0 MISSED, 0 PARTIAL, 48
+    CAPTURED**. A standing false PARTIAL is worse than none: it is #15's noise,
+    and it hides a real one.
+
+    **AND ONE SUMMARY LINE WAS WRITTEN, THEN IMMEDIATELY SPLIT, BECAUSE THE FIRST
+    VERSION CONFLATED TWO OPPOSITE FACTS.** `run_flows --check-only` printed
+    every per-step review line and no total, so *"13% of asserted steps have
+    nothing known to be able to fail"* was computable across 30 files and
+    unstated. The first summary added them together and made 13% read as 13%
+    junk. **HOLLOW is measured** — the check had that value BEFORE the step, so
+    the step could do nothing and still pass. **UNPROVEN is an absence of
+    evidence** — the recorder never observed it beforehand, which says nothing
+    about whether it would have failed, and one of them asserts a validation
+    message after a deliberately bad submit, among the strongest checks in the
+    corpus. Split, the real figures are **120 steps, 83 asserted (69%), and
+    exactly ONE hollow** — on a step whose `url` check does witness it, which is
+    why it is correctly not flagged unevidenced. Same kind-split rule as #70's
+    readiness tiers and #37's `help=` vs `error=`.
+
+    Suites: 1580 checks. New — C47/C47b/C47c (the research index, with the
+    planted-name control that proves the completeness check can fire).
 
 ## Debugging starting points
 
