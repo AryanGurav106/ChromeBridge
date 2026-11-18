@@ -126,6 +126,27 @@ formatting elements, which put one label on several DOM nodes in **137 of 186**
 snapshots. Audited in `CLAUDE.md` #73 and #78; `tools/bench_mind2web.py
 --no-repair` still prints the old 96.0%/173, labelled as what it is.
 
+**And a second number that is not a benchmark at all.** Mind2Web scores whether
+we surface the element a human clicked, on stripped snapshots. The other
+question is whether anything the page actually renders goes MISSING, and that
+one is asked on the live web: **445 sites, 258 of them usable, 74,784 listing
+entries, 2,148 shadow roots and 501 frames walked, 36 languages — and 0
+identities lost.** An identity is lost when a control the page renders, and has
+not declared hidden, reaches no row of its own. Zero on all three definitions,
+zero sites with any loss, zero drop reasons outside the permitted set. Re-run
+again after a 48-commit day, and separately through **four compounding
+interactions** on 30 sites — menus, tabs, disclosures, dialogs — where 248
+controls existed only because of an interaction and none was lost.
+
+Three things that number is not. **187 sites did not render and are counted as
+UNMEASURED, never as passes** — bot walls, consent walls, timeouts — and no
+user-agent spoofing was used to get past any of them, so the corpus skews toward
+pages that let a headless browser in. **The probe is shown firing on a planted
+loss before each run**, because a zero from a detector nobody has seen fire is
+worth nothing. And it measures PRESENCE: an element can reach a row and still be
+hard to ask for by the name printed on it, which is why a separate findability
+measure and a comparison against Chrome's own accessibility tree sit beside it.
+
 ---
 
 ## Install

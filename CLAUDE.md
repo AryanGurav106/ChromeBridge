@@ -10351,6 +10351,46 @@ granted in the side panel is refused with the same message the agent gets.
     in every presence metric and unreachable by the name printed for it — which
     is why `measure_findability` and the AX-tree oracle (#93) exist beside this.
 
+106. **THE GAP I NAMED IN MY OWN EVIDENCE, CLOSED.** #105 ended by saying what
+    its three zeros do NOT cover: `lost_identities` asks whether a rendered
+    control reaches a row of its own, and #74 is the standing proof that an
+    element can pass every presence metric and still be unreachable by the name
+    printed for it — 118 of them, present in all of them, findable by none. The
+    name path is exactly what moved today (the AX-oracle's two one-line fixes
+    and the Hebrew quoting fix), so that was a live regression risk and not a
+    rhetorical caveat.
+
+    `tools/measure_findability.py`, frozen corpus, self-test shown firing first:
+
+    | | baseline (#80) | now |
+    |---|---|---|
+    | strict — reachable by its OWN printed identity | 0.9797 | **0.9807** |
+    | with descendant credit | 0.9996 | **0.9996** |
+    | sites / identities | 84 / 2,661 | 74 / 2,334 |
+
+    **No regression, and the residue is identical down to the element.** 44 of
+    45 misses are rescued by a returned descendant — the label+badge shape #80
+    classified — and **the single strict miss is the same one that entry names**:
+    carbon's `div "All about Carbon What's happening Designing Developing…"`, a
+    container whose name is a page section's worth of concatenated text with
+    every contributor already kept as its own entry. `find` declining to return
+    it confidently is the blanking rule (#34/#35/#74) working, not a defect.
+
+    Fewer sites than the baseline (74 vs 84) because some HARs replay empty —
+    18 of the corpus are named non-deterministic in #16 — so the two runs are
+    not identity-for-identity. The rate is the comparable figure and it moved
+    +0.001, which is inside nothing worth claiming either way.
+
+    **What this pair of numbers now covers, stated so it is not over-read.**
+    #105 says a rendered control reaches a row (0 lost, 258 live sites, 74,784
+    entries). This says the row can be found by what it prints (0.98 strict,
+    0.9996 credited). #93's AX-tree comparison says whether that printed name is
+    the RIGHT one (0.9134 where we claim a name). Three different questions, three
+    rulers, none of which substitutes for another — and together they still do
+    not say "perfect", because no ruler here can ask whether a model would pick
+    the right row when several are plausible (#75 tried and the benchmark
+    substrate defeated it).
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -10385,6 +10425,8 @@ granted in the side panel is refused with the same message the agent gets.
 | Trusted input works exactly ONCE on a tab, then "different extension" errors | Another extension injected an iframe (password manager on a login page). Run `debug_targets` — Chrome refuses CDP attach tab-wide. Untrusted paths still work; see limitation #12 |
 | `read_page` says "(N on screen)" and N looks far too small | A menu/dialog elsewhere is marking the page `aria-hidden`. The listing now says so and names the recovery; if it does not, check `_stateDrops` in `_collectInteractivePage`. Also check the hidden-tab note — some sites defer layout while the tab is in the background (limitation #23) |
 | A scoped read returns zero rows | It now tells you which of the four causes applies (off-viewport, aria-hidden, inert, genuinely empty). If it just says "0 elements" with no reason, the explanation branch was skipped — it lives before the legend's early return |
+| `fill_form` says `NOT DONE: … cannot hold typed text: it is a <button>` | New in #97, and it replaced a SILENT WRONG SUCCESS: fill_form used to type into a popup trigger and report `ok:true` with the value read back, while the field never landed. The element is a custom dropdown — pass the option TEXT and it routes to the picker. If it refuses there too, the page declares no role, no `aria-haspopup` and no `aria-expanded`+`aria-controls`, so nothing says it opens a list; drive it with `computer` (click, then click the option) |
+| A `computer` click takes ~400ms longer than usual, and only sometimes | By design since #101. When the guard is about to say NO EFFECT it waits for Chrome to announce a navigation rather than sampling once — measured, a form submit announces 81–91ms AFTER the op returns, so sampling printed NO EFFECT about clicks that worked. A click that navigated resolves in ~85ms; only a genuinely dead click waits the full cap, which is the case the warning is for |
 | `form_input` says the write did NOT land | It compared the readback to what you sent and they disagree. Rich editors keep a read-only mirror textarea; use `computer` (click, ctrl+a, type). This replaced a false "Success" |
 | The listing is indented / rows are grouped under `main`, `nav`, `form` | By design since #27 — `format` defaults to `"tree"`. Pass `read_page(format="flat")` for the older one-row-per-control listing |
 | A repeated record prints as `N× …, identical siblings — one line per POSITION` | That IS the record: `#1`/`#2`/`#3` are its fields, in document order, every member keeping its own ref |
