@@ -592,7 +592,7 @@ granted in the side panel is refused with the same message the agent gets.
 ## Known limitations / open work
 
 1. **read_page subtree scoping (`ref_id`) IS applied** (this entry used to say it was accepted-then-ignored; that is fixed — `_collectInteractivePage(structured, scopeMmid, detail)` filters by composed-tree ancestry). Host inclusion differs by detail level on purpose: `compact` looks INSIDE a container and excludes the host, `full` describes THAT element and keeps it; the host is also kept when the subtree is otherwise empty, so scoping to a leaf returns the leaf instead of nothing. `depth` is still accepted and unused. **A ref absent from the current document now raises** — mmids are per-document, so a ref carried across a navigation used to drop the scope silently while the server still stamped "[scoped to the subtree of ref_N]" on a WHOLE-PAGE listing. Found live: after a `fill_form` submit navigated to /inventory.html, a read scoped to a previous-page ref returned all 25 elements of the new page under the scoped header. Pinned by L9/L9b.
-2. **Open AND CLOSED shadow DOM, same-origin iframes and cross-origin iframes are all handled** (the closed half since #31 — see the end of this entry; this heading said "only closed shadow roots are not" for five entries after that stopped being true, and the README and EXTENSION_SETUP repeated it until #67) — the collection walk recurses into open `shadowRoot`s (Lit/Shoelace/ytd-*) and same-origin `contentDocument`s (incl. `srcdoc`); actions resolve `[mmid='N']` through `window.__mmidReg`. In-frame elements get TOP-document absolute `box()` coords, `section=iframe`, and `_rectForPage` offsets CDP trusted clicks. CROSS-ORIGIN frames (consent CMPs, embedded checkouts): `collectCrossFrames` injects the collector per-frame via `chrome.scripting frameIds` + `chrome.webNavigation.getAllFrames`, anchors each frame to its shell rect, and appends entries as `[mmid='f<frameId>:<n>']`; `resolveFrameSelector` routes every action op (click/type/dropdown/fill_form-single-frame/trusted with shell-offset CDP coords). NOTE: the cross-origin path uses chrome.* APIs — validated by review + syntax, runtime-verifiable only in the live extension (Playwright can't exercise it). Bare JS-handler divs are tagged by `extension/listener_tag.js` (document_start MAIN-world addEventListener wrap, all_frames). ~~Closed shadow roots still need CDP `pierce`.~~ **STALE — #31 closed this:** `listener_tag.js` wraps `attachShadow` at document_start in MAIN world, so nothing can create a closed root without handing us a reference, and nine traversal sites read `|| el.__abClosedRoot`. No debugger, so it works where CDP `pierce` cannot — #12 refuses the attach tab-wide on exactly the password-manager login pages where a form must be read. Tests: `python tools/test_shadow.py` (S14-S14d included), `python tools/test_gaps.py` (48 checks, 0 MISS).
+2. **Open AND CLOSED shadow DOM, same-origin iframes and cross-origin iframes are all handled** (the closed half since #31 — see the end of this entry; this heading said "only closed shadow roots are not" for five entries after that stopped being true, and the README and EXTENSION_SETUP repeated it until #67) — the collection walk recurses into open `shadowRoot`s (Lit/Shoelace/ytd-*) and same-origin `contentDocument`s (incl. `srcdoc`); actions resolve `[mmid='N']` through `window.__mmidReg`. In-frame elements get TOP-document absolute `box()` coords, `section=iframe`, and `_rectForPage` offsets CDP trusted clicks. CROSS-ORIGIN frames (consent CMPs, embedded checkouts): `collectCrossFrames` injects the collector per-frame via `chrome.scripting frameIds` + `chrome.webNavigation.getAllFrames`, anchors each frame to its shell rect, and appends entries as `[mmid='f<frameId>:<n>']`; `resolveFrameSelector` routes every action op (click/type/dropdown/fill_form-single-frame/trusted with shell-offset CDP coords). NOTE: the cross-origin path uses chrome.* APIs. **This said "Playwright can't exercise it" and that was FALSE** — the claim is about `page.evaluate()` reaching `chrome.*`, not about Playwright, and `tools/run_flows.py` has been launching a real Chrome with the real unpacked extension in CI since #50. `tools/audit_frames_live.py` drives the whole path and found a defect review had not: a cross-origin frame below depth 1 was SILENTLY ABSENT (`parentFrameId === 0`), measured at 3 of 3 controls lost on two scenarios. Fixed in #94. Bare JS-handler divs are tagged by `extension/listener_tag.js` (document_start MAIN-world addEventListener wrap, all_frames). ~~Closed shadow roots still need CDP `pierce`.~~ **STALE — #31 closed this:** `listener_tag.js` wraps `attachShadow` at document_start in MAIN world, so nothing can create a closed root without handing us a reference, and nine traversal sites read `|| el.__abClosedRoot`. No debugger, so it works where CDP `pierce` cannot — #12 refuses the attach tab-wide on exactly the password-manager login pages where a form must be read. Tests: `python tools/test_shadow.py` (S14-S14d included), `python tools/test_gaps.py` (48 checks, 0 MISS).
 3. **Per-tab routing** — every op accepts `tabId` (falls back to the active tab). MCP tabs live in a dedicated "Claude" tab group (`tabs_context_mcp`). True multi-window orchestration (beyond the tab's own window) is not implemented.
 4. **Yellow "is debugging" infobar** — visible as long as `chrome.debugger` is attached (trusted clicks, `computer`, `javascript_tool`). The server detaches on shutdown. Cannot be suppressed.
 5. **Console capture misses browser-generated messages** — CSP violations and network errors don't route through `console.*`; the `listener_tag.js` wrap can't see them. Network failures DO show in `read_network_requests` (onErrorOccurred). Buffers are best-effort (lost on SW eviction / page reload for console).
@@ -9391,6 +9391,91 @@ granted in the side panel is refused with the same message the agent gets.
     said so rather than banking it: 0.6628 vs 0.7370 on the full sample, but
     most of that is composition, and a 34-site run with the corrected code built
     in reverses the sign (0.8150 vs 0.8001) with overlapping intervals.
+
+
+94. **A BELIEF IN FIVE PLACES WAS FALSE, IT STOPPED A CAPABILITY BEING BUILT,
+    AND THE COUNTER-EXAMPLE WAS ALREADY IN THIS REPO.** #2 recorded that the
+    cross-origin frame path is *"runtime-verifiable only in the live extension
+    (Playwright can't exercise it)"*, and `mcp_server.py` used that to decline
+    building a capability outright: *"querying INTO those frames … is
+    deliberately not attempted here."*
+
+    **`tools/run_flows.py` has been launching a real Chrome with the real
+    unpacked extension, a real bridge and the real MCP tools IN CI ON EVERY PUSH
+    since #50.** The claim is about `page.evaluate()` reaching `chrome.*`, not
+    about Playwright, and it had been generalised into a limit. The same belief
+    sits in `CLAUDE.md` #2, `mcp_server.py`, `tools/test_frames.py`,
+    `tools/README.md` (*"No suite requires the live extension"*) and
+    `STAGE-GENERALITY` (whose *"nor the collector can read into one"* is wrong
+    twice over — it has since #2). All five corrected.
+
+    **POINTED AT THE REAL PATH IT FOUND WHAT REVIEW HAD NOT.**
+    `tools/audit_frames_live.py` drives real `chrome.webNavigation.getAllFrames`
+    and real `chrome.scripting.executeScript({frameIds, world:"MAIN"})` against
+    three origins on three local ports:
+
+    | scenario | before | after |
+    |---|---|---|
+    | depth-2 nested | **3 of 3 controls silently lost** | 0 |
+    | cross-origin under same-origin | **3 of 3 silently lost** | 0 |
+    | depth-1, same-origin, late-created, 3 same-host | 0 | 0 |
+
+    `collectCrossFrames` filtered on `parentFrameId === 0`, so a frame below
+    depth 1 was **silently absent — and two messages promise `read_page` reaches
+    it, while on one scenario the notice NAMES THE EXACT FRAME.**
+
+    **MY FIRST FIX MADE IT WORSE, 3 LOSSES BECOMING 4.** A nested frame has no
+    `<iframe>` shell in THIS document to anchor to, so `shell.x` and
+    `shell.title` dereferenced null, threw, and the caller's catch turned a
+    geometry gap into `collectCrossFrames` returning `''` — losing the depth-1
+    frame as well. Geometry is DECLINED now and the row says so, because refs
+    re-measure at click time (#11): an unanchored frame's controls are fully
+    actionable without a box. Caught by re-running the probe, not by reading the
+    patch.
+
+    **AND THE FRAME SERIALIZER HAD #93's QUOTING BUG**, an hour after `_fmtLine`
+    was fixed. It is a FORCED duplicate — `_fmtLine` is nested inside the
+    injected collector and unreachable from the worker — and it had drifted,
+    which is what a forced duplicate does when nothing enforces it.
+
+    **A SELFTEST THAT ASSERTS A DEFECT EXISTS EXPIRES WHEN YOU FIX IT.** The
+    probe's firing proof required those two scenarios to report loss, so the fix
+    turned it red. That is `MEASUREMENT.md`'s A/B-probe-lifetime rule one layer
+    up. They moved to the must-stay-zero side; the frame cap stays on the firing
+    side because it is correct behaviour being ANNOUNCED, and `--lossy` is the
+    second proof (cuts real rows from a listing, clean 0 → mutilated 4).
+
+    **THE GUARD IS NOW IN CI**, which is the durable part: nothing could guard
+    this path before, because of the belief. `audit_frames_live.py --selftest`
+    runs beside the flow replays, with no public internet.
+
+    **HOVER CAME BACK CLEAN**, and the reason it was skipped is not the reason
+    it was unmeasurable: a CSS `:hover` menu declares no state flip, so the
+    PRODUCT must not guess at one (PRINCIPLES 1) — a PROBE may drive one
+    deliberately. 120 out-of-sample sites, 115 usable, **63 reveals on 38 sites,
+    528 controls revealed, 0 own no row, 0 unstamped**, `find` reaching 0.913,
+    no drop reason outside `SPEC_DELETES`. Drift: reveal counts move ~5% while
+    **the identity number is 0 in both passes**, and the single apparent residue
+    did not reproduce and is recorded as noise.
+
+    **THE AGENT'S OWN FIRST PASS REPORTED 98.5% LOSS**, from four ruler bugs
+    that were each a definition RESTATED instead of reused — PRINCIPLES 17, four
+    times, in a report quoting PRINCIPLES 17. Two `box()` definitions made every
+    below-fold control read as "appeared", so it was measuring #6/#26's
+    deliberate viewport scoping; its strict arm omitted mmids the real harvest
+    takes; it compared raw `innerText` against the collector's collapsed
+    AccName; and it had no `aria-hidden`/`inert` exclusion. The tell was
+    arithmetic — the weaker arm losing 7x the stronger one is impossible.
+
+    **Still unfixed, with evidence, and ranked:** a click into a cross-origin
+    frame LANDS and reports `*** NOT DELIVERED ***` (the input probe is armed in
+    the top document, so the frame's events never reach it — the control is a
+    top-document click in the same tab at the same instant reporting correctly);
+    frame rows are unreachable by `find`/`search_page`, and `query_elements`
+    **reported 1 where the DOM holds 2** with its frame notice gated on the
+    zero-match path; the frame serializer drops 21 transferable element facts;
+    and `(REPLACES the whole page)` was written FOR cross-frame rows and cannot
+    appear on one.
 
 
 ## Debugging starting points

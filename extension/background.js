@@ -5409,13 +5409,29 @@ function _frameShellsPage() {
 async function collectCrossFrames(tabId, geometry) {
   let frames = [];
   try { frames = await chrome.webNavigation.getAllFrames({ tabId }) || []; } catch (e) { return ''; }
-  const children = frames.filter(f => f.frameId !== 0 && f.parentFrameId === 0 &&
+  // ANY DEPTH, NOT JUST DEPTH 1. `parentFrameId === 0` kept only frames whose
+  // parent is the top document, so a cross-origin frame nested inside another
+  // frame was SILENTLY ABSENT -- measured at 3 of 3 controls lost on two
+  // scenarios (a depth-2 nest, and cross-origin under same-origin), through the
+  // real extension in a real Chrome. Worse than absent: two messages promise
+  // `read_page` reaches such a frame, and on one scenario the notice NAMES THE
+  // EXACT FRAME it cannot read into.
+  //
+  // A DEEPER FRAME HAS NO SHELL IN THE TOP DOCUMENT -- its <iframe> element
+  // lives inside its parent frame -- so it cannot be anchored, and anchoring is
+  // what the old code required before collecting anything. Geometry is the only
+  // thing that needs the anchor: refs RE-MEASURE at click time (fix #11), so an
+  // unanchored frame's controls are fully actionable without it. Declining the
+  // coordinate is the right trade against dropping the controls.
+  const children = frames.filter(f => f.frameId !== 0 &&
                                        f.url && !f.url.startsWith('about:'));
   if (!children.length) return '';
   let shells = [];
-  try { shells = await runInTab(tabId, _frameShellsPage) || []; } catch (e) { return ''; }
-  if (!shells.length) return '';
+  try { shells = await runInTab(tabId, _frameShellsPage) || []; } catch (e) { shells = []; }
   const shellMap = new Map();
+  // Frames we will collect WITHOUT a box: nested ones, whose shell is not in
+  // this document to be found. See the filter note above.
+  const unanchored = [];
   const used = new Set();
   for (const fr of children) {
     // Anchor the frame to its shell: exact src match first, then unique-host.
@@ -5428,6 +5444,7 @@ async function collectCrossFrames(tabId, geometry) {
       } catch (e) {}
     }
     if (shell) { used.add(shells.indexOf(shell)); shellMap.set(fr.frameId, shell); }
+    else if (fr.parentFrameId !== 0) unanchored.push(fr.frameId);
   }
   // GEOMETRIC FALLBACK: exact-src then unique-host matching both fail when a page
   // embeds SEVERAL same-host frames (Stripe Elements ships card/expiry/CVC as three
@@ -5447,16 +5464,19 @@ async function collectCrossFrames(tabId, geometry) {
     }
     cs.forEach((fr, i) => shellMap.set(fr.frameId, ss[i]));
   }
-  if (!shellMap.size) return '';
+  if (!shellMap.size && !unanchored.length) return '';
   const offsets = new Map();
   let text = '';
-  for (const [fid, shell] of shellMap) {
+  const _todo = [...shellMap.entries(), ...unanchored.map((f) => [f, null])];
+  for (const [fid, shell] of _todo) {
     let raw = null;
     try { raw = await runInTab(tabId, _collectInteractivePage, [true], fid); } catch (e) { continue; }
     if (!Array.isArray(raw) || !raw.length) continue;
-    offsets.set(fid, { x: shell.x, y: shell.y, w: shell.w, h: shell.h, src: shell.src || '' });
+    if (shell) {
+      offsets.set(fid, { x: shell.x, y: shell.y, w: shell.w, h: shell.h, src: shell.src || '' });
+    }
     let host = '';
-    try { host = new URL(shell.src).hostname; } catch (e) {}
+    try { host = new URL(shell ? shell.src : (frames.find((f) => f.frameId === fid) || {}).url).hostname; } catch (e) {}
     const lines = [];
     // PRIORITISE before capping, then say what was cut. The old code did a blind
     // slice(0,40) and printed the kept count as though it were complete — so a TCF
@@ -5477,8 +5497,15 @@ async function collectCrossFrames(tabId, geometry) {
       if (e.value)       id += ` value=${JSON.stringify(e.value)}`;
       if (e.submits)     id += ` submits=${JSON.stringify(e.submits)}`;
       if (e.placeholder) id += ` placeholder=${JSON.stringify(e.placeholder)}`;
-      if (!id && e.text) id = ` "${e.text}"`;
-      if (!id && e.label) id = ` "${e.label}"`;
+      // THROUGH JSON.stringify, the same correction `_fmtLine` took: a label
+      // containing a double quote otherwise produces a row that cannot be
+      // parsed back, and that is an i18n defect (Hebrew writes the gershayim
+      // in an abbreviation as a plain ASCII quote). This serializer is a
+      // FORCED duplicate -- `_fmtLine` is nested inside the injected collector
+      // and unreachable from here -- and it had drifted, which is what a
+      // forced duplicate does when nothing enforces it.
+      if (!id && e.text) id = ` ${JSON.stringify(e.text)}`;
+      if (!id && e.label) id = ` ${JSON.stringify(e.label)}`;
       const flags = (e.active ? ` (${e.active})` : '') + (e.required ? ' (required)' : '') +
                     (e.unselected ? ' (unselected)' : '') + (e.disabled ? ' (disabled)' : '');
       const rl = (e.role && e.role !== e.tag) ? ` role=${e.role}` : '';
@@ -5488,11 +5515,20 @@ async function collectCrossFrames(tabId, geometry) {
       // place (a cross-origin frame) where the agent is already least sure how to
       // address the element. The banner below says "act with ref f<fid>:N"; now
       // the rows agree with it.
-      const _xbox = geometry ? ` | box(${e.x + shell.x},${e.y + shell.y},${e.w},${e.h})` : '';
+      // NO SHELL MEANS NO BOX, NOT NO ROW. A nested frame has no <iframe> in
+      // THIS document to anchor to, so its coordinates are unknowable from
+      // here -- and refs re-measure at click time (#11), so the controls are
+      // actionable without one. The first version of this dereferenced a null
+      // shell here and in the header below, which threw, and the caller's
+      // catch turned a geometry gap into collectCrossFrames returning '' --
+      // losing the depth-1 frame as well. Measured: S3 went from 3 silent
+      // losses to 4.
+      const _xbox = (geometry && shell)
+        ? ` | box(${e.x + shell.x},${e.y + shell.y},${e.w},${e.h})` : '';
       lines.push(`ref_f${fid}:${e.mmid} | ${e.tag}${id}${rl}${flags}${_xbox}`);
     }
     if (lines.length) {
-      text += `\n[CROSS-ORIGIN IFRAME f${fid}${shell.title ? ` "${shell.title}"` : ''}${host ? ` (${host})` : ''} — ` +
+      text += `\n[CROSS-ORIGIN IFRAME f${fid}${(shell && shell.title) ? ` ${JSON.stringify(shell.title)}` : ''}${host ? ` (${host})` : ''}${shell ? '' : ' — NESTED, so its position on the page is not knowable from here and its rows carry no box(); acting BY REF still works, because a ref re-measures at click time'} — ` +
               `${lines.length} of ${raw.length} element(s) shown; act with ref f${fid}:N]\n` + lines.join('\n') +
               (frameHidden > 0
                 ? `\n... +${frameHidden} more element(s) in this frame not shown (capped at ${FRAME_CAP}; ` +

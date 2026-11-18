@@ -131,6 +131,28 @@ jobs:
       - name: Replay with the nav badge moved (the href fallback)
         run: python tools/run_flows.py --playground --local-only --chaos badge
 
+      # THE CROSS-ORIGIN FRAME PATH, WHICH NOTHING COULD GUARD UNTIL #94. It goes
+      # through `chrome.webNavigation.getAllFrames` and
+      # `chrome.scripting.executeScript({frameIds})`, so no injected-function
+      # suite can reach it -- and that was written down as "runtime-verifiable
+      # only in a live extension (Playwright can't exercise it)", which is FALSE
+      # and had stopped a capability being built. The step above has been
+      # launching a real Chrome with the real unpacked extension since #50; the
+      # counter-example was already in this file.
+      #
+      # Pointed at frame fixtures it immediately found a defect review had not:
+      # a cross-origin frame BELOW depth 1 silently absent, 3 of 3 controls lost
+      # on each of two scenarios. This is the guard for that fix. Three real
+      # origins on three local ports, no public internet.
+      #
+      # `--selftest` asserts the shape in BOTH directions: zero silent loss on
+      # the six scenarios that must be clean, and a non-zero count on the frame
+      # cap, which is correct behaviour being ANNOUNCED. `--lossy` is the other
+      # firing proof -- it cuts real rows out of a listing and requires the
+      # metric to report them (measured: clean 0 -> mutilated 4).
+      - name: Cross-origin frames through the real extension
+        run: python tools/audit_frames_live.py --selftest
+
   # ---------------------------------------------------------------------------
   # pyproject.toml claims requires-python = ">=3.10" and advertises 3.10-3.13.
   # Nothing checked that. The unit group imports mcp_server.py and every

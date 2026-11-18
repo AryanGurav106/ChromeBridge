@@ -93,7 +93,7 @@ Without them the group is **skipped with a reason**, not failed — so a
 developer who has not installed Playwright still gets a useful run. CI passes
 `--strict` so that a skip there is a failure.
 
-**No suite requires the live extension or the WebSocket bridge.** The things
+**No suite requires the live extension or the WebSocket bridge.** The things **CORRECTED (#94): `run_flows.py` has required both since #50, and `audit_frames_live.py` now does too — that is how the cross-origin path is exercised at all.**
 that do are the `diag_*` probes, and the pattern for writing one is in
 CLAUDE.md under "Test-harness pattern".
 

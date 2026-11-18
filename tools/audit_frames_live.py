@@ -197,6 +197,33 @@ def build_pages(pA: int, pB: int, pC: int) -> tuple:
 {frame.format(src=B + "/big.html", title="consent frame")}
 </body>""",
 
+        # S8 -- A HOVER MENU, THROUGH THE REAL STACK. It lives here rather than in
+        # audit_hover_stage because that probe calls the collector DIRECTLY from
+        # Playwright and therefore cannot see anything the SERVER adds: the
+        # `(just appeared)` novelty flag (#31) is server-side state seeded per tab,
+        # and a collector-direct harness would report it absent for a reason that
+        # has nothing to do with hovering. This rig drives read_page for real.
+        "/s8.html": """<!DOCTYPE html><meta charset="utf-8"><title>s8 hover menu</title>
+<style>
+  body { font: 14px system-ui; margin: 0; }
+  nav ul { list-style: none; margin: 0; padding: 12px; display: flex; gap: 20px; }
+  .sub { display: none; position: absolute; background: #fff; border: 1px solid #666;
+         padding: 8px; z-index: 9; }
+  li.has:hover .sub { display: block; }
+</style>
+<body><h1>S8 hover menu</h1>
+  <nav><ul>
+    <li class="has" id="root">Products
+      <div class="sub">
+        <a href="/h1">HOVERONLY alpha</a><br>
+        <a href="/h2">HOVERONLY beta</a><br>
+        <button>HOVERONLY gamma</button>
+      </div>
+    </li>
+    <li><a href="/plain">Always visible link</a></li>
+  </ul></nav>
+</body>""",
+
         # Same-origin leaves, served from A.
         "/leaf_same.html": _child("Same-origin leaf", "SAMEORIGIN"),
         "/nest_same.html": f"""<!DOCTYPE html><meta charset="utf-8"><title>same wrapper</title>
@@ -206,7 +233,13 @@ def build_pages(pA: int, pB: int, pC: int) -> tuple:
     }
 
     b_pages = {
-        "/leaf.html": _child("B leaf", "XORIGINB"),
+        # The `target="_top"` link is deliberate. `_fmtLine`'s flag for it reads
+        # "(REPLACES the whole page, destroying THIS FRAME and every F-REF in it)"
+        # and its legend line calls it an "in-frame link" -- both written for
+        # exactly this row, in the formatter cross-origin frame rows never reach.
+        # Measured rather than inferred from the source.
+        "/leaf.html": _child("B leaf", "XORIGINB",
+                             '<a href="/elsewhere" target="_top">XORIGINB escape-hatch</a>'),
         "/leaf2.html": _child("B leaf two", "XORIGINB2"),
         "/leaf3.html": _child("B leaf three", "XORIGINB3"),
         "/nest.html": f"""<!DOCTYPE html><meta charset="utf-8"><title>B nest</title>
@@ -415,6 +448,19 @@ async def run_scenario(rig: Rig, tab: int, name: str, url: str, *, pre_click=Non
     listing = str(await rig.tool("read_page")(tabId=tab))
     row["listing"] = listing
     row["listing_chars"] = len(listing)
+    # CAN THE ONE DIAGNOSTIC THAT EXISTS TO ANSWER "why is this element missing"
+    # ANSWER IT HERE? `read_page(ledger=true)` is that tool. The op router does
+    # `if (params?.ledger) break;` BEFORE the cross-frame append, so a ledger read
+    # never calls collectCrossFrames at all -- measured rather than read off the
+    # source, because #29 records the ledger having a silent exit that made it
+    # unable to explain a same-origin frame.
+    try:
+        led = str(await rig.tool("read_page")(tabId=tab, ledger=True))
+    except Exception as e:
+        led = "ERROR " + str(e)[:80]
+    row["ledger_mentions_frame"] = ("iframe" in led.lower())
+    row["ledger_has_cross_frame_rows"] = ("f" in led and "ref_f" in led)
+    row["ledger_excerpt"] = led[:300].replace("\n", " ")
 
     # Frame inventory straight from Playwright -- the ground truth the extension
     # is being scored against, and the only place depth is knowable.
@@ -439,12 +485,15 @@ async def run_scenario(rig: Rig, tab: int, name: str, url: str, *, pre_click=Non
     row["xorigin_blocks"] = len(announced)
 
     per_frame = []
+    censuses = []
     for f, depth in frames:
         try:
             census = await f.evaluate(FRAME_CENSUS)
         except Exception as e:
             per_frame.append({"url": f.url, "depth": depth, "error": str(e)[:90]})
+            censuses.append([])
             continue
+        censuses.append(census)
         same_origin = f.url.startswith(url.split("/", 3)[0] + "//" + url.split("/", 3)[2])
         # Which f<id> block, if any, carries this frame's rows? Join by the
         # frame's own unique marker, then take that block's id.
@@ -457,39 +506,110 @@ async def run_scenario(rig: Rig, tab: int, name: str, url: str, *, pre_click=Non
                     fid = blk.group(1)
                     break
         sc = score_frame(census, listing, fid if fid else (None if same_origin else "?"))
+        # CAPPED IS NOT THE SAME AS LOST, and conflating them would damn a bound
+        # the system states out loud. `collectCrossFrames` prints "N of M
+        # element(s) shown" plus a truncation note, which is the one bound this
+        # project permits (PRINCIPLES 5: never truncate SILENTLY). Counted
+        # separately so the headline can say which kind of absence this is.
+        capped = 0
+        if fid:
+            m = re.search(r"\[CROSS-ORIGIN IFRAME f" + fid + r"\b[^\]]*?(\d+) of (\d+) element",
+                          listing)
+            if m and int(m.group(1)) < int(m.group(2)):
+                capped = int(m.group(2)) - int(m.group(1))
         per_frame.append({
             "url": f.url, "depth": depth, "same_origin": same_origin,
             "announced_as": fid, "controls": len(census),
             "candidates": sc["candidates"],
             "lenient_lost": len(sc["lenient_lost"]),
             "strict_norow": len(sc["strict_norow"]),
+            "announced_cap": capped,
+            # The number that matters: absent AND nothing said so.
+            "silent_norow": max(0, len(sc["strict_norow"]) - capped),
             "no_mmid": len(sc["no_mmid"]),
             "examples": [c["identity"][:50] for c in sc["strict_norow"][:4]],
         })
     row["per_frame"] = per_frame
+    row["_census"] = censuses
+    row["recovery_claim"] = recovery_claim(row)
     return row
 
 
-async def reachability(rig: Rig, tab: int, needle: str) -> dict:
-    """Can the OTHER tools reach a string the listing plainly printed?
+async def reachability(rig: Rig, tab: int, needle: str, ref: str) -> dict:
+    """Can the OTHER tools reach a row the listing plainly printed?
 
     #74's shape: present in every presence metric, unreachable by the tool that
     reads the listing. Four tools, because they take four different routes --
     `find` and `read_interactive_elements` ask for the STRUCTURED array,
     `query_elements` and `search_page` run their own page-context pass.
+
+    THE TEST IS THE REF, NOT THE NEEDLE, and the first version got this wrong in
+    the flattering direction. `search_page` ECHOES the caller's pattern in its
+    miss message (#42 made it quote the pattern) and `find` echoes the query, so
+    `needle in result` scored three of four tools as REACHING when two of them
+    had plainly answered "no match" -- a false credit of exactly the kind
+    PRINCIPLES 8 exists for, produced by the person writing the probe. A hit
+    emits the REF; an echo cannot.
     """
-    out = {"needle": needle}
-    for tool, kw in (("find", {"query": needle}),
-                     ("search_page", {"pattern": needle}),
-                     ("query_elements", {"selector": "button"}),
-                     ("read_interactive_elements", {})):
+    out = {"needle": needle, "ref": ref}
+    # COUNTING IS THIS TOOL'S PURPOSE, and a partial count is the dangerous case.
+    # `query_elements` has a frame notice -- but it is on the ZERO-match path only,
+    # where the agent is already suspicious. When the top document holds SOME
+    # matches and a cross-origin frame holds more, the tool returns a confident
+    # number that is wrong and says nothing. Measured against DOM truth rather
+    # than asserted: count the selector in every frame via Playwright.
+    truth = 0
+    for f in rig.ctx.pages[-1].frames:
+        try:
+            truth += await f.evaluate("() => document.querySelectorAll('button').length")
+        except Exception:
+            pass
+    try:
+        q = str(await rig.tool("query_elements")(tabId=tab, selector="button"))
+    except Exception as e:
+        q = "ERR " + str(e)[:80]
+    m = re.search(r"(\d+)\s+element\(s\) match", q)
+    out["count_reported"] = int(m.group(1)) if m else None
+    out["count_dom_truth_all_frames"] = truth
+    out["count_is_partial"] = (out["count_reported"] is not None
+                               and out["count_reported"] < truth)
+    out["count_warned_about_frames"] = "DID NOT LOOK INSIDE" in q
+    for tool, kw, hit in (
+            ("find", {"query": needle}, lambda r: ("ref_" + ref) in r),
+            ("search_page", {"pattern": needle}, lambda r: "No match" not in r),
+            ("query_elements", {"selector": "button"}, lambda r: needle in r),
+            ("read_interactive_elements", {}, lambda r: ("ref_" + ref) in r or ref in r)):
         try:
             r = str(await rig.tool(tool)(tabId=tab, **kw))
         except Exception as e:
             r = "ERROR " + str(e)[:90]
-        out[tool] = needle in r
-        out[tool + "_excerpt"] = r[:160].replace("\n", " ")
+        out[tool] = bool(hit(r))
+        out[tool + "_echoed_the_query"] = needle in r      # recorded, never credited
+        out[tool + "_excerpt"] = r[-400:].replace("\n", " ")
     return out
+
+
+def recovery_claim(row: dict) -> dict:
+    """Does the page-text notice promise a recovery that works for THESE frames?
+
+    `_domTextPage` ends its cross-origin notice with "read_page DOES reach them --
+    their refs look like ref_f<frameId>:<n>". That is true at depth 1 and false
+    for every other frame, and PRINCIPLES 6 is explicit that a tool may state a
+    fact and list causes but may not assert a recovery it has not verified.
+    """
+    L = row["listing"]
+    promises = "read_page DOES reach them" in L
+    named = re.findall(r"CROSS-ORIGIN iframe\(s\) on this page whose text is NOT included", L)
+    reached = set(re.findall(r"\[CROSS-ORIGIN IFRAME f(\d+)", L))
+    # Frames the census found with content that owns no row anywhere.
+    unreached = [p for p in row["per_frame"]
+                 if not p.get("same_origin") and p.get("candidates")
+                 and p.get("announced_as") is None]
+    return {"notice_promises_read_page": promises,
+            "notices": len(named),
+            "frames_read_page_reached": len(reached),
+            "frames_with_content_NOT_reached": len(unreached),
+            "promise_is_false_here": bool(promises and unreached)}
 
 
 async def action_routing(rig: Rig, tab: int, listing: str) -> dict:
@@ -505,9 +625,24 @@ async def action_routing(rig: Rig, tab: int, listing: str) -> dict:
         return {"ref": None, "why": "no cross-frame button row in the listing"}
     ref = m.group(1)
     res = {"ref": ref}
+    # THE CONTROL, and without it this measures the harness rather than the code.
+    # A headless browser, a background tab or a dead input channel (#56) would
+    # make EVERY click report NOT DELIVERED, in which case a cross-frame click
+    # reporting it says nothing about frames. So a TOP-DOCUMENT button is clicked
+    # first, under identical conditions, and its verdict is recorded beside.
+    top = re.search(r"ref_(\d+) \| button", listing)
+    if top:
+        try:
+            rt = str(await rig.tool("computer")(action="left_click", ref=top.group(1), tabId=tab))
+        except Exception as e:
+            rt = "ERROR " + str(e)[:80]
+        res["control_top_ref"] = top.group(1)
+        res["control_says_not_delivered"] = "NOT DELIVERED" in rt
+        res["control_excerpt"] = rt[:150].replace("\n", " ")
     try:
-        r = await rig.tool("computer")(action="left_click", ref=ref, tabId=tab)
-        res["click_result"] = str(r)[:200].replace("\n", " ")
+        r = str(await rig.tool("computer")(action="left_click", ref=ref, tabId=tab))
+        res["click_result"] = r[:260].replace("\n", " ")
+        res["says_not_delivered"] = "NOT DELIVERED" in r
     except Exception as e:
         res["click_error"] = str(e)[:140]
     # Did the FRAME receive it? Asked of the page, not of the tool's own report --
@@ -539,16 +674,113 @@ actual string."""
 
 
 def lossy(row: dict) -> dict:
-    """Delete the cross-frame block from a real listing; the strict arm must rise."""
+    """Delete the cross-frame block from a REAL listing; the strict arm must rise.
+
+    The census is held fixed and only the haystack is mutilated, so a rise can
+    only come from the metric noticing the rows are gone."""
     listing = row["listing"]
-    clean = {"lenient": 0, "strict": 0}
-    mutilated = {"lenient": 0, "strict": 0}
-    for pf in row["per_frame"]:
-        clean["lenient"] += pf.get("lenient_lost", 0)
-        clean["strict"] += pf.get("strict_norow", 0)
     cut = re.sub(r"\[CROSS-ORIGIN IFRAME f\d+[^\]]*\]\n(?:ref_f\d+:.*\n?)*", "", listing)
-    return {"clean": clean, "cut_chars": len(listing) - len(cut),
-            "note": LOSSY_NOTE, "mutilated_listing": cut}
+    clean = {"lenient": sum(p.get("lenient_lost", 0) for p in row["per_frame"]),
+             "strict": sum(p.get("strict_norow", 0) for p in row["per_frame"])}
+    mut = {"lenient": 0, "strict": 0}
+    for pf, cen in zip(row["per_frame"], row.get("_census", [])):
+        sc = score_frame(cen, cut, pf.get("announced_as"))
+        mut["lenient"] += len(sc["lenient_lost"])
+        mut["strict"] += len(sc["strict_norow"])
+    return {"clean": clean, "mutilated": mut, "cut_chars": len(listing) - len(cut),
+            "fired": mut["strict"] > clean["strict"] and mut["lenient"] > clean["lenient"],
+            "note": LOSSY_NOTE}
+
+
+async def hover_through_server(rig: Rig, tab: int, url: str) -> dict:
+    """A CSS :hover menu, read through the REAL read_page.
+
+    Three questions a collector-direct probe cannot answer, because all three are
+    produced by the server or by per-tab state the server keeps:
+      * do the revealed rows appear at all, through the whole pipeline;
+      * are they flagged `(just appeared)` (#31's novelty flag, seeded per tab
+        from the mmid registry on UNSCOPED reads) -- i.e. is the agent TOLD the
+        menu opened, or does it have to diff two listings itself;
+      * does a non-modal hover popover raise the MODAL banner (#51's class).
+    The baseline read is taken FIRST so the novelty seen-set exists; without it
+    nothing is ever marked new and the answer would be "no flag" for a reason
+    that has nothing to do with hovering (#31 pins that a first read marks
+    nothing).
+    """
+    await rig.goto(tab, url)
+    pg = rig.page_for("s8.html")
+    out = {"url": url}
+    if pg is None:
+        return {"error": "no page handle"}
+    await pg.wait_for_timeout(500)
+    before = str(await rig.tool("read_page")(tabId=tab))
+    out["before_has_hoveronly"] = "HOVERONLY" in before
+    out["before_modal_banner"] = "MODAL/DIALOG IS CURRENTLY OPEN" in before
+    el = await pg.query_selector("#root")
+    bb = await el.bounding_box()
+    await pg.mouse.move(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+    await pg.wait_for_timeout(120)
+    await pg.mouse.move(bb["x"] + bb["width"] / 2 + 1, bb["y"] + bb["height"] / 2 + 1)
+    await pg.wait_for_timeout(600)
+    # The menu must still be open when the listing is taken, or a zero is a zero
+    # for the wrong reason. Asked of the DOM.
+    out["menu_open_at_read"] = await pg.evaluate(
+        "() => { const s = document.querySelector('.sub');"
+        " return !!s && getComputedStyle(s).display !== 'none'; }")
+    after = str(await rig.tool("read_page")(tabId=tab))
+    out["after_has_hoveronly"] = "HOVERONLY" in after
+    out["revealed_rows"] = len(re.findall(r'"HOVERONLY \w+"', after))
+    out["just_appeared_on_revealed"] = len(
+        [l for l in after.splitlines() if "HOVERONLY" in l and "(just appeared)" in l])
+    out["after_modal_banner"] = "MODAL/DIALOG IS CURRENTLY OPEN" in after
+    out["sample_rows"] = [l.strip() for l in after.splitlines() if "HOVERONLY" in l][:4]
+    # Is a revealed row reachable by the tool whose job is reading the listing?
+    try:
+        f = str(await rig.tool("find")(query="HOVERONLY beta", tabId=tab))
+    except Exception as e:
+        f = "ERR " + str(e)[:80]
+    m = re.search(r"ref_(\d+) \| a \"HOVERONLY beta\"", after)
+    out["find_reaches_revealed"] = bool(m and ("ref_" + m.group(1)) in f)
+    return out
+
+
+def selftest_verdict(scenarios: list) -> dict:
+    """PROVE THE DETECTOR FIRES, on three controls it SHOULD report missing.
+
+    The scenarios are built so the answer is known in advance from the DOM, not
+    from the collector: S3's depth-2 leaf, S4's cross-origin-under-same-origin
+    leaf, and S7's over-the-cap tail all hold rendered, visible, named controls.
+    If this probe reports zero for them, the probe is broken and every zero it
+    prints elsewhere is worthless (PRINCIPLES 15).
+
+    The negative control is S1/S2/S5/S6: the SAME census, the SAME scoring, on
+    frames the collector does reach -- those must come back zero, or the probe
+    is simply reporting loss everywhere and distinguishes nothing.
+    """
+    def tot(name, key):
+        s = next((x for x in scenarios if x["scenario"].startswith(name)), None)
+        return sum(p.get(key, 0) for p in (s or {}).get("per_frame", []))
+
+    # S3 AND S4 MOVED FROM must_fire TO must_stay_zero WHEN THE DEFECT WAS FIXED.
+    # They were the firing proof for A1 -- a cross-origin frame below depth 1
+    # silently absent, 3 of 3 controls lost on each -- and `collectCrossFrames`
+    # now walks any depth, so asserting they still fire would mean asserting the
+    # bug is still there. That is an A/B probe's expiry (MEASUREMENT.md: a probe
+    # whose arms come from the broken state has a LIFETIME), one layer over: a
+    # SELFTEST that asserts a defect EXISTS becomes a failure the moment it is
+    # fixed.
+    #
+    # The firing proof does not disappear with it. S7 still fires on the real
+    # 40-entry cap, which is CORRECT behaviour being announced rather than a
+    # defect, so the probe is still shown able to report a loss -- which is what
+    # makes the zeros below evidence (PRINCIPLES 5). `--lossy` is the other arm.
+    must_fire = {"S7 over the frame cap": tot("S7", "strict_norow")}
+    must_stay_zero = {n: tot(n, "strict_norow")
+                      for n in ("S1", "S2", "S3", "S4", "S5", "S6")}
+    ok = all(v > 0 for v in must_fire.values()) and all(v == 0 for v in must_stay_zero.values())
+    return {"fires_where_it_must": must_fire,
+            "silent_where_it_must_be": must_stay_zero,
+            "PASSED": ok}
 
 
 # --------------------------------------------------------------------------
@@ -575,15 +807,31 @@ async def measure(selftest=False, lossy_run=False, keep=False):
                 ("S5 frame added after a click", "/s5.html", "#add"),
                 ("S6 three same-host frames", "/s6.html", None),
                 ("S7 frame over the 40-cap", "/s7.html", None),
+                ("S8 hover menu (real stack)", "/s8.html", None),
             ]
             for name, path, click in plan:
+                if name.startswith("S8"):
+                    report["hover"] = await hover_through_server(rig, tab, base + "/s8.html")
+                    continue
                 row = await run_scenario(rig, tab, name, base + path, pre_click=click)
                 if name.startswith("S1"):
-                    row["reachability"] = await reachability(rig, tab, "XORIGINB button")
+                    L = row["listing"]
+                    # Does the one notation authored FOR a cross-frame row survive
+                    # the hand-rolled serializer? The element is there; the entry
+                    # field is set by the collector running inside the frame.
+                    row["topnav"] = {
+                        "row_present": bool(re.search(r"ref_f\d+:\d+ \| a[^\n]*escape-hatch", L)),
+                        "flag_on_row": "REPLACES the whole page" in L,
+                        "legend_line": "in-frame link with target" in L,
+                    }
+                    m = re.search(r"ref_(f\d+:\d+) \| button \"XORIGINB button\"", row["listing"])
+                    row["reachability"] = await reachability(
+                        rig, tab, "XORIGINB button", m.group(1) if m else "f?:?")
                     row["action"] = await action_routing(rig, tab, row["listing"])
                     if lossy_run:
                         row["lossy"] = lossy(row)
                 report["scenarios"].append(row)
+            report["selftest"] = selftest_verdict(report["scenarios"]) if selftest else None
             await rig.tool("tabs_close_mcp")(tabId=tab)
     finally:
         for s in (sA, sB, sC):
@@ -599,35 +847,84 @@ def print_report(r: dict):
     print(f"\nbackground.js sha256[:16] = {r['bg_sha']}")
     print(f"origins: A={r['ports']['A']}  B={r['ports']['B']}  C={r['ports']['C']}"
           "   (three ports = three real origins)\n")
-    hdr = f"{'scenario':<34}{'frames':>7}{'blocks':>7}{'cand':>6}{'lenient':>9}{'strict':>8}"
+    hdr = (f"{'scenario':<34}{'frm':>4}{'blk':>4}{'cand':>6}{'lenient':>9}"
+           f"{'strict':>8}{'capped':>8}{'SILENT':>8}")
     print(hdr)
     print("-" * len(hdr))
     for s in r["scenarios"]:
         if s.get("error"):
             print(f"{s['scenario']:<34}  ERROR {s['error']}")
             continue
-        cand = sum(p.get("candidates", 0) for p in s["per_frame"])
-        len_l = sum(p.get("lenient_lost", 0) for p in s["per_frame"])
-        strict = sum(p.get("strict_norow", 0) for p in s["per_frame"])
-        print(f"{s['scenario']:<34}{s['frames_present']:>7}{s['xorigin_blocks']:>7}"
-              f"{cand:>6}{len_l:>9}{strict:>8}")
+        g = lambda k: sum(p.get(k, 0) for p in s["per_frame"])  # noqa: E731
+        print(f"{s['scenario']:<34}{s['frames_present']:>4}{s['xorigin_blocks']:>4}"
+              f"{g('candidates'):>6}{g('lenient_lost'):>9}{g('strict_norow'):>8}"
+              f"{g('announced_cap'):>8}{g('silent_norow'):>8}")
         for pf in s["per_frame"]:
             tag = "same-origin" if pf.get("same_origin") else "CROSS"
-            print(f"    d{pf.get('depth')} {tag:<12} announced=f{pf.get('announced_as')}"
-                  f"  cand={pf.get('candidates')} lenient_lost={pf.get('lenient_lost')}"
-                  f" strict_norow={pf.get('strict_norow')}"
-                  + (f"  e.g. {pf['examples']}" if pf.get("examples") else ""))
+            print(f"    d{pf.get('depth')} {tag:<12} announced="
+                  f"{('f' + pf['announced_as']) if pf.get('announced_as') else 'NO BLOCK'}"
+                  f"  cand={pf.get('candidates')} lenient={pf.get('lenient_lost')}"
+                  f" strict={pf.get('strict_norow')} capped={pf.get('announced_cap')}"
+                  f" SILENT={pf.get('silent_norow')}"
+                  + (f"  e.g. {pf['examples'][:3]}" if pf.get("examples") else ""))
+        rc = s.get("recovery_claim") or {}
+        if rc.get("promise_is_false_here"):
+            print(f"    !! the page-text notice promises \"read_page DOES reach them\" while "
+                  f"{rc['frames_with_content_NOT_reached']} frame(s) with content got no block")
+        if g("silent_norow"):
+            print(f"    !! ledger(ref_f rows present)={s.get('ledger_has_cross_frame_rows')} "
+                  f"— the one diagnostic for \"why is this missing\"")
     s1 = next((s for s in r["scenarios"] if s["scenario"].startswith("S1")), None)
     if s1 and s1.get("reachability"):
-        print("\nREACHABILITY of a row the listing printed "
-              f"({s1['reachability']['needle']!r}):")
+        rr = s1["reachability"]
+        print(f"\nREACHABILITY of the row `ref_{rr['ref']}` the listing printed "
+              f"({rr['needle']!r}):")
         for t in ("find", "search_page", "query_elements", "read_interactive_elements"):
-            print(f"    {t:<28} {'REACHES' if s1['reachability'][t] else 'MISSES'}")
+            echo = "  (result merely ECHOED the query)" if (
+                rr.get(t + "_echoed_the_query") and not rr[t]) else ""
+            print(f"    {t:<28} {'REACHES' if rr[t] else 'MISSES'}{echo}")
+        print(f"\n    COUNTING: query_elements('button') reported "
+              f"{rr.get('count_reported')}, the DOM across all frames holds "
+              f"{rr.get('count_dom_truth_all_frames')} — partial="
+              f"{rr.get('count_is_partial')}, and it warned about frames="
+              f"{rr.get('count_warned_about_frames')}")
     if s1 and s1.get("action"):
         a = s1["action"]
-        print(f"\nACTION ROUTING on {a.get('ref')}: "
-              f"{'LANDED in ' + str(a.get('landed_in_frame')) if a.get('landed') else 'DID NOT LAND'}")
-        print(f"    tool said: {a.get('click_result', a.get('click_error'))}")
+        print(f"\nACTION ROUTING on ref_{a.get('ref')}: "
+              + (f"LANDED in {a.get('landed_in_frame')}" if a.get("landed") else "DID NOT LAND"))
+        print(f"    cross-frame click says NOT DELIVERED: {a.get('says_not_delivered')}")
+        print(f"    CONTROL — top-document click (ref_{a.get('control_top_ref')}) "
+              f"says NOT DELIVERED: {a.get('control_says_not_delivered')}")
+        print(f"    tool said: {str(a.get('click_result', a.get('click_error')))[:230]}")
+    if s1 and s1.get("topnav"):
+        t = s1["topnav"]
+        print(f"\nTOPNAV — a target=\"_top\" link INSIDE the cross-origin frame "
+              f"(its flag text says \"destroying this frame and every f-ref in it\"):")
+        print(f"    the row is listed: {t['row_present']}")
+        print(f"    (REPLACES the whole page) flag on it: {t['flag_on_row']}")
+        print(f"    legend line present: {t['legend_line']}")
+    if s1 and s1.get("lossy"):
+        L = s1["lossy"]
+        print(f"\nLOSSY FIRING PROOF (cut {L['cut_chars']} chars of real cross-frame rows): "
+              f"clean {L['clean']} -> mutilated {L['mutilated']}   "
+              f"{'FIRED' if L['fired'] else 'DID NOT FIRE — the metric is worthless'}")
+    if r.get("hover"):
+        h = r["hover"]
+        print("\nHOVER MENU THROUGH THE REAL STACK (S8):")
+        print(f"    before hover: HOVERONLY present={h.get('before_has_hoveronly')}")
+        print(f"    menu still open when the listing was taken: {h.get('menu_open_at_read')}")
+        print(f"    after hover: rows={h.get('revealed_rows')} "
+              f"(just appeared) on {h.get('just_appeared_on_revealed')} of them")
+        print(f"    MODAL banner raised by the popover: {h.get('after_modal_banner')} "
+              f"(was {h.get('before_modal_banner')} before)")
+        print(f"    find reaches a revealed row: {h.get('find_reaches_revealed')}")
+        for s in h.get("sample_rows", []):
+            print(f"      {s}")
+    if r.get("selftest"):
+        st = r["selftest"]
+        print("\nSELFTEST  fires where it must: " + str(st["fires_where_it_must"]))
+        print("          silent where it must be: " + str(st["silent_where_it_must_be"]))
+        print("          " + ("PASSED" if st["PASSED"] else "FAILED"))
     print(f"\nsaved: {r['_path']}")
 
 

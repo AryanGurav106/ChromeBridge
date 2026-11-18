@@ -68,8 +68,7 @@ cannot be satisfied by a neighbour's text.
 * whether a model then *picks* the right row (#75; that work found the benchmark substrate
   cannot carry the question).
 * anything behind a login, a paywall, or a consent wall we declined to click through.
-* cross-origin iframes: measured by neither arm, because neither this probe nor the collector
-  can read into one.
+* cross-origin iframes: not measured by THIS probe. **The clause that followed here said "nor the collector can read into one", and that was wrong** — `collectCrossFrames` has read into them since #2. Measured in #94 through the real extension: depth-1 frames were fine, and a frame BELOW depth 1 was silently absent until that entry fixed it. See `docs/research/HOVER-AND-FRAMES-2026-11.md`.
 
 ## Method
 

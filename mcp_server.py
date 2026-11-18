@@ -2505,11 +2505,21 @@ async def query_elements(
         # three causes that do not apply. Asked only on the miss path, so a
         # successful query pays nothing (#38).
         #
-        # THIS IS THE NOTICE, NOT THE CAPABILITY. Querying INTO those frames is
-        # the real fix and is deliberately not attempted here: the cross-origin
-        # path goes through chrome.scripting frameIds and is runtime-verifiable
-        # only in a live extension, and this project has already paid for a
-        # batch of fixtured-but-unexercised changes. Recorded as E4-D2.
+        # THIS IS THE NOTICE, NOT THE CAPABILITY, and the reason given for that
+        # was FALSE. It said querying into those frames is "runtime-verifiable
+        # only in a live extension" -- true -- and treated that as a blocker,
+        # which it is not: `tools/run_flows.py` has been launching a real Chrome
+        # with the real unpacked extension, a real bridge and the real MCP tools
+        # IN CI ON EVERY PUSH since #50. The counter-example was already in this
+        # repo. `tools/audit_frames_live.py` now drives the whole cross-origin
+        # path -- real `chrome.webNavigation.getAllFrames`, real
+        # `chrome.scripting.executeScript({frameIds, world:"MAIN"})` -- and
+        # found a defect (a frame below depth 1 silently absent) that no amount
+        # of review had.
+        #
+        # So the capability is NOT blocked on verifiability. It is unbuilt, and
+        # that is now a choice with a reason rather than an assumed limit.
+        # Recorded as E4-D2.
         _frames = 0
         try:
             _fr = await b.call("query_elements", tabId=tabId,
