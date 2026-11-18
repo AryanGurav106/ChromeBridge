@@ -1,0 +1,4 @@
+arm	pass1_calls	pass2_calls	correct	note
+chromebridge	9	5	yes	replay unusable: secret only settable out-of-band; fell back to driving again
+claude-in-chrome	NULL	NULL	n/a	extension never answered; 8 calls all timeouts, 0 productive
+chromebridge-replay	9	1	yes	7/7 steps in 0.56s, zero model calls, with the secret supplied

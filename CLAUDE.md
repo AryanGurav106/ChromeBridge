@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1601 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1603 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1601 checks, ~153s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1603 checks, ~153s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -9917,7 +9917,7 @@ granted in the side panel is refused with the same message the agent gets.
     **Verified by me in both directions, not just by the report.** Shut popover
     + the shown label -> `ok:false` with an honest "no visible options were
     found" (was `ok:true`); open popover + a real option -> `ok:true` and the
-    hidden input commits. Full suite **21/21, 1601 checks, ALL GREEN**, with
+    hidden input commits. Full suite **21/21, 1603 checks, ALL GREEN**, with
     W17/W17b/W17c/W17d/W17e/W17f and OR1-OR4 all still passing.
     `audit_patterns.py` unchanged on every risky category. Zero listing-token
     cost, because the harvest runs only inside `fillDropdown`/`form_input` and
@@ -10040,6 +10040,87 @@ granted in the side panel is refused with the same message the agent gets.
     while deleting #83's tolerance), FD26 (the cross-frame ordinal) and
     FD26b/FD26c (its controls — this is not "refuse anything carrying an `f<n>:`
     ref"). Probes: `tools/audit_atoms_safety.py`, `tools/audit_window_declarations.py`.
+
+100. **THE COMPARISON FINALLY RAN, THE PRE-REGISTERED PREDICTION FAILED, AND ONE
+    ARM NEVER ANSWERED.** Six evals have been blocked on four ungranted public
+    origins. That blocked a PUBLIC-SITE comparison and never blocked this one:
+    both toolsets reach `localhost` — ChromeBridge is granted there and
+    Claude-in-Chrome navigated there earlier in the same session. Reporting it
+    as blocked for hours was my error, not the gate's. `tools/bench_turns/eval13`.
+
+    | arm | pass 1 | pass 2 | correct |
+    |---|---|---|---|
+    | ChromeBridge | 9 calls | 5 calls | yes (`REF-3381`, Wayne Ent) |
+    | Claude-in-Chrome | **NULL** | **NULL** | n/a — never answered |
+    | ChromeBridge, replay with the secret supplied | 9 calls | **1 call, 0.56s** | yes |
+
+    **THE PREDICTION WAS WRITTEN TO BE ABLE TO FAIL AND IT FAILED.** `PREREG.md`
+    said the arm with replay should make pass 2 cheaper, and that if it did not
+    *"that is the finding and it gets reported as the headline, not buried"*. The
+    agent recorded a flow and **could not replay it**: the recorder correctly
+    refuses to write a password into a file meant to be committed and names an
+    environment variable instead, the agent has no shell, `run_flow` refused
+    twice, and the four calls spent on it bought nothing. It finished by driving
+    the task again ref-free in one `browser_batch`. **On that run the headline
+    capability cost four calls and returned nothing.**
+
+    **AND THE OTHER HALF IS ALSO TRUE, which is why only reporting the first
+    would be the mirror of only reporting the second.** Re-run with the secret
+    supplied the way the corrected message now describes: **7/7 steps, four of
+    them asserted, 0.56 seconds, zero model calls** — one tool call where the
+    first pass was nine, which at #38's ~3.6s model turn is the whole of the
+    difference. The capability delivers what it claims **and was undiscoverable
+    from inside a session**. The mechanism was never broken: `mcp_server.py`
+    calls `load_dotenv`, so a `CB_SECRET_…` line in the gitignored `.env` beside
+    `BRIDGE_TOKEN` reaches `secrets.resolve` — verified directly. The refusal
+    said *"export the variable and run it again"*, which is shell advice to a
+    reader with no shell, so the agent concluded the feature was unusable and
+    spent four calls proving it. **I did not repeat its conclusion** — "any flow
+    containing a login is un-replayable from an agent session" is overstated and
+    I tested it before relaying it. Fixed, and pinned by `FS8`, which fails
+    against the old wording; `FS8b` is the control that it still refuses rather
+    than offering to type a blank.
+
+    **ARM B WAS A NULL RUN AND I VERIFIED IT MYSELF.** Eight calls, every one a
+    timeout, zero productive — not a slow arm, no arm. The agent said so plainly
+    rather than offering a number, which is the right call. Reproduced by me:
+    `tabs_context_mcp{createIfEmpty:false}`, which creates nothing and touches no
+    page, timed out. **The decisive control, same browser, same minute:**
+    ChromeBridge's `sw_info` answered in **7.6ms with `recent_timeouts: []`**. So
+    Chrome was awake, the machine was fine, the app was fine, and consent was not
+    involved — ChromeBridge refusals are fast explicit messages, never timeouts.
+    The other extension's service worker was wedged, which nothing on this side
+    can evict while a connection holds it. **n=1, on one evening, and it is NOT
+    offered as a reliability claim** — it is recorded because the control makes
+    the cause unambiguous and because it is why this eval contains no comparison.
+
+    **WHAT THE PAIR YIELDED BESIDES THE NUMBERS.** `NO EFFECT` reproduced on a
+    **form-submit** navigation (POST to `/logout`) where `_navSeq` did not fire,
+    which is a sharper lead than `OPEN.md` 18 had — the earlier sightings were
+    link clicks. A **seventh** independent sighting of the readiness banner
+    firing on settled reads, in the agent's own words *"I ignored it each time
+    and was right to"*; measured since: the strong banner's headline asserts
+    STILL CHANGING at any age while printing a `since` that may be seconds old,
+    and `R-TENSE` only forbids the words "right now". And two messages in the
+    OTHER product that name unreachable recoveries — its timeout advises
+    `get_page_text`, which needs a `tabId`, which only the timing-out tool yields.
+    That is #51's own defect, in someone else's codebase, found by running theirs
+    beside ours.
+
+    **Kept: `flows/acme-top-invoice.flow.json`**, the agent's recording. No
+    plaintext password, 7 steps with 4 asserted, matches the fixture pattern CI
+    can serve, and CI derives its secret automatically — so it is free coverage
+    for sorting and pagination, which no existing flow exercised.
+
+    **A directory I clobbered and restored, said rather than hidden:** I wrote a
+    prereg into `tools/bench_turns/eval12`, which already held a COMPLETED eval
+    with its own VERDICT, overwriting two tracked files. Caught by
+    `git status` immediately, restored with `git checkout --`, and the new eval
+    took the next free number. Nothing was lost; the lesson is that `mkdir -p`
+    on a numbered directory is not evidence the number was free.
+
+    Suites: 1603 checks. New — FS8/FS8b (the refusal names a channel the reader
+    can use, with the still-refuses control).
 
 ## Debugging starting points
 
