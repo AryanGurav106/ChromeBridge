@@ -843,6 +843,15 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/reset":
             with STATE_LOCK:
                 STATE["projects"], STATE["next_id"], STATE["chaos"] = seed_projects(), 5, set()
+                # A RESET THAT LEAVES YOU SIGNED IN IS NOT A RESET. `run_flows`
+                # resets PER FLOW (#61) so each one gets the state it was
+                # recorded against, and the session was the one piece of app
+                # state it did not restore. Found by adding a flow that logs in
+                # and sorts alphabetically BEFORE `live-atoms-resort`, which
+                # records `path: '/'` and was then handed `/projects`, because
+                # `/` redirects when a session survives. The flow's own path
+                # check caught it (#80) -- the fixture was what was wrong.
+                STATE["sessions"].clear()
             return self._send(json.dumps({"ok": True}), ctype="application/json")
 
         form = self._form()

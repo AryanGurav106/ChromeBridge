@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1603 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1604 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1603 checks, ~153s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1604 checks, ~153s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -9917,7 +9917,7 @@ granted in the side panel is refused with the same message the agent gets.
     **Verified by me in both directions, not just by the report.** Shut popover
     + the shown label -> `ok:false` with an honest "no visible options were
     found" (was `ok:true`); open popover + a real option -> `ok:true` and the
-    hidden input commits. Full suite **21/21, 1603 checks, ALL GREEN**, with
+    hidden input commits. Full suite **21/21, 1604 checks, ALL GREEN**, with
     W17/W17b/W17c/W17d/W17e/W17f and OR1-OR4 all still passing.
     `audit_patterns.py` unchanged on every risky category. Zero listing-token
     cost, because the harvest runs only inside `fillDropdown`/`form_input` and
@@ -10121,6 +10121,66 @@ granted in the side panel is refused with the same message the agent gets.
 
     Suites: 1603 checks. New — FS8/FS8b (the refusal names a channel the reader
     can use, with the still-refuses control).
+
+101. **THE GUARD ASKED CHROME A QUESTION WHOSE ANSWER DID NOT EXIST YET —
+    MEASURED AT 81, 89 AND 91ms.** #81 replaced an inference with a fact: *did
+    this tab start a main-frame navigation since the click*, read from Chrome's
+    own `onBeforeNavigate`. That was right, and it **sampled the counter once**,
+    at a moment when the event has not been delivered. A live agent reported the
+    `NO EFFECT` guard and the batch's own navigation tracker contradicting each
+    other inside ONE output, on a **form submit** (POST `/logout`) — every
+    earlier sighting had been a link click, which is why #98 left it open.
+
+    **REPRODUCED AND THEN MEASURED, against the real extension in a throwaway
+    profile** (`audit_frames_live.Rig`, so the owner's stale Chrome did not
+    block it):
+
+    | | |
+    |---|---|
+    | `NO EFFECT` warned | **yes** |
+    | URL at the guard's read | `/projects` |
+    | URL 1.5s later | **`/login`** — the click worked |
+    | navigation observable after the op returned, 3 trials | **81, 89, 91 ms** |
+
+    **SO SUBSCRIBE RATHER THAN SAMPLE.** `awaitNavStart(tabId, baseSeq, cap)`
+    resolves the moment the counter moves, using a start-waiter list `_navStart`
+    already had the information for — `_navWaiters` resolves on SETTLE, which is
+    a different question and far too late. It is awaited on exactly one path:
+    when the guard is about to WARN. A click that navigated resolves in ~85ms; a
+    genuinely dead click — the case the warning exists for, and the one worth
+    being right about — waits the cap. **400ms is ~4x the measured latency and
+    ~11% of one model turn** (#38's ~3.6s). It is a bound on how long a REPORT
+    may be delayed, not a rule about the page, and the measurement it is derived
+    from is in the comment beside it.
+
+    **Live-verified both directions, which is the whole point of having a rig
+    that does not need the owner's browser:** the form-submit navigation no
+    longer warns and does reach `/login`; a genuinely inert button still warns.
+    `ID9e` pins the live ORDERING — the announcement lands AFTER the guard looks
+    — and **fails against the sampling version**, while `ID9`, `ID9b`, `ID9c` and
+    `ID9d` pass in both arms. ID9 itself fires the announcement DURING the
+    readback, so it had only ever tested the half where the counter had already
+    moved.
+
+    **AND KEEPING ONE FLOW BROKE ANOTHER, which the flow's own check caught.**
+    `acme-top-invoice` (#100) logs in and sorts alphabetically BEFORE
+    `live-atoms-resort`, which records `path: '/'` — and `/` redirects to
+    `/projects` while a session survives. The replay failed with `path is
+    '/projects', recorded '/'`, which is #80's path check doing exactly its job.
+    The fixture was what was wrong: `/api/reset` rebuilt projects, counters and
+    chaos flags and **never cleared `sessions`**, so a login survived the
+    per-flow reset that exists (#61) precisely to give each flow the state it was
+    recorded against. **A reset that leaves you signed in is not a reset.**
+    13/13 flows now, with the new one included.
+
+    **Not the CI flake.** `OPEN.md` 18 is `about:blank` after a navigate that
+    PASSED, and it still has one sighting and no local reproduction; this was a
+    different failure with a different message, found because the new flow made
+    it deterministic. Item 18 stays open with its trace.
+
+    Suites: 1604 checks. New — ID9e (the announcement lands after the guard
+    looks; FAILS against the sampling version, with ID9/ID9b/ID9c/ID9d as the
+    four controls that pass in both arms).
 
 ## Debugging starting points
 

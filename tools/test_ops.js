@@ -1492,6 +1492,33 @@ const FIELDS3 = () => ([
       { tabId: 1, action: "left_click", selector: "[mmid='5']" });
     check("ID9d CONTROL: a SUBFRAME navigating does not suppress the token",
       r.ok && /NO EFFECT/.test(String(r.result)), String(r.result).slice(0, 160));
+
+    // ID9e — THE ANNOUNCEMENT LANDS AFTER THE GUARD LOOKS, WHICH IS THE LIVE
+    // ORDERING FOR A FORM SUBMIT. ID9 above fires it DURING the readback, so it
+    // only ever tested the easy half: the counter had already moved by the time
+    // the guard sampled it. MEASURED on the real extension in a throwaway
+    // profile, three trials -- a POST /logout becomes observable 81, 89 and 91ms
+    // AFTER the click op returns, so the guard sampled a fact that did not exist
+    // yet and printed NO EFFECT about a click that worked (URL /projects at the
+    // read, /login 1.5s later). The guard subscribes now, with a bounded cap on
+    // how long a WARNING may be delayed.
+    resetState();
+    setStubs({
+      _computerPoint: () => ({ x: 500, y: 356 }),
+      _hitTestPage: () => null,
+      _rectForPage: () => ({ x: 60, y: 40, w: 20, h: 20, visible: true }),
+      _clickEffectPage: same,
+      _inputProbePage: () => true,          // nothing announced during the readback
+    });
+    // ...it arrives while the guard is waiting, the way Chrome delivers it.
+    setTimeout(() => fire(listeners.navBefore,
+      { tabId: 1, frameId: 0, url: "https://b.test/after-submit" }), 60);
+    r = await callOp("computer",
+      { tabId: 1, action: "left_click", selector: "[mmid='5']" });
+    check("ID9e a navigation announced AFTER the guard samples still suppresses "
+      + "the token — a form submit announces ~85ms late, and sampling once "
+      + "reads a fact that does not exist yet",
+      r.ok && !/NO EFFECT/.test(String(r.result)), String(r.result).slice(0, 160));
   });
 
   await test("await_navigation waits on a FACT, and only while there is one", async () => {

@@ -2290,8 +2290,26 @@ const clickKinds = { left_click: ["left", 1], right_click: ["right", 1], double_
       // version compared `.url` and `.t`, neither of which exists -- so every
       // comparison was undefined === undefined and the branch fired on every
       // delivered click. Checked against the function rather than assumed.
+      // ...AND THE COUNTER IS READ TOO EARLY TO BE A FACT YET. #81 made this
+      // guard ask Chrome instead of inferring, which was right, and sampled the
+      // answer ONCE at a moment when the answer does not exist. MEASURED on the
+      // real extension in a throwaway profile, three trials: a form-submit
+      // navigation (POST /logout) becomes observable **81, 89 and 91ms** after
+      // the click op returns, so `NO EFFECT` was printed about a click that
+      // plainly worked -- reproduced live, URL `/projects` at the guard's read
+      // and `/login` 1.5s later. A live agent hit the same thing and said the
+      // guard and the batch's own navigation tracker contradicted each other
+      // inside one output.
+      //
+      // So SUBSCRIBE rather than sample, and bound how long a WARNING may be
+      // delayed. 400ms is ~4x the measured latency and ~11% of one model turn
+      // (#38's ~3.6s), and it is paid ONLY here: a click that navigated resolves
+      // as soon as the event lands (~85ms), and only a genuinely dead click --
+      // the case this warning exists for, and the one worth being right about --
+      // waits the whole cap. It is a bound on a REPORT, not a rule about the page.
       if (_fxA && _fxA.n === _fxB.n && _fxA.txt === _fxB.txt
-          && (_fxA.st || '') === (_fxB.st || '')) {
+          && (_fxA.st || '') === (_fxB.st || '')
+          && !(await awaitNavStart(t.id, _navSeqB, 400))) {
         _noEffect = ` NO EFFECT: WARNING: the click was delivered and the page did `
           + `not react (URL, element count, text and the element's own state are all `
           + `unchanged). The element may be disabled, covered by an overlay, or wired `
@@ -3269,9 +3287,32 @@ function _navSettle(tabId) {
   for (const f of arr.slice()) { try { f(true); } catch (e) {} }
 }
 
+// Waiters for a navigation START (not a settle). `_navWaiters` resolves when a
+// navigation FINISHES, which is a different question and far too late for the
+// dead-click guard: it only needs to know whether one BEGAN.
+const _navStartWaiters = new Map();   // tabId -> [resolve, ...]
+
+// Resolve TRUE as soon as this tab's navigation counter moves past `baseSeq`,
+// FALSE if the cap passes first. Used on exactly one path -- see the guard in
+// `computerOp` -- so a tab that never navigates pays this once per warning, not
+// once per click.
+function awaitNavStart(tabId, baseSeq, capMs) {
+  if (navSeq(tabId) !== baseSeq) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let done = false;
+    const fire = (v) => { if (done) return; done = true; resolve(v); };
+    const arr = _navStartWaiters.get(tabId) || [];
+    arr.push(fire);
+    _navStartWaiters.set(tabId, arr);
+    setTimeout(() => fire(navSeq(tabId) !== baseSeq), capMs);
+  });
+}
+
 function _navStart(tabId, phase, url) {
   const gen = ++_navGen;
   _navSeq.set(tabId, (_navSeq.get(tabId) || 0) + 1);
+  const _sw = _navStartWaiters.get(tabId);
+  if (_sw) { _navStartWaiters.delete(tabId); for (const f of _sw.slice()) { try { f(true); } catch (e) {} } }
   _navState.set(tabId, { phase, url: url || '', since: Date.now(), gen });
   // A navigation that neither commits nor errors must not pin the tab as busy
   // forever: a stuck entry would make EVERY later wait in every later batch pay
