@@ -8779,6 +8779,50 @@ granted in the side panel is refused with the same message the agent gets.
     fact — all three FAIL against the pre-fix recorder).
 
 
+87. **"SHIPPED" AND "RUNNING" WERE THE SAME WORD FOR THE EXTENSION, AND A GUARD
+    ON AN IRREVERSIBLE ACTION WAS SITTING ON THE WRONG SIDE OF IT.** `sw_info`
+    has reported `server_code_changed_since_start` since #61, because a stale
+    stdio process answers normally and the only symptom is a saved artefact
+    quietly missing a field a newer recorder writes (#59 paid three reconnects
+    learning that, #61 three more). **The extension half had no read at all**,
+    and it is the more expensive of the two: a `/mcp` reconnect fixes a stale
+    server in a second, while a stale service worker needs a hand-reload at
+    `chrome://extensions` and nothing anywhere said so.
+
+    **Measured rather than supposed, and the instance is the worst available
+    one.** The observe→act submit REFUSAL — the guard that stops a trusted
+    click on a declared submit whose identity moved since the read — was
+    committed at **13:22**; the worker running in the user's Chrome had started
+    at **23:33 the previous night**. So it is shipped, fixtured, and was headed
+    `CLOSED` in `OPEN.md`, and it has never executed in a browser. #43's rule is
+    that fixtures encode what you thought of and a live pass is not optional;
+    this turns "have I had one?" from a thing to remember into a read.
+
+    **AN AGE WE CANNOT READ IS UNKNOWN, NEVER CLEAN.** `ageSec` comes from the
+    extension, so it can be absent or junk, and #77's structural root is that
+    *"I could not see"* must never render as *"there is nothing to see"*. The
+    helper returns `None` for that and the caller says UNKNOWN; an empty list
+    would read as a clean bill of health.
+
+    **TWO TRAPS THIS PROJECT HAS ALREADY PAID FOR, avoided deliberately.** The
+    helper sits BEFORE the `@mcp.tool()` decorator — #64 bound that decorator to
+    a helper inserted after it, which removed `sw_info` from the tool surface
+    **while the count stayed at 31**, so the over-the-wire smoke test passed.
+    Verified over the wire again here: 31 tools, `sw_info` present, no helper
+    leaked. And the age is read from BOTH shapes `out` can take, because
+    `sw_info` builds it as `res` itself for a dict result and `{"sw": res}` for
+    a string — reading one spelling finds the age on live traffic and nothing on
+    the other, which is the string-contract class that kept `delta` dead for its
+    whole life (#30) and that #19 names as the untested link. C43e drives the
+    real extraction over all three shapes rather than grepping for it.
+
+    Suites: 1499 checks. New — C43 (a young worker reports nothing — the control
+    that keeps it from being #15's always-on warning), C43b (an old one names
+    the files), C43c (an unreadable age is UNKNOWN), C43d (`sw_info` CALLS it —
+    the helper existing is not the same as it being wired), C43e/C43f (both
+    shapes, and junk yields no age). All fail pre-fix.
+
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -8883,6 +8927,7 @@ granted in the side panel is refused with the same message the agent gets.
 | A flow step reports `matched href=…` | By design since #61 — the recorded name no longer matches and the step resolved on the link's declared destination instead. Deterministic, nothing guessed and nothing asked, but NOT a clean pass: the page's labels moved, and the proposed patch says to what. Recorded only where the href was unique at record time, and only for `<a>`/`<area>` |
 | A flow step that reports `matched href=…` is also SLOW | By design since #61 — the recorded descriptor gets its whole settle window first, because a name that has not RENDERED yet is not a name that CHANGED (#59), and routing around it early proposes a mid-render patch. Measured at 6.58s against 0.4s clean. Only a genuinely drifted step pays it; applying the proposed patch removes it |
 | A recorded flow has no `alt` key on a link target | The MCP server was loaded before #61. It reads `descriptor.py` and `core/flows/*` at CONNECT time, and the old one answers normally while writing a slightly older format — `/mcp` reconnect, then CHECK THE SAVED FILE rather than the live result |
+| An extension change seems to have no effect | `sw_info` answers this since #87: `extension_code_changed_since_worker_start` names every `extension/` file whose mtime is later than the RUNNING worker's start. **A `/mcp` reconnect does NOT fix this** — reload at chrome://extensions. `extension_stale_note: UNKNOWN` means the worker reported no readable age, which is not the same as clean |
 | Server-side edits seem to have no effect | `sw_info` answers this since #61: `server_code_changed_since_start` names every file whose mtime is later than this process's import. Empty means the running server IS the code on disk. The client must reconnect (`/mcp`); nothing else picks it up, and the stale process keeps answering normally, which is what made this cost six reconnects across #59 and #61 |
 | A flow says a step FAILED but the action plainly worked | Fixed in #60 — the postcondition window was a flat 6s and a real app's create -> table-refresh took longer, so the flow reported FAILED for a record that HAD been created. Each step now carries `settle_ms`, measured at record time from the timestamps the recorder already kept, and the replay allows the default PLUS that. A flow recorded before #60 carries 0 and is unchanged |
 | The banner says `THE DOM IS STILL CHANGING` | By design since #70 — the page is actively being rewritten, measured by mutation recency rather than by the network. Every other signal reads ZERO on this case (an SPA painting rows after its one fetch has resolved), which is why it was invisible for so long. The kinds are named because `40 @style` (an ad carousel) and `40 structural` (the table you are reading) are opposite facts |

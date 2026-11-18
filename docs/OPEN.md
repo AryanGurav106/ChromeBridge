@@ -112,7 +112,7 @@ left is one element, and it is the intended behaviour.**
 
 
 
-### 1. The observe→act gap — NOTE and REFUSAL both shipped — CLOSED
+### 1. The observe→act gap — NOTE live, REFUSAL shipped but not yet run in a browser
 > **NOTE half, #84.** A click on a control whose identity moved since the read
 > reports it and acts. Live-verified.
 >
@@ -124,6 +124,16 @@ left is one element, and it is the intended behaviour.**
 > number. `rec` is excluded for a STRUCTURAL reason rather than the noise
 > figure: it is the surrounding record's text, and `fill_form` fills the form
 > before submitting, so refusing on it would refuse on success.
+>
+> **NOT LIVE-VERIFIED, and that is now a READ rather than a thing to remember.**
+> The refusal was committed at 13:22; the service worker running in the user's
+> Chrome started 23:33 the previous night, so this guard is shipped, fixtured,
+> headed CLOSED, and has never executed in a browser. #43's rule is that
+> fixtures encode what you thought of. `sw_info` now reports
+> `extension_code_changed_since_worker_start`, so the next reader does not have
+> to work this out from commit times — and a `/mcp` reconnect does NOT fix it,
+> only a reload at chrome://extensions does. **The NOTE half IS live (#84); the
+> REFUSAL half is pending that reload.**
 >
 > It lives in `clickTrusted` as an opt-in, because the rect it needs is already
 > in hand there. The first attempt took a second `_rectForPage` round trip from
