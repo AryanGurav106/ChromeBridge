@@ -1,36 +1,36 @@
 [
   {
     "id": "S1",
-    "site": "www.timeanddate.com",
-    "start": "https://www.timeanddate.com/",
-    "prompt": "Using the site's date-to-date duration calculator, work out how many days there are from 14 March 2015 to 2 November 2019, with the end date included in the count. Set the start date, the end date and the 'include end date' option yourself in the form, then submit it. Report the number of days.",
-    "steps": 5,
-    "answer": "1695",
-    "onpage": "1695 days",
+    "site": "datatables.net",
+    "start": "https://datatables.net/examples/",
+    "prompt": "From the examples index, open the basic initialisation section and then its 'Zero configuration' example, which shows a table of staff. Set the table to show 25 entries per page, type 'Software Engineer' into its search box, and sort the results by Salary. Tell me the name of the person with the highest salary among those who remain.",
+    "steps": 6,
+    "answer": "Brenden Wagner",
+    "onpage": "Brenden Wagner",
     "repeatable": true,
-    "why": "Needs the calculator reached from the home page, six date selectors plus a checkbox set correctly, and the include-end-date option changes the result by one."
+    "why": "Two levels of navigation, then a select, a text filter and a column sort that all have to be combined, with the answer being a name in the last row or first row depending on sort direction."
   },
   {
     "id": "S2",
-    "site": "www.timeanddate.com",
-    "start": "https://www.timeanddate.com/",
-    "prompt": "Use the site's date calculator (the add/subtract one, not the duration one) to add 1000 days to 1 January 2020. Enter the start date and the number of days into the form and submit it. Tell me which day of the week the resulting date falls on.",
+    "site": "books.toscrape.com",
+    "start": "https://books.toscrape.com/",
+    "prompt": "In the Mystery category, go to the second page of results. Among the books on that page that have a five-star rating, pick the one with the higher price and open its detail page. Report the UPC shown in the product information table.",
     "steps": 5,
-    "answer": "Tuesday",
-    "onpage": "Tuesday, September 27, 2022 (wording and date order vary by locale; the result date is 27 Sep 2022)",
+    "answer": "f06039c29b5891fa",
+    "onpage": "f06039c29b5891fa",
     "repeatable": true,
-    "why": "The agent must tell the add/subtract calculator from the near-identical duration calculator, fill several fields, and read the weekday from a result sentence."
+    "why": "Category sidebar, pagination, a comparison across listing cards where rating is shown only as a star icon, then a detail page with a key-value table."
   },
   {
     "id": "S3",
-    "site": "www.timeanddate.com",
-    "start": "https://www.timeanddate.com/sun/",
-    "prompt": "Find the sunrise time in Reykjavik, Iceland on 21 June 2019. Use the site's sun calculator section: search for the city, then choose June 2019 in the month and year selectors and read the row for the 21st. Give me the sunrise time as shown.",
-    "steps": 5,
-    "answer": "02:55",
-    "onpage": "02:55",
+    "site": "www.scrapethissite.com",
+    "start": "https://www.scrapethissite.com/",
+    "prompt": "Open the Sandbox, then the 'Oscar Winning Films' page. Load the film list for 2010 and then for 2013 using the year links. Looking at both years, which single film won the most awards (the 'Awards' column)? Give its title.",
+    "steps": 6,
+    "answer": "Gravity",
+    "onpage": "Gravity",
     "repeatable": true,
-    "why": "Requires a city search, picking a past month and year from dropdowns, and reading one cell of a dense daily table among many numeric columns (sunrise vs sunset vs day length)."
+    "why": "Two levels of navigation, then AJAX-loaded tables swapped by year links, requiring the agent to wait for content and compare a numeric column across two separate loads."
   },
   {
     "id": "S4",

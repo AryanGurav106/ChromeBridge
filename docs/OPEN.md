@@ -112,56 +112,24 @@ left is one element, and it is the intended behaviour.**
 
 
 
-### 1. The observe→act gap — NOTE shipped, REFUSAL measured and parked `MEASURE DONE`
-> **The NOTE half shipped in #84** and is live-verified: a click on a control
-> whose identity moved since the read reports it and acts. **The REFUSAL half
-> on declared submits is now MEASURED** (`tools/audit_stale_refusal.py`, 92
-> frozen sites, 35,750 controls, a real 3.6s model turn):
+### 1. The observe→act gap — NOTE and REFUSAL both shipped — CLOSED
+> **NOTE half, #84.** A click on a control whose identity moved since the read
+> reports it and acts. Live-verified.
 >
-> | | rate |
-> |---|---|
-> | all controls, any field | 1.491% |
-> | all controls, IDENTITY only (tag/role/name/disabled/href) | **0.081%** |
-> | DECLARED SUBMITS, any field | **0 of 54** (rule-of-three bound ~5.6%) |
+> **REFUSAL half, now shipped.** Measured first
+> (`tools/audit_stale_refusal.py`, 92 frozen sites, 35,750 controls, a real
+> 3.6s model turn): all controls move on ANY field at 1.491%, on IDENTITY alone
+> at **0.081%**, and DECLARED SUBMITS at **0 of 54** — which tightens the bound
+> from ~30% to ~5.6% and is why #84 was right to hold it until there was a
+> number. `rec` is excluded for a STRUCTURAL reason rather than the noise
+> figure: it is the surrounding record's text, and `fill_form` fills the form
+> before submitting, so refusing on it would refuse on success.
 >
-> That is 18x quieter on identity alone, and it makes the design structural
-> rather than tuned: `rec` is the surrounding record's text, and `fill_form`
-> FILLS the form before submitting, so refusing on it would refuse on the tool
-> working correctly.
->
-> **NOT LANDED.** The implementation is written and one fixture would not go
-> green: in `test_ops.js`'s mocked `fill_form`, the pre-check's
-> `ritFF(_rectForPage, [submit_mmid])` neither throws nor reaches the stub
-> (the stub records 2 calls, both attributable to `clickTrusted`), so the
-> guard's branch never fires and the submit proceeds. Forcing the branch
-> crashes the *unstubbed* happy-path test at the same line, which proves the
-> line executes there. Those two observations have not been reconciled and the
-> work was reverted rather than left half-shipped on an irreversible action.
-> The WIP copy is `docs/wip/wip_guard_bg.js`.
->
-> **Next step is NOT more debugging of the mock.** Read the `observed` that
-> `clickTrusted` already computes and returns, instead of taking a second
-> `_rectForPage` round trip — cheaper, and it removes the call that is
-> behaving differently under the harness.
-We re-measure refs at click time but never compare what is there **now** against
-what was **observed**. The model turn in between is ~3.6s (#38), which is the
-whole exposure window.
-
-Evidence: [arXiv:2603.00476](https://arxiv.org/abs/2603.00476) — **all 10
-evaluated browser agents vulnerable, 100% trigger ratio**, prompt-only
-mitigation gave no improvement; a MutationObserver (into shadow roots and
-same-origin iframes) **plus a ResizeObserver**, checked immediately before
-execution, gives **0% trigger at <0.05s**.
-[arXiv:2610.39282](https://arxiv.org/abs/2610.39282) measures stale clicks at
-**0.4% on a settled page vs 17% at DOM-ready**, and its break-even formula puts
-the worthwhile-check threshold at **≈1.2% for an irreversible action** — i.e.
-`fill_form(submit=True)`.
-
-What we have: #51's `page_fingerprint` ref-resolution check is the machinery.
-What we lack: a **ResizeObserver** (an overlay that shifts a box without
-touching the DOM is invisible to a ref check, and `(occluded/blocked)` is
-computed at listing time, not action time), and observation **through** the
-model turn rather than at step boundaries.
+> It lives in `clickTrusted` as an opt-in, because the rect it needs is already
+> in hand there. The first attempt took a second `_rectForPage` round trip from
+> `fill_form` and could not be made to fire under the mock; moving it is both
+> cheaper and the thing that works. The only caller that opts in is the submit.
+> SB1 fails against the pre-fix code; SB2 and SB3 pass in both arms.
 
 ### 2. 52.6% of ordinal-bearing descriptors cannot be witnessed `MEASURED CANDIDATE`
 > **Re-measured in #83 on 39 sites against #72's 24.** The unwitnessed share is

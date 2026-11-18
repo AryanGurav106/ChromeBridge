@@ -1375,7 +1375,8 @@ async function ensureInputReady(tabId) {
   return { focusOk: _focusOk, lifecycleOk: _lifecycleOk, err: _lastErr };
 }
 
-async function clickTrusted(tabId, selector, frameIdOverride = null) {
+async function clickTrusted(tabId, selector, frameIdOverride = null,
+                            refuseOnIdentityDrift = false) {
   // ATTACH FIRST, then measure. Chrome's "extension is debugging this browser"
   // infobar appears on attach and PUSHES THE PAGE CONTENT DOWN by ~32px.
   // If we read getBoundingClientRect before the bar appears, coordinates are
@@ -1392,6 +1393,45 @@ async function clickTrusted(tabId, selector, frameIdOverride = null) {
   const rect = await runInTab(tabId, _rectForPage, [rt.selector], rt.frameId);
   if (!rect) return { ok: false, msg: `Element ${selector} not found.` };
   if (!rect.visible) return { ok: false, msg: `Element ${selector} is not visible.` };
+  // THE ONE PLACE A REFUSAL IS WORTH A TURN, and it reuses the rect that is
+  // already in hand rather than taking a second round trip for it.
+  //
+  // #84 shipped the observe-to-act guard as a NOTE everywhere and HELD the
+  // refusal, because the only number for the population a refusal would gate --
+  // controls the DOCUMENT declares as submits -- was 0 diffs of 10, which the
+  // rule of three bounds at ~30%. Measured since (tools/audit_stale_refusal.py,
+  // 92 frozen sites, 35,750 controls, a real 3.6s model turn, #38):
+  //
+  //    ALL controls, any field        1.491%
+  //    ALL controls, IDENTITY only    0.081%     <- 18x quieter
+  //    DECLARED SUBMITS, any field    0 of 54    (bound ~5.6%)
+  //
+  // IDENTITY ONLY, AND THE REASON IS STRUCTURAL RATHER THAN THE NOISE FIGURE.
+  // `rec` is the surrounding record's text, and `fill_form` FILLS THE FORM and
+  // then submits it -- so by the time this runs the record's text has
+  // necessarily changed, by the tool's own correct operation. Refusing on it
+  // would refuse on success. The control's own identity has no such excuse: if
+  // the button about to be pressed is not the button that was read, that is the
+  // #10/#11/#12 family and a submit cannot be taken back.
+  //
+  // OPT-IN, so every ordinary click keeps the note and acts (#84). Only the
+  // caller that knows the action is irreversible asks for this.
+  if (refuseOnIdentityDrift && rect.observed) {
+    const drift = Object.keys(rect.observed).filter((k) => k !== 'rec');
+    if (drift.length) {
+      const q = (v) => (v === true ? 'yes' : v === false ? 'no' : JSON.stringify(String(v)));
+      const was = drift.map((k) =>
+        `${k === 'dis' ? 'disabled' : k} ${q(rect.observed[k][0])} -> ${q(rect.observed[k][1])}`
+      ).join('; ');
+      // STATES THE FACT, NAMES NO CAUSE (PRINCIPLE 6): a re-render, a live
+      // counter and the control having been swapped all look like this.
+      return { ok: false, identityDrift: true, msg:
+        `REFUSED: the control you named is not the control you read — ${was}. `
+        + `NOTHING was clicked. Re-read and act on the ref you see now. This `
+        + `check runs only where the action cannot be taken back; an ordinary `
+        + `click reports the same change and proceeds.` };
+    }
+  }
   if (rect.blockedBy) {
     return { ok: false, msg:
       `Element ${selector} is COVERED by ${rect.blockedBy} — did not click. Something is on top of ` +
@@ -16069,7 +16109,13 @@ async function handleOp({ id, op, params }) {
           const doSubmit = async (trusted) => {
             if (!trusted) return await ritFF(_clickPage, [submit_mmid]);
             try {
-              return await clickTrusted(t.id, submit_mmid, ffFrame);
+              // THE IRREVERSIBLE ONE. A submit is the action this project's own
+              // break-even formula names (arXiv:2610.39282 puts the
+              // worthwhile-check threshold at ~1.2% there), so it is the single
+              // caller that asks clickTrusted to REFUSE rather than report when
+              // the control's identity has moved since the agent read it.
+              // Measured at 0 of 54 declared submits over a real model turn.
+              return await clickTrusted(t.id, submit_mmid, ffFrame, true);
             } catch (e) {
               const em = String((e && e.message) || e);
               if (!/Trusted input is unavailable|different extension/i.test(em)) throw e;

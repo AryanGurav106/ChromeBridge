@@ -366,9 +366,22 @@ vm.runInContext(`
     netBuf: _netBuf,
     netOrigin: _netOrigin,
     setMcpGroup: (v) => { _mcpGroupId = v; },
+    // Reached directly so the submit refusal can be tested where it LIVES,
+    // instead of through the whole fill_form pipeline. The first attempt went
+    // through fill_form and the branch could not be made to fire under the
+    // mock; the behaviour under test is clickTrusted's, so this drives that.
+    clickTrusted: (tabId, sel, frame, refuse) => clickTrusted(tabId, sel, frame, refuse),
+    // ensureInputReady remembers which tabs it has already prepared, so a
+    // test that drives a trusted click leaves the NEXT test's focus-emulation
+    // short-circuited and its ordering check reads focusEmu at -1. Found by
+    // adding the first such test: module state outlives resetState unless
+    // resetState is told about it. (No backticks in this comment: it sits
+    // inside a template literal and one would end it.)
+    inputReady: _inputReady,
   };
 `, sandbox, { filename: "test_ops_exporter.js" });
 const priv = sandbox.__priv;
+const clickTrustedRef = (...a) => priv.clickTrusted(...a);
 
 // Install a connected mock socket so reply() delivers.
 const wsMock = new MockWebSocket("ws://test");
@@ -387,6 +400,7 @@ async function callOp(op, params) {
 function resetState() {
   callLog.length = 0;
   currentStubs = {};
+  try { priv.inputReady.clear(); } catch (e) { /* set up after this is defined */ }
   state.tabs = [{ id: 1, url: "https://app.example/form", title: "Form", windowId: 10, active: true, groupId: -1 }];
   state.windows = { 10: { focused: true, width: 1280, height: 800 } };
   state.groups = new Set();
@@ -438,6 +452,54 @@ const FIELDS3 = () => ([
   });
 
   // ---- 1+2: fill_form happy path (also the fieldKinds-TDZ crash regression guard)
+  // SB1-SB3 — THE ONE REFUSAL, and it lives in `clickTrusted` because the rect
+  // it needs is ALREADY IN HAND there. The first attempt took a second
+  // _rectForPage round trip from fill_form and could not be made to fire under
+  // the mock; reading the rect clickTrusted already computes is both cheaper and
+  // the thing that works.
+  //
+  // Everywhere else the observe-to-act guard reports and acts (#84 held the
+  // refusal on 0-of-10, which the rule of three bounds at ~30%). Measured since
+  // over 92 frozen sites and 35,750 controls across a real 3.6s model turn:
+  // ALL controls move on ANY field at 1.491%, on IDENTITY alone at 0.081%, and
+  // DECLARED SUBMITS at 0 of 54. So the refusal is opt-in, and the only caller
+  // that opts in is the submit.
+  //
+  // `rec` IS EXCLUDED FOR A STRUCTURAL REASON, not because it is noisy: it is
+  // the surrounding record's text, and fill_form FILLS the form before
+  // submitting, so refusing on it would refuse on success.
+  await test("the submit identity refusal", async () => {
+    const rect = (observed) => ({ x: 10, y: 10, w: 40, h: 20, visible: true,
+                                  blockedBy: "", observed, dsx: 0, dsy: 0 });
+    resetState();
+    setStubs({ _rectForPage: () => rect({ name: ["Save", "Delete account"] }),
+               _inputProbePage: () => true });
+    let r = await clickTrustedRef(1, "[mmid='9']", null, true);
+    check("SB1 a trusted click asked to guard an IRREVERSIBLE action REFUSES "
+      + "when the control's identity moved, and clicks nothing",
+      r && r.ok === false && /REFUSED/.test(r.msg)
+      && /"Save" -> "Delete account"/.test(r.msg), JSON.stringify(r).slice(0, 150));
+
+    // THE STRUCTURAL CONTROL: fill_form changes the record's text by filling it.
+    resetState();
+    setStubs({ _rectForPage: () => rect({ rec: [111, 222] }),
+               _inputProbePage: () => true });
+    r = await clickTrustedRef(1, "[mmid='9']", null, true);
+    check("SB2 CONTROL: the surrounding RECORD's text changing does NOT refuse — "
+      + "fill_form just changed it, so that would refuse on success",
+      r && r.ok !== false, JSON.stringify(r).slice(0, 120));
+
+    // AND THE DEFAULT IS UNCHANGED. Without this, turning every click into a
+    // refusal would satisfy SB1 and break every other caller.
+    resetState();
+    setStubs({ _rectForPage: () => rect({ name: ["Save", "Delete account"] }),
+               _inputProbePage: () => true });
+    r = await clickTrustedRef(1, "[mmid='9']", null, false);
+    check("SB3 CONTROL: an ORDINARY trusted click with the same drift still "
+      + "clicks — the refusal is opt-in and only the submit opts in",
+      r && r.ok !== false, JSON.stringify(r).slice(0, 120));
+  });
+
   await test("fill_form happy path", async () => {
     resetState();
     let snapI = 0;
