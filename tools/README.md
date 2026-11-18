@@ -21,7 +21,7 @@ Two kinds of thing live here, and the difference matters:
   --------------------------------------------------
   delta       unit     PASS        3.3s  10/10
   ...
-  21 passed, 0 failed, 0 skipped of 21 suite(s); 1587 checks; 153s
+  21 passed, 0 failed, 0 skipped of 21 suite(s); 1594 checks; 153s
   ALL GREEN
 ```
 
@@ -107,6 +107,8 @@ all three had passed code review before they were measured.
 | probe | self-test | what it proves |
 |---|---|---|
 | `audit_patterns.py` | built in | fires on the three historical pattern bugs in their pre-fix form |
+| `audit_window_declarations.py` | `--fire`, plus `--drift N` | answers two questions nothing else here asks: does ANY declaration separate "row 3 of the rendered WINDOW" from "row 3 of the DATASET" (`aria-setsize`/`aria-rowcount` against rendered peers), and WHAT is the unwitnessable ordinal residue made of. `--fire` plants a positive for every detector AND for every Q2 bucket, with a plain `<ul>` of identical buttons as the negative control that must report 0 windowed. Answer: **1 of 2,531 tied crowds on 1 of 93 sites**, `aria-rowcount` on zero — see `docs/research/FLOW-SILENT-BIND-2026-11.md` §4.3 |
+| `audit_atoms_safety.py` | `--self-test` | the arm `audit_record_witness.py` does not have: **removing the TARGET's record**, where the only correct outcome is a refusal. Seven cases, and three of them are the controls that stop "refuse whenever the crowd changed size" from passing — a re-sort, a DIFFERENT record removed, and a cell edited on an unchanged crowd must all still RESOLVE. It also reports the coverage of the SHIPPED `recordAtoms` (`closest('tr,li,dl,article,figure,fieldset')`), which is not the structural definition `audit_record_witness.py` measured. See `docs/research/FLOW-SILENT-BIND-2026-11.md` |
 | `measure_findability.py --self-test` | `--self-test` | **FAILS against the pre-#74 scorer** and passes against the fix, with a known-miss control (a deliberately blanked app shell) passing in both arms |
 | `audit_opacity.py` | built in | the `probe` arm wraps the gate in a recorder that returns the SAME value, so `probe == base` entry counts prove observing changed nothing; and `ablate − base` must never EXCEED the recorded population, which would mean the recorder missed elements |
 | `audit_frames.py` | `--fixtures`, plus a built-in control | the corpus returns **0 of 128 frames** declaring a page-level trigger; the SAME census over those pages' TOP documents returns 91 dialog nodes on 31 sites, which is what proves the zero is the sample rather than the probe. `--fixtures` builds the shapes the corpus cannot hold (HARs are captured after consent) from two ports, so cross-origin is real |

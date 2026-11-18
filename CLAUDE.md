@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1587 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1594 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1587 checks, ~153s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1594 checks, ~153s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -9829,22 +9829,16 @@ granted in the side panel is refused with the same message the agent gets.
     the same rule, and that rule must be the COLLECTOR's. Shown firing:
     reverting one copy reports `2 distinct rule(s)` and prints both.
 
-    **WHAT THIS FIX DOES AND DOES NOT DO — measured, not assumed.** Driving
-    `_pickOptionPage` against the REAL running widget (Playwright at
-    `127.0.0.1:8787`, logged in, modal opened the way a user opens it) the pick
-    still does not commit: `ok:false`, hidden input `"" -> ""`, and the message
-    is *no option matched "eu-west-1". Visible options are: "Select a region",
-    "⌄"* with `dbg {via: harvest-clickable, found: 2, scope: null}`. Those two
-    "options" are the TRIGGER'S OWN SPANS. So after correctly rejecting the
-    decoy listbox (#29), the harvest never reaches the real `.pop` container —
-    although a genuine click on the trigger DOES open it (`hidden` removed,
-    `display: block`, `aria-expanded: true`).
-    **So the classification fix converts a SILENT WRONG SUCCESS into a LOUD
-    FAILURE, which is the whole direction this codebase chooses, and it does not
-    make the field fillable.** #25 recorded "Ant Design v6 defeats the option
-    picker entirely" and #29 rewrote the picker for it; this says the rc-select
-    shape is still not picked when the trigger declares no role. Handed on with
-    the exact reproduction rather than guessed at.
+    **THE PARAGRAPH THAT STOOD HERE WAS WRONG, AND IT WAS MY MEASUREMENT, NOT
+    THE CODE — see #98.** It reported that the pick "still does not commit on
+    this widget", from driving `_pickOptionPage` directly. **That function does
+    not click**: the opening click is `fillDropdown` step 1 (`_clickPage`), so
+    the probe measured a popover that was still `display:none`, and a container
+    that is not rendered being refused is #29's decoy rule working exactly as
+    specified. Verified by reading the function: zero trigger-click lines in 645.
+    With the widget actually open the pick commits — `ok:true`,
+    hidden input `"" -> "eu-west-1"`. The classifier fix above is sound and the
+    caveat it carried was not.
 
     **NOT LIVE-VERIFIED, and that is a READ rather than a thing to remember.**
     The running service worker predates this edit and `sw_info`'s
@@ -9860,6 +9854,99 @@ granted in the side panel is refused with the same message the agent gets.
     Suites: 1587 checks. New — W17f/W17f2/W17f3 (the role-less popup trigger,
     with the text-input and plain-button controls), C48/C48b (the duplicate rule,
     with the planted-drift demonstration).
+
+98. **I HANDED AN AGENT A DEFECT THAT DID NOT EXIST, AND DISPROVING IT FOUND A
+    WORSE ONE.** #97 closed with "the pick does not commit on this widget",
+    measured by driving `_pickOptionPage` directly against the fixture app.
+    **`_pickOptionPage` does not click.** The opening click is `fillDropdown`
+    step 1 (`_clickPage`), so the probe measured a popover that was still
+    `hidden`/`display:none`/`aria-expanded=false`, and the harvest refusing a
+    container that is not rendered is #29's decoy rule behaving exactly as
+    specified. Confirmed by reading the function rather than by argument: **zero
+    trigger-click lines in 645**. With the widget genuinely open the pick
+    commits (`ok:true`, hidden input `"" -> "eu-west-1"`). Four independent
+    confirmations followed, ending in a LIVE run through the real unpacked
+    extension and real op router in a throwaway profile, where the SERVER
+    recorded `region=sa-east-1` for an override — neither the default nor any
+    pre-existing row, so no ambiguity. #16's rule landing on me: a result that
+    damns the system gets re-derived before it is believed, and I shipped this
+    one into a handoff instead.
+
+    **WHAT IS REAL IS SHARPER AND WORSE: the harvest scrapes the dialog that
+    CONTAINS the trigger.** `_pickOptionPage` already rejects a
+    trigger-containing container in two places (the `aria-controls` scope and
+    the structural candidate pool); the harvest fallback had neither rule, and
+    its container list includes `[role="dialog"]` — and a combobox inside a form
+    dialog is the commonest layout there is. It is the shape #97 was found on.
+    Reproduced by me on SHIPPED code, popover shut:
+
+    | | shipped |
+    |---|---|
+    | two-span trigger | `Visible options are: "Select a region", "⌄"` — the trigger's OWN spans |
+    | one-span trigger | `Visible options are: "Cancel", "Create project"` — **the modal's own buttons**, under *"Pass one of these exactly"* |
+    | ask for the label the trigger is SHOWING | **`ok:true actual:"Select a region"`** while the hidden input stayed `""` |
+    | a chip elsewhere in the dialog matching the text | clicked, `ok:true` |
+
+    That third row is a silent wrong success of #97's exact class, and I
+    reproduced it myself before applying anything. This is #25's worst dropdown
+    failure — "offered the site's own nav bar as the field's options" — landing
+    on a **destructive** control instead of a navigation link, and it fires
+    precisely when the popover failed to open (slow render, trusted input
+    needed, AJAX options), which is when an agent is already in trouble.
+
+    **THE FIX IS THREE CLAUSES, EACH ALREADY STATED ELSEWHERE IN THE FILE.** No
+    framework name, no class name, no `data-*` convention, no pixel threshold:
+    (1) the trigger's own declared state gates the HARVEST — and that clause is
+    byte-equivalent to the gate `_countVisibleOptionsPage` already carries
+    (`if (ex === 'false' || ds === 'closed') return 0;` under the comment "THE
+    TRIGGER'S OWN STATE IS THE GATE"), which I checked rather than took on
+    trust; (2) a row INSIDE the trigger is never one of its options, because
+    activating the trigger is what opens the list, so its contents are its
+    label; (3) rows scraped from a trigger-containing container may still be
+    CLICKED when one matches, but are never ENUMERATED as "the options" —
+    "Pass one of these exactly" cannot truthfully be said of the Cancel button.
+
+    **TWO INTERMEDIATE VERSIONS WERE MEASURED WRONG, which is what makes the
+    third clause earn its place.** On a 9-shape matrix: shipped **5/9**; the
+    blunt "reject any trigger-containing container" **7/9** and it REGRESSES two
+    reachable shapes, because an open, role-less, unstacked popover inside a
+    dialog picks today and would stop; clauses 2+3 without 1 introduce a **NEW
+    silent wrong success** (the foreign chip is clicked, `ok:true`); all three
+    **9/9**. Clause 3 is what preserves the capability the blunt rule destroyed.
+
+    **Verified by me in both directions, not just by the report.** Shut popover
+    + the shown label -> `ok:false` with an honest "no visible options were
+    found" (was `ok:true`); open popover + a real option -> `ok:true` and the
+    hidden input commits. Full suite **21/21, 1594 checks, ALL GREEN**, with
+    W17/W17b/W17c/W17d/W17e/W17f and OR1-OR4 all still passing.
+    `audit_patterns.py` unchanged on every risky category. Zero listing-token
+    cost, because the harvest runs only inside `fillDropdown`/`form_input` and
+    `read_page` cannot reach it. Tagged `dup:popupscope` x4 so MC2 holds.
+
+    **AND A RECORDED FLOW WAS BLIND TO THE FIELD #97 BROKE.**
+    `acme-create-project` asserts `table tbody tr count=5` plus a search for the
+    project name, and the server DEFAULTS `region`, so the flow passed green
+    throughout the #97 defect — confirmed by two runs with different regions
+    both passing on identical assertions. That is #68's unevidenced-assertion
+    problem with a consequence attached: the one field the bug destroyed was the
+    one field nothing witnessed.
+
+    **Residual, stated rather than hidden:** a trigger that declares NOTHING
+    about its state, with a shut popover, inside a dialog, still gets its
+    ancestor scraped — but clause 3 means it is never enumerated, so the
+    destructive instruction is gone either way, and such a trigger cannot reach
+    `fillDropdown` at all because `_fieldKindPage` needs a declaration to call
+    it a combobox. Accepted trade: on an open, role-less, unstacked in-dialog
+    popover `sampleOptions` now returns `[]`, so the success message loses its
+    `(other options available: …)` clause — a debug convenience, and it is what
+    stops `(other options available: "Cancel", "Create project")`.
+
+    Suites: 1594 checks. New — W17g–W17g4 (the dialog's controls, the trigger's
+    own label, the shown-label non-pick, the foreign-chip non-click; all four
+    FAIL on shipped) and W17g5/W17g6/W17g7 (the controls: the same widget open
+    still picks, a lying `aria-expanded` with real `role=option` rows still
+    picks, and an open unstacked in-dialog popover still picks — the shape the
+    blunt rule regressed).
 
 ## Debugging starting points
 

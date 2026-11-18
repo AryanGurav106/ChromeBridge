@@ -171,6 +171,10 @@ def resolve_gated_alt(target: dict, entries: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def crowd_id(crowd) -> str:
+    return ",".join(sorted(str(e.get("mmid")) for e in crowd))
+
+
 def crowds_of(entries):
     pool = [e for e in entries if D._targetable(e)]
     groups: dict = {}
@@ -251,44 +255,62 @@ async def run_site(browser, name, url, COLLECT, TAG_JS, rows, cov):
     if not targets:
         return 0
 
+    # The crowds the scored targets belong to, and the ONE member of each that
+    # both drop arms remove. Deterministic (the first member in document
+    # order) so the two arms are comparable and a re-run reproduces.
+    crowd_victims: dict = {}
+    for _mm, _t, _crowd in targets:
+        crowd_victims.setdefault(crowd_id(_crowd),
+                                 [str(e.get("mmid")) for e in _crowd])
+
     for arm in ("base", "drop-target", "drop-other"):
         ctx, page = await load(browser, name, url, TAG_JS)
         if not page:
             continue
         try:
             await page.evaluate(page_js())
-            # The victim set for this arm, applied in ONE pass so every
-            # descriptor is scored against the same mutated document.
+            # COLLECT ONCE BEFORE MUTATING. `window.__mmidReg` is built BY the
+            # collection walk, so a mutation issued before it has no way to
+            # resolve an mmid to a node. The first version of this probe
+            # mutated first: every call returned 'no-node', both drop arms
+            # contributed ZERO rows, and the run reported only `base`. It
+            # failed loudly rather than reporting a flattering zero, which is
+            # the only reason it was caught (#16).
+            await collect(page, COLLECT)
+            # ONE VICTIM PER CROWD, and both drop arms use the SAME one.
+            #
+            # The first version chose a victim PER TARGET, and several targets
+            # share a crowd -- so for target A it dropped B's record and for
+            # target B it dropped A's, and then scored BOTH as `drop-other`
+            # with both records gone. That reported `drop-other` at 53.3%
+            # CORRECT against #83's 96.3%, which is what made it worth
+            # re-deriving (#16): a control arm that quietly contains the
+            # treatment cannot say whether the treatment is safe.
             dropped = {}
             if arm != "base":
-                for mm, t, crowd in targets:
-                    if arm == "drop-target":
-                        key = mm
-                    else:
-                        other = next((str(o.get("mmid")) for o in crowd
-                                      if str(o.get("mmid")) != mm), None)
-                        if other is None:
-                            continue
-                        key = other
-                    if key in dropped:
-                        continue
-                    dropped[key] = await page.evaluate(
-                        "(m)=>window.__as.dropRecord(m)", key)
+                for _cid, members in crowd_victims.items():
+                    v = members[0]
+                    dropped[v] = await page.evaluate(
+                        "(m)=>window.__as.dropRecord(m)", v)
             ents = await collect(page, COLLECT)
         finally:
             await ctx.close()
 
         for mm, t, crowd in targets:
+            cid = crowd_id(crowd)
+            victim = crowd_victims[cid][0]
             if arm == "drop-target":
-                if dropped.get(mm) not in ("record", "element"):
+                if mm != victim:
+                    continue                      # scored on the victim only
+                if dropped.get(victim) not in ("record", "element"):
                     continue                      # mutation did not apply
                 want = None                       # gone: refusal is correct
             elif arm == "drop-other":
-                other = next((str(o.get("mmid")) for o in crowd
-                              if str(o.get("mmid")) != mm), None)
-                if other is None or dropped.get(other) not in ("record", "element"):
+                if mm == victim:
+                    continue                      # that is the other arm
+                if dropped.get(victim) not in ("record", "element"):
                     continue
-                want = mm
+                want = mm                         # intact: must still resolve
             else:
                 want = mm
             rows.append({

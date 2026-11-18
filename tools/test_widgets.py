@@ -855,6 +855,137 @@ async def main():
               f"{_k_plain}")
         await kp.close()
 
+        # ---- W17g: THE HARVEST SCRAPED THE DIALOG THAT HOLDS THE TRIGGER ----
+        # The harvest fallback's container list contains [role="dialog"], and a
+        # combobox inside a form dialog is the commonest layout there is -- it is
+        # the shape #97 was found on. _pickOptionPage already rejects a container
+        # that CONTAINS the trigger in two places (the aria-controls scope, and the
+        # structural candidate pool), and the harvest had neither rule, so whenever
+        # the popover was not open it scraped the enclosing modal.
+        #
+        # Measured on the running fixture app (127.0.0.1:8787, logged in, modal
+        # opened the way a user opens it), calling the shipped _pickOptionPage with
+        # the popover shut:
+        #     Visible options are: "Select a region", "⌄"      <- the TRIGGER'S SPANS
+        # and with a one-child trigger, the biggest sibling group in the dialog is
+        # its footer:
+        #     Visible options are: "Cancel", "Create project"
+        # both under "Pass one of these exactly" -- an instruction that discards the
+        # form. That is #25's worst dropdown failure ("offered the site's own nav
+        # bar as the field's options") landing on a DESTRUCTIVE control.
+        #
+        # Three clauses, each already stated elsewhere in the codebase, and each
+        # measured to earn its place:
+        #  (1) the trigger's own DECLARED state gates the harvest -- the rule
+        #      _countVisibleOptionsPage already applies. Scoped to the harvest, so
+        #      a widget whose aria-expanded lies still picks real role=option rows
+        #      (W17g5).
+        #  (2) a row inside the trigger is never one of its options -- without it,
+        #      asking for the label the trigger is SHOWING matched the trigger's own
+        #      span, clicked it and returned ok:true (W17g3).
+        #  (3) rows scraped from a container that contains the trigger may still be
+        #      CLICKED when one matches, but are never ENUMERATED as "the options".
+        #      Rejecting the container outright was measured as a regression on two
+        #      reachable shapes (W17g6), and clauses 2+3 WITHOUT clause 1 introduced
+        #      a NEW silent wrong success -- clicking a foreign "recently used" chip
+        #      elsewhere in the dialog (W17g7).
+        gp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await gp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+
+        def _dlg(trig_attrs, spans, pop_attrs, pop_style="position:absolute;z-index:40",
+                 extra=""):
+            sp = "".join(f"<span>{s}</span>" for s in spans)
+            return ("<!doctype html><meta charset=utf-8><body style='margin:0'>"
+                    "<div role=dialog style='position:fixed;inset:0;background:#fff'>"
+                    "<h2>New project</h2><div style='position:relative'>"
+                    f"<button id=t data-combo-trigger {trig_attrs} style='cursor:pointer'>{sp}</button>"
+                    "<ul id=decoy role=listbox hidden style='display:none'></ul>"
+                    f"<div class=pop {pop_attrs} style='{pop_style}'>"
+                    "<div style='cursor:pointer;width:120px;height:20px'>eu-west-1</div>"
+                    "<div style='cursor:pointer;width:120px;height:20px'>us-east-1</div>"
+                    f"</div></div>{extra}"
+                    "<div><button style='cursor:pointer'>Cancel</button>"
+                    "<button style='cursor:pointer'>Create project</button></div>"
+                    "</div></body>")
+
+        _EF = 'aria-expanded="false" aria-controls="decoy"'
+        _ET = 'aria-expanded="true" aria-controls="decoy"'
+
+        async def _gpick(html, want, setup=None):
+            await gp.goto("about:blank")
+            await gp.set_content(html)
+            await gp.wait_for_timeout(110)
+            if setup:
+                await gp.evaluate(setup)
+            return await gp.evaluate(
+                "(function(){ " + PICK + "; return _pickOptionPage("
+                + json.dumps(want) + ", '#t'); })()")
+
+        _g1 = await _gpick(_dlg(_EF, ["Select a region"], "hidden"), "eu-west-1")
+        _m1 = _g1.get("msg") or ""
+        check("W17g a shut combobox never offers its enclosing dialog's own "
+              "controls as the field's options",
+              not _g1.get("ok")
+              and not any(w in _m1 for w in ("Cancel", "Create project")),
+              f"msg={_m1[:120]!r}")
+
+        _g2 = await _gpick(_dlg(_EF, ["Select a region", "⌄"], "hidden"), "eu-west-1")
+        _m2 = _g2.get("msg") or ""
+        check("W17g2 ...nor the TRIGGER'S OWN label and chevron",
+              not _g2.get("ok") and "Select a region" not in _m2 and "⌄" not in _m2,
+              f"msg={_m2[:120]!r}")
+
+        _g3 = await _gpick(_dlg(_EF, ["Select a region", "⌄"], "hidden"), "Select a region")
+        check("W17g3 asking for the text the trigger is SHOWING is not reported as "
+              "a pick — the trigger's own span is not one of its options",
+              not _g3.get("ok"),
+              f"ok={_g3.get('ok')} actual={_g3.get('actual')!r}")
+
+        _chip = ("<p>Recently used:</p><div>"
+                 "<span id=chip style='cursor:pointer;width:90px;height:20px;"
+                 "display:inline-block'>eu-west-1</span>"
+                 "<span style='cursor:pointer;width:90px;height:20px;"
+                 "display:inline-block'>ap-south-1</span></div>")
+        _g7 = await _gpick(_dlg(_EF, ["Select a region"], "hidden", extra=_chip), "eu-west-1",
+                           setup="() => { window.__c = false; document.getElementById('chip')"
+                                 ".addEventListener('click', () => { window.__c = true; }); }")
+        _clicked = await gp.evaluate("() => window.__c")
+        check("W17g4 a foreign element elsewhere in the dialog matching the "
+              "requested text is never clicked while the widget declares itself "
+              "closed — the declared state is what separates this from W17g6",
+              not _clicked and not _g7.get("ok"),
+              f"foreign chip clicked={_clicked} ok={_g7.get('ok')}")
+
+        _g4 = await _gpick(_dlg(_ET, ["Select a region", "⌄"], ""), "eu-west-1")
+        check("W17g5 CONTROL: the same widget OPEN still picks",
+              bool(_g4.get("ok")) and _g4.get("actual") == "eu-west-1",
+              f"ok={_g4.get('ok')} actual={_g4.get('actual')!r}")
+
+        _g5 = await _gpick(
+            "<!doctype html><meta charset=utf-8><body style='margin:0'>"
+            "<div role=dialog style='position:fixed;inset:0;background:#fff'>"
+            "<div style='position:relative'>"
+            "<button id=t data-combo-trigger aria-expanded='false' aria-controls='lb'"
+            " style='cursor:pointer'><span>Select a region</span></button>"
+            "<ul id=lb role=listbox style='position:absolute;z-index:40'>"
+            "<li role=option style='width:120px;height:20px'>eu-west-1</li>"
+            "<li role=option style='width:120px;height:20px'>us-east-1</li>"
+            "</ul></div></div></body>", "eu-west-1")
+        check("W17g6 CONTROL: a trigger whose aria-expanded lies still picks when "
+              "real role=option rows are visible — clause 1 gates the HARVEST, "
+              "never the standard-ARIA path",
+              bool(_g5.get("ok")) and _g5.get("actual") == "eu-west-1",
+              f"ok={_g5.get('ok')} actual={_g5.get('actual')!r}")
+
+        _g6 = await _gpick(_dlg("role=combobox " + _ET, ["Select a region"], "",
+                                "position:static"), "eu-west-1")
+        check("W17g7 CONTROL: an OPEN, role-less, NOT-stacked popover inside the "
+              "dialog still picks — rejecting a trigger-containing container "
+              "outright was measured as a regression on exactly this shape",
+              bool(_g6.get("ok")) and _g6.get("actual") == "eu-west-1",
+              f"ok={_g6.get('ok')} actual={_g6.get('actual')!r}")
+        await gp.close()
+
         # ---- W16: which tab is selected, decided by DECLARATIONS -------------
         # `(current)/(selected)` tells the agent "already active; don't re-click",
         # so a wrong one suppresses a real action. It used to be answered, after

@@ -3861,7 +3861,39 @@ function _pickOptionPage(text, triggerSel) {
   // trigger told us which container it controls, ask whether any visible option is
   // actually IN it; foreign options must not vouch for this widget.
   const visInScope = scopeRoot ? vis.filter(o => { try { return scopeRoot.contains(o); } catch (e) { return false; } }) : vis;
-  if (!visInScope.length) {
+  // dup:popupscope — THE HARVEST IS THE GUESSY PATH AND IT HAD NONE OF THE THREE
+  // RULES THE REST OF THIS FUNCTION ALREADY APPLIES. Its container list contains
+  // [role="dialog"], and a combobox inside a form dialog is the commonest layout
+  // there is — so whenever the popover was NOT open the harvest scraped the
+  // ENCLOSING DIALOG and handed its rows back under "Pass one of these exactly".
+  // Measured on the fixture app's Region field: "Select a region", "⌄" (the
+  // TRIGGER'S OWN SPANS), and with a one-child trigger "Cancel", "Create project"
+  // — the modal's own buttons, one of which discards the form. That is #25's worst
+  // dropdown failure ("offered the site's nav bar as the field's options") landing
+  // on a destructive control instead of a navigation link.
+  //
+  // (1) THE TRIGGER'S OWN DECLARED STATE IS THE GATE — byte-identical to the rule
+  //     _countVisibleOptionsPage already applies: if the widget says it is closed,
+  //     nothing on the page is its open option list. Scoped to the HARVEST only;
+  //     the standard-ARIA path is not a guess and keeps working for a widget whose
+  //     aria-expanded lies while real role=option rows are visible.
+  const _closed = (() => {
+    try {
+      const _qt = (x) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(x || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(x); };
+      const t = triggerSel ? _qt(triggerSel) : null;
+      if (!t) return false;
+      return t.getAttribute('aria-expanded') === 'false' || t.getAttribute('data-state') === 'closed';
+    } catch (e) { return false; }
+  })();
+  // (3) Rows scraped out of a container that CONTAINS the trigger are a last-resort
+  //     scrape of the widget's own ancestor, not a list the page says is this
+  //     field's. They may still be CLICKED when one of them matches (that is how an
+  //     unstacked, role-less, in-dialog popover picks today, and removing it was
+  //     measured as a regression on two reachable shapes), but they must never be
+  //     ENUMERATED back as "the options" — "Pass one of these exactly" cannot
+  //     truthfully be said of the Cancel button.
+  let _scrapedTriggerAncestor = false;
+  if (!visInScope.length && !_closed) {
     // No standard-ARIA options — try to find a popover-like container and
     // harvest its clickable text rows as candidate options. Container query
     // covers ARIA roles + the major positioning libraries' portal markers
@@ -3883,9 +3915,25 @@ function _pickOptionPage(text, triggerSel) {
       };
       containers.sort((a, b) => zOf(a) - zOf(b));   // stable: ties keep DOM order
       const pop = containers[containers.length - 1];
+      // dup:popupscope (3) — record that this pool came from the trigger's own
+      // ancestor, so the failure message below does not offer it as the options.
+      try {
+        const _qt = (x) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(x || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(x); };
+        const _tg6 = triggerSel ? _qt(triggerSel) : null;
+        if (_tg6 && pop.contains(_tg6)) _scrapedTriggerAncestor = true;
+      } catch (e) {}
       const harvest = (requireClickable) => {
+        // dup:popupscope (2) — A ROW INSIDE THE TRIGGER IS NEVER ONE OF ITS OPTIONS.
+        // Activating the trigger is what OPENS the list, so its own contents are its
+        // LABEL. Without this, asking for the text the trigger is already showing
+        // matched the trigger's own span, CLICKED IT (toggling the popover) and
+        // returned ok:true with that label as `actual` — a silent wrong success of
+        // the same class as #97, reproduced on the fixture app.
+        const _qt = (x) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(x || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(x); };
+        const _tg5 = triggerSel ? _qt(triggerSel) : null;
         let rows = Array.from(pop.querySelectorAll('div, li, span, button, a')).filter(r => {
           if (r === pop) return false;
+          if (_tg5 && (r === _tg5 || _tg5.contains(r))) return false;
           let cs;
           try { cs = getComputedStyle(r); } catch (e) { return false; }
           if (requireClickable) {
@@ -4109,7 +4157,9 @@ function _pickOptionPage(text, triggerSel) {
     // SURROGATE in the middle of the string the agent is told to "pass exactly".
     // Pinned by MC1 — the `dup:` tag had been enforced by nothing.
     const _mk = (v, n) => { v = String(v == null ? '' : v); if (v.length <= n) return v; const c = v.charCodeAt(n - 1); const h = v.slice(0, (c >= 0xD800 && c <= 0xDBFF) ? n - 1 : n); return h + '…(+' + (v.length - h.length) + ')'; };
-    const avail = pool.slice(0, 8).map(o => _mk((o.innerText || '').trim(), 40)).filter(Boolean);
+    // dup:popupscope (3) — see the note at the harvest gate.
+    const avail = _scrapedTriggerAncestor ? []
+      : pool.slice(0, 8).map(o => _mk((o.innerText || '').trim(), 40)).filter(Boolean);
     return {
       ok: false, actual: '',
       msg: want
@@ -5129,9 +5179,21 @@ async function fillDropdown(tabId, selector, text) {
       });
     }
     if (!els.length) {
-      const containers = (scopeRoot ? [scopeRoot] : Array.from(document.querySelectorAll(
+      // dup:popupscope — see _pickOptionPage. This probe only ENUMERATES (it never
+      // clicks), and its output is appended to the model-facing message as
+      // "(other options available: …)", so a scrape of the trigger's own ancestor
+      // is always wrong here: it produced ["Select a region", "⌄"] and, with a
+      // one-child trigger, ["Cancel", "Create project"]. Both clauses that bear on
+      // enumeration apply — the declared-closed gate and the trigger-ancestor
+      // rejection — and nothing is lost, because a sample is a convenience.
+      const _qt2 = (x) => { try { const m = /mmid=['"]?([^'"\]]+)/.exec(x || ''); const r = window.__mmidReg; if (m && r) { const n = r.get(m[1]); if (n && n.isConnected) return n; } } catch (e) {} return document.querySelector(x); };
+      const _tgS = trigSel ? _qt2(trigSel) : null;
+      const _closedS = !!_tgS && (_tgS.getAttribute('aria-expanded') === 'false'
+                                  || _tgS.getAttribute('data-state') === 'closed');
+      const containers = (_closedS ? [] : (scopeRoot ? [scopeRoot] : Array.from(document.querySelectorAll(
         '[data-radix-popper-content-wrapper], [data-popper-placement], [data-floating-ui-portal], [role="listbox"], [role="menu"], [role="dialog"]'
-      ))).filter(c => c.getBoundingClientRect().width > 0 && c.getBoundingClientRect().height > 0);
+      )))).filter(c => c.getBoundingClientRect().width > 0 && c.getBoundingClientRect().height > 0)
+          .filter(c => { try { return !(_tgS && c.contains(_tgS)); } catch (e) { return true; } });
       if (containers.length) {
         const zOf = (c) => {
           let z = 0, w = c;
