@@ -267,6 +267,75 @@ def main():
           "simply silence the warning",
           unwitnessed_ordinal({"of": 3, "nth": 0}), "no witness, no atoms")
 
+    # ---- FA10k/FA10l: THE RECORD IS GONE AND A STRANGER SHARES A WORD ------
+    # The atoms branch is the only binding path that ignores crowd COMPOSITION,
+    # and it RETURNS before the `len(hits) != of` check that would have caught
+    # this (line order is load-bearing: atoms at ~599, composition at ~602).
+    # Safe for a re-sort, which is what it was built for; unsafe when the
+    # target's OWN record is gone, because it binds on INTERSECTION so one
+    # shared token decides it. The ordinal path REFUSED this case before atoms
+    # existed, so it was a regression introduced by the fix for the PREVIOUS
+    # silent mis-bind. Reproduced against the shipped resolver by
+    # tools/audit_atoms_safety.py, which reported WRONG on both of these.
+    # docs/research/FLOW-SILENT-BIND-2026-11.md
+    def _inv(n, num, firm, status="Open"):
+        return [E(n, "button", name="Delete", section="main", under="Invoices",
+                  atoms=[f"INV-{num}", firm, status, "Delete"])]
+
+    _iv = _inv(10, 1001, "Acme", "Paid") + _inv(20, 1002, "Globex") \
+        + _inv(30, 1003, "Initech")
+    _t0 = build(_iv[0], _iv)
+    _g0 = _inv(20, 1002, "Globex") + _inv(30, 1099, "Delta", "Paid")
+    check("FA10k a record that is GONE does not bind to a stranger sharing one "
+          "word of it, once the crowd has CHANGED SIZE",
+          _res(_t0, _g0) == "REFUSED", f"-> {_res(_t0, _g0)}")
+
+    _t1 = build(_iv[1], _iv)
+    _g1 = _inv(10, 1001, "Acme", "Paid") + _inv(30, 1099, "Delta", "Globex")
+    check("FA10l ...including when the stranger lands at the RECORDED index, "
+          "where the `moved` note does not fire either",
+          _res(_t1, _g1) == "REFUSED", f"-> {_res(_t1, _g1)}")
+
+    # THE TWO CONTROLS. Without them "refuse whenever the crowd changed size"
+    # and "refuse whenever an atom is missing" both satisfy the two above while
+    # deleting the tolerance #83 built the intersection rule for.
+    _c0 = _inv(10, 1001, "Acme", "Paid") + _inv(30, 1003, "Initech")
+    check("FA10m CONTROL: a DIFFERENT record removed still resolves — the gate "
+          "must not be 'refuse whenever the crowd changed size'",
+          _res(_t0, _c0) == "10", f"-> {_res(_t0, _c0)}")
+    _c1 = _inv(10, 1001, "Acme", "Overdue") + _inv(20, 1002, "Globex") \
+        + _inv(30, 1003, "Initech")
+    check("FA10n CONTROL: a cell changing on an UNCHANGED crowd still resolves",
+          _res(_t0, _c1) == "10", f"-> {_res(_t0, _c1)}")
+
+    # ---- FD26: AN ORDINAL COUNTED ACROSS FRAMES ---------------------------
+    # Surface opened the same day by 97efc75 (#94), which put cross-frame
+    # entries into the structured array the recorder describes from; before it,
+    # the step was dropped at compile with a CROSS-ORIGIN explanation.
+    # `collectCrossFrames` forces section 'iframe', so that rung cannot
+    # separate two frames, and the ordinal's declared basis -- document order --
+    # does not exist across a frame boundary: entries are concatenated in
+    # whatever order chrome.webNavigation.getAllFrames returned. A page
+    # embedding one widget twice (saved-card and new-card payment frames) is a
+    # crowd of identical descriptors whose only discriminator is that order.
+    def _F(fid, n, name):
+        return E(f"f{fid}:{n}", "button", name=name, section="iframe")
+
+    _two = [_F(12, 3, "Pay now"), _F(17, 3, "Pay now")]
+    _tf = build(_two[0], _two)
+    check("FD26 an ordinal counted across FRAMES refuses — cross-frame entries "
+          "are concatenated in enumeration order, which is not document order",
+          _res(_tf, _two) == "REFUSED", f"-> {_res(_tf, _two)}")
+    _one = [_F(12, 3, "Pay now"), _F(12, 5, "Pay now")]
+    _t1f = build(_one[0], _one)
+    check("FD26b CONTROL: a crowd INSIDE one frame still uses its ordinal — "
+          "this is not 'refuse anything carrying an f<n>: ref'",
+          _res(_t1f, _one) == "f12:3", f"-> {_res(_t1f, _one)}")
+    _top = [E("3", "button", name="Pay now"), E("5", "button", name="Pay now")]
+    _tt = build(_top[0], _top)
+    check("FD26c CONTROL: a top-document crowd is untouched",
+          _res(_tt, _top) == "3", f"-> {_res(_tt, _top)}")
+
     # FD21 — EVERY `via` THE DESCRIPTOR EMITS MUST BE HANDLED BY THE RUNNER.
     # The consumer branched on `via == "position"` and treated EVERYTHING else
     # as an href-alternate note, reading `n["alt"]`. When the content witness

@@ -41,7 +41,22 @@ WHAT IS DELIBERATELY EXCLUDED, each for a reason this log already paid for:
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable, Optional
+
+# WHICH DOCUMENT AN ENTRY LIVES IN, as the extension declares it.
+# `collectCrossFrames` prefixes a cross-origin frame's mmid `f<frameId>:` and
+# `resolveFrameSelector` routes on that spelling, so it is a declaration rather
+# than a guess. Defined HERE, in the leaf module, because `recorder.py` already
+# carries a private second copy of this pattern and two spellings of one
+# concept is what rule 17 exists to stop -- that import replaces it.
+CROSS_FRAME_REF = re.compile(r"^f(\d+):")
+
+
+def frame_of(entry: dict) -> str:
+    """The frame id an entry belongs to; '' for the top document."""
+    m = CROSS_FRAME_REF.match(str(entry.get("mmid") or ""))
+    return m.group(1) if m else ""
 
 # Cumulative strengths. A recorded step stores the CHEAPEST one that resolves,
 # not the strongest: every field added is another thing that can change
@@ -576,15 +591,62 @@ def _resolve_recorded(target: dict, entries: list[dict],
     if atoms:
         want_a = set(atoms)
         cand = [e for e in hits if want_a & set(e.get("recordAtoms") or [])]
+        # THE COMPOSITION GATE, and it is the ONE place this branch reads `of`.
+        #
+        # Everything above was written on the premise that a content witness
+        # makes no positional claim, so neither a re-sort nor a row being added
+        # or removed touches it. That is true of a re-sort and of a DIFFERENT
+        # record being deleted -- which are the two arms it was measured on --
+        # and FALSE when the target's own record is gone, because the resolver
+        # then has to tell "my row lost a cell" from "my row is gone and a
+        # stranger shares a word". It binds on INTERSECTION, so one shared
+        # token decides it. MEASURED: a step recording
+        # ['Acme Ltd', 'INV-1001', 'Paid'] binds to an unrelated customer's
+        # invoice because that row also renders `Paid`, and when the survivor
+        # happens to land at the recorded index it emits no note either, so the
+        # flow reports PASSED having deleted the wrong record. Worse, the
+        # ordinal path REFUSED that case before atoms existed
+        # (`len(hits) != of`), so this was a regression introduced by the fix
+        # for the previous silent mis-bind. tools/audit_atoms_safety.py.
+        #
+        # THE RULE IS EXACT AND THERE IS NO THRESHOLD IN IT. Composition
+        # unchanged -> a SUBSET still identifies the member, which is the
+        # tolerance the intersection rule exists for (a status flipping, a
+        # total recalculated). Composition CHANGED -> the record must be wholly
+        # present, because a missing record and an edited cell are otherwise
+        # the same evidence and the page declares nothing that separates them.
+        # "All of them" and "the same number as before" are facts, not chosen
+        # numbers.
+        #
+        # THE TOLERANT VARIANT IS REJECTED, and it is the one that looks
+        # better: requiring only the atoms still present ANYWHERE in the crowd
+        # would survive a simultaneous edit, and it re-admits the defect --
+        # with the target's record gone the only surviving recorded atom IS
+        # `Paid`, so "all present atoms" is `{Paid}` and the stranger carries
+        # all of it.
+        gated = want is not None and len(hits) != want
+        if gated:
+            cand = [e for e in cand
+                    if want_a <= set(e.get("recordAtoms") or [])]
         if len(cand) != 1:
             raise Unresolved(
-                f"{len(hits)} element(s) match {_describe(desc)}, and {len(cand)} of "
-                f"them carry the text that identified this one when the flow was "
-                f"recorded ({', '.join(repr(x) for x in atoms[:3])}"
-                f"{', …' if len(atoms) > 3 else ''}). Exactly one must. Its record "
-                f"was removed, its text changed, or another record now carries the "
-                f"same text — and the recorded position is not evidence of which "
-                f"element was meant in any of those cases",
+                (f"{len(hits)} element(s) match {_describe(desc)} but {want} did when "
+                 f"this flow was recorded, so the crowd CHANGED — and {len(cand)} of "
+                 f"them still carry the whole of the text that identified this one "
+                 f"({', '.join(repr(x) for x in atoms[:3])}"
+                 f"{', …' if len(atoms) > 3 else ''}). Exactly one must. When a row "
+                 f"has been added or removed, a record that carries only PART of that "
+                 f"text is as consistent with a different record sharing a word as it "
+                 f"is with this one having changed a cell, and the recorded position "
+                 f"is not evidence either"
+                 if gated else
+                 f"{len(hits)} element(s) match {_describe(desc)}, and {len(cand)} of "
+                 f"them carry the text that identified this one when the flow was "
+                 f"recorded ({', '.join(repr(x) for x in atoms[:3])}"
+                 f"{', …' if len(atoms) > 3 else ''}). Exactly one must. Its record "
+                 f"was removed, its text changed, or another record now carries the "
+                 f"same text — and the recorded position is not evidence of which "
+                 f"element was meant in any of those cases"),
                 _candidates(hits))
         if nth is not None and 0 <= nth < len(hits) \
                 and str(cand[0].get("mmid")) != str(hits[nth].get("mmid")):
@@ -597,6 +659,45 @@ def _resolve_recorded(target: dict, entries: list[dict],
                               "now": hits.index(cand[0]),
                               "mmid": str(cand[0].get("mmid"))})
         return str(cand[0].get("mmid"))
+
+    # AN ORDINAL ACROSS FRAMES HAS NO BASIS. The ordinal's declared basis is
+    # DOCUMENT ORDER -- "the collector emits in composed walk order", a few
+    # lines up. A crowd spanning frames has no single document: cross-frame
+    # entries are CONCATENATED after the top document's, in whatever order
+    # `chrome.webNavigation.getAllFrames` returned the frames, and nothing in
+    # the platform declares that to be stable.
+    #
+    # This became reachable on 2026-11-18 (97efc75, #94): the structured array
+    # the recorder describes from now carries cross-frame entries, where before
+    # it did not and the step was dropped at compile. `collectCrossFrames`
+    # forces `section: e.section || 'iframe'`, so every cross-frame control on
+    # a page collapses into ONE landmark bucket -- and `section` is the rung
+    # that takes a descriptor from 59.5% to 84.7% unique. A page embedding the
+    # same widget twice (a saved-card and a new-card payment frame; one CMP
+    # mounting in two frames) therefore produces a crowd of identical
+    # descriptors whose only discriminator is the enumeration order, and
+    # swapping it binds the other frame and reports success.
+    #
+    # REFUSE RATHER THAN GUESS (#24, #49): the frame is declared by the mmid's
+    # own form, so this needs no new field and no threshold. The cost on the
+    # frozen corpus is ZERO -- #78 measured 0 of 128 frames cross-origin there
+    # -- and on a real page it is a pause exactly where the alternative is a
+    # coin flip between two payment frames.
+    #
+    # NOT applied to the atoms branch above, deliberately: a content witness
+    # names the member by text its own record carries, which is as true inside
+    # a frame as outside it. This guards the paths that rest on ORDER, and the
+    # self+anchor witness is inside it because `witness_map` builds its window
+    # by walking `entries` in that same concatenated order.
+    if want is not None and nth is not None \
+            and len({frame_of(e) for e in hits}) > 1:
+        raise Unresolved(
+            f"the {len(hits)} element(s) matching {_describe(desc)} are spread across "
+            f"several frames, so there is no document order to count position "
+            f"{nth} in — cross-origin frames are listed after the top document in "
+            f"whatever order the browser enumerated them, which is not something "
+            f"the page declares. Name the one you mean",
+            _candidates(hits))
 
     if want is not None and nth is not None:
         if len(hits) != want:

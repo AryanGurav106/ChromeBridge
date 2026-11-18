@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1594 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1601 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1594 checks, ~153s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1601 checks, ~153s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -9917,7 +9917,7 @@ granted in the side panel is refused with the same message the agent gets.
     **Verified by me in both directions, not just by the report.** Shut popover
     + the shown label -> `ok:false` with an honest "no visible options were
     found" (was `ok:true`); open popover + a real option -> `ok:true` and the
-    hidden input commits. Full suite **21/21, 1594 checks, ALL GREEN**, with
+    hidden input commits. Full suite **21/21, 1601 checks, ALL GREEN**, with
     W17/W17b/W17c/W17d/W17e/W17f and OR1-OR4 all still passing.
     `audit_patterns.py` unchanged on every risky category. Zero listing-token
     cost, because the harvest runs only inside `fillDropdown`/`form_input` and
@@ -9947,6 +9947,99 @@ granted in the side panel is refused with the same message the agent gets.
     still picks, a lying `aria-expanded` with real `role=option` rows still
     picks, and an open unstacked in-dialog popover still picks — the shape the
     blunt rule regressed).
+
+99. **THE FIX FOR THE PREVIOUS SILENT MIS-BIND INTRODUCED THE NEXT ONE, AND THE
+    LINE ORDER IS THE WHOLE STORY.** #83 added record-text atoms so a re-sorted
+    list could not delete the wrong invoice. The atoms branch RETURNS at line
+    599; the crowd-composition check that would refuse — `len(hits) != of` — is
+    at line 602. **So when the target's own record is gone, atoms bind before
+    the guard is ever reached**, and they bind on INTERSECTION, so one shared
+    token decides it. A step recording `['Acme Ltd','INV-1001','Paid']` binds to
+    an unrelated customer's invoice because that row also renders `Paid`, and
+    when the stranger lands at the recorded index the `moved` note does not fire
+    either, so the flow reports PASSED having deleted the wrong record.
+    **The ordinal path REFUSED that case before atoms existed**, which makes
+    this a regression introduced by the fix for the previous one.
+
+    | case, against the SHIPPED resolver | |
+    |---|---|
+    | drop-target + shared company | **WRONG** |
+    | drop-target + shared STATUS only | **WRONG** |
+    | drop-target, nothing shared | REFUSED |
+    | base / re-sort / drop-OTHER / edit-cell | CORRECT |
+
+    **THE GATE IS EXACT AND HAS NO THRESHOLD IN IT.** Composition unchanged -> a
+    SUBSET still identifies the member, which is the tolerance the intersection
+    rule exists for (a status flipping, a total recalculated). Composition
+    CHANGED -> the record must be wholly present, because a missing record and
+    an edited cell are otherwise the same evidence and the page declares nothing
+    that separates them. "All of them" and "the same number as before" are
+    facts, not chosen numbers. **The tolerant variant is rejected and it is the
+    one that looks better:** requiring only the atoms still present ANYWHERE
+    re-admits the defect, since with the target's record gone the only surviving
+    recorded atom IS `Paid` and the stranger carries all of it. Cost: **0 on a
+    genuinely unchanged crowd by construction**, +1.3pp refusals on a reload,
+    +3.2pp when another record was removed — which is what makes it a different
+    proposal from the blanket refusal #72 rejected at ~14%.
+
+    **AND MY OWN COMMIT OPENED A SECOND ONE THE SAME DAY.** #94 put cross-frame
+    entries into the structured array the recorder describes from; before it,
+    such a step was DROPPED at compile with a cross-origin explanation. Now it
+    is kept, at level 1, with no note. `collectCrossFrames` forces
+    `section: 'iframe'`, so the rung that takes a descriptor from 59.5% to 84.7%
+    unique cannot separate two frames — and the ordinal's declared basis,
+    DOCUMENT ORDER, does not exist across a frame boundary: entries are
+    concatenated in whatever order `chrome.webNavigation.getAllFrames` returned.
+    A page embedding one widget twice (a saved-card and a new-card payment
+    frame) is a crowd of identical descriptors whose only discriminator is that
+    enumeration order. **Refusal is exact**, because the frame is declared by the
+    mmid's own `f<n>:` form, so it needs no new field and no threshold; corpus
+    cost is zero, since #78 measured 0 of 128 frames cross-origin there. NOT
+    applied to the atoms branch, deliberately: a content witness names its member
+    by text its own record carries, which is as true inside a frame as outside.
+
+    **VERIFIED MYSELF RATHER THAN ON THE REPORT**, which is the rule that paid
+    twice today. Read the two line numbers to confirm atoms return before the
+    composition check; ran the probe against the shipped resolver and saw both
+    WRONG rows; applied; saw them become REFUSED with the four CORRECT controls
+    unmoved; then ablated the whole patch and watched **FA10k, FA10l and FD26
+    FAIL while FA10m, FA10n, FD26b and FD26c passed in BOTH arms**. Then the
+    live pass the research did not do (PRINCIPLES 12): `run_flows --playground
+    --local-only` is **12/12 through the real unpacked extension, real bridge and
+    real op router**, including `live-atoms-resort` (the atoms path still binds)
+    and `acme-create-project` (which drives the very combobox #98 changed).
+
+    **DON'T BUILD, measured, so it is not re-derived:** a virtualised window has
+    a declaration and this project already reads it twice (`virtualNote`,
+    `_queryElementsPage`'s `declared`) — but `aria-rowcount` is on **0 of 2,531**
+    tied crowds and the discrepancy signal on **1 crowd across 1 of 93 sites**.
+    What reopens it is the admin-tool corpus `OPEN.md` item 2 already asks for,
+    not another attribute.
+
+    **THE RESIDUE, CLASSIFIED RATHER THAN QUOTED.** Of the ordinals with no
+    witness: `no-record` 57.3%, `shared-record` 26.8%, `record-identical` 8.0%,
+    `record-distinct` 4.3%, `tablist` 2.5%, `record-digits` 1.0% — and split by
+    danger, **43.5% DANGEROUS, 36.9% PROVABLY INTERCHANGEABLE** (nested or
+    same-box, where a click bubbles to the same action), 19.6% UNKNOWN. The
+    largest actionable lever left: **~10% of the residue is witnessable today and
+    lost to a definition mismatch** — the shipped `recordAtoms` keys on a tag
+    list while the probe that justified it used a structural record, 13.1% against
+    #83's published 43.9%. One of those two numbers describes nothing that runs,
+    and reconciling them is `MEASURE FIRST`.
+
+    **A commit of mine is mis-described, and rewriting published history to hide
+    that is worse than saying so.** `2457136` carries this research paper and two
+    probes alongside the picker fix its message describes, because I ran
+    `git add -A` while an agent was writing into the tree. No product code of the
+    agent's went in — `core/flows/` was untouched there — but the message is not
+    the whole truth about the commit, and it is pushed.
+
+    Suites: 1601 checks. New — FA10k/FA10l (the stranger bind, both WRONG on
+    shipped), FA10m/FA10n (the two controls without which "refuse whenever the
+    crowd changed size" and "refuse whenever an atom is missing" would both pass
+    while deleting #83's tolerance), FD26 (the cross-frame ordinal) and
+    FD26b/FD26c (its controls — this is not "refuse anything carrying an `f<n>:`
+    ref"). Probes: `tools/audit_atoms_safety.py`, `tools/audit_window_declarations.py`.
 
 ## Debugging starting points
 
