@@ -112,7 +112,37 @@ left is one element, and it is the intended behaviour.**
 
 
 
-### 1. The observe→act gap is unguarded `MEASURED, NOT APPLIED`
+### 1. The observe→act gap — NOTE shipped, REFUSAL measured and parked `MEASURE DONE`
+> **The NOTE half shipped in #84** and is live-verified: a click on a control
+> whose identity moved since the read reports it and acts. **The REFUSAL half
+> on declared submits is now MEASURED** (`tools/audit_stale_refusal.py`, 92
+> frozen sites, 35,750 controls, a real 3.6s model turn):
+>
+> | | rate |
+> |---|---|
+> | all controls, any field | 1.491% |
+> | all controls, IDENTITY only (tag/role/name/disabled/href) | **0.081%** |
+> | DECLARED SUBMITS, any field | **0 of 54** (rule-of-three bound ~5.6%) |
+>
+> That is 18x quieter on identity alone, and it makes the design structural
+> rather than tuned: `rec` is the surrounding record's text, and `fill_form`
+> FILLS the form before submitting, so refusing on it would refuse on the tool
+> working correctly.
+>
+> **NOT LANDED.** The implementation is written and one fixture would not go
+> green: in `test_ops.js`'s mocked `fill_form`, the pre-check's
+> `ritFF(_rectForPage, [submit_mmid])` neither throws nor reaches the stub
+> (the stub records 2 calls, both attributable to `clickTrusted`), so the
+> guard's branch never fires and the submit proceeds. Forcing the branch
+> crashes the *unstubbed* happy-path test at the same line, which proves the
+> line executes there. Those two observations have not been reconciled and the
+> work was reverted rather than left half-shipped on an irreversible action.
+> The WIP copy is `docs/wip/wip_guard_bg.js`.
+>
+> **Next step is NOT more debugging of the mock.** Read the `observed` that
+> `clickTrusted` already computes and returns, instead of taking a second
+> `_rectForPage` round trip — cheaper, and it removes the call that is
+> behaving differently under the harness.
 We re-measure refs at click time but never compare what is there **now** against
 what was **observed**. The model turn in between is ~3.6s (#38), which is the
 whole exposure window.
