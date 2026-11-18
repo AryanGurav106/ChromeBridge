@@ -9544,11 +9544,32 @@ granted in the side panel is refused with the same message the agent gets.
     again. The scope rule is mirrored, so a scoped read still does not import
     frames from outside its scope. Live: `find` MISSES → **REACHES**.
 
-    **Still unfixed, with evidence:** `search_page` greps rendered text in the
-    top document only, so in-frame text is not searchable; `query_elements`
-    likewise, though it now WARNS that its count is partial. Both would need
-    per-frame injection with result merging, which is a larger change than
-    either of today's and is not started.
+    **AND THEN BOTH OF THOSE TOO — "a larger change" was my estimate, and
+    checking it was what closed them.** `search_page` and `query_elements` both
+    ran in the top document alone, so text and counts inside a consent sheet or
+    an embedded checkout were invisible to the two tools whose whole job is
+    finding and counting, while `read_page` listed those controls — the same
+    sibling-capability gap as #30's `near=` and #48's `include_text`. Both now
+    inject per-frame through ONE `_crossFrameIds` helper shared with the
+    collector, rather than a second copy of the filter.
+
+    | tool | before | after |
+    |---|---|---|
+    | `find` | MISSES | REACHES |
+    | `search_page` | MISSES | **REACHES** |
+    | `query_elements` | MISSES | **REACHES** |
+    | counting | reported **1** where the DOM held 2 | **2 of 2, partial=False** |
+
+    **AND THAT MADE MY OWN WARNING FROM AN HOUR EARLIER WRONG.** "COUNT MAY BE
+    PARTIAL" fired whenever a frame EXISTED; once the count is complete that is
+    a false warning — the always-on noise #15 priced, introduced by the person
+    who keeps quoting it. It gates on `frames_seen - frames_read` now, a FACT
+    rather than a proxy, and the extra `iframe, frame` round trip is gone
+    because the op already counted the frames it tried.
+
+    **One scope decision, stated rather than silent:** a `css_scope` is a
+    TOP-DOCUMENT selector, so a scoped search stays in the top document.
+    Extending it into frames would silently widen a scope the caller chose.
 
 
 ## Debugging starting points

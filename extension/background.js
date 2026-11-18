@@ -5424,6 +5424,18 @@ function _frameShellsPage() {
 // Collect + serialize the contents of cross-origin iframes (depth-1) and
 // return text to APPEND to the main listing. Each frame's entries act through
 // selector [mmid='f<frameId>:<n>'] — resolveFrameSelector routes the ops.
+// Which frames of this tab are worth injecting into, at ANY depth. ONE
+// SPELLING, shared by `collectCrossFrames` and `search_dom_text` -- the search
+// used to run in the top document only, so text inside a consent sheet or an
+// embedded checkout was not searchable at all, and a second copy of this filter
+// is exactly the drift #21 exists to stop.
+async function _crossFrameIds(tabId) {
+  let frames = [];
+  try { frames = await chrome.webNavigation.getAllFrames({ tabId }) || []; } catch (e) { return []; }
+  return frames.filter((f) => f.frameId !== 0 && f.url && !f.url.startsWith('about:'))
+               .map((f) => f.frameId);
+}
+
 async function collectCrossFrames(tabId, geometry) {
   let frames = [];
   try { frames = await chrome.webNavigation.getAllFrames({ tabId }) || []; } catch (e) { return { text: '', entries: [] }; }
@@ -15987,7 +15999,7 @@ async function handleOp({ id, op, params }) {
       // exactly what the gate exists for.
       case "search_dom_text": {
         const t = await resolveTab(params);
-        result = await runInTab(t.id, _searchTextPage, [
+        const _sArgs = [
           String((params && params.pattern) || ''),
           {
             regex: !!(params && params.regex),
@@ -15996,19 +16008,90 @@ async function handleOp({ id, op, params }) {
             maxResults: params && params.maxResults,
             cssScope: (params && params.cssScope) || null,
           },
-        ]);
+        ];
+        result = await runInTab(t.id, _searchTextPage, _sArgs);
+        // ACROSS CROSS-ORIGIN FRAMES TOO. This ran in the top document alone,
+        // so text inside a consent sheet, an embedded checkout or a comment
+        // widget was NOT SEARCHABLE -- and `read_page` lists those controls,
+        // so the two tools disagreed about what the page contains. That is the
+        // defect this project keeps finding (#30's `near=`, #48's
+        // `include_text`): a capability present in one tool and absent from
+        // its sibling.
+        //
+        // A css_scope is a TOP-DOCUMENT selector, so a scoped search stays in
+        // the top document -- extending it into frames would silently widen a
+        // scope the caller chose.
+        if (!_sArgs[1].cssScope && result && !result.error) {
+          try {
+            for (const fid of await _crossFrameIds(t.id)) {
+              let r = null;
+              try { r = await runInTab(t.id, _searchTextPage, _sArgs, fid); } catch (e) { continue; }
+              if (!r || r.error || !Array.isArray(r.hits)) continue;
+              // The ref carries the SAME f<fid>:<n> spelling the listing
+              // prints, so a hit can be acted on without translation.
+              for (const h of r.hits) {
+                if (h && h.ref != null) h.ref = `f${fid}:${h.ref}`;
+                h.frame = fid;
+              }
+              result.hits = result.hits.concat(r.hits);
+              result.total = (result.total || 0) + (r.total || 0);
+              result.scanned = (result.scanned || 0) + (r.scanned || 0);
+            }
+            // The per-document caps already applied; this reports the TRUE
+            // total and shows what survived, the way the main listing does.
+            const _cap = _sArgs[1].maxResults;
+            if (_cap && result.hits.length > _cap) result.hits = result.hits.slice(0, _cap);
+            result.shown = result.hits.length;
+          } catch (e) {}
+        }
         break;
       }
       case "query_elements": {
         const t = await resolveTab(params);
-        result = await runInTab(t.id, _queryElementsPage, [
+        const _qArgs = [
           String((params && params.selector) || '*'),
           {
             attributes: (params && params.attributes) || null,
             maxResults: params && params.maxResults,
             includeText: !(params && params.includeText === false),
           },
-        ]);
+        ];
+        result = await runInTab(t.id, _queryElementsPage, _qArgs);
+        // ACROSS CROSS-ORIGIN FRAMES TOO, for the reason COUNTING exists: this
+        // ran in the top document alone and reported `1` on a page whose DOM
+        // held 2, which is worse than reporting none -- "No element matches"
+        // prompts a second look and a confident `1` does not. Counting is this
+        // tool's whole purpose (#32), so a population it cannot see is a wrong
+        // answer, not a missing feature.
+        //
+        // `frames_seen` / `frames_read` are reported so the SERVER can say the
+        // count is partial only when a frame was genuinely unreadable, rather
+        // than whenever a frame exists.
+        if (result && !result.error && Array.isArray(result.rows)) {
+          try {
+            const _ids = await _crossFrameIds(t.id);
+            result.frames_seen = _ids.length;
+            result.frames_read = 0;
+            for (const fid of _ids) {
+              let r = null;
+              try { r = await runInTab(t.id, _queryElementsPage, _qArgs, fid); } catch (e) { continue; }
+              if (!r || r.error || !Array.isArray(r.rows)) continue;
+              result.frames_read++;
+              // Same f<fid>:<n> spelling the listing prints, so a row can be
+              // acted on without translation (#21).
+              for (const row of r.rows) {
+                if (row && row.ref != null) row.ref = `f${fid}:${row.ref}`;
+              }
+              result.rows = result.rows.concat(r.rows);
+              result.total = (result.total || 0) + (r.total || 0);
+              if (typeof r.visible === 'number') {
+                result.visible = (result.visible || 0) + r.visible;
+              }
+            }
+            const _cap = _qArgs[1].maxResults;
+            if (_cap && result.rows.length > _cap) result.rows = result.rows.slice(0, _cap);
+          } catch (e) {}
+        }
         break;
       }
       case "ax_names": {

@@ -2581,19 +2581,21 @@ async def query_elements(
     # there. Asked only when there IS a match to qualify -- the zero path has
     # its own, fuller notice -- and it costs one extra call on a page that has
     # frames at all.
-    _xf = 0
-    if total:
-        try:
-            _fr2 = await b.call("query_elements", tabId=tabId,
-                                selector="iframe, frame", maxResults=1,
-                                includeText=False)
-            _xf = (_fr2.get("total") or 0) if isinstance(_fr2, dict) else 0
-        except Exception:
-            _xf = 0
-    _fnote = (f"  (COUNT MAY BE PARTIAL: this page contains {_xf} frame(s), and THIS QUERY "
-              f"DID NOT LOOK INSIDE THEM -- a cross-origin frame is a separate document, so "
-              f"matches in one are not in this number. `read_page` does reach them; their "
-              f"refs look like ref_f<frameId>:<n>.)" if _xf else "")
+    # WARN ONLY WHEN A FRAME WAS GENUINELY UNREADABLE. The op now searches
+    # cross-origin frames too and reports `frames_seen` / `frames_read`, so the
+    # count is COMPLETE on an ordinary framed page -- and a "may be partial"
+    # line there would be a false warning, the always-on noise #15 priced. It
+    # fires on the difference, which is a fact rather than a proxy.
+    #
+    # The extra `iframe, frame` round trip is gone with it: the op already
+    # counted the frames it tried.
+    _seen = res.get("frames_seen") if isinstance(res, dict) else None
+    _read = res.get("frames_read") if isinstance(res, dict) else None
+    _missed = (_seen - _read) if isinstance(_seen, int) and isinstance(_read, int) else 0
+    _fnote = (f"  (COUNT MAY BE PARTIAL: {_missed} of this page's {_seen} frame(s) could not "
+              f"be read, so matches inside them are not in this number. `read_page` lists "
+              f"what it can reach; those refs look like ref_f<frameId>:<n>.)"
+              if _missed > 0 else "")
     out = [f"{total} element(s) match {selector!r}"
            + (f", showing the first {len(rows)}:" if total > len(rows) else ":")
            + _vnote + _fnote]
