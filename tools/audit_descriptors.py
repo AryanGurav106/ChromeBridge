@@ -231,9 +231,18 @@ async def main() -> int:
                 print(f"  [{i:>3}/{len(sites)}] {name:<24} skipped")
                 continue
             rows.append(r)
+            # HOISTED, AND NOT COSMETICALLY. These two used to be subscripted
+            # INSIDE the f-string with the same quote character the string
+            # itself uses -- PEP 701, legal only from 3.12, while
+            # pyproject.toml advertises >=3.10. So this probe did not PARSE on
+            # the minimum version it claims to support, and C45 could not see
+            # it: its scanner `continue`s on a file that fails to parse, which
+            # on 3.10 is exactly the offending file (#96 again, one class over).
+            _uq = r["uniq_" + str(FULL_LV)]
+            _st = r["stable_" + str(FULL_LV)]
             print(f"  [{i:>3}/{len(sites)}] {name:<24} targets={r['targets']:<4} "
-                  f"uniq@name={r['uniq_1']:.2f} uniq@full={r["uniq_" + str(FULL_LV)]:.2f} "
-                  f"stable={r["stable_" + str(FULL_LV)]:.2f}")
+                  f"uniq@name={r['uniq_1']:.2f} uniq@full={_uq:.2f} "
+                  f"stable={_st:.2f}")
         await browser.close()
 
     if not rows:

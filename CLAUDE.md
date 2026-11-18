@@ -9726,6 +9726,31 @@ granted in the side panel is refused with the same message the agent gets.
     parse it`. Verified on both: **3.10 unit group 10/10, 868 checks, ALL
     GREEN**, and 3.12 unchanged at 124/124 contracts.
 
+    **AND THE SAME QUESTION, ASKED PROPERLY, FOUND A SECOND FILE THAT HAS NEVER
+    PARSED ON THE FLOOR.** With a real 3.10 finally in hand it cost one loop to
+    ask it of every file rather than the one that crashed: **170 files, 0
+    unparseable on 3.12 and on 3.13, 1 on 3.10** —
+    `tools/audit_descriptors.py`, which subscripts a dict INSIDE an f-string
+    with the same quote character the string itself uses
+    (`f"...{r["uniq_" + str(FULL_LV)]:.2f}"`). That is PEP 701 as well, so 3.12+
+    only, and it is a DIFFERENT class from the backslash: **C45 structurally
+    cannot see it.** On 3.12 the file parses and there is no backslash to find;
+    on 3.10 the file does not parse and C45's scanner `continue`s past it — so
+    the one version that could detect it is the one version where the detector
+    skips it. The probe has therefore never run on the minimum version
+    `pyproject.toml` advertises, and no suite imports it, so nothing anywhere
+    said so.
+    **`ast.parse(feature_version=(3, 10))` was the obvious dev-machine fix and
+    was MEASURED not to work** — it parses the file happily at (3,10), (3,11)
+    and (3,12), because `feature_version` is best-effort and does not restrict
+    f-string grammar. There is no check that catches this class from 3.12, and
+    saying so is better than shipping one that cannot fire. **A real
+    interpreter on the floor is the only thing that decides it, and CI's 3.10
+    job already has one**, so that job now runs `compileall` over every
+    `.py` before the suites. Shown firing: the planted construct FAILS
+    `compileall` on 3.10 and PASSES on 3.12, which is the whole reason the
+    class is invisible locally.
+
     **The other half of the red was already fixed and nobody had looked.** The
     same run shows `Test suites (unit + browser)` and the 3.13 leg both passing
     on this commit, so #86's `--local-only` repair (a flow pointed at a local

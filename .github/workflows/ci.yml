@@ -185,5 +185,19 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
+      # EVERY .py MUST PARSE ON THE FLOOR, not just the ones a suite imports.
+      # `tools/audit_descriptors.py` subscripted a dict INSIDE an f-string with
+      # the same quote character the string uses -- PEP 701, so 3.12+ only --
+      # and did not parse on 3.10 at all. Nothing caught it: the unit group
+      # never imports that probe, and C45's scanner `continue`s on a file that
+      # fails to parse, which on 3.10 is exactly the offending file. C45 can
+      # only see the backslash class, from a version that CAN parse the file;
+      # `ast.parse(feature_version=(3,10))` was measured and does NOT restrict
+      # f-string grammar, so there is no dev-machine check for this. A real
+      # interpreter on the floor is the only thing that decides it, and this
+      # job already has one.
+      - name: Every Python file parses on this version
+        run: python -m compileall -q mcp_server.py config.py core tools legacy
+
       - name: Run the browser-free suites
         run: python tools/run_tests.py --group unit --strict
