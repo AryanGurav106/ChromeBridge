@@ -1339,9 +1339,34 @@ async def _selftest():
         by_ours = {row["ours"]: row for row in r["rows"]}
         report_rows = r["rows"]
 
-        # 1. THE COMPARATOR FIRES ON A GENUINE SPEC DISAGREEMENT.
-        if not any(row["cls"] == "whitespace-only" and "9秒39" in row["ours"] for row in r["rows"]):
-            fails.append("the AccName separator case did not fire: %s"
+        # 1. THE COMPARATOR FIRES ON A GENUINE SPEC DISAGREEMENT -- one we have
+        #    MEASURED AND DELIBERATELY NOT FIXED, which is the only kind that
+        #    can serve as a standing firing proof.
+        #
+        #    THIS CHECK EXPIRED ONCE AND THAT IS WHY IT IS WORDED THIS WAY. It
+        #    used to require the AccName SEPARATOR case (`<span>4</span>
+        #    <span>9秒39</span>`, #28's shape) to come back `whitespace-only`.
+        #    #93 made `_contentName` display-aware so inline children
+        #    concatenate exactly as Chrome does -- and the two now AGREE, so the
+        #    row vanished and the selftest FAILED on its own success. Verified
+        #    before rewriting rather than assumed: on this fixture both
+        #    separator shapes, inline and block, produce no row at all, and the
+        #    comparison is 11 compared / 10 exact. That is `MEASUREMENT.md`'s
+        #    probe-lifetime rule: an A/B whose firing proof is a DEFECT expires
+        #    when the defect ships a fix.
+        #
+        #    `chrome-superset` is #34's measured shape -- Chrome's name absorbs a
+        #    nested control's `aria-label` where ours stops at the link's own
+        #    text, and per AccName 2F Chrome is right and we stop short. It is
+        #    recorded as a characterisation of the gap, not a bug queued for
+        #    fixing, so it is a disagreement that should still be here. If it is
+        #    ever closed, this proof expires too -- rewrite it rather than
+        #    deleting it, and say what replaced it.
+        if not any(row["cls"] == "chrome-superset"
+                   and "Deadline" in (row["ours"] or "") for row in r["rows"]):
+            fails.append("the comparator reported NO genuine disagreement on a "
+                         "shape that is known to disagree (#34's nested-label "
+                         "case): %s"
                          % [(x["ours"], x["theirs"], x["cls"]) for x in r["rows"]][:6])
         # 2. THE CONTROLS MUST AGREE. Without this a probe that reports EVERYTHING as a
         #    disagreement would pass check 1 and the agreement rate would be meaningless.

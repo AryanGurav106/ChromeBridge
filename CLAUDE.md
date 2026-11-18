@@ -10391,6 +10391,67 @@ granted in the side panel is refused with the same message the agent gets.
     the right row when several are plausible (#75 tried and the benchmark
     substrate defeated it).
 
+107. **THE ONLY INDEPENDENT RULER WOULD NOT START, AND THE REASON WAS TODAY'S
+    FIX.** Three of the four rulers here score us against ourselves —
+    `lost_identities` and findability both ask our collector about our own
+    output. `audit_name_correctness.py` is the one that does not: it compares
+    our AccName derivation against **Chrome's own `Accessibility.getFullAXTree`**.
+    The name path is exactly what moved today, so it is the one that could catch
+    what the others cannot. Its `--selftest` **failed**.
+
+    **It failed on its own success.** The firing proof required the AccName
+    SEPARATOR case — `<span>4</span><span>9秒39</span>`, #28's shape — to come
+    back as a `whitespace-only` disagreement. #93 made `_contentName`
+    display-aware this morning so inline children concatenate exactly as Chrome
+    does. Verified rather than assumed before touching anything: on that fixture
+    **both separator shapes, inline and block, now produce no row at all**, and
+    the comparison is 11 compared / 10 exact. The defect the proof depended on
+    was gone, so the proof could not fire. That is `MEASUREMENT.md`'s
+    probe-lifetime rule — **an A/B whose firing proof is a DEFECT expires when
+    the defect ships a fix** — landing on the probe whose whole job is catching
+    this class, hours after the fix.
+
+    Re-based on a disagreement **measured and deliberately NOT fixed**: #34's
+    `chrome-superset`, where Chrome's name absorbs a nested control's
+    `aria-label` and ours stops at the link's own text. Per AccName 2F Chrome is
+    right and we stop short, and #34 recorded that as a characterisation of the
+    gap rather than a bug queued for fixing. The comment says so and says to
+    REWRITE rather than delete if it is ever closed. The planted-sentinel arm
+    was already there, is defect-independent, and fires on 5 rows.
+
+    **Then the measurement, 25 live sites through two stages, 10,574
+    comparisons.** `fmt_drift: 0` and no AX failures, so the probe's parsing had
+    not drifted from `_fmtLine` — which mattered, because the Hebrew quoting fix
+    (#93) touched that very path.
+
+    | | #93 (251 sites) | now (25 sites) |
+    |---|---|---|
+    | `src=name`, pooled | 0.9134 | 0.8298 |
+    | `src=name`, **per-site median** | **0.9722** | **0.9455** |
+
+    **NO REGRESSION IS CLAIMED AND NEITHER IS PARITY, because the two are not
+    comparable and #93 proves it from inside its own sample**: pooled 0.9134
+    against per-site median 0.9722 is a 7pp gap from COMPOSITION alone, on one
+    corpus. Mine is 16 sites with ≥20 comparisons against 251, and three
+    outliers carry the pooled figure down — `w2_supremecourt` 0.455,
+    `w2_seoul` 0.567, `gov_tw_moi` 0.569.
+
+    **What IS checkable, and is the actual result: no new disagreement class
+    appeared.** Every example is one #93 or #34 already documents — a video
+    thumbnail Chrome names `影片縮圖` while we take the title; our
+    `[另開新視窗]` "opens in a new window" prefix, which the page renders and
+    Chrome drops; Chrome absorbing an image's alt (`Perl Camel Logo`); and
+    U+3000 / U+200B punctuation. And on the WORST site, 8 of 12 `src=name`
+    disagreements are **`chrome-empty`** — Chrome has no name at all for those
+    roles, which #93 explicitly excludes from any error rate (removing them took
+    its own figure 0.9134 → 0.9492).
+
+    **A gap in the ruler, recorded rather than fixed:** the per-site `src`
+    breakdown is reachable only by walking `sites[].reads[].by_src` — there is
+    no rolled-up per-site field — so the comparable statistic took a second pass
+    to compute and the first attempt reported "0 sites" and looked like missing
+    data. Worth adding when this is next touched.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
