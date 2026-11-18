@@ -9500,13 +9500,38 @@ granted in the side panel is refused with the same message the agent gets.
     `ref_f11549:16` … `ref_f11549:24` — so the promise that notice makes is true
     rather than aspirational.
 
-    **Still unfixed, with evidence:** the frame serializer drops 21 transferable
-    element facts (`readonly`, `href`, `type`, constraints, `options`,
-    `help=`/`error=`) because it is a second `_fmtLine` and `_fmtLine` is nested
-    inside the injected collector; and `(REPLACES the whole page)` was written
-    FOR cross-frame rows and cannot appear on one. Frame rows remain
-    unreachable by `find`/`search_page`, which ask for the structured array
-    while the frame block is string-only.
+    **ALL FOUR RESIDUALS ARE NOW CLOSED, and the last two closed a CAUSE.**
+
+    **The frame serializer dropped 21 transferable facts — deleted, not
+    patched.** It knew name, value, submits, placeholder, role and four flags,
+    so `readonly`, `href`, `type`, every constraint, `options`/`count`, `help=`,
+    `error=`, `(post-key)`, `(checked)`, `(current)` and `(just appeared)` never
+    reached a frame row: **a control inside a cross-origin frame got a strictly
+    poorer row than the identical control in the top document, silently.** The
+    collector already sets `e.line` on every structured entry using the real
+    `_fmtLine`, so re-prefixing `ref_N` → `ref_f<fid>:N` is the whole job and
+    the 25 duplicated lines are gone. Zero extra round trips. That duplicate was
+    also the thing that drifted on quoting an hour earlier, so removing it
+    closes both.
+    Measured: `ref_f6:8 | select name="…" value="alpha"` became
+    `… count=2 options=["alpha", "beta"]`.
+
+    **`(REPLACES the whole page)` could not appear on the rows it was written
+    for, because "inside a frame" is TWO different tests and the code knew one.**
+    For a SAME-ORIGIN frame the collector runs in the top document and walks
+    into `contentDocument`, so `ownerDocument !== document` is exact. For a
+    CROSS-ORIGIN frame it is INJECTED INTO that frame — `ownerDocument` IS
+    `document` — so the condition was false on exactly the population the flag
+    exists for. `window.top !== window` is the other half.
+    **And then the LEGEND still did not appear**, because the legend is built
+    from the top document's entries and the frame block is appended after it —
+    so the notation was PRESENT AND UNEXPLAINED, which is #13's rule failing in
+    the opposite direction from usual. Added where the fact is known, and only
+    when the notation really appears.
+
+    **Still unfixed, with evidence:** frame rows remain unreachable by
+    `find`/`search_page`, which ask for the structured array while the frame
+    block is string-only.
 
 
 ## Debugging starting points

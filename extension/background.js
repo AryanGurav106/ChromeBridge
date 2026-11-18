@@ -5510,40 +5510,40 @@ async function collectCrossFrames(tabId, geometry) {
       : raw;
     const frameHidden = raw.length - ordered.length;
     for (const e of ordered) {
-      let id = '';
-      if (e.name)        id += ` name=${JSON.stringify(e.name)}`;
-      if (e.value)       id += ` value=${JSON.stringify(e.value)}`;
-      if (e.submits)     id += ` submits=${JSON.stringify(e.submits)}`;
-      if (e.placeholder) id += ` placeholder=${JSON.stringify(e.placeholder)}`;
-      // THROUGH JSON.stringify, the same correction `_fmtLine` took: a label
-      // containing a double quote otherwise produces a row that cannot be
-      // parsed back, and that is an i18n defect (Hebrew writes the gershayim
-      // in an abbreviation as a plain ASCII quote). This serializer is a
-      // FORCED duplicate -- `_fmtLine` is nested inside the injected collector
-      // and unreachable from here -- and it had drifted, which is what a
-      // forced duplicate does when nothing enforces it.
-      if (!id && e.text) id = ` ${JSON.stringify(e.text)}`;
-      if (!id && e.label) id = ` ${JSON.stringify(e.label)}`;
-      const flags = (e.active ? ` (${e.active})` : '') + (e.required ? ' (required)' : '') +
-                    (e.unselected ? ' (unselected)' : '') + (e.disabled ? ' (disabled)' : '');
-      const rl = (e.role && e.role !== e.tag) ? ` role=${e.role}` : '';
-      // `ref_` , not `mmid=`. The main listing moved to ref_N and tells the agent
-      // "Act on a row by its ref_N", while these rows still announced themselves
-      // with the internal spelling — two vocabularies for one concept, in the one
-      // place (a cross-origin frame) where the agent is already least sure how to
-      // address the element. The banner below says "act with ref f<fid>:N"; now
-      // the rows agree with it.
+      // THE COLLECTOR ALREADY FORMATTED THIS ROW. `_collectInteractivePage`
+      // sets `e.line` on every structured entry with the real `_fmtLine`, so
+      // re-prefixing it is the whole job -- and the 25 lines of duplicated
+      // formatting that used to live here are deleted rather than patched.
+      //
+      // THE DUPLICATE WAS COSTING 21 TRANSFERABLE FACTS. It knew name, value,
+      // submits, placeholder, role and four flags, and therefore dropped
+      // `readonly`, `href`, `type`, `pattern`/`min`/`max`/`maxlength`/`format`,
+      // `options`/`count`, `help=`, `error=`, `(post-key)`, `(checked)`,
+      // `(current)`, `(just appeared)` and the rest -- so a control inside a
+      // cross-origin frame got a STRICTLY POORER row than the identical
+      // control in the top document, silently. It had also drifted on quoting,
+      // which is what a forced duplicate does when nothing enforces it.
+      //
+      // Zero extra round trips: the structured call already returns the line.
+      // The ref is re-prefixed `ref_N` -> `ref_f<fid>:N` by anchored match, so
+      // a `ref_` appearing inside a LABEL cannot be rewritten.
+      const _raw = (typeof e.line === 'string' && e.line)
+        ? e.line.replace(/^ref_(\d+)\b/, `ref_f${fid}:$1`)
+        : `ref_f${fid}:${e.mmid} | ${e.tag}`;
       // NO SHELL MEANS NO BOX, NOT NO ROW. A nested frame has no <iframe> in
       // THIS document to anchor to, so its coordinates are unknowable from
       // here -- and refs re-measure at click time (#11), so the controls are
-      // actionable without one. The first version of this dereferenced a null
-      // shell here and in the header below, which threw, and the caller's
-      // catch turned a geometry gap into collectCrossFrames returning '' --
-      // losing the depth-1 frame as well. Measured: S3 went from 3 silent
-      // losses to 4.
+      // actionable without one. The first version dereferenced a null shell
+      // here and in the header below, which threw, and the caller's catch
+      // turned a geometry gap into collectCrossFrames returning '' -- losing
+      // the depth-1 frame as well. Measured: S3 went from 3 losses to 4.
+      //
+      // The frame's own `box()` is FRAME-relative, so where we have a shell the
+      // offset is added; `_fmtLine` already omitted it unless geometry was
+      // asked for, so there is nothing to strip when it was not.
       const _xbox = (geometry && shell)
         ? ` | box(${e.x + shell.x},${e.y + shell.y},${e.w},${e.h})` : '';
-      lines.push(`ref_f${fid}:${e.mmid} | ${e.tag}${id}${rl}${flags}${_xbox}`);
+      lines.push(_raw.replace(/ \| box\([^)]*\)/, '') + _xbox);
     }
     if (lines.length) {
       text += `\n[CROSS-ORIGIN IFRAME f${fid}${(shell && shell.title) ? ` ${JSON.stringify(shell.title)}` : ''}${host ? ` (${host})` : ''}${shell ? '' : ' — NESTED, so its position on the page is not knowable from here and its rows carry no box(); acting BY REF still works, because a ref re-measures at click time'} — ` +
@@ -5554,6 +5554,17 @@ async function collectCrossFrames(tabId, geometry) {
                   `further down inside the frame — scroll within it or act on a more specific region).`
                 : '');
     }
+  }
+  // THE LEGEND IS BUILT FROM THE TOP DOCUMENT'S ENTRIES, and these rows are
+  // appended after it -- so a notation that appears ONLY in a frame block had
+  // no explanation anywhere, which is #13's rule ("a listing names only the
+  // notations actually present") failing in the other direction: present and
+  // unnamed. Added here, where the fact is known, and only when the notation
+  // really appears.
+  if (text.includes('(REPLACES the whole page')) {
+    text += `\n  - (REPLACES the whole page) — an in-frame link with target="_top"/"_parent".` +
+            ` Following it navigates the TOP document, which destroys this frame and` +
+            ` invalidates every ref_f<frameId>:<n> above.`;
   }
   _frameShells.set(tabId, offsets);
   return text;
@@ -10210,8 +10221,21 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       newTab: tagL === 'a' && el.getAttribute('target') === '_blank',
       // Only meaningful for an element INSIDE a frame: in the top document a
       // target=_top link is an ordinary same-tab navigation and needs no flag.
+      //
+      // "INSIDE A FRAME" IS TWO DIFFERENT TESTS, and this knew one. For a
+      // SAME-ORIGIN frame the collector runs in the top document and walks
+      // into `contentDocument`, so `ownerDocument !== document` identifies an
+      // in-frame element exactly. For a CROSS-ORIGIN frame it is INJECTED INTO
+      // that frame -- `ownerDocument` IS `document` -- so the test was false
+      // and the flag never set on the elements it was written for. Measured
+      // with a planted `target="_top"` link inside a cross-origin frame: the
+      // row listed, the flag absent, the legend line absent.
+      //
+      // `window.top !== window` is the other half, and it is the one that
+      // holds wherever the collector happens to be running.
       topNav: tagL === 'a' && /^(_top|_parent)$/.test(el.getAttribute('target') || '')
-              && (el.ownerDocument || document) !== document,
+              && (((el.ownerDocument || document) !== document)
+                  || (function () { try { return window.top !== window; } catch (e) { return true; } })()),
       crossFrame,                       // opaque cross-origin iframe shell
       canvasLike,                       // pixel/vector drawing surface (canvas or class-marked div/svg)
       physBlocked,                      // physically covered (drives modal/overlay heuristics)
