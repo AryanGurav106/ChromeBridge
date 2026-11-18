@@ -392,6 +392,93 @@ def project_page(user, p):
 </div>""", user, "/projects")
 
 
+# --- /invoices: the shape the eval-10 scenarios actually have ----------------
+# Everything before this is one page with one interaction. The scenarios written
+# for eval 10 are four to six interactions of MIXED kinds -- filter the table,
+# sort a column, page forward, open a row -- and nothing in this fixture had
+# that shape, so the record-and-replay feature had never been exercised at the
+# complexity the showcase will use.
+#
+# SERVER-RENDERED FROM QUERY PARAMS ON PURPOSE. Sort order, filter and page are
+# all in the URL, so the page is deterministic and a replay reaches the same
+# state without depending on client JS timing. That also makes the hard case
+# constructible: flipping `dir` genuinely re-sorts the rows under a recorded
+# step, which is exactly what a content witness has to survive and what an
+# ordinal alone gets wrong.
+_INV = [
+    ("INV-1001", "Acme Ltd",      "2026-01-14", 4820),
+    ("INV-1002", "Globex",        "2026-01-22", 15300),
+    ("INV-1003", "Initech",       "2026-02-03", 990),
+    ("INV-1004", "Umbrella Corp", "2026-02-11", 23750),
+    ("INV-1005", "Soylent",       "2026-02-19", 6100),
+    ("INV-1006", "Hooli",         "2026-03-02", 18420),
+    ("INV-1007", "Stark Ind",     "2026-03-15", 2450),
+    ("INV-1008", "Wayne Ent",     "2026-03-27", 31990),
+    ("INV-1009", "Cyberdyne",     "2026-04-04", 7730),
+    ("INV-1010", "Tyrell Corp",   "2026-04-18", 12660),
+    ("INV-1011", "Weyland",       "2026-05-01", 540),
+    ("INV-1012", "Oscorp",        "2026-05-13", 9870),
+]
+_INV_REF = {r[0]: f"REF-{(sum(ord(c) for c in r[0]) * 7) % 9973:04d}" for r in _INV}
+_PER_PAGE = 5
+
+
+def invoices_page(user, q="", sort="id", direction="asc", page=1):
+    rows = [r for r in _INV
+            if not q or q.lower() in r[0].lower() or q.lower() in r[1].lower()]
+    key = {"id": 0, "customer": 1, "date": 2, "amount": 3}.get(sort, 0)
+    rows = sorted(rows, key=lambda r: r[key], reverse=(direction == "desc"))
+    total = len(rows)
+    pages = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
+    page = max(1, min(page, pages))
+    shown = rows[(page - 1) * _PER_PAGE: page * _PER_PAGE]
+
+    def hdr(field, label):
+        nd = "desc" if (sort == field and direction == "asc") else "asc"
+        arrow = "" if sort != field else (" \u2191" if direction == "asc" else " \u2193")
+        return (f'<th><a href="/invoices?q={q}&sort={field}&dir={nd}&page=1">'
+                f'{label}{arrow}</a></th>')
+
+    body_rows = "".join(
+        f'<tr><td><a href="/invoices/{i}">{i}</a></td><td>{c}</td>'
+        f'<td>{d}</td><td class=amt>{a:,}</td></tr>' for i, c, d, a in shown)
+    pager = "".join(
+        f'<a class="pg{" on" if n == page else ""}" '
+        f'href="/invoices?q={q}&sort={sort}&dir={direction}&page={n}">{n}</a> '
+        for n in range(1, pages + 1))
+    return shell("Invoices", f"""
+<h1>Invoices</h1>
+<p class=sub>{total} invoice(s) match.</p>
+<form method=get action="/invoices" style="margin:12px 0">
+  <input name=q value="{q}" placeholder="Filter by number or customer"
+         aria-label="Filter invoices" style="width:260px">
+  <input type=hidden name=sort value="{sort}"><input type=hidden name=dir value="{direction}">
+  <button type=submit>Filter</button>
+</form>
+<table id=invoices><thead><tr>
+{hdr("id", "Invoice")}{hdr("customer", "Customer")}{hdr("date", "Date")}{hdr("amount", "Amount")}
+</tr></thead><tbody>{body_rows}</tbody></table>
+<nav class=pager style="margin-top:10px">{pager}</nav>
+""", user, "/invoices")
+
+
+def invoice_page(user, inv):
+    row = next((r for r in _INV if r[0] == inv), None)
+    if not row:
+        return shell("Not found", "<h1>404</h1><p class='sub'>No such invoice.</p>", user)
+    i, c, d, a = row
+    return shell(f"Invoice {i}", f"""
+<h1>Invoice {i}</h1>
+<table id=detail>
+<tr><th>Customer</th><td>{c}</td></tr>
+<tr><th>Date</th><td>{d}</td></tr>
+<tr><th>Amount</th><td>{a:,}</td></tr>
+<tr><th>Reference</th><td id=ref>{_INV_REF[i]}</td></tr>
+</table>
+<p><a href="/invoices">Back to invoices</a></p>
+""", user, "/invoices")
+
+
 def report_page(user):
     """Two shapes that each made a pass disagree with another pass (#48).
 
@@ -563,6 +650,15 @@ class H(BaseHTTPRequestHandler):
             p = next((x for x in STATE["projects"] if x["id"] == int(m.group(1))), None)
             return self._send(project_page(user, p)) if p else self._send(
                 shell("Not found", "<h1>404</h1><p class='sub'>No such project.</p>", user), 404)
+        if path == "/invoices":
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            return self._send(invoices_page(
+                user, (qs.get("q") or [""])[0],
+                (qs.get("sort") or ["id"])[0], (qs.get("dir") or ["asc"])[0],
+                int((qs.get("page") or ["1"])[0] or 1)))
+        m = re.fullmatch(r"/invoices/(INV-\d+)", path)
+        if m:
+            return self._send(invoice_page(user, m.group(1)))
         if path == "/report":
             return self._send(report_page(user))
         if path == "/members":
