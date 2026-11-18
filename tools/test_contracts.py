@@ -1902,17 +1902,33 @@ def main() -> int:
     check("C45 no f-string in the project puts a backslash in its EXPRESSION "
           "part — legal only from 3.12, and pyproject.toml advertises >=3.10",
           not _fstr, f"offenders={_fstr}")
-    # THE DETECTOR SHOWN FIRING. Planted in memory; the construct parses here
-    # (3.12+) and would not on 3.10, which is precisely why a scan is needed
-    # rather than relying on the file failing to import.
-    _planted_f = _ast.parse('x = 1\ny = f"{chr(92) and \'a\\\\b\' in \'z\'}"\n')
-    _pf = [1 for _n in _ast.walk(_planted_f)
-           if isinstance(_n, _ast.FormattedValue)
-           and "\\" in (_ast.get_source_segment(
-               'x = 1\ny = f"{chr(92) and \'a\\\\b\' in \'z\'}"\n', _n.value) or "")]
+    # THE DETECTOR SHOWN FIRING -- AND THIS CONTROL ONCE BROKE EXACTLY THE WAY
+    # THE CHECK ABOVE EXISTS TO PREVENT. The planted source is parsed with the
+    # RUNNING interpreter, and on 3.10/3.11 that raises SyntaxError before any
+    # of it is inspected -- uncaught, so the whole contracts suite died at this
+    # line and CI's 3.10 leg reported `FAIL ... ? <- exit code 1` with no check
+    # named. The comment that used to sit here even said the construct "would
+    # not [parse] on 3.10" and then called ast.parse on it anyway. So the check
+    # written to catch a 3.10-only breakage was itself a 3.10-only breakage, in
+    # its own control, by the author who had just written the rule (#86's
+    # lesson one layer deeper: a rule in prose is one a human has to remember,
+    # and a rule in a check is one its own control can still violate).
+    #
+    # The fix is C42b's shape, which had this asymmetry right from the start:
+    # on a version that REFUSES the construct, the refusal IS the detection,
+    # and the control must report that rather than die of it.
+    _planted_src = 'x = 1\ny = f"{chr(92) and \'a\\\\b\' in \'z\'}"\n'
+    try:
+        _planted_f = _ast.parse(_planted_src)
+        _pf = [1 for _n in _ast.walk(_planted_f)
+               if isinstance(_n, _ast.FormattedValue)
+               and "\\" in (_ast.get_source_segment(_planted_src, _n.value) or "")]
+        _pf_how = "our scan"
+    except SyntaxError:
+        _pf, _pf_how = [1], "the interpreter refusing to parse it"
     check("C45b CONTROL: the same scan fires on a planted backslash, so the "
           "clean result above is evidence rather than an empty loop",
-          len(_pf) == 1, f"planted hits={len(_pf)}")
+          len(_pf) == 1, f"planted hits={len(_pf)}, caught by {_pf_how}")
 
     # ---- C46: AN imageId MUST NOT RESOLVE IN A SESSION THAT DID NOT MAKE IT --
     # `_store_image` used a module-level counter, so the Nth screenshot of EVERY

@@ -9691,6 +9691,48 @@ granted in the side panel is refused with the same message the agent gets.
     Suites: 1580 checks. New — C47/C47b/C47c (the research index, with the
     planted-name control that proves the completeness check can fire).
 
+96. **THE CHECK WRITTEN TO CATCH A 3.10-ONLY BREAKAGE WAS ITSELF A 3.10-ONLY
+    BREAKAGE, IN ITS OWN CONTROL.** CI's 3.10 leg had been red for days with
+    `contracts FAIL 62.2s ? <- exit code 1` — a `?` in the CHECKS column, which
+    means the suite produced no parseable count, i.e. it CRASHED rather than
+    failing a check and so named nothing. Reproduced on a real 3.10 rather than
+    guessed at (`uv python install 3.10`, a venv from `requirements.txt`), which
+    took four minutes and ended three rounds of hypotheses about `tomllib`,
+    `datetime.UTC` and PEP 701 parsing differences, none of which was it.
+
+    **C45** (#91) scans every `ast.FormattedValue` in the project for a
+    backslash in the EXPRESSION part, legal only from 3.12, because such a file
+    does not PARSE on 3.10 and the suite dies at import. **C45b** is its
+    control, and it plants the violation by calling `ast.parse()` on a source
+    string containing one — **with the running interpreter**. On 3.10 that
+    raises `SyntaxError` before anything is inspected, uncaught, killing the
+    suite at that line. The comment that sat directly above it said the
+    construct *"would not [parse] on 3.10, which is precisely why a scan is
+    needed"* — the author knew, wrote it down, and parsed it anyway.
+
+    So: #86 found two of three C45 offenders were written that hour by the
+    author of C42; #91 found two more of its own; and this is the same hand
+    again, one layer deeper — not in the rule, not in the check, but in the
+    CONTROL that exists to prove the check can fire. **A rule in prose is one a
+    human has to remember; a rule in a check is one its own control can still
+    violate.**
+
+    **THE FIX WAS ALREADY IN THE FILE, TWENTY LINES UP.** C42b has this
+    asymmetry right and always has: it reports a planted violation as caught
+    *"by this scan, or by the compiler refusing it"*, because on a version that
+    REFUSES the construct the refusal IS the detection. C45b now does the same —
+    `SyntaxError` is a catch, not a crash — and says which path found it:
+    on 3.12 `caught by our scan`, on 3.10 `caught by the interpreter refusing to
+    parse it`. Verified on both: **3.10 unit group 10/10, 868 checks, ALL
+    GREEN**, and 3.12 unchanged at 124/124 contracts.
+
+    **The other half of the red was already fixed and nobody had looked.** The
+    same run shows `Test suites (unit + browser)` and the 3.13 leg both passing
+    on this commit, so #86's `--local-only` repair (a flow pointed at a local
+    server CI cannot serve is SKIPPED with its reason, not failed) had landed
+    and the only thing still red was this. **Three days of red is what it costs
+    to report "CI is fixed" from the change you made rather than from the run.**
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -9710,6 +9752,7 @@ granted in the side panel is refused with the same message the agent gets.
 | Submit fires but modal stays open | `fill_form` submit path — check `out.submit_errors` and `out.unfilled` enumeration in the result message |
 | Bridge says "Element X not found" mid-form | React re-render mid-fill_form. Confirm batched text-write path is being used (`fieldKinds` probe), and that mmid injection is additive (`window.__mmidCounter`) |
 | MCP server won't start / Claude Code shows it as failed | Run `.venv\Scripts\python.exe mcp_server.py` manually — anything on stdout other than JSON-RPC kills the transport; logs must be stderr-only. Then check, in order: `.mcp.json` expansion (a bare unset `${VAR}` fails silently; `.` resolves against the LAUNCH dir), whether the re-exec found `./.venv`, and whether all ten ports 8765-8774 are taken |
+| A suite fails only on CI's 3.10 leg and the runner prints `?` in the CHECKS column | A `?` means the suite produced no parseable count, i.e. it CRASHED rather than failing a check — so no check name appears and the log says nothing useful. Get a real interpreter (`uv python install 3.10`, a venv from `requirements.txt`) and run it; four minutes of that beat three rounds of guessing at `tomllib`/`datetime.UTC`/PEP 701. The one this cost days to find was C45b (#96): a CONTROL that plants a backslash-in-f-string by calling `ast.parse` on it with the RUNNING interpreter, which 3.10 refuses. A control that constructs the very thing its check forbids must treat the interpreter's refusal as a CATCH, the way C42b always has |
 | A suite fails only on CI's 3.13 leg, with `UnicodeEncodeError … surrogates not allowed` at an import | A docstring contains a lone UTF-16 surrogate — usually because it SPELLS the escape (`\ud83d`) in a non-raw string, so it became one. From 3.13 `compile()` refuses that outright while 3.10/3.12 accept it, which is why it is invisible locally. Make the docstring raw. An ordinary string constant with one is fine; C42 enforces docstrings only, and `python3.13 -c "compile(open(f).read(),f,'exec')"` reproduces it in one line |
 | `run_flows --local-only` fails on a flow pointed at another local server | By design since #86 — it keeps only flows the harness can SERVE, i.e. the fixture `--playground` starts. A `localhost:8080` flow is loopback and still needs a server CI does not have; it is SKIPPED with the reason printed rather than failing the build |
 | A flow replay refuses with "needs N secret that is not set" although the fixture flows work | Before #86, `_fixture_secret_names` matched the literal `127.0.0.1:8787` while `--local-only` knew all three loopback spellings, so a flow recorded against `localhost:8787` was selected and its secret withheld. Both read one `FIXTURE_RE` now. If it recurs, the flow's origin is genuinely not the fixture — export the variable yourself |
