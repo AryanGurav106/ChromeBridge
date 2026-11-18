@@ -4496,6 +4496,18 @@ _BATCHABLE.update(
         "resize_window": resize_window,
         "file_upload": file_upload,
         "upload_image": upload_image,
+        # MUTATING TOOLS THAT A RECORDED FLOW CAN CONTAIN, so `_flow_call` must
+        # be able to dispatch them. `MUTATES` decides what survives a compile and
+        # this table decides what the runner can RUN, and nothing held the two
+        # together: a name in the first and not the second compiles into a saved
+        # file and then raises "flow step names 'x', which is not a runnable
+        # tool" on its first replay. `call_page_tool` has been in that state
+        # since WebMCP shipped -- a flow driving a page-declared tool records
+        # cleanly and has never been replayable -- and `dismiss_dialog` joined it
+        # when accepting a confirm() was correctly reclassified as an ACTION.
+        # FD25 is the tripwire, as a permitted set that may only shrink (L10c's
+        # shape), so a NEW tool cannot quietly arrive in the same state.
+        "call_page_tool": call_page_tool,
     }
 )
 
@@ -4801,6 +4813,14 @@ async def dismiss_dialog(
                 f"because whatever ran before the dialog may have changed the page.")
     return str(res)
 
+
+
+# REGISTERED HERE because `dismiss_dialog` is defined BELOW the main table and
+# Python binds the name at module execution, not at reference. See that table's
+# note: `MUTATES` decides what a compile keeps and `_BATCHABLE` decides what the
+# runner can dispatch, and a name in the first and not the second records into a
+# saved flow and raises on its first replay. FD25 is the tripwire.
+_BATCHABLE["dismiss_dialog"] = dismiss_dialog
 
 @mcp.tool()
 async def record_flow(

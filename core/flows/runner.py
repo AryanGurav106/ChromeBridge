@@ -39,7 +39,8 @@ from typing import Any, Callable, Optional
 
 from . import secrets
 from .descriptor import Unresolved, build, resolve
-from .model import NAVIGATIONAL, VAR_RE, Flow, Step, resolve_vars, set_ref
+from .model import (NAVIGATIONAL, VAR_RE, Flow, Step, created_tab as _created_tab,
+                    resolve_vars, set_ref)
 from .recorder import (no_effect, query_first_attrs, query_first_text,
                        query_total, refused, search_hits)
 
@@ -110,23 +111,10 @@ def _as_list(v) -> list:
     return list(v) if isinstance(v, list) else [v]
 
 
-def _created_tab(result) -> Optional[int]:
-    """The tab id `tabs_create_mcp` just made, or None if it cannot be read.
-
-    The tool answers with JSON, but a result-string contract is exactly what
-    kept `delta` dead for its whole life (#30), so this accepts the parsed
-    shape as well and refuses to guess when neither is there -- the caller
-    stops rather than silently carrying on in the old tab.
-    """
-    if isinstance(result, dict):
-        v = result.get("tabId")
-        return int(v) if v is not None else None
-    try:
-        return int((json.loads(result) or {}).get("tabId"))
-    except Exception:
-        pass
-    m = re.search(r'"tabId"\s*:\s*(\d+)', str(result or ""))
-    return int(m.group(1)) if m else None
+def _path_of(url: str) -> str:
+    """pathname + search, the one spelling `path` checks already use."""
+    u = urlsplit(str(url or ""))
+    return u.path + (f"?{u.query}" if u.query else "")
 
 
 class Run:
@@ -201,6 +189,27 @@ class Run:
     async def go(self, binding: Optional[str] = None) -> dict:
         """Run from the current step. `binding` answers the question that stopped us."""
         self._t0 = time.time()
+
+        # A FLOW WITH NO STEPS REPORTED **PASSED**, which is a false green in a
+        # test runner and the worst direction there is. It is not hypothetical:
+        # `compile()` drops a step it cannot describe, a step addressed by CSS
+        # selector carrying a typed value, a call that errored and a call whose
+        # tool said it did not act -- so a recording where every one of those
+        # applied produced an empty flow, saved it, and replayed it green for
+        # ever. Measured before this existed: `start(Flow(steps=[]), ...)` ->
+        # `passed 0/0` with an empty reason.
+        #
+        # Checked here rather than at LOAD because the file is not the only way
+        # to reach it: `compile()` builds the object directly, and the runner is
+        # where "did this test actually run" is decided.
+        if not self.flow.steps:
+            return self._stop(FAILED,
+                              "this flow has NO steps, so replaying it asserts "
+                              "nothing and reporting it as a pass would be a false "
+                              "green. A recording compiles to nothing when every "
+                              "call errored, was refused, or named a ref that could "
+                              "not be described — record_flow(action=\"stop\") names "
+                              "which. Re-record it.")
 
         while self.i < len(self.flow.steps):
             # STOP AFTER STEP N, FOR INTERROGATING THE PAGE MID-FLOW.
@@ -371,6 +380,7 @@ class Run:
                 # answer went to whichever target happened to come first.
                 self.pending_path = unresolved.path
                 why = unresolved.reason + self._surface_note() \
+                    + await self._location_note() \
                     + await self._viewport_note() + await self._lang_note()
                 if len(step.targets) > 1 and unresolved.path:
                     why += (f" (this step names {len(step.targets)} targets; the "
@@ -577,6 +587,86 @@ class Run:
                 f"invalidates every step at once; re-record against this language, "
                 f"or switch the app back.")
 
+    def _recorded_location(self) -> str:
+        """The path the RECORDING was on when it performed the current step.
+
+        OBSERVED locations only: the nearest preceding step's `expect.url` /
+        `expect.path`, or the flow's `require`, which is the landing state.
+        Nothing is derived from the live page, so this is what the recording
+        claims rather than a guess.
+
+        A `navigate` ENDS the scan and contributes NOTHING ITSELF, and the
+        second half of that was a defect of mine caught by running the chaos
+        arm rather than by reading. The first version also read the navigate's
+        own url as a fallback -- which is an INTENT, not an observation. On
+        `acme-nav-badge` (`navigate("/logout")`, and /logout redirects to
+        /login) a genuine failure three steps later was decorated with
+
+            The tab is also at a different PATH than the recording was when it
+            performed this step: 'http://127.0.0.1:8787/login' now against
+            '/logout' then
+
+        -- a false cause, on a flow that was doing exactly what it recorded,
+        and it would fire on every login flow, every canonical redirect and
+        every trailing-slash rewrite. Principle 6, inside the note written to
+        serve principle 6. A navigate still TERMINATES the scan, because an
+        earlier step's location describes a page this flow has since left.
+        """
+        for st in reversed(self.flow.steps[:self.i]):
+            exp, _ = resolve_vars(st.expect or {}, self.vars)
+            for k in ("url", "path"):
+                if exp.get(k):
+                    return _path_of(exp[k])
+            if st.name in NAVIGATIONAL:
+                return ""
+        req, _ = resolve_vars(self.flow.require or {}, self.vars)
+        for k in ("url", "path"):
+            if req.get(k):
+                return _path_of(req[k])
+        return ""
+
+    async def _location_note(self) -> str:
+        """Name the page the tab is actually on, when it is not the recorded one.
+
+        THE REALISTIC OVERNIGHT FAILURE is a session that expires mid-flow: the
+        app answers every later request with its sign-in page, at a 200 and a
+        plausible url, and the step that fails reports *"no element on the page
+        matches this step's target: tag='button' name='Delete record'"* -- true,
+        and a description of the symptom rather than the cause. The same
+        sentence covers a redirect, a navigation that did not commit (#40), and
+        a flow started from the wrong place.
+
+        The fact is DECLARED on both sides: the recording says where it was
+        (`_recorded_location`) and `get_url` says where the tab is. Reported as
+        a CAUSE among causes, never as a diagnosis (principle 6) -- a page can
+        legitimately redirect without the step being wrong.
+
+        Through `get_url` rather than the fingerprint `_live_env` uses, for a
+        reason that matters precisely here: `get_url` is ungated and injects
+        nothing into the page, so it keeps answering when the page's main thread
+        is blocked by a dialog -- which is one of the states in which a resolve
+        failure is most confusing. Asked only on the failure path, so a passing
+        flow pays nothing (#38).
+        """
+        want = self._recorded_location()
+        if not want:
+            return ""
+        try:
+            res = await self.call("get_url", {"tabId": self.cur_tab})
+        except Exception:
+            return ""
+        m = re.search(r'"url"\s*:\s*"([^"]+)"', str(res))
+        if not m:
+            return ""
+        raw = m.group(1)
+        if _path_of(raw) == want:
+            return ""
+        return (f" The tab is also at a different PATH than the recording was when "
+                f"it performed this step: {raw!r} now against {want!r} then. A "
+                f"session that expired and bounced to a sign-in page, a redirect, a "
+                f"navigation that did not commit, and a flow started somewhere other "
+                f"than where it was recorded all produce this.")
+
     async def _viewport_note(self) -> str:
         """Name a size difference, but only while explaining a failure.
 
@@ -634,13 +724,24 @@ class Run:
         neither the popover nor the recovery.
         """
         try:
+            # ...AND THE SURFACE ITSELF IS NOT ALWAYS THE THING LISTED. A
+            # consent sheet or an onboarding overlay that appears only on the
+            # REPLAY (a fresh profile has no cookie saying it was dismissed) is
+            # frequently a plain <div> with no role at all -- but the collector
+            # has already DECIDED it is a dialog, by #25's rule that a visible
+            # dialog whose siblings are aria-hidden is modal, and it stamps
+            # `section=dialog` on everything inside it. Reading that is asking
+            # the collector's own answer rather than forming a second opinion
+            # about what a dialog is, which is #18's asymmetry and has cost
+            # this project three times.
             open_surfaces = [e for e in (self._last_entries or [])
-                             if (e.get("role") or "") in ("listbox", "menu", "dialog")]
+                             if (e.get("role") or "") in ("listbox", "menu", "dialog")
+                             or (e.get("section") or "") == "dialog"]
         except Exception:
             return ""
         if not open_surfaces:
             return ""
-        roles = sorted({e.get("role") for e in open_surfaces})
+        roles = sorted({e.get("role") or "dialog" for e in open_surfaces})
         return (f" — NOTE: an open {'/'.join(roles)} IS listed on this page, and an "
                 f"open popup surface marks the rest of the document aria-hidden, so "
                 f"every other descriptor stops resolving at once. Dismiss it (Escape) "

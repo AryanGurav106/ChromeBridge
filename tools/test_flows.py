@@ -1883,12 +1883,19 @@ async def record_and_replay():
                 return '{"tabId": %d}' % (900 + self.made)
             return await super().call(tool, inp)
 
+    # THE CALLS ARE THE ONES A CLIENT REALLY MAKES. `tabs_create_mcp` takes no
+    # arguments at all -- `_flow_call` strips `tabId` from it for that reason --
+    # and an agent that has just read `{"tabId": 901}` addresses the new tab by
+    # that id. The fixture used to hand `tabId: 1` to the create and then stay
+    # in tab 1, which is a recording that spans two tabs: the runner follows the
+    # created tab (the thing FT2 asserts), so the later step was recorded
+    # somewhere the replay would never be. FT3 below is the single-tab control.
     tf = TabBridge([E(70, "button", name="Create")])
     rt = Recorder("tabs", tf.entries_fn)
-    ci = {"tabId": 1}
+    ci = {}
     ct = await rt.before("tabs_create_mcp", ci)
     rt.after("tabs_create_mcp", ci, '{"tabId": 901}', ct)
-    ai = {"ref": "ref_70", "tabId": 1}
+    ai = {"ref": "ref_70", "tabId": 901}
     at = await rt.before("computer", ai)
     rt.after("computer", ai, "clicked", at)
     ftf, _ = rt.compile()
@@ -2346,8 +2353,15 @@ async def record_and_replay():
     # round-trip a recorder-shaped value through from_json. A new kind that is
     # not taught to the validator fails here rather than on someone's first
     # real flow.
+    # EACH SAMPLE IS WHAT `_checks` REALLY WRITES. `search` was `{"pattern":
+    # "hello"}` and the recorder has never emitted that shape -- it always adds
+    # `absent: True` or `min: 1` -- so the sample was testing the validator
+    # against a value no recording produces, and it went red the moment the
+    # validator started refusing a check that asserts nothing. Corrected rather
+    # than exempted: the check's own comment says "a recorder-shaped value".
     _SAMPLE = {"url": "https://app.test/x", "path": "/x",
-               "search": {"pattern": "hello"}, "query": {"selector": "tr", "count": 1}}
+               "search": {"pattern": "hello", "min": 1, "observed": 2},
+               "query": {"selector": "tr", "count": 1}}
     for _kind in FM.EXPECT_KINDS:
         assert _kind in _SAMPLE, f"FO8 has no sample for new kind {_kind!r}"
         _raw = {"schema": 1, "name": "k", "origin": "https://app.test",
@@ -3051,6 +3065,513 @@ async def record_and_replay():
     check("FN1b CONTROL: a step with no note says nothing extra",
           "the flow says this step is here" not in rn2["reason"])
 
+    # ======================================================================
+    # CONCEPTUAL BREAKS — docs/research/FLOWS-CONCEPTUAL-BREAKS-2026-11.md
+    #
+    # Each of these reproduces a shape a recorded flow meets in the wild and
+    # that nothing in the loop had an answer for. The ones that MATTER are the
+    # ones where the old code reported a clean pass.
+    # ======================================================================
+
+    # ---- FT5: A TAB THE **PAGE** OPENED ----------------------------------
+    # #58 taught the runner to follow a tab the FLOW creates with
+    # tabs_create_mcp. A tab the PAGE creates -- target="_blank", a payment
+    # popup, an OAuth window -- joins the group, becomes ACTIVE, and has no name
+    # a recording can carry. Measured with this exact fixture before the fix:
+    # the recording clicked Download in the popup and the replay clicked the
+    # ORIGINAL tab's Download button and reported PASSED 3/3. A different
+    # element, in a different document, reported as a clean pass.
+    _pop_home = [E(1, "a", name="Open report", href="/r"),
+                 E(2, "button", name="Download")]
+    _pop_new = [E(5, "button", name="Download")]
+
+    class _TwoTab(FakeBridge):
+        async def entries_fn(self, tabId=None):
+            return list(_pop_new if tabId == 9 else _pop_home)
+
+    _tt = _TwoTab(_pop_home)
+    _rt5 = Recorder("popup", _tt.entries_fn)
+    for _tool, _in, _res in [
+            ("navigate", {"url": "https://app.test/x", "tabId": 7}, "Navigated"),
+            ("computer", {"action": "left_click", "ref": "ref_1", "tabId": 7}, "ok"),
+            ("computer", {"action": "left_click", "ref": "ref_5", "tabId": 9}, "ok"),
+            ("get_url", {"tabId": 9}, '{"url": "https://app.test/report"}')]:
+        _rt5.after(_tool, _in, _res, await _rt5.before(_tool, _in))
+    _fpop, _rpop = _rt5.compile()
+    check("FT5 a call made in a tab the PAGE opened is NOT compiled into the "
+          "flow — the replay pins every step to one tab, so keeping it means "
+          "acting on the wrong document and reporting a pass",
+          [s.name for s in _fpop.steps] == ["navigate", "computer"]
+          and [t for _n, t in _rpop.get("off_tab", [])] == [9, 9],
+          f"steps={[s.name for s in _fpop.steps]} off_tab={_rpop.get('off_tab', [])}")
+    check("FT5b ...and the OBSERVATIONS made there go too, or the other tab's "
+          "state becomes this step's postcondition",
+          not _fpop.steps[-1].expect, str(_fpop.steps[-1].expect))
+    check("FT5c ...and the report names the tab and the recovery, rather than "
+          "leaving a shorter flow to be noticed",
+          any("tab 9" in n and "tabs_create_mcp" in n for n in _rpop["notes"]),
+          str(_rpop["notes"])[:160])
+
+    # THE CONTROL that this did not just start dropping steps. A recording that
+    # names ONE tab throughout is untouched -- without this, "drop everything
+    # that names a tab" would satisfy FT5 and delete the feature.
+    _tt2 = _TwoTab(_pop_home)
+    _rt6 = Recorder("one", _tt2.entries_fn)
+    for _tool, _in in [("navigate", {"url": "https://app.test/x", "tabId": 7}),
+                       ("computer", {"action": "left_click", "ref": "ref_1", "tabId": 7}),
+                       ("computer", {"action": "left_click", "ref": "ref_2", "tabId": 7})]:
+        _rt6.after(_tool, _in, "ok", await _rt6.before(_tool, _in))
+    _f1t, _r1t = _rt6.compile()
+    check("FT6 CONTROL: a single-tab recording keeps every step and reports "
+          "nothing", len(_f1t.steps) == 3 and not _r1t.get("off_tab", []),
+          f"{len(_f1t.steps)} steps, off_tab={_r1t.get('off_tab', [])}")
+
+    # ...and the control for the other direction: a tab the FLOW made is the
+    # tab the flow is in, so calls naming it are kept (FT1/FT2 assert the
+    # runner's half; this asserts the recorder agrees with it).
+    _tt3 = _TwoTab(_pop_home)
+    _rt7 = Recorder("made", _tt3.entries_fn)
+    _rt7.after("tabs_create_mcp", {}, '{"tabId": 9}', {})
+    _mk = {"action": "left_click", "ref": "ref_5", "tabId": 9}
+    _rt7.after("computer", _mk, "ok", await _rt7.before("computer", _mk))
+    _fmk, _rmk = _rt7.compile()
+    check("FT7 CONTROL: a tab the FLOW created with tabs_create_mcp is the tab "
+          "the flow is in, so calls naming it are kept — the recorder reads the "
+          "created id the same way the runner does (rule 17)",
+          [s.name for s in _fmk.steps] == ["tabs_create_mcp", "computer"]
+          and not _rmk.get("off_tab", []),
+          f"steps={[s.name for s in _fmk.steps]} off_tab={_rmk.get('off_tab', [])}")
+
+    # ---- FW14: target="_blank" -------------------------------------------
+    # The IMPLICIT half of FT5, which no tabId can catch: once the popup is
+    # active, a call that names no tabId goes THERE while the replay stays
+    # here, and nothing in the recording says so. `newTab` is `target="_blank"`
+    # read off the element by the collector, so this is a declaration rather
+    # than an inference.
+    _blank_page = [E(1, "a", name="Open report", href="/r"),
+                   E(2, "button", name="Acknowledge")]
+    _blank_page[0]["newTab"] = True
+
+    async def _rec_blank(seq, page):
+        _b = FakeBridge(page)
+        _r = Recorder("b", _b.entries_fn)
+        for _tool, _in in seq:
+            _r.after(_tool, _in, "ok", await _r.before(_tool, _in))
+        return _r.compile()
+
+    _fb, _rb = await _rec_blank(
+        [("computer", {"action": "left_click", "ref": "ref_1", "tabId": 7}),
+         ("computer", {"action": "left_click", "ref": "ref_2", "tabId": 7})],
+        _blank_page)
+    check("FW14 a click on a link declaring target=\"_blank\" is named when the "
+          "recording CONTINUES after it — the steps that follow replay in the "
+          "tab the flow started in, not the one the link opens",
+          _rb.get("opens_new_tab", []) == [0]
+          and any(r.startswith("opens-new-tab:") for r in _fb.steps[0].review),
+          f"opens_new_tab={_rb.get('opens_new_tab', [])}")
+    _fb2, _rb2 = await _rec_blank(
+        [("computer", {"action": "left_click", "ref": "ref_1", "tabId": 7})],
+        _blank_page)
+    check("FW14b CONTROL: a flow that ENDS on that click has nothing left to "
+          "mis-target, so it says nothing — a warning that fires on every "
+          "_blank link is the always-on noise #15 priced",
+          _rb2.get("opens_new_tab", []) == [], str(_rb2.get("opens_new_tab", [])))
+    _fb3, _rb3 = await _rec_blank(
+        [("computer", {"action": "left_click", "ref": "ref_1", "tabId": 7}),
+         ("computer", {"action": "left_click", "ref": "ref_2", "tabId": 7})],
+        [E(1, "a", name="Open report", href="/r"), E(2, "button", name="Acknowledge")])
+    check("FW14c CONTROL: an ordinary link with steps after it says nothing — "
+          "the flag is the page's own target attribute, not the tag",
+          _rb3.get("opens_new_tab", []) == [], str(_rb3.get("opens_new_tab", [])))
+
+    # ---- FD24: the recorder could not READ the result of a click ---------
+    # An MCP tool answers with a string OR with a list of content objects, and
+    # `computer` -- every click, drag, scroll and keystroke -- answers with the
+    # list. `after()` stored `result if isinstance(result, str) else ""`, so the
+    # text was discarded for exactly that tool: a click answering
+    # "*** NOT DELIVERED" (#56's dead trusted-input channel) stored '', refused()
+    # returned None, and the step was compiled in as a real action with
+    # `dropped: 0 failed call(s)`. The record-time guard FLOWS-FAILURE-SURFACE
+    # 1.1 calls CLOSED has only ever worked for the fill family.
+    # The RUNNER saw it by accident -- it stringifies the live object and a
+    # list's repr contains its items' text -- so the two halves of one project
+    # read one result two different ways, and the blind half was the one that
+    # WRITES THE FILE (rule 17).
+    try:
+        from core.flows.recorder import result_text as _result_text
+    except ImportError:          # the pre-fix arm, for the ablation
+        def _result_text(r):
+            return r if isinstance(r, str) else ""
+
+    class _TC:
+        def __init__(self, text):
+            self.type, self.text = "text", text
+
+    class _IC:
+        def __init__(self, data):
+            self.type, self.data = "image", data
+
+    async def _click_result(res):
+        _b = FakeBridge([E(2, "button", name="Delete")])
+        _r = Recorder("r", _b.entries_fn)
+        _r.after("computer", {"action": "left_click", "tabId": 7}, res, {})
+        return _r, _r.compile()
+
+    _rr, (_fdel, _rdel) = await _click_result(
+        [_TC("left_click on [mmid='2'] — landed at (1,2). "
+             "*** NOT DELIVERED: the page recorded no event ***")])
+    check("FD24 a click whose tool said *** NOT DELIVERED is dropped at compile "
+          "— it is the one tool that reports a dead input channel and the one "
+          "whose result the recorder could not read",
+          not _fdel.steps and _rdel["dropped_errors"] == 1,
+          f"steps={[s.name for s in _fdel.steps]} dropped={_rdel['dropped_errors']}")
+    check("FD24b ...because the TEXT is stored, whatever shape the tool answered in",
+          FR_NO_EFFECT not in _rr.raw[0]["result"]
+          and "NOT DELIVERED" in _rr.raw[0]["result"],
+          repr(_rr.raw[0]["result"])[:80])
+    _rr2, (_fok2, _rok2) = await _click_result(
+        [_TC("left_click on [mmid='2'] — landed at (1,2).")])
+    check("FD24c CONTROL: an ordinary click in the same shape is kept",
+          [s.name for s in _fok2.steps] == ["computer"],
+          str([s.name for s in _fok2.steps]))
+    check("FD24d ...and an IMAGE part contributes no text — `computer"
+          "(action=\"screenshot\")` carries a base64 payload in its repr, and "
+          "the recorder holds every raw call for the length of the recording",
+          _result_text([_IC("A" * 500), _TC("screenshot captured")])
+          == "\nscreenshot captured",
+          repr(_result_text([_IC("A" * 500), _TC("screenshot captured")]))[:60])
+
+    # ---- FW15: the tool said the page did not react ----------------------
+    # `NOT DONE:` already drops a step at compile. `NO EFFECT:` -- the other
+    # token the extension emits from the same ok/not-ok branch -- was read only
+    # by the RUNNER, so a click the extension itself reported as having no
+    # detectable effect was compiled in and said nothing to the person who could
+    # still re-click it. Reproduced live against a fixture whose Delete goes
+    # through a confirm(): the click reported exactly this.
+    _ne = FakeBridge([E(2, "button", name="Delete")])
+    _rne = Recorder("ne", _ne.entries_fn)
+    _nei = {"action": "left_click", "ref": "ref_2", "tabId": 7}
+    _rne.after("computer", _nei,
+               "left_click on [mmid='2'] — landed at (1,2). " + FR_NO_EFFECT
+               + "WARNING: the click was delivered and nothing moved",
+               await _rne.before("computer", _nei))
+    _fne, _rne2 = _rne.compile()
+    check("FW15 a step whose own tool reported NO DETECTABLE EFFECT is named at "
+          "RECORD time, which is the one moment it is cheap to act on",
+          _rne2.get("no_effect", []) == [0]
+          and any(r.startswith("no-effect:") for r in _fne.steps[0].review),
+          f"no_effect={_rne2.get('no_effect', [])}")
+    check("FW15b ...and it is NOT dropped — 'no DETECTABLE effect' is not 'no "
+          "effect' (a native select opening looks like this), which is why the "
+          "runner treats it as fatal only for a step nothing could catch",
+          len(_fne.steps) == 1, f"{len(_fne.steps)} steps")
+    _ne2 = FakeBridge([E(2, "button", name="Delete")])
+    _rne3 = Recorder("ok", _ne2.entries_fn)
+    _rne3.after("computer", _nei, "left_click on [mmid='2'] — landed at (1,2).",
+                await _rne3.before("computer", _nei))
+    _fok, _rok = _rne3.compile()
+    check("FW15c CONTROL: an ordinary click says nothing",
+          _rok.get("no_effect", []) == [], str(_rok.get("no_effect", [])))
+
+    # ---- FW16: an input that is not a descriptor and never will be -------
+    # model.py's comment beside REF_KEYS has said since it was written that "the
+    # recorder marks it rather than pretending otherwise". NOTHING MARKED IT: a
+    # drag compiled to literal pixels with no target, no review line and no
+    # note, and an `upload_image` wrote `img_3` -- a counter into the recording
+    # session's own screenshot registry -- into a file meant to be committed.
+    # Principle 18: a comment asserting a guarantee the code does not have.
+    _op = FakeBridge([E(2, "button", name="Drop here")])
+    _rop = Recorder("op", _op.entries_fn)
+    _rop.after("computer", {"action": "drag", "start": [1, 2],
+                            "coordinate": [3, 4], "tabId": 7}, "ok", {})
+    _ii = {"imageId": "img_3", "ref": "ref_2", "tabId": 7}
+    _rop.after("upload_image", _ii, "ok", await _rop.before("upload_image", _ii))
+    _fop, _rop2 = _rop.compile()
+    check("FW16 a coordinate and an imageId are MARKED on the step that carries "
+          "them — neither is re-resolved, and an imageId resolves in a later "
+          "session to a DIFFERENT image rather than to none",
+          _rop2.get("opaque_inputs", []) == [(0, "coordinate"), (1, "imageId")],
+          str(_rop2.get("opaque_inputs", [])))
+    check("FW16b ...on the step, so it reaches the JSON diff and --check-only "
+          "and not only the transcript (#68)",
+          all(any(r.startswith("opaque-input:") for r in s.review)
+              for s in _fop.steps), str([s.review for s in _fop.steps]))
+    _op2 = FakeBridge([E(2, "button", name="Save")])
+    _rop3 = Recorder("plain", _op2.entries_fn)
+    _pi = {"action": "left_click", "ref": "ref_2", "tabId": 7}
+    _rop3.after("computer", _pi, "ok", await _rop3.before("computer", _pi))
+    _fp2, _rp2 = _rop3.compile()
+    check("FW16c CONTROL: a ref-addressed click carries neither",
+          _rp2.get("opaque_inputs", []) == [], str(_rp2.get("opaque_inputs", [])))
+
+    # ---- FD22: a ref into a CROSS-ORIGIN frame ---------------------------
+    # `read_page` appends cross-frame elements as `f<frameId>:<n>`; the
+    # STRUCTURED array a recording is described from is built before that pass
+    # and never carries them (background.js: `if (!params?.structured …)`).
+    # Measured live on a fixture serving one frame from `localhost` and the page
+    # from `127.0.0.1`: the inner button is in the listing and absent from
+    # `_flow_entries`. The step was already dropped; what it said -- "not in the
+    # current listing" -- reads as nonsense to an agent that had just read it
+    # out of one.
+    _cf = FakeBridge([E(2, "button", name="Accept")])
+    _rcf = Recorder("cf", _cf.entries_fn)
+    _cfi = {"action": "left_click", "ref": "ref_f12:3", "tabId": 7}
+    _rcf.after("computer", _cfi, "ok", await _rcf.before("computer", _cfi))
+    _fcf, _rcf2 = _rcf.compile()
+    check("FD22 a cross-origin-frame ref is dropped AND told apart from a ref "
+          "that is simply gone",
+          not _fcf.steps
+          and any("CROSS-ORIGIN IFRAME" in n for n in _rcf2["notes"]),
+          str(_rcf2["notes"])[:150])
+    _rcf3 = Recorder("cf2", _cf.entries_fn)
+    _cfi2 = {"action": "left_click", "ref": "ref_404", "tabId": 7}
+    _rcf3.after("computer", _cfi2, "ok", await _rcf3.before("computer", _cfi2))
+    _, _rcf4 = _rcf3.compile()
+    check("FD22b CONTROL: an ordinary missing ref keeps the plain message",
+          not any("CROSS-ORIGIN" in n for n in _rcf4["notes"])
+          and any("not in the current listing" in n for n in _rcf4["notes"]),
+          str(_rcf4["notes"])[:120])
+
+    # ---- FR25: A FLOW WITH NO STEPS REPORTED **PASSED** -------------------
+    # The worst thing a test runner can do. Reachable without a hand edit: four
+    # separate rules drop a step, so a recording where every call errored, was
+    # refused, named an undescribable ref or carried a selector-addressed typed
+    # value compiles to nothing, saves, and replays green for ever.
+    _eb = FakeBridge([])
+    _re = await start(Flow(name="empty", origin="https://app.test"), 1,
+                      _eb.call, _eb.entries_fn)
+    check("FR25 a flow with NO steps FAILS rather than reporting a pass",
+          _re["status"] == FAILED and "NO steps" in _re["reason"],
+          f'{_re["status"]}: {_re["reason"][:90]}')
+    _eb2 = FakeBridge([E(1, "button", name="Go")])
+    _eb2.url = "https://app.test/done"
+    _re2 = await start(Flow(name="one", origin="https://app.test", steps=[Step(
+        name="computer", input={"action": "left_click"},
+        targets={"ref": {"level": 1, "desc": {"tag": "button", "role": "",
+                                              "type": "", "name": "Go"}}})]),
+        1, _eb2.call, _eb2.entries_fn)
+    check("FR25b CONTROL: a flow with one real step still passes",
+          _re2["status"] == PASSED, str(_re2["status"]))
+
+    # ---- FR26: the session that expires mid-flow -------------------------
+    # The realistic overnight failure. The app answers every later request with
+    # its sign-in page, at a 200 and a plausible url, and the step that fails
+    # reports "no element on the page matches this step's target" -- true, and a
+    # description of the symptom. The fact is declared on BOTH sides: the
+    # recording says where it was and get_url says where the tab is.
+    _TGT = {"ref": {"level": 1, "desc": {"tag": "button", "role": "", "type": "",
+                                         "name": "Delete record"}}}
+    _login = [E(1, "input", type_="email", name="Email", section="form",
+                clickable=False, editable=True)]
+
+    async def _expire(urls, steps):
+        _seq = list(urls)
+
+        class _B(FakeBridge):
+            async def call(self, tool, inp):
+                if tool == "get_url":
+                    return '{"url": "%s"}' % (_seq.pop(0) if len(_seq) > 1 else _seq[0])
+                return await FakeBridge.call(self, tool, inp)
+        _b = _B(_login)
+        return await start(Flow(name="x", origin="https://app.test", steps=steps),
+                           1, _b.call, _b.entries_fn)
+
+    _steps = [Step(name="navigate", input={"url": "https://app.test/projects"},
+                   expect={"path": "/projects"}),
+              Step(name="computer", input={"action": "left_click"}, targets=_TGT)]
+    _rx = await _expire(["https://app.test/projects",
+                         "https://app.test/login?next=/projects"], _steps)
+    check("FR26 a target that cannot be resolved names the PATH the tab is on "
+          "when it is not the one the recording was on — a session that expired "
+          "and bounced to a sign-in page is otherwise reported as one missing "
+          "button",
+          "different PATH" in _rx["reason"] and "/login" in _rx["reason"],
+          _rx["reason"][:150])
+    _rx2 = await _expire(["https://app.test/projects"], _steps)
+    check("FR26b CONTROL: the same failure on the RIGHT page says nothing — a "
+          "note that fires on every resolve failure is noise, not a cause",
+          "different PATH" not in _rx2["reason"], _rx2["reason"][:120])
+    _rx3 = await _expire(["https://app.test/login"],
+                         [Step(name="computer", input={"action": "left_click"},
+                               targets=_TGT)])
+    check("FR26c CONTROL: with nothing recorded about where the step ran, no "
+          "claim is made",
+          "different PATH" not in _rx3["reason"], _rx3["reason"][:120])
+    # ...AND THE ONE THAT CAUGHT ME. The first version also read a `navigate`'s
+    # own url as a fallback, which is an INTENT and not an observation. Found by
+    # running the chaos arm, not by reading: `acme-nav-badge` navigates to
+    # /logout, /logout REDIRECTS to /login, and a genuine failure three steps
+    # later was decorated with "'…/login' now against '/logout' then" -- a false
+    # cause on a flow doing exactly what it recorded, which would fire on every
+    # login flow and every canonical redirect. Principle 6, inside the note
+    # written to serve principle 6.
+    _rx4 = await _expire(["https://app.test/login"],
+                         [Step(name="navigate", input={"url": "https://app.test/logout"}),
+                          Step(name="computer", input={"action": "left_click"},
+                               targets=_TGT)])
+    check("FR26d CONTROL: a navigate's own url is an INTENT, not an observation "
+          "— a redirect must not be reported as the tab being on the wrong page",
+          "different PATH" not in _rx4["reason"], _rx4["reason"][:160])
+
+    # ---- FR27: an overlay that appears only on the REPLAY ----------------
+    # A consent sheet or an onboarding tour fires on a fresh profile and on no
+    # other run, and it marks the rest of the document aria-hidden, so every
+    # descriptor stops resolving at once. `_surface_note` looked for role
+    # listbox/menu/dialog and such an overlay is frequently a plain <div> with
+    # no role -- but the COLLECTOR has already decided it is modal (#25: a
+    # visible dialog whose siblings are aria-hidden) and stamps `section=dialog`
+    # on what is inside it. Reading that asks the collector's answer instead of
+    # forming a second opinion about what a dialog is (#18).
+    _ov = FakeBridge([E(1, "button", name="Accept all", section="dialog"),
+                      E(2, "button", name="Manage choices", section="dialog")])
+    _rov = await start(Flow(name="ov", steps=[Step(
+        name="computer", input={"action": "left_click"},
+        targets={"ref": {"level": 1, "desc": {"tag": "button", "role": "",
+                                              "type": "", "name": "Delete record"}}})]),
+        1, _ov.call, _ov.entries_fn)
+    check("FR27 a roleless overlay the collector calls a dialog is named as the "
+          "cause — otherwise an overlay that only ever appears on the replay "
+          "reports itself as one missing button",
+          "open" in _rov["reason"] and "dialog" in _rov["reason"],
+          _rov["reason"][-150:])
+    _nov = FakeBridge([E(1, "button", name="Somewhere else", section="main")])
+    _rnov = await start(Flow(name="nov", steps=[Step(
+        name="computer", input={"action": "left_click"},
+        targets={"ref": {"level": 1, "desc": {"tag": "button", "role": "",
+                                              "type": "", "name": "Delete record"}}})]),
+        1, _nov.call, _nov.entries_fn)
+    check("FR27b CONTROL: an ordinary page says nothing — a note that fires on "
+          "every resolve failure is noise rather than a cause",
+          "aria-hidden" not in _rnov["reason"], _rnov["reason"][-110:])
+
+    # ---- FO9: a LEGAL key that asserts nothing ---------------------------
+    # 2.4 refused an unknown key. This is the same silence wearing a valid name:
+    # `{"min": 0}` passes every shape check and `tot < 0` is never true, so the
+    # step reports a postcondition and has none.
+    def _refused(exp):
+        try:
+            FM.validate_expect("t", exp)
+        except ValueError as exc:
+            return str(exc)
+        return ""
+
+    for _why, _exp in [("min below 1 on a query", {"query": {"selector": "tr", "min": 0}}),
+                       ("min below 1 on a search", {"search": {"pattern": "x", "min": 0}}),
+                       ("a query with nothing to compare", {"query": {"selector": "tr"}}),
+                       ("a search that is neither present nor absent",
+                        {"search": {"pattern": "x"}})]:
+        _msg = _refused(_exp)
+        check(f"FO9[{_why}] is refused at LOAD, naming what to write instead",
+              bool(_msg), _msg[:110] or "ACCEPTED — asserts nothing, silently")
+    check("FO9b CONTROL: count 0 is NOT refused — a disappearance is half of "
+          "what a UI test checks (#63/D13), and refusing it would delete that",
+          FM.validate_expect("t", {"query": {"selector": ".modal", "count": 0}}) is None)
+    check("FO9c CONTROL: absent:true is not refused either",
+          FM.validate_expect("t", {"search": {"pattern": "x", "absent": True}}) is None)
+
+    # ---- FD23: dismiss_dialog MUTATES ------------------------------------
+    # Accepting a confirm() takes the action behind it -- the tool's own
+    # parameter documentation says so. It was classified as an OBSERVATION, so a
+    # happy path that goes through a native dialog had the one call that
+    # completes it folded away as scenery.
+    check("FD23 dismiss_dialog is an ACTION, not an observation — a happy path "
+          "that goes through a confirm() cannot be recorded otherwise",
+          FM.mutates("dismiss_dialog", {"accept": True})
+          and FM.mutates("dismiss_dialog", {}),
+          str(sorted(FM.MUTATES)))
+    check("FD23b CONTROL: the read-only tools a flow folds into assertions are "
+          "still observations",
+          not any(FM.mutates(t, {}) for t in
+                  ("get_url", "search_page", "query_elements", "read_page"))
+          and not FM.mutates("computer", {"action": "screenshot"}))
+
+    # ---- FW17: a recording that compiled down to nothing that ACTS --------
+    # Measured live: a fixture whose Delete goes through a native confirm()
+    # timed the click out behind the dialog, dropped it as an error, and saved
+    # a flow that was one `navigate` with a path assertion. It replays green for
+    # ever and tests nothing about deleting.
+    _nb = FakeBridge([])
+    _rn5 = Recorder("navonly", _nb.entries_fn)
+    _rn5.after("navigate", {"url": "https://app.test/x", "tabId": 7}, "Navigated", {})
+    _fn5, _rn6 = _rn5.compile()
+    check("FW17 a flow whose surviving steps are ALL navigations says so — zero "
+          "steps is refused outright, and this is the shape just above it",
+          any("every step that survived is a NAVIGATION" in n for n in _rn6["notes"]),
+          str(_rn6["notes"])[:120])
+    _rn7 = Recorder("acts", FakeBridge([E(2, "button", name="Go")]).entries_fn)
+    _rn7.after("navigate", {"url": "https://app.test/x", "tabId": 7}, "Navigated", {})
+    _ai5 = {"action": "left_click", "ref": "ref_2", "tabId": 7}
+    _rn7.after("computer", _ai5, "ok", await _rn7.before("computer", _ai5))
+    _fn7, _rn8 = _rn7.compile()
+    check("FW17b CONTROL: a flow that acts says nothing",
+          not any("NAVIGATION" in n for n in _rn8["notes"]), str(_rn8["notes"])[:120])
+
+    # ---- FW18: a warning about a check that is no longer on the step -----
+    # The landing checks MOVE off the navigational step onto `require`, and the
+    # three review lists are computed before that and WRITTEN after it. So a
+    # check that moved left its review line behind, on a step whose expect is
+    # now {}. Reproduced live by re-recording acme-invoices-drilldown through
+    # the real MCP path: step 1 carried "unproven: location was first observed
+    # AFTER this step" while the location check sat in `require`.
+    # It is not merely misplaced: `unproven` means "nothing earlier observed
+    # this with a different value", which is TRIVIALLY true of a precondition.
+    _lnd = FakeBridge([E(2, "button", name="Sign in")])
+    _rlnd = Recorder("lnd", _lnd.entries_fn)
+    for _tool, _in, _res in [
+            ("navigate", {"url": "https://app.test/login", "tabId": 7}, "Navigated"),
+            ("read_page", {"tabId": 7}, "Current URL: /login\n...rows..."),
+            ("computer", {"action": "left_click", "ref": "ref_2", "tabId": 7}, "ok"),
+            ("query_elements", {"tabId": 7, "selector": ".ok"},
+             "1 element(s) match '.ok'")]:
+        _rlnd.after(_tool, _in, _res, await _rlnd.before(_tool, _in))
+    _flnd, _ = _rlnd.compile()
+    check("FW18 a check that MOVED to `require` leaves no review line behind on "
+          "the navigational step it came from",
+          _flnd.require.get("path") == "/login"
+          and not _flnd.steps[0].expect and not _flnd.steps[0].review,
+          f"require={_flnd.require} step0 expect={_flnd.steps[0].expect} "
+          f"review={_flnd.steps[0].review}")
+    check("FW18b CONTROL: a step that KEEPS its expect keeps its review lines — "
+          "the filter is by step INDEX, not 'clear review everywhere'",
+          bool(_flnd.steps[1].expect)
+          and any(r.startswith("unproven:") for r in _flnd.steps[1].review),
+          str(_flnd.steps[1].review)[:120])
+
+    # ---- FW19: and `require` is reviewed by nothing at all ---------------
+    # The three loops walk `kept`, so a precondition is subject to no analysis.
+    # `hollow`/`unproven` are meaningless there (nothing precedes it). An
+    # unwitnessed ABSENCE is not: #64's rule is that a search which found
+    # nothing becomes a permanent "this must never appear", and in a
+    # precondition NO absence can ever be witnessed — so it is NAMED rather
+    # than dropped, because dropping them all would delete the only way to say
+    # "the cart is empty when this flow starts", which one flow on disk uses.
+    async def _req_flow(landing_result):
+        _b = FakeBridge([E(2, "button", name="Add")])
+        _r = Recorder("req", _b.entries_fn)
+        for _tool, _in, _res in [
+                ("navigate", {"url": "https://app.test/cart", "tabId": 7}, "Navigated"),
+                ("query_elements", {"tabId": 7, "selector": "[data-remove]"},
+                 landing_result),
+                ("computer", {"action": "left_click", "ref": "ref_2", "tabId": 7}, "ok"),
+                ("query_elements", {"tabId": 7, "selector": "[data-remove]"},
+                 "1 element(s) match '[data-remove]'")]:
+            _r.after(_tool, _in, _res, await _r.before(_tool, _in))
+        return _r.compile()
+
+    _fq, _ = await _req_flow("No element matches '[data-remove]'")
+    check("FW19 an ABSENCE in a flow's precondition is named — nothing precedes "
+          "a landing state, so a mistyped pattern is absent for ever and the "
+          "check then passes for ever",
+          any(r.startswith("require-absence:") for s in _fq.steps for r in s.review),
+          str([s.review for s in _fq.steps])[:150])
+    check("FW19b ...and it is NOT dropped: an absence is the only way to say "
+          "'the cart is empty when this flow starts'",
+          (_fq.require.get("query") or {}).get("count") == 0, str(_fq.require))
+    _fq2, _ = await _req_flow("3 element(s) match '[data-remove]'")
+    check("FW19c CONTROL: a precondition with no absence says nothing",
+          not any(r.startswith("require-absence:") for s in _fq2.steps
+                  for r in s.review), str([s.review for s in _fq2.steps])[:120])
+
     # ---- contracts -------------------------------------------------------
     check("FD16 REF_KEYS matches browser_batch's own _REF_KEYS — one concept, "
           "one spelling (#21), enforced rather than hoped for",
@@ -3079,6 +3600,28 @@ async def record_and_replay():
     check("FD17b ...and a readiness banner in front of them does not blind the "
           "parser, which is exactly when a flow is most likely to be running",
           search_hits("PAGE IS STILL SETTLING\n2 match(es) for \"x\"") == 2)
+
+    # ---- FD25: WHAT THE COMPILE KEEPS, THE RUNNER MUST BE ABLE TO RUN -----
+    # `MUTATES` decides what survives a recording and `mcp_server._BATCHABLE`
+    # decides what `_flow_call` can dispatch. Nothing held the two together, so
+    # a name in the first and not the second compiles into a saved file and then
+    # raises "flow step names 'x', which is not a runnable tool" on its first
+    # replay. Measured: TWO such names, and `call_page_tool` has been one since
+    # WebMCP shipped -- a flow driving a page-declared tool records cleanly and
+    # cannot be replayed.
+    # A PERMITTED SET rather than an equality, the same shape as L10c: the list
+    # shrinking means the gap closed and must not fail a build, while the list
+    # GROWING is a new tool that records and cannot replay.
+    # BOTH ARE NOW DISPATCHABLE, so the permitted set is EMPTY. It stays as a
+    # set rather than becoming `not _und` so the next gap is reported with its
+    # name, and so a future tool that genuinely cannot be dispatched can be
+    # named here deliberately rather than by deleting the check.
+    _KNOWN_UNDISPATCHABLE = set()
+    _und = _undispatchable_mutators()
+    check("FD25 no NEW mutating tool can be recorded that the runner cannot "
+          "dispatch — the two known ones are named, and the set may only shrink",
+          _und <= _KNOWN_UNDISPATCHABLE,
+          f"undispatchable={sorted(_und)} known={sorted(_KNOWN_UNDISPATCHABLE)}")
 
 
 def _record(calls, bridge):
@@ -3118,6 +3661,23 @@ def _signatures_survive_wrapping():
     ok = (not list(inspect.signature(ms._BATCHABLE["tabs_create_mcp"]).parameters)
           and "tabId" in inspect.signature(ms._BATCHABLE["read_page"]).parameters)
     return bad, ok
+
+
+def _undispatchable_mutators():
+    """Tools a recording may KEEP that `_flow_call` cannot then run.
+
+    `MUTATES` decides what survives the compile and `mcp_server._BATCHABLE`
+    decides what the runner can dispatch, and nothing held the two together.
+    A name in the first and not the second compiles into a flow file and then
+    raises `flow step names 'x', which is not a runnable tool` on its first
+    replay -- loud, which is why this is a documented gap rather than a defect,
+    but it is a gap a recording can walk into without warning.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ms_disp", ROOT / "mcp_server.py")
+    ms = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ms)
+    return {n for n in FM.MUTATES if n not in ms._BATCHABLE}
 
 
 def _batch_ref_keys():

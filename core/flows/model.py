@@ -46,8 +46,70 @@ MUTATES = {
     "navigate", "form_input", "fill_form", "file_upload", "upload_image",
     "call_page_tool", "javascript_tool", "tabs_create_mcp", "tabs_close_mcp",
     "resize_window",
+    # ACCEPTING A confirm() TAKES THE ACTION BEHIND IT -- `dismiss_dialog`'s own
+    # parameter documentation says so in as many words. It was classified as an
+    # OBSERVATION, so a happy path that goes through a native dialog had the one
+    # call that completes it folded away as scenery: measured on a fixture whose
+    # Delete asks first, the recording kept `navigate` + the click and dropped
+    # the dismissal, leaving a flow that stops at a dialog nothing will answer.
+    # The classification is what was wrong; a dialog that is dismissed rather
+    # than accepted changes nothing on the page, but the op is the same op and
+    # the decision belongs to the recording, not to a guess about its argument.
+    "dismiss_dialog",
 }
 COMPUTER_OBSERVES = {"screenshot", "wait", "zoom"}
+
+# A PER-DOCUMENT HANDLE THAT IS NOT A REF, AND THEREFORE NOT RE-RESOLVED.
+#
+#   coordinate    a point, not an element: nothing to describe and nothing to
+#                 re-resolve, so a recorded one is fragile by construction.
+#                 #26 made geometry opt-in for the same reason and #23/#25
+#                 measured ours drifting 110px and 1097px.
+#   imageId       `img_<n>`, a SEQUENTIAL counter into the server's in-memory
+#                 screenshot registry (mcp_server._IMG_SEQ). It means nothing in
+#                 a later process -- and the dangerous case is not that it
+#                 misses: a replay in a session that happens to have taken more
+#                 screenshots resolves `img_3` to a DIFFERENT image and uploads
+#                 it successfully.
+#
+# The comment above REF_KEYS has claimed since it was written that "the recorder
+# marks it rather than pretending otherwise". Nothing marked it: a drag step
+# compiled to literal pixels with no target, no review line and no note, which
+# is principle 18 -- a comment asserting a guarantee the code does not have.
+# `Recorder.compile` reads this and names each one on the step that carries it.
+UNRESOLVABLE_INPUTS = {
+    "coordinate": ("a COORDINATE, which is a point rather than an element: "
+                   "nothing describes it and nothing re-resolves it, so this "
+                   "step replays at the same pixels whatever the page does"),
+    "imageId": ("an IMAGE ID, which is a counter into the screenshot registry of "
+                "the session that recorded it. A later session resolves the same "
+                "id to a DIFFERENT image, or to none at all"),
+}
+
+
+def created_tab(result):
+    """The tab id `tabs_create_mcp` just made, or None if it cannot be read.
+
+    ONE SPELLING, because both ends need it: the RUNNER follows a tab the flow
+    creates (#58) and the RECORDER has to know the same thing to tell a step
+    that merely names a tab apart from one that names a tab the replay will
+    never have. Two copies would drift and each would be exercised by half the
+    tests (rule 17).
+
+    The tool answers with JSON, and a result-string contract is exactly what
+    kept `delta` dead for its whole life (#30) -- so the parsed shape is
+    accepted as well, and neither being there is an answer of None rather than
+    a guess.
+    """
+    if isinstance(result, dict):
+        v = result.get("tabId")
+        return int(v) if v is not None else None
+    try:
+        return int((json.loads(result) or {}).get("tabId"))
+    except Exception:
+        pass
+    m = re.search(r'"tabId"\s*:\s*(\d+)', str(result or ""))
+    return int(m.group(1)) if m else None
 
 # Calls that establish WHERE the flow acts rather than changing the app. They
 # mutate the browser and not the page, which is why `MUTATES` has to keep
@@ -204,6 +266,32 @@ def validate_expect(where: str, exp: Optional[dict]) -> None:
                     f"which this build does not read — a misspelt field is an "
                     f"assertion that silently checks nothing. Valid: "
                     f"{', '.join(EXPECT_FIELDS[kind])}.")
+            # ...AND A LEGAL KEY CAN STILL ASSERT NOTHING, which is the same
+            # silence wearing a valid name. `{"min": 0}` passes every check
+            # above and `tot < 0` is never true, so the step reports a
+            # postcondition and has none -- and a flow that cannot fail is the
+            # worst thing a test runner can produce. `count: 0` is NOT this: it
+            # is a disappearance, which is half of what a UI test checks
+            # (#63/D13). Only the floor that no page can fall below is refused.
+            _floor = item.get("min")
+            if _floor is not None and (not isinstance(_floor, int)
+                                       or isinstance(_floor, bool) or _floor < 1):
+                raise ValueError(
+                    f"{where}.{kind} declares min={_floor!r}. A floor below 1 is "
+                    f"satisfied by every page including a blank one, so this "
+                    f"check cannot fail — use count for an exact observation, or "
+                    f"min>=1 for presence.")
+            if kind == "query" and not any(
+                    k in item for k in ("count", "min", "text", "attrs")):
+                raise ValueError(
+                    f"{where}.query names a selector and nothing to compare it "
+                    f"against, so it runs the query and asserts nothing. Add "
+                    f"count, min, text or attrs.")
+            if kind == "search" and not item.get("absent") and "min" not in item:
+                raise ValueError(
+                    f"{where}.search names a pattern and neither absent nor min, "
+                    f"so it searches the page and asserts nothing. Add min (it is "
+                    f"there) or absent (it is not).")
 
 
 @dataclass

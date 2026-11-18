@@ -8,6 +8,12 @@ nobody has thought about, which is the only kind that is genuinely dangerous.
 
 Read `FLOWS.md` first for what the feature is. This is the adversarial pass.
 
+**EXTENDED BY `docs/research/FLOWS-CONCEPTUAL-BREAKS-2026-11.md`**, which went
+looking for the shapes this list had no entry for at all — a frame, a shadow
+root, a virtualised list, a native dialog, **a tab the page opened**, a drag, an
+upload, a session that dies mid-run. Three of those were SILENT, and one of them
+had disarmed row 1.1 below. Rows corrected by it are marked inline.
+
 Status: `CLOSED` (fixed + a check that fails against the old code) ·
 `BOUNDED` (cannot be fixed, but the failure is announced) ·
 `OPEN` · `INHERENT` (a property of the problem, not of this implementation).
@@ -18,7 +24,7 @@ Status: `CLOSED` (fixed + a check that fails against the old code) ·
 
 | # | Failure | Status |
 |---|---|---|
-| 1.1 | A step that silently did nothing is compiled in as a real step | `CLOSED` — the extension emits `NOT DONE:` / `NO EFFECT:` tokens from the ok/not-ok branch itself, so a new refusal wording cannot appear without one (#66, #72). An enumeration of wordings was always one wording behind. |
+| 1.1 | A step that silently did nothing is compiled in as a real step | `CLOSED` — the extension emits `NOT DONE:` / `NO EFFECT:` tokens from the ok/not-ok branch itself, so a new refusal wording cannot appear without one (#66, #72). An enumeration of wordings was always one wording behind. **AND THIS ROW WAS HALF TRUE UNTIL CONCEPTUAL-BREAKS C2:** `Recorder.after` stored `result if isinstance(result, str) else ""`, and `computer` — every click — answers with a LIST of content objects, so the markers were discarded for exactly the tool that emits them. The guard had only ever fired for the fill family. One `result_text()` now answers "the text a tool returned" for the recorder and the runner alike (`FD24`). |
 | 1.2 | An assertion that was already true before the step | `CLOSED` — flagged at `record_flow(stop)`, the one moment it is cheap, scanning back ACROSS actions for the latest prior value (#57). It is a warning, never a refusal: an idempotent step legitimately leaves state alone. |
 | 1.3 | An assertion nothing was ever observed to contradict | `CLOSED` — `unproven`, named rather than dropped, since unevidenced is not wrong (#68). |
 | 1.4 | A mistyped search that found nothing, frozen in as `absent: true` | `CLOSED` — an absence is only kept when the thing was SEEN present earlier, otherwise dropped and named (#64). |
@@ -51,7 +57,7 @@ Status: `CLOSED` (fixed + a check that fails against the old code) ·
 | 3.5 | The control has not RENDERED yet, reported as absent | `CLOSED` — target resolution gets the same bounded settle window as a postcondition (#59), and the recorded descriptor gets its WHOLE window before the alternate is offered, or a mid-render name gets written into the flow (#61). |
 | 3.6 | A responsive layout at a different width genuinely lacks the control | `BOUNDED` — reported as a CAUSE on a resolve failure, width only, no threshold (#57, #59). |
 | 3.7 | **A descriptor unique at record time becomes ambiguous later** | `CLOSED` — the cheap and the full descriptor are both stored, cheap-first with full as tie-break: 54% → 0% refusals, still 0% wrong (#49). |
-| 3.8 | **The page is rendered in a different LANGUAGE than when it was recorded** | `OPEN`. The identity rung IS the accessible name, so a localised app invalidates every descriptor at once — the playground ships a `ja` chaos flag whose own comment says "the whole descriptor design rests on the accessible name", and this surface had no entry for it. Measured: a target recorded as `name='Sign in'` against a Japanese render reports *"no element on the page matches this step's target: tag='button' name='Sign in'"* and **names no cause**, while the same failure at a different viewport WIDTH appends *"The window is also a different WIDTH…"*. The page declares the fact (`<html lang>`); what is missing is the recorded half — `Flow` has no `lang`, and `viewport` is populated by `mcp_server` at stop time, so closing this needs a writer there as well as the reader here (rule 14). |
+| 3.8 | **The page is rendered in a different LANGUAGE than when it was recorded** | `CLOSED` — `Flow.lang` is populated by `mcp_server` at stop time and `runner._lang_note` reads it on a resolve failure, comparing the BCP 47 primary subtag only. **This row read `OPEN` for several entries after the fix shipped**, which is the stale-heading class principle V names. The original text, kept for its measurement:  `OPEN`. The identity rung IS the accessible name, so a localised app invalidates every descriptor at once — the playground ships a `ja` chaos flag whose own comment says "the whole descriptor design rests on the accessible name", and this surface had no entry for it. Measured: a target recorded as `name='Sign in'` against a Japanese render reports *"no element on the page matches this step's target: tag='button' name='Sign in'"* and **names no cause**, while the same failure at a different viewport WIDTH appends *"The window is also a different WIDTH…"*. The page declares the fact (`<html lang>`); what is missing is the recorded half — `Flow` has no `lang`, and `viewport` is populated by `mcp_server` at stop time, so closing this needs a writer there as well as the reader here (rule 14). |
 
 ## Stage 4 — ACT: the action landing
 
@@ -96,8 +102,24 @@ directly and never crosses into `mcp_server`'s renderer.
 
 | # | Failure | Status |
 |---|---|---|
-| 7.1 | **`run_flow(stop_after=N)` cannot be rendered at all** | `OPEN`, and it has never worked over the wire. `_flow_report`'s `head` is a three-key dict lookup — `passed` / `failed` / `needs_decision` — and the runner's fourth status is `stopped_early`. Reproduced against **git HEAD**, not against anyone's working tree: `_flow_report({... "status": "stopped_early" ...})` raises `KeyError: 'stopped_early'`. FR22/FR22b/FR22c pin the RUNNER and pass; nothing pins the renderer. The fix is one dict entry in `mcp_server.py`, which is why it is not fixed here (that file is held by another agent this session); the check that should land with it is in the handover notes. |
+| 7.1 | **`run_flow(stop_after=N)` cannot be rendered at all** | `CLOSED` — `_flow_report`'s `head` carries `stopped_early` in `mcp_server.py` at HEAD, and `FR22d` enumerates every status the runner can return. **This row read `OPEN` after the fix landed**, which is the stale-row class principle V names; the original text, kept for its measurement: it had never worked over the wire. `_flow_report`'s `head` is a three-key dict lookup — `passed` / `failed` / `needs_decision` — and the runner's fourth status is `stopped_early`. Reproduced against **git HEAD**, not against anyone's working tree: `_flow_report({... "status": "stopped_early" ...})` raises `KeyError: 'stopped_early'`. FR22/FR22b/FR22c pin the RUNNER and pass; nothing pins the renderer. The fix is one dict entry in `mcp_server.py`, which is why it is not fixed here (that file is held by another agent this session); the check that should land with it is in the handover notes. |
 | 7.2 | A `stop_after` at the LAST index reports `passed`, not `stopped_early` | Working as intended, recorded so it is not re-filed: every step ran and every assertion was checked, so there is nothing partial to announce. Callers key on the `stopped_early` flag, which is absent in exactly that case. |
+
+
+## Stage 8 — THE SHAPE OF THE PAGE
+
+The stage this document had no entries for, which is why it had no entries for
+the three SILENT modes below. Full reproductions, numbers and controls in
+`docs/research/FLOWS-CONCEPTUAL-BREAKS-2026-11.md`.
+
+| # | Failure | Status |
+|---|---|---|
+| 8.1 | **A step performed in a tab the PAGE opened** (`target="_blank"`, a payment popup) | was `SILENT` — replayed in the ORIGINAL tab and reported PASSED 3/3. `CLOSED`: dropped at compile from the recorded tabIds, naming both tabs (C1, `FT5`). The implicit half — no `tabId` named, the popup merely active — is named through the DECLARED `target="_blank"` (C4, `FW14`) and closed exactly only by the `_flow_entries` diff in that paper's §6. |
+| 8.2 | **A virtualised list** | `OPEN`, and the sharpest one. The crowd is the rendered WINDOW, whose size does not change when it scrolls, so the composition check that catches a row being added or removed **can never fire**. Measured live: recorded REC-1003, replayed REC-1053, no refusal. A sub-case of `OPEN.md` item 2; the `positional:` warning now names it as a third mechanism beside a re-sort and churn (M1). |
+| 8.3 | **A target inside a cross-origin iframe** | `BOUNDED` — `read_page` reaches it and the STRUCTURED array a recording is described from does not, so the step is dropped. It now says WHY (C7, `FD22`); closing it is a collector change. |
+| 8.4 | A target inside a shadow root (open or closed) or a same-origin iframe | not a failure — verified live, descriptors resolve at level 1 and clicks land (S1–S3). |
+| 8.5 | **A consent sheet that appears only on the REPLAY and declares no role** | `CLOSED` — `_surface_note` reads the collector's own `section=dialog` verdict rather than forming a second opinion (C10, `FR27`). |
+| 8.6 | A drag (`coordinate`) or an `upload_image` (`imageId`) | `BOUNDED` — neither is ever re-resolved, and an `imageId` is a per-session counter that a later session resolves to a DIFFERENT image. Both MARKED on the step (C6, `FW16`); `model.py` had claimed since it was written that the recorder marked them, and nothing did (principle 18). |
 
 ---
 

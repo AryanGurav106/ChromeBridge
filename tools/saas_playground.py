@@ -573,6 +573,156 @@ def settings_page(user):
 
 
 # ---------------------------------------------------------------------------
+# THE /lab PAGES — shapes a recorded flow can break on, each one a row in
+# docs/FLOWS-CONCEPTUAL-BREAKS-2026-11.md.
+#
+# They are deliberately OUTSIDE the session, because what is under test is the
+# record->replay loop's reaction to a page SHAPE, and making every probe log in
+# first adds a failure mode that is not the one being measured.
+# ---------------------------------------------------------------------------
+def lab_shell(title, body):
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            f'<title>{title} · lab</title><style>{CSS}</style></head><body>'
+            f'<div class="wrap"><h1>{title}</h1>{body}</div></body></html>')
+
+
+def lab_frames():
+    """Same-origin AND cross-origin iframes, each holding a control.
+
+    The cross-origin one is the SAME SERVER under a different hostname --
+    `localhost` against `127.0.0.1` -- which is a genuinely different origin to
+    the browser and needs no second port or certificate.
+    """
+    return lab_shell("Frames", f"""
+<p class="sub">Two same-origin frames and one cross-origin frame.</p>
+<iframe src="/lab/frame-inner?tag=alpha" title="alpha frame"
+        style="width:420px;height:120px;border:1px solid #2a2a31" class="{rid()}"></iframe>
+<iframe src="/lab/frame-inner?tag=beta" title="beta frame"
+        style="width:420px;height:120px;border:1px solid #2a2a31" class="{rid()}"></iframe>
+<iframe src="http://localhost:{PORT}/lab/frame-inner?tag=gamma" title="gamma frame"
+        style="width:420px;height:120px;border:1px solid #2a2a31" class="{rid()}"></iframe>
+<p class="muted" id="lab-note">frames rendered</p>""")
+
+
+def lab_frame_inner(tag):
+    return lab_shell(f"Frame {tag}", f"""
+<p class="muted">inner document</p>
+<button class="primary {rid()}" onclick="document.getElementById('o').textContent='approved {tag}'">
+  Approve {tag}</button>
+<p id="o" class="muted">pending {tag}</p>""")
+
+
+def lab_shadow():
+    """One OPEN shadow root and one CLOSED one, each holding a real control.
+
+    The closed root is the case CDP `pierce` is usually needed for and this
+    extension reaches without a debugger, because listener_tag.js wraps
+    attachShadow at document_start (#31).
+    """
+    return lab_shell("Shadow", f"""
+<p class="sub">An open root and a closed root.</p>
+<div id="open-host" class="{rid()}"></div>
+<div id="closed-host" class="{rid()}"></div>
+<p id="shadow-out" class="muted">nothing yet</p>
+<script>
+  var o = document.getElementById('open-host').attachShadow({{mode:'open'}});
+  o.innerHTML = '<button id="ob">Publish openly</button>';
+  o.getElementById('ob').addEventListener('click', function () {{
+    document.getElementById('shadow-out').textContent = 'published from the open root';
+  }});
+  var c = document.getElementById('closed-host').attachShadow({{mode:'closed'}});
+  c.innerHTML = '<button id="cb">Publish privately</button>';
+  c.getElementById('cb').addEventListener('click', function () {{
+    document.getElementById('shadow-out').textContent = 'published from the closed root';
+  }});
+</script>""")
+
+
+def lab_virtual(plain=False):
+    """A VIRTUALISED list: 200 records, ten rows ever in the DOM.
+
+    The crowd a recorded ordinal was counted against is the WINDOW, not the
+    list, and the window's size does not change when it scrolls -- so
+    `len(hits) == of` holds while every member is a different record. That is
+    the shape an ordinal cannot survive and a content witness can.
+
+    `?plain=1` strips the per-row code, which is what the `near=` hint and the
+    record-text witness both feed on. With it the rows are distinguishable and
+    the descriptor needs no ordinal; without it they are identical and the
+    ordinal is all there is -- the two arms of the same page.
+    """
+    code = "" if plain else ("'<span>REC-' + (1000 + i) + '</span>'\n         + ")
+    return lab_shell("Virtual list", f"""
+<p class="sub">200 records, ten in the DOM at a time.</p>
+<div id="vp" style="height:300px;overflow:auto;border:1px solid #2a2a31" class="{rid()}">
+  <div id="spacer" style="height:6000px;position:relative"><div id="rows"></div></div>
+</div>
+<p id="vout" class="muted">none selected</p>
+<script>
+  var N = 200, H = 30, WIN = 10;
+  var vp = document.getElementById('vp'), rows = document.getElementById('rows');
+  function render() {{
+    var top = Math.min(Math.floor(vp.scrollTop / H), N - WIN);
+    var h = '';
+    for (var i = top; i < top + WIN; i++) {{
+      h += '<div class="row" style="position:absolute;top:' + (i * H) + 'px;height:' + H + 'px">'
+         + {code}'<button data-i="' + i + '">Select</button></div>';
+    }}
+    rows.innerHTML = h;
+  }}
+  vp.addEventListener('scroll', render);
+  rows.addEventListener('click', function (e) {{
+    var b = e.target.closest('button[data-i]');
+    if (b) document.getElementById('vout').textContent =
+      'selected REC-' + (1000 + Number(b.getAttribute('data-i')));
+  }});
+  render();
+</script>""")
+
+
+def lab_confirm():
+    """A Delete whose happy path goes THROUGH a native confirm().
+
+    Every page-context op is queued behind the dialog's own thread, so the one
+    tool that can answer it is `dismiss_dialog` (CDP, out of process). Whether
+    that call survives the COMPILE is what this page is here to measure.
+    """
+    return lab_shell("Confirm", f"""
+<p class="sub">Deleting asks first.</p>
+<button class="danger {rid()}" id="del">Delete record</button>
+<p id="cout" class="muted">record present</p>
+<script>
+  document.getElementById('del').addEventListener('click', function () {{
+    if (window.confirm('Delete record?')) {{
+      document.getElementById('cout').textContent = 'record deleted';
+    }}
+  }});
+</script>""")
+
+
+def lab_popup():
+    """A link that opens the next page in a tab the PAGE created."""
+    return lab_shell("Popup", f"""
+<p class="sub">The report opens in its own tab.</p>
+<a href="/lab/popup-target" target="_blank" class="{rid()}">Open the report</a>
+<button class="{rid()}" id="ack">Acknowledge</button>
+<p id="pout" class="muted">not acknowledged</p>
+<script>document.getElementById('ack').addEventListener('click', function () {{
+  document.getElementById('pout').textContent = 'acknowledged on the opener';
+}});</script>""")
+
+
+def lab_popup_target():
+    return lab_shell("Report", f"""
+<p class="muted">this document lives in the tab the page opened</p>
+<button class="primary {rid()}" id="ack">Acknowledge</button>
+<p id="pout" class="muted">not acknowledged</p>
+<script>document.getElementById('ack').addEventListener('click', function () {{
+  document.getElementById('pout').textContent = 'acknowledged in the popup';
+}});</script>""")
+
+
+# ---------------------------------------------------------------------------
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -628,6 +778,21 @@ class H(BaseHTTPRequestHandler):
             return self._send(json.dumps({
                 "projects": STATE["projects"], "chaos": sorted(STATE["chaos"])}),
                 ctype="application/json")
+        if path.startswith("/lab/"):
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            page = {
+                "/lab/frames": lab_frames,
+                "/lab/frame-inner": lambda: lab_frame_inner(
+                    re.sub(r"[^a-z]", "", (qs.get("tag") or ["x"])[0])[:12] or "x"),
+                "/lab/shadow": lab_shadow,
+                "/lab/virtual": lambda: lab_virtual(bool(qs.get("plain"))),
+                "/lab/confirm": lab_confirm,
+                "/lab/popup": lab_popup,
+                "/lab/popup-target": lab_popup_target,
+            }.get(path)
+            if page:
+                return self._send(page())
+            return self._send(lab_shell("Not found", "<p>no such lab page</p>"), 404)
         user = self._session()
         if path == "/logout":
             # GET as well as POST. A recorded flow establishes its own starting

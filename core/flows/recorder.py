@@ -35,8 +35,18 @@ from urllib.parse import urlsplit
 
 from .descriptor import build, unwitnessed_ordinal
 from . import secrets
-from .model import (NAVIGATIONAL, Flow, Step, get_ref, mutates, ref_paths,
-                    set_value, slug, value_paths)
+from .model import (NAVIGATIONAL, UNRESOLVABLE_INPUTS, Flow, Step, created_tab,
+                    get_ref, mutates, ref_paths, set_value, slug, value_paths)
+
+# A REF INTO A CROSS-ORIGIN IFRAME, which `read_page` emits and `_flow_entries`
+# cannot. The string listing appends cross-frame elements as `f<frameId>:<n>`
+# (background.js `collectCrossFrames`); the STRUCTURED array the recorder
+# describes refs from is built before that pass and never carries them. So an
+# agent can read a consent dialog, click it, and have the recorder answer "not
+# in the current listing" about a ref it had just read out of one -- which is
+# true of the listing THIS side sees and reads as nonsense to the agent.
+# The form is declared by the extension, so saying which it is costs a regex.
+_CROSS_FRAME_REF = re.compile(r"^f\d+:")
 
 # Result-string contracts. These parse the OUTPUT of two tools, which is a
 # string contract with mcp_server -- exactly the thing #30 found dead for the
@@ -97,6 +107,41 @@ REFUSALS = (
 )
 
 
+def result_text(result) -> str:
+    """The TEXT a tool returned, whatever shape it came back in.
+
+    AN MCP TOOL MAY ANSWER WITH A STRING OR WITH A LIST OF CONTENT OBJECTS, and
+    `computer` -- the tool that performs every click, drag, scroll and
+    keystroke -- answers with the list. `Recorder.after` stored
+    `result if isinstance(result, str) else ""`, so for that one tool the text
+    was discarded before anything could read it.
+
+    MEASURED: a click answering
+        [TextContent(text="… *** NOT DELIVERED: the page recorded no event ***")]
+    stored '', `refused()` returned None, and the step was compiled into the
+    flow as a real action -- `dropped: 0 failed call(s)`. So the record-time
+    guard against a step that silently did nothing has never once fired for the
+    tool that does the clicking; it only ever worked for the fill family, which
+    returns strings. #56's dead trusted-input channel and the `NO EFFECT`
+    token were both invisible here.
+
+    The RUNNER saw them, by accident: it passes the live object to `refused()`,
+    which stringified it, and a list's repr happens to contain its items' text.
+    Two halves of one project reading one result two different ways (rule 17),
+    with the half that WRITES THE FILE being the blind one.
+
+    Text parts only, never the repr: `computer(action="screenshot")` answers
+    with an ImageContent whose repr carries the whole base64 payload, and the
+    recorder holds every raw call for the length of the recording.
+    """
+    if isinstance(result, str):
+        return result
+    if isinstance(result, (list, tuple)):
+        return "\n".join(result_text(x) for x in result)
+    t = getattr(result, "text", None)
+    return t if isinstance(t, str) else ""
+
+
 def refused(result) -> Optional[str]:
     """The tool's own words, when it reported that nothing happened.
 
@@ -104,7 +149,7 @@ def refused(result) -> Optional[str]:
     whether the step "worked" -- only whether the tool SAID it did not, which
     is a fact already in hand.
     """
-    text = result if isinstance(result, str) else str(result or "")
+    text = result_text(result)
     for m in REFUSALS:
         if m in text:
             return m
@@ -134,8 +179,7 @@ NO_EFFECT = "NO EFFECT: "
 
 
 def no_effect(result) -> bool:
-    text = result if isinstance(result, str) else str(result or "")
-    return NO_EFFECT in text
+    return NO_EFFECT in result_text(result)
 
 
 def search_hits(result: str) -> Optional[int]:
@@ -253,10 +297,17 @@ class Recorder:
         self.raw: list = []
         self.started = time.time()
         self.notes: list = []
+        # DECLARED FACTS ABOUT THIS CALL'S TARGETS that do not belong in the
+        # descriptor. `before` sees the collector entry and `after` records the
+        # call; the wrapper always pairs them, so the handoff is a field rather
+        # than a parameter neither signature wants. Cleared by whichever runs
+        # next, so a test that calls `after` alone inherits nothing.
+        self._pending: dict = {}
 
     # -- during the run ----------------------------------------------------
     async def before(self, tool: str, inp: dict) -> dict:
         """Describe every ref this call is about to consume, while it still means something."""
+        self._pending = {}
         paths = ref_paths(tool, inp)
         if not paths:
             return {}
@@ -275,9 +326,22 @@ class Recorder:
             if e is None:
                 self.notes.append(
                     f"{tool}: {ref} is not in the current listing, so this step "
-                    f"cannot be described and will be dropped")
+                    f"cannot be described and will be dropped"
+                    + (" — it names an element inside a CROSS-ORIGIN IFRAME "
+                       "(consent dialog, embedded checkout, payment frame). "
+                       "read_page reaches those and the structured listing a "
+                       "recording is built from does not, so there is nothing "
+                       "to describe the element with. A flow cannot replay a "
+                       "step inside one."
+                       if _CROSS_FRAME_REF.match(mm) else ""))
                 continue
             out[p] = build(e, entries)
+            # `target="_blank"` — a DECLARED attribute the collector already
+            # reads. Kept for `compile`, which is where it can be told whether
+            # the recording CONTINUED after this click and therefore whether
+            # anything could have been driven in the tab it opens.
+            if e.get("newTab"):
+                self._pending.setdefault("newTab", []).append(p)
             # SAID WHILE THE AGENT IS STILL DRIVING, which is the only moment
             # either of these is cheap to act on: scoping the step differently,
             # or clicking a control that CAN be described, costs nothing now
@@ -315,11 +379,16 @@ class Recorder:
             # changes nothing but the noise.
             "input": {k: v for k, v in (inp or {}).items() if v is not None},
             "targets": targets or {},
-            "result": result if isinstance(result, str) else "",
+            # THE TEXT, not "the string if it happens to be one". See
+            # `result_text`: `computer` answers with a list of content objects,
+            # so this discarded the result of every click the recorder ever saw.
+            "result": result_text(result),
             "error": error,
             "mutates": mutates(tool, inp or {}),
+            "flags": self._pending,
             "ts": time.time(),
         })
+        self._pending = {}
 
     # -- afterwards --------------------------------------------------------
     def compile(self) -> tuple:
@@ -340,6 +409,44 @@ class Recorder:
         live = [r for r in self.raw
                 if not r.get("error") and not (r.get("mutates") and refused(r.get("result")))]
         dropped_err = len(self.raw) - len(live)
+
+        # ...AND A CALL MADE IN A TAB THE REPLAY WILL NOT BE IN.
+        #
+        # The runner pins every step to ONE tab, and follows a tab only when the
+        # flow itself created it with `tabs_create_mcp` (#58). A tab the PAGE
+        # opened -- `target="_blank"`, a payment popup, an OAuth window -- is
+        # reachable by the agent (it joins the group and becomes active) and
+        # unreachable by the replay, which has no declared way to name it.
+        #
+        # MEASURED, and this is the silent half: a recording of
+        #   navigate(tab 7) -> click a link(tab 7) -> click Download(tab 9)
+        # replayed PASSED 3/3 having clicked the ORIGINAL tab's Download button.
+        # A different element, in a different document, reported as a clean
+        # pass -- the #10/#11/#12 family. Where the old tab has no match it
+        # merely pauses, so whether it is loud or silent depends on the page.
+        #
+        # Decidable from the recording alone: every call carries the tabId it
+        # was made with, `tabs_create_mcp` announces the one tab it made, and a
+        # call naming any other tab is a call the replay cannot reproduce.
+        # Dropped and NAMED, like the other two things a recording cannot carry
+        # (an undescribable ref, a selector-addressed typed value) -- keeping it
+        # would mean replaying it against the wrong document.
+        #
+        # OBSERVATIONS ARE DROPPED TOO, not only actions: an observation made in
+        # the popup becomes the previous action's POSTCONDITION, so leaving them
+        # in asserts the other tab's state against this one.
+        live, off_tab, home_tab = self._single_tab(live)
+        if off_tab:
+            self.notes.append(
+                f"{len(off_tab)} call(s) ({', '.join(sorted({n for n, _t in off_tab}))}) "
+                f"were made in tab "
+                f"{', '.join(sorted({str(t) for _n, t in off_tab}))} while this flow "
+                f"runs in tab {home_tab} — a replay stays in one tab, and follows a "
+                f"second one only when the flow itself opened it with "
+                f"tabs_create_mcp. Those calls were DROPPED rather than replayed "
+                f"against the wrong document. If that work belongs in a second tab, "
+                f"re-record it as tabs_create_mcp + navigate; a tab the PAGE opened "
+                f"(target=_blank, a popup) has no name a recording can carry.")
 
         # Focus is established by the last step that NAMED a ref. That is #43's
         # rule for the batch guard, reused here so `computer(action="type")` --
@@ -646,7 +753,58 @@ class Recorder:
             # precondition to precede.
             _require = {}
         elif _require and _first_real > 0:
-            kept[_first_real - 1].expect = {}
+            _moved_ix = _first_real - 1
+            kept[_moved_ix].expect = {}
+            # ...AND ITS REVIEW LINES GO WITH THEM, or the step carries a
+            # warning about a check it no longer has. The three lists above were
+            # computed while that step still held its expect, and the loops that
+            # WRITE them run below this, so without the filter a reviewer
+            # reading the diff is pointed at a line that is not there.
+            # REPRODUCED LIVE, not inferred: re-recording
+            # acme-invoices-drilldown through the real MCP path left
+            #   step 1 navigate  expect=[]  review=["unproven: location was
+            #                                       first observed AFTER…"]
+            #   require: {"path": "/login"}
+            # It is not merely misplaced. `unproven` means "nothing earlier
+            # observed this with a different value", which is TRIVIALLY true of
+            # a precondition -- it IS the first thing observed -- so the line is
+            # meaningless in the only place it could belong. Same for `hollow`.
+            #
+            # FILTERED BY INDEX, before those loops, rather than stripped by
+            # prefix afterwards: a prefix list ("hollow:", "unproven:",
+            # "dropped:") is the hand-kept list this project keeps deleting and
+            # would go stale the next time a review line is added.
+            hollow = [h for h in hollow if h[0] != _moved_ix]
+            unwitnessed = [u for u in unwitnessed if u[0] != _moved_ix]
+            unproven = [u for u in unproven if u[0] != _moved_ix]
+
+        # ...AND `require` IS REVIEWED BY NOTHING AT ALL, which is the gap one
+        # field over. The three loops above walk `kept`, so a precondition is
+        # subject to no analysis of any kind.
+        #
+        # `hollow` and `unproven` are meaningless there for the reason just
+        # given. An unwitnessed ABSENCE is not: #64's rule is that a search
+        # which found nothing becomes a permanent "this must never appear", and
+        # a mistyped pattern is absent for ever. In a precondition it cannot be
+        # dropped by that rule -- nothing precedes the landing state, so NO
+        # absence there can ever be witnessed, and dropping them all would
+        # delete a real capability ("the cart is empty when this flow starts" is
+        # only expressible as an absence, and one recorded flow on disk uses
+        # exactly that). So it is NAMED rather than dropped, on the step the
+        # precondition guards, which is where a reader of the diff is looking.
+        if _require and _first_real is not None:
+            _abs = [k for k, v in self._check_items(_require).items()
+                    if self._is_empty(k, v)]
+            if _abs:
+                kept[_first_real].review.append(
+                    f'require-absence: this flow STARTS by requiring that '
+                    f'{", ".join(repr(k[1]) if len(k) > 1 else str(k[0]) for k in _abs)} '
+                    f'be absent. Nothing precedes a precondition, so no absence in '
+                    f'one can be witnessed the way #64 witnesses a step\'s: a '
+                    f'mistyped pattern is absent for ever and this check then '
+                    f'passes for ever. Keep it if the emptiness is the starting '
+                    f'state you meant; it was not dropped, because that is the '
+                    f'only way to say so.')
 
         # WHAT THE RECORDING COULD NOT VOUCH FOR, written INTO THE FILE. #68
         # worked out which assertions carry no evidence and then printed it
@@ -871,10 +1029,16 @@ class Recorder:
                         f'positional: {_p} is one of {_t.get("of")} controls that are '
                         f'identical in every declared field AND in their surroundings, '
                         f'so this step is pinned by POSITION alone — and it does not '
-                        f'take a user to break it. A re-sort moves them, but so does '
-                        f'CHURN: a recency list that gains one row at the top and drops '
-                        f'its oldest leaves the count and the order identical while '
-                        f'every index shifts by one, so nothing here can notice. '
+                        f'take a user to break it. A re-sort moves them; so does '
+                        f'CHURN, a recency list that gains one row at the top and drops '
+                        f'its oldest, which leaves the count and the order identical '
+                        f'while every index shifts by one; and so does a VIRTUALISED '
+                        f'list, where the crowd is the rendered WINDOW rather than the '
+                        f'data, its size does not change when it scrolls, and therefore '
+                        f'the composition check that catches a row being added or '
+                        f'removed can never fire at all. Measured live on a 200-record '
+                        f'window of ten: recorded REC-1003, replayed REC-1053, no '
+                        f'refusal and no note. '
                         f'Measured on 20 frozen sites with a churn arm: the unwitnessed '
                         f'half bound to the WRONG element 100% of the time with 0% '
                         f'refusals. An inbox, an audit log or a Latest-invoices table '
@@ -884,6 +1048,67 @@ class Recorder:
                         f'untargetable: {_p} was described from an element the '
                         f'collector does not consider actionable, so this step will '
                         f'fail to resolve at replay')
+
+        # THREE THINGS THE CALL ITSELF DECLARED, each said at the one moment it
+        # is cheap to act on: the agent is still driving.
+        _dead: list = []
+        _blank: list = []
+        _opaque: list = []
+        for _n, (_ix, _st) in enumerate(zip(action_ix, kept)):
+            _r = live[_ix]
+
+            # (a) THE TOOL SAID THE PAGE DID NOT REACT. `NOT DONE:` already
+            #     drops a step at compile, and `NO EFFECT:` -- the other token
+            #     the extension emits, from the same ok/not-ok branch -- was
+            #     read only by the RUNNER. So a click the extension itself
+            #     reported as having no detectable effect was compiled in as a
+            #     real step and said nothing to the person recording it, who is
+            #     the only one who can still re-click it or find out why.
+            #     NOT a drop: "no DETECTABLE effect" is not "no effect" (a
+            #     native select opening, a focus change, a canvas repaint all
+            #     produce it), which is exactly why the runner treats it as
+            #     fatal only for a step with nothing that could catch it.
+            if no_effect(_r.get("result")):
+                _dead.append(_n)
+                _st.review.append(
+                    'no-effect: the tool reported NO DETECTABLE EFFECT for this '
+                    'step — it compared URL, DOM and text around the click and '
+                    'none of them moved. That is not proof nothing happened (a '
+                    'native select opening and a focus change both look like '
+                    'this), but a step that really did nothing is a step this '
+                    'flow will assert around for ever. Check it, then re-record')
+
+            # (b) AN INPUT THAT IS NOT A DESCRIPTOR AND NEVER WILL BE. A
+            #     coordinate is a point and an imageId is a handle into the
+            #     recording session's own memory; both are written verbatim and
+            #     both mean something different on the next run. The comment
+            #     above REF_KEYS has claimed the recorder marks these since the
+            #     day it was written, and nothing did (principle 18).
+            for _k, _why in UNRESOLVABLE_INPUTS.items():
+                if _k in (_st.input or {}):
+                    _opaque.append((_n, _k))
+                    _st.review.append(f'opaque-input: {_k} is {_why}')
+
+            # (c) A LINK THAT OPENS A TAB THIS FLOW CANNOT FOLLOW. `newTab` is
+            #     `target="_blank"` read off the element, so it is declared
+            #     rather than inferred -- and it is the mechanism behind the
+            #     implicit half of the tab divergence `_single_tab` catches
+            #     explicitly: once the popup is active, a call that names no
+            #     tabId goes THERE while the replay stays here, and no tabId in
+            #     the recording says so.
+            #     Only when the recording CONTINUED: a flow that ends on the
+            #     click has nothing left to mis-target, and warning there would
+            #     be the always-on noise #15 priced.
+            if _n < len(kept) - 1:
+                for _p in ((_r.get("flags") or {}).get("newTab") or []):
+                    _blank.append(_n)
+                    _st.review.append(
+                        f'opens-new-tab: {_p} names a link declaring '
+                        f'target="_blank", so activating it opens a tab the PAGE '
+                        f'owns. A replay stays in the tab it started in and '
+                        f'follows only a tab the flow opened itself with '
+                        f'tabs_create_mcp, so any later step that was driven in '
+                        f'that new tab will replay against this one')
 
         # THE ORIGIN THE FLOW ACTS ON, which was a declared field that nothing
         # ever filled: `_FlowRecorder(name, entries_fn)` is constructed without
@@ -900,6 +1125,25 @@ class Recorder:
                     if m:
                         self.origin = m.group(1)
                         break
+
+        # A RECORDING THAT COMPILED DOWN TO NOTHING THAT ACTS. Four separate
+        # rules drop a step -- an errored call, a tool that said it did not act,
+        # a ref that could not be described, a typed value addressed by selector
+        # -- and each names itself, but nothing said what was LEFT. Measured on
+        # a fixture whose Delete goes through a native confirm(): the click
+        # timed out behind the dialog, was dropped as an error, and the saved
+        # flow was one `navigate` with a path assertion. It replays green for
+        # ever and tests nothing about deleting.
+        #
+        # Zero steps is refused outright by the runner; this is the shape just
+        # above it, where a landing-page smoke test is a legitimate if weak
+        # thing to want, so it is said rather than refused.
+        if kept and all(s.name in NAVIGATIONAL for s in kept):
+            self.notes.append(
+                f"every step that survived is a NAVIGATION, so this flow opens a "
+                f"page and asserts what is on it and never acts on the app. If "
+                f"that is the test you meant, it is a fine one; if an action was "
+                f"dropped above, fix that and re-record.")
 
         flow = Flow(
             name=self.name, origin=self.origin,
@@ -923,9 +1167,47 @@ class Recorder:
             "hollow": hollow,
             "unwitnessed_absence": unwitnessed,
             "unproven": unproven,
+            "no_effect": _dead,
+            "opaque_inputs": _opaque,
+            "opens_new_tab": sorted(set(_blank)),
+            "off_tab": off_tab,
             "notes": self.notes,
         }
         return flow, report
+
+    @staticmethod
+    def _single_tab(live: list) -> tuple:
+        """Keep only the calls a one-tab replay can reproduce.
+
+        -> (kept, [(tool, tabId) dropped], the tab the flow runs in)
+
+        THE TAB IN FORCE is the first one any call names, and it changes only
+        where the RUNNER's does: at a `tabs_create_mcp`, whose result announces
+        exactly one id (#58, and the same rule the batch threads since #46).
+        A call naming any other tab is a call the replay will make somewhere
+        else, so it is not kept.
+
+        A call that names NO tab says nothing either way -- it went to whatever
+        was active, which the replay cannot know -- so it is kept and nothing is
+        claimed about it. That is the residue, and it is the shape the `newTab`
+        review line covers from the other end: the CLICK that opens the tab is
+        declared even when the calls after it are not addressed explicitly.
+        """
+        cur = None
+        keep, off = [], []
+        for r in live:
+            tab = (r.get("input") or {}).get("tabId")
+            if cur is None and tab is not None:
+                cur = tab
+            if tab is not None and cur is not None and tab != cur:
+                off.append((r["name"], tab))
+                continue
+            keep.append(r)
+            if r["name"] == "tabs_create_mcp":
+                made = created_tab(r.get("result"))
+                if made is not None:
+                    cur = made
+        return keep, off, cur
 
     @staticmethod
     def _checks(records: list, keep_first: bool = False) -> dict:
