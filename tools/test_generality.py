@@ -1758,6 +1758,66 @@ async def main():
         check("MV3 CONTROL: the SAME overlay at opacity:1 does raise the banner",
               "A MODAL/DIALOG IS CURRENTLY OPEN" in _mv1,
               "banner present" if "A MODAL/DIALOG IS CURRENTLY OPEN" in _mv1 else "NO BANNER")
+        # MV5/MV5b — A NATIVE <dialog> HAS ALREADY ANSWERED THE MODALITY QUESTION,
+        # and the geometry fallback was overruling it. `:modal` is tested four
+        # lines above the fallback and returns FALSE for a dialog opened with
+        # show() -- that is the browser stating it is NOT making the page inert.
+        # Measured live on Web Awesome's docs: <wa-popover> renders a native
+        # <dialog> in its shadow root, opens it with show(), and sizes it to the
+        # FULL viewport as a top-layer positioning container for a small popover.
+        # All three fallback conditions passed, so an ordinary popover raised the
+        # MODAL banner and told the agent to ignore the rest of a page that is
+        # fully interactive behind it.
+        #
+        # MV5b IS THE CONTROL THAT THIS IS NOT "STOP TRUSTING GEOMETRY": the same
+        # full-viewport overlay as a <div role=dialog>, which declares nothing
+        # else, still raises the banner -- there geometry is the only signal left.
+        # (A show() dialog that really IS modal is still caught by the
+        # aria-hidden-siblings and [inert] branches that run after the fallback.)
+        DLG = ("<!doctype html><meta charset=utf-8><body style='margin:0'>"
+               "<nav><a href=/a>Alpha</a> <a href=/b>Beta</a></nav>"
+               "<main><button>Buy</button></main>"
+               "<{tag} {attr} style='position:fixed;inset:0;border:0;margin:0;"
+               "padding:0;width:100vw;height:100vh;max-width:none;max-height:none;"
+               "background:rgba(0,0,0,.2)'>"
+               "<button>Inside</button></{tag}></body>")
+        # THE EXPLICIT SIZE IS LOAD-BEARING AND I LEFT IT OUT FIRST. A <dialog>
+        # carries `width: fit-content` from the UA stylesheet, so `inset:0` alone
+        # leaves it 52x21 -- ratio 0.002 against a 0.5 threshold -- and MV5 then
+        # PASSED against the pre-fix collector, proving nothing. Measured rather
+        # than guessed: 52x21 as written, 900x700 with the size, `:modal` false
+        # in both. That is the identical mistake MV1's own comment twenty lines
+        # above records ("320x120 in a corner ... the fixture proved nothing"),
+        # made again in the same block, and only the ablation caught it.
+        await mv.set_content(DLG.format(tag="dialog", attr="id=d aria-label='Popover'"))
+        # opened from OUTSIDE the document: an inline <script> is a non-hidden
+        # SIBLING of the dialog, which breaks the aria-hidden-siblings branch's
+        # `hiddenSibs === sibs` and made a working patch look like a regression
+        # (#29's vacuous-fixture lesson pointed the other way -- a fixture can
+        # manufacture a failure as easily as it can hide one).
+        await mv.evaluate("document.getElementById('d').show()")
+        await mv.wait_for_timeout(120)
+        _mv5 = await mv.evaluate("(function(){ " + COLLECT
+                                 + "; return _collectInteractivePage(false); })()")
+        check("MV5 a native <dialog> opened with show() and sized to the whole "
+              "viewport raises NO modal banner — :modal already said it is not "
+              "modal, and geometry must not overrule a declaration",
+              "A MODAL/DIALOG IS CURRENTLY OPEN" not in _mv5,
+              "banner present" if "A MODAL/DIALOG IS CURRENTLY OPEN" in _mv5 else "no banner")
+        check("MV5c ...and the page behind it is still listed, which is what the "
+              "banner was costing",
+              '"Buy"' in _mv5 and '"Alpha"' in _mv5,
+              f"buy={'\"Buy\"' in _mv5} alpha={'\"Alpha\"' in _mv5}")
+        await mv.set_content(DLG.format(tag="div", attr="role=dialog aria-label='Consent'"))
+        await mv.wait_for_timeout(120)
+        _mv5b = await mv.evaluate("(function(){ " + COLLECT
+                                  + "; return _collectInteractivePage(false); })()")
+        check("MV5b CONTROL: the SAME full-viewport overlay as a <div role=dialog> "
+              "— which declares nothing else — still raises it, so this is not "
+              "'stop trusting geometry'",
+              "A MODAL/DIALOG IS CURRENTLY OPEN" in _mv5b,
+              "banner present" if "A MODAL/DIALOG IS CURRENTLY OPEN" in _mv5b else "NO BANNER")
+
         # MV4/MV4b — THE SAME DIALOG, THE SAME ORIGIN, ONE VARIABLE CHANGED.
         # `_allComposed` iterates `mmidReg`, which the collection walk stamps
         # ACROSS same-origin frame boundaries, so a dialog can live in a frame

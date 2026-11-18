@@ -10638,7 +10638,31 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           _dh = _ov.innerHeight || _dh;
         }
       } catch (e) {}
-      if ((rr.width * rr.height) / (_dw * _dh) >= 0.5 &&
+      // A NATIVE <dialog> HAS ALREADY ANSWERED THIS. `:modal` is checked above
+      // and returned false, which is the browser stating this dialog was opened
+      // with show() rather than showModal() and is NOT making the rest of the
+      // page inert. The fallback below exists for an element that declares
+      // NOTHING -- a <div role="dialog"> -- where geometry is the only signal
+      // left; applying it to a <dialog> overrules a declaration with a
+      // measurement, which is the direction PRINCIPLES 1 forbids.
+      //
+      // MEASURED on wc_webawesome: <wa-popover> renders a native <dialog> in
+      // its shadow root, opens it with show(), and sizes it to the FULL
+      // viewport (1280x1600) as a top-layer positioning container for a small
+      // popover panel. All three fallback conditions passed, so an ordinary
+      // popover raised the MODAL banner and told the agent to ignore rows
+      // outside that subtree -- on a page that is fully interactive behind it,
+      // and whose aria-hidden count does not move when it opens.
+      //
+      // A show() dialog that IS modal in practice is still caught, by the
+      // aria-hidden-siblings and [inert] branches that run after this -- which
+      // is what controls D and E pin. Control C (a <div role=dialog> overlay
+      // that declares nothing else) pins that this is not "stop trusting
+      // geometry". Priced across the 45 sites that raised the banner anywhere,
+      // 91 reads: 2 verdicts change, 68 banners kept, both changes the
+      // <wa-popover> shape. 82 -> 92 rows restored on the affected read.
+      if (d.tagName !== 'DIALOG' &&
+          (rr.width * rr.height) / (_dw * _dh) >= 0.5 &&
           rr.left <= _dw / 2 && rr.right >= _dw / 2 &&
           rr.top <= _dh / 2 && rr.bottom >= _dh / 2 &&
           /^(fixed|absolute|sticky)$/.test(dcs.position)) return true;
@@ -13132,13 +13156,23 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
     // agents, alongside the table leak fixed above; the same #26 class.
     if (scopeMmid) {
       // nothing: the count describes the document, not this subtree
-    } else if (_ah >= 3 && dialogOpen) {
-      L.push(`  - NOTE: ${_ah} interactive element(s) are NOT listed because an`
-           + ` ancestor is aria-hidden="true"${_ahN ? ` (${_ahN} of them carry their own label or text)` : ''}.`
-           + ` A dialog IS open (see the banner above), and marking the rest of the page`
-           + ` hidden is how focus-trap libraries do that — dismiss it and re-read to see`
-           + ` the page again. This is page STATE, not the page's contents.`);
-    } else if (_ah >= 3 && _ahN >= 3) {
+    } else if (_ah >= 3 && (_ahN >= 3 || dialogOpen)) {
+      // THE DIALOG BRANCH THAT USED TO SIT HERE ASSERTED THE DIALOG AS THE CAUSE
+      // and promised a recovery it had not verified -- "dismiss it and re-read to
+      // see the page again". MEASURED on wc_webawesome by counting controls with an
+      // aria-hidden/inert ancestor across the composed tree at every stage:
+      //   before the popover: 50     while it is open: 50     after closing: 49
+      // The suppression does not move when the dialog opens. Those elements are
+      // decorative <wa-icon>s that are aria-hidden permanently, as icons always are,
+      // and dismissing the dialog brings back ONE. The collector has no history of
+      // the page, so whether they were hidden beforehand is not derivable from a
+      // single read -- which is exactly what the comment above this block says to do
+      // about it: state the FACT, list causes as causes, never assert a recovery the
+      // tool has not verified. PRINCIPLE 6 / #33's class, in the note rewritten to
+      // enforce it, and C15 cannot catch it because the sentence is declarative.
+      // Folded into the general branch below, which already does it right, so one
+      // concept has one spelling (PRINCIPLE 17) and a dialog becomes EVIDENCE FOR a
+      // cause rather than the cause.
       // A DIALOG IS NOT THE ONLY THING THAT TRAPS FOCUS, and this branch used to
       // read "Nothing here indicates an open dialog, so this is most likely a CLOSED
       // menu/panel" — a single cause, asserted, exactly what the comment above this
@@ -13198,7 +13232,10 @@ OMITTED BUT ACTIONABLE (ref:"label", ${_capTail.length} element(s), ` +
            + ` completing it brings the page back; (b) a CLOSED menu/panel kept in the DOM,`
            + ` which needs nothing; (c) a library's duplicate markup, e.g. mobile and`
            + ` desktop copies of one nav, which also needs nothing.`
-           + (_pop ? ` An open role=${_pop} IS listed below, which is consistent with (a).` : '')
+           + (dialogOpen ? ` A dialog IS open (see the banner above), which is consistent with (a)`
+                        + ` — though whether it is WHY these elements are hidden is not knowable`
+                        + ` from one read, since they may have been hidden before it opened.`
+              : (_pop ? ` An open role=${_pop} IS listed below, which is consistent with (a).` : ''))
            + ` read_page(ledger=true) names exactly what was dropped.`
            // THE RECOVERY HAS TO MATCH THE DROP REASON, and this sentence used
            // to offer `find()`, which is the recovery for a DIFFERENT one.
