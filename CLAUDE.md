@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1488 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1493 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1488 checks, ~127s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1493 checks, ~143s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -8685,6 +8685,100 @@ granted in the side panel is refused with the same message the agent gets.
     live-web floor this corpus has (#16).
 
 
+86. **CI HAD BEEN RED FOR THREE DAYS, ON A PUBLIC REPO, AND I HAD NOT LOOKED —
+    two independent breaks, neither visible from the version I develop on.**
+    Found while replaying a flow, not while looking for them: the flow suite is
+    a CI step, so checking why `bench-grocery-add-to-cart` failed locally led to
+    `gh run list`, which has been `failure` since 2026-11-16.
+
+    **A DOCSTRING THAT SPELLS AN ESCAPE BECOMES ONE.** `_scrub_surrogates` is
+    #82's fix for a lone UTF-16 surrogate killing the server process, and its
+    docstring says so by writing `\ud83d` — in an ordinary, non-raw string, so
+    it did not DESCRIBE a lone surrogate, it CONTAINED one. From Python 3.13
+    `compile()` refuses that outright (it encodes while dedenting the
+    docstring), so `from core.bridge.server import …` raised `UnicodeEncodeError
+    … position 312` and **seven suites — batch, contracts, delta, find, flows,
+    steer, truncate — died at import on the 3.13 leg while passing on 3.10 and
+    3.12**. `pyproject.toml` advertises `>=3.10` and CI runs the unit group on
+    3.10 AND 3.13 for exactly this; the machinery worked and nobody read the
+    result.
+    Reproduced on 3.14 locally before changing anything: `compile()` FAILS at
+    position 312, `r"""` makes it pass. **The distinction is exact and is the
+    rule: a lone surrogate in an ORDINARY string constant compiles on every
+    version** — C41's own dirty fixture is one, and forbidding those would fail
+    the test that proves the scrub works — **so this is about docstrings
+    alone.** C42 scans every docstring under mcp_server/config/core/tools (116
+    files, 392 docstrings) and C42b plants one and asserts it is caught, by the
+    scan or by the compiler refusing it, because "0 offenders" from a loop
+    nobody has seen fire is worth nothing (#21's rule for `audit_patterns.py`).
+    **A version-specific break is invisible to the developer BY CONSTRUCTION**,
+    which is why the tripwire has to run on whatever version is running the
+    suite rather than relying on someone reading a second CI leg.
+
+    **"LOOPBACK" IS NOT "A SERVER THIS HARNESS CAN START".** The two came apart
+    the moment a flow was recorded against a DIFFERENT local server.
+    `bench-grocery-add-to-cart` points at `localhost:8080` (WebPageBench, ~GB
+    and not in this repo): loopback, so `--local-only` kept it, so every CI run
+    failed with *"this flow's precondition could not be evaluated"* — true,
+    unhelpful, and precisely the class that flag exists to keep out of the
+    build. Its own help text said "what CI wants"; what CI can provide is the
+    fixture `--playground` starts. That is the rule now, and such a flow is
+    SKIPPED with the reason printed. **11/12 → 12/12, exit 0.**
+
+    **AND ONE CONCEPT HAD TWO SPELLINGS IN ONE FILE (#21).**
+    `_fixture_secret_names` tested the literal `"127.0.0.1:8787"` while
+    `--local-only`'s own test knew all three loopback spellings — so a flow
+    recorded through an MCP session against `localhost:8787` was SELECTED and
+    then had its secret silently withheld, and the run failed naming the missing
+    env var. The reader exports it by hand and never learns the harness was
+    meant to. Measured (the predicted failure, reproduced), then fixed, then
+    re-run. `PG_HOST`/`PG_PORT`/`PG_BASE`/`LOOPBACK`/`FIXTURE_RE` are one
+    spelling each, and the membership test reuses `_origins` rather than
+    re-deriving URLs — my first attempt DID re-derive them, with a character
+    class that read `[^\"'\s]` and therefore stopped at the first `s`.
+
+    **THE NEWEST CHECK KIND WAS INVISIBLE TO THE ANALYSIS THAT GRADES THE
+    OTHERS.** `path` arrived in #80 and `_check_items` predates it, so the
+    function deciding whether a step's assertions can fail saw `url`, `search`
+    and `query` and not the fourth. Loudly: a step whose path check is the ONLY
+    one that witnesses anything was reported *"every check on this step is
+    hollow or unproven, so none of them is known to be able to fail"* — pointing
+    the reviewer away from the soundest line on the step, inside the warning #68
+    built so a human reading a small JSON diff knows which lines can be quietly
+    wrong. Quietly: **a path check that really IS hollow was never flagged at
+    all**, which is the whole purpose of #57.
+    Found by reading the saved file rather than the stop summary, then
+    **falsified instead of argued**: `--vars '{"filter_invoices":"Ltd"}'` makes
+    that run FAIL with `path is '/invoices?q=Ltd&sort=id&dir=asc', recorded
+    '/invoices?q=Corp&sort=id&dir=asc'` — i.e. on exactly the check the review
+    had called incapable of failing.
+    `url` and `path` share ONE key rather than getting two, because an earlier
+    step that read the URL and a later one that read the PATH are looking at the
+    same thing and under two keys the second reads as never-before-seen. Both
+    reduce to pathname+search — what `path` already is, and what the runner
+    reduces `get_url` to — because comparing a whole url against a path makes an
+    UNCHANGED location look changed, which loses the hollow warning. `_checks`
+    already drops `path` when `url` is present, so they never both appear on one
+    step. **FW4 had to be rewritten to its invariant** (it asserted the report
+    names `"url"`, which encoded the implementation) and now passes in both
+    arms, which is what makes it the control — #30's TR8d case.
+
+    **THE FLOW THAT FOUND ALL OF IT.** `acme-invoices-drilldown`: navigate →
+    redirect to login → `fill_form` with a password → navigate → filter →
+    sort by clicking a column header → drill into one row and read its
+    reference. Six steps, five asserted, **replays 6/6 in 0.71s with zero model
+    calls**. Its FIRST recording was deleted because the recorder correctly
+    dropped the login step — I had addressed the fields by CSS selector, whose
+    declared type it cannot read, so it refused rather than risk writing a
+    plaintext password into a file whose purpose is to be committed. Addressed
+    by ref, the redaction applies and `grep -c` for the password returns 0.
+
+    Suites: 1493 checks. New — C42/C42b (no docstring holds a lone surrogate,
+    with the planted-violation control), FW13/FW13b/FW13c (a path check is
+    witnessed, a hollow one is flagged, and a url and a path compare as one
+    fact — all three FAIL against the pre-fix recorder).
+
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -8704,6 +8798,10 @@ granted in the side panel is refused with the same message the agent gets.
 | Submit fires but modal stays open | `fill_form` submit path — check `out.submit_errors` and `out.unfilled` enumeration in the result message |
 | Bridge says "Element X not found" mid-form | React re-render mid-fill_form. Confirm batched text-write path is being used (`fieldKinds` probe), and that mmid injection is additive (`window.__mmidCounter`) |
 | MCP server won't start / Claude Code shows it as failed | Run `.venv\Scripts\python.exe mcp_server.py` manually — anything on stdout other than JSON-RPC kills the transport; logs must be stderr-only. Then check, in order: `.mcp.json` expansion (a bare unset `${VAR}` fails silently; `.` resolves against the LAUNCH dir), whether the re-exec found `./.venv`, and whether all ten ports 8765-8774 are taken |
+| A suite fails only on CI's 3.13 leg, with `UnicodeEncodeError … surrogates not allowed` at an import | A docstring contains a lone UTF-16 surrogate — usually because it SPELLS the escape (`\ud83d`) in a non-raw string, so it became one. From 3.13 `compile()` refuses that outright while 3.10/3.12 accept it, which is why it is invisible locally. Make the docstring raw. An ordinary string constant with one is fine; C42 enforces docstrings only, and `python3.13 -c "compile(open(f).read(),f,'exec')"` reproduces it in one line |
+| `run_flows --local-only` fails on a flow pointed at another local server | By design since #86 — it keeps only flows the harness can SERVE, i.e. the fixture `--playground` starts. A `localhost:8080` flow is loopback and still needs a server CI does not have; it is SKIPPED with the reason printed rather than failing the build |
+| A flow replay refuses with "needs N secret that is not set" although the fixture flows work | Before #86, `_fixture_secret_names` matched the literal `127.0.0.1:8787` while `--local-only` knew all three loopback spellings, so a flow recorded against `localhost:8787` was selected and its secret withheld. Both read one `FIXTURE_RE` now. If it recurs, the flow's origin is genuinely not the fixture — export the variable yourself |
+| A step's review says "every check on this step is hollow or unproven" and one of its checks plainly changed | Fixed in #86 if that check is the `path` — `_check_items` predated the kind and could not see it, so it counted toward neither evidence nor the hollow warning. `url` and `path` now share one key, both reduced to pathname+search |
 | Every op returns "Permission required: … not allowed to act on `<origin>`" | Working as designed. The side panel raises "Permission requested → Allow this site" for exactly that origin. If the card is absent, the refusal was on a different origin than assumed — the message names it. See "Permission model" |
 | Every op returns "ChromeBridge is PAUSED" | The user hit Pause in the panel; only they can resume. `PAUSE_EXEMPT_OPS` still answer, which is why `sw_info`/`get_url` keep working and can mislead you into thinking the bridge is fine |
 | A NEW op you just added is refused everywhere | Gated by omission — that is the intended default. Add it to `UNGATED_OPS` only if it neither exposes page content nor delivers input, and update `tools/test_permissions.js` |
