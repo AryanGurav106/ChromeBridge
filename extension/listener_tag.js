@@ -126,7 +126,53 @@
     if (window.__abMut) return;
     const CAP = 1024;
     const ts = new Float64Array(CAP);     // performance.now() per record
-    const kd = new Uint8Array(CAP);       // 1 childList, 2 characterData, 3 attributes
+    const kd = new Uint8Array(CAP);       // 1 structural, 2 re-text, 3 attributes
+    // A `textContent =` ASSIGNMENT IS A RE-TEXT, AND THE RING WAS FILING IT AS
+    // STRUCTURAL. The DOM implements it by removing the old Text node and
+    // inserting a new one, so it arrives as a `childList` record -- which made
+    // every clock tick, live price and status line trip the STRONG "elements
+    // were added, removed or re-texted ... do NOT conclude something is absent"
+    // banner, for ever. READINESS.md 5(b) names this as the case the #70
+    // kind-split provably does not cover, and the adversarial audit measured the
+    // consequence at SIX steady-state reads warning about content that never
+    // changes again -- the always-on warning #15 priced and #43 deleted
+    // `readyState` for.
+    //
+    // THIS IS A MISCLASSIFICATION, NOT A NEW RULE. The ring's own vocabulary
+    // already has a `text` kind, and the banner's own words define `structural`
+    // as ELEMENTS being added or removed. `Node.nodeType` decides which one a
+    // childList record is: a declaration, with no threshold, class name, framework
+    // name or wordlist (PRINCIPLES 1).
+    //
+    // IT CANNOT PRODUCE SILENCE, by construction rather than by measurement: a
+    // reclassified record moves from `structural` to `text`, and both are
+    // non-zero tiers, so a read that warned before still warns. What changes is
+    // WHICH warning.
+    //
+    // STRICTLY nodeType === 3. A comment node, a CDATA section or anything else
+    // stays structural, which OVER-warns -- the safe direction. And a
+    // `textContent =` that destroys real ELEMENTS still carries them in
+    // removedNodes, so it stays structural: measured as shape 20 of the
+    // adversarial audit, where ten buttons are removed by one textContent
+    // assignment and the verdict is correctly STRONG.
+    //
+    // COST, against the unpatched ring, interleaved on the same page load with an
+    // A/A floor taken in the same sequence (PRINCIPLES 10), at 40,000 mutations
+    // in ONE batch -- the 2,000-row grid regime #70's own cost note names:
+    //   append      9.3ms -> 9.3ms   (A/A floor 0.00%)
+    //   retext     14.8ms -> 15.0ms  (+1.35%, A/A floor 0.68%)
+    //   attributes 10.1ms -> 10.0ms  (A/A floor 0.00%)
+    // Every reading is inside its own drift floor. The scan early-exits on the
+    // first non-Text node, so an element append pays one nodeType read.
+    const _allText = (r) => {
+      try {
+        const a = r.addedNodes, b = r.removedNodes;
+        if (!a.length && !b.length) return false;
+        for (let i = 0; i < a.length; i++) if (a[i].nodeType !== 3) return false;
+        for (let i = 0; i < b.length; i++) if (b[i].nodeType !== 3) return false;
+        return true;
+      } catch (e) { return false; }
+    };
     const an = new Array(CAP);            // attribute name, or null
     const tg = new Array(CAP);            // WeakRef(target), or null
     let n = 0;                            // monotonic total; slot = n % CAP
@@ -228,7 +274,8 @@
         if (kept > 32) continue;   // counted, not stored
         const s = n % CAP;
         ts[s] = t;
-        kd[s] = r.type === 'childList' ? 1 : (r.type === 'characterData' ? 2 : 3);
+        kd[s] = r.type === 'childList' ? (_allText(r) ? 2 : 1)
+          : (r.type === 'characterData' ? 2 : 3);
         an[s] = r.attributeName || null;
         // A ShadowRoot HAS NO parentElement, and that made every direct append
         // into one unattributable. A ShadowRoot is a DocumentFragment (nodeType

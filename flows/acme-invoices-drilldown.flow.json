@@ -1,0 +1,259 @@
+{
+  "schema": 1,
+  "name": "acme-invoices-drilldown",
+  "origin": "http://localhost:8787",
+  "recorded_at": "2026-11-18T14:57:38",
+  "viewport": {
+    "width": 1512,
+    "height": 868
+  },
+  "lang": "en",
+  "vars": {
+    "work_email": "ada@acme.test",
+    "filter_invoices": "Corp"
+  },
+  "require": {
+    "path": "/login"
+  },
+  "steps": [
+    {
+      "name": "tabs_create_mcp",
+      "input": {},
+      "on_fail": "ask"
+    },
+    {
+      "name": "navigate",
+      "input": {
+        "url": "http://localhost:8787/invoices"
+      },
+      "on_fail": "ask",
+      "review": [
+        "unproven: location was first observed AFTER this step, so nothing here says it would have failed before"
+      ]
+    },
+    {
+      "name": "fill_form",
+      "input": {
+        "fields": [
+          {
+            "value": "{{work_email}}"
+          },
+          {
+            "value": "${CHROMEBRIDGE_SECRET:CB_SECRET_ACME_INVOICES_DRILLDOWN_PASSWORD}"
+          }
+        ],
+        "submit": true
+      },
+      "targets": {
+        "fields.0": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "email",
+            "name": "Work email"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "email",
+            "name": "Work email",
+            "section": "",
+            "under": "Sign in",
+            "near": ""
+          }
+        },
+        "fields.1": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "password",
+            "name": "Password"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "password",
+            "name": "Password",
+            "section": "",
+            "under": "Sign in",
+            "near": ""
+          }
+        }
+      },
+      "on_fail": "ask"
+    },
+    {
+      "name": "navigate",
+      "input": {
+        "url": "http://localhost:8787/invoices"
+      },
+      "expect": {
+        "path": "/invoices",
+        "search": {
+          "pattern": "12 invoice(s) match",
+          "min": 1,
+          "observed": 1
+        }
+      },
+      "on_fail": "ask",
+      "review": [
+        "unproven: search '12 invoice(s) match' was first observed AFTER this step, so nothing here says it would have failed before"
+      ]
+    },
+    {
+      "name": "fill_form",
+      "input": {
+        "fields": [
+          {
+            "value": "{{filter_invoices}}"
+          }
+        ],
+        "submit": false
+      },
+      "targets": {
+        "submit_ref": {
+          "level": 1,
+          "desc": {
+            "tag": "button",
+            "role": "",
+            "type": "submit",
+            "name": "Filter"
+          },
+          "full": {
+            "tag": "button",
+            "role": "",
+            "type": "submit",
+            "name": "Filter",
+            "section": "",
+            "under": "Invoices",
+            "near": ""
+          }
+        },
+        "fields.0": {
+          "level": 1,
+          "desc": {
+            "tag": "input",
+            "role": "",
+            "type": "",
+            "name": "Filter invoices"
+          },
+          "full": {
+            "tag": "input",
+            "role": "",
+            "type": "",
+            "name": "Filter invoices",
+            "section": "",
+            "under": "Invoices",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "path": "/invoices?q=Corp&sort=id&dir=asc",
+        "search": {
+          "pattern": "3 invoice(s) match",
+          "min": 1,
+          "observed": 1
+        },
+        "query": {
+          "selector": "#invoices tbody tr td:first-child",
+          "count": 3
+        }
+      },
+      "on_fail": "ask",
+      "review": [
+        "unproven: query '#invoices tbody tr td:first-child' was first observed AFTER this step, so nothing here says it would have failed before",
+        "unproven: search '3 invoice(s) match' was first observed AFTER this step, so nothing here says it would have failed before"
+      ]
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "Amount"
+          },
+          "full": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "Amount",
+            "section": "table-header",
+            "under": "Invoices",
+            "near": ""
+          }
+        }
+      },
+      "expect": {
+        "url": "http://localhost:8787/invoices?q=Corp&sort=amount&dir=asc&page=1",
+        "query": {
+          "selector": "#invoices tbody tr td:first-child",
+          "count": 3
+        }
+      },
+      "on_fail": "ask",
+      "review": [
+        "hollow: query had this value BEFORE this step ran, so the step could do nothing and still pass"
+      ]
+    },
+    {
+      "name": "computer",
+      "input": {
+        "action": "left_click"
+      },
+      "targets": {
+        "ref": {
+          "level": 1,
+          "desc": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "INV-1012"
+          },
+          "full": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "name": "INV-1012",
+            "section": "table-body",
+            "under": "Invoices",
+            "near": ""
+          },
+          "alt": {
+            "tag": "a",
+            "role": "",
+            "type": "",
+            "href": "/invoices/INV-1012"
+          }
+        }
+      },
+      "expect": {
+        "url": "http://localhost:8787/invoices/INV-1012",
+        "search": {
+          "pattern": "REF-3346",
+          "min": 1,
+          "observed": 1
+        },
+        "query": {
+          "selector": "#ref",
+          "count": 1,
+          "text": "REF-3346"
+        }
+      },
+      "on_fail": "ask",
+      "review": [
+        "unproven: query '#ref' was first observed AFTER this step, so nothing here says it would have failed before",
+        "unproven: search 'REF-3346' was first observed AFTER this step, so nothing here says it would have failed before"
+      ]
+    }
+  ]
+}

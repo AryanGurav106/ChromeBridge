@@ -151,6 +151,38 @@ fx("18_slow_chunked_closed_shadow", page("<main id=m><x-feed id=f></x-feed></mai
    "if(i<400)setTimeout(s,400)})()}})"),
    "window.__cnt", "closed-root rows appended DIRECTLY to the root, 400ms commits")
 
+# 19/20 are the TEXT-TIER controls (see audit_retext_tier.py). The set had no
+# shape that is sampled WHILE content arrives as text and none where a
+# `textContent =` DESTROYS elements, so a reclassification of text-node childList
+# records could have been called safe on a corpus that never put it under load.
+fx("19_text_only_arrival_inflight", page(
+   "<main id=m>" + "".join(f"<div class=slot id=s{i}></div>" for i in range(20)) + "</main>",
+   "let i=0;(function s(){const e=document.getElementById('s'+i);"
+   "if(e)e.textContent='DATA '.repeat(20);if(++i<20)setTimeout(s,400);})();"),
+   "document.getElementById('m').innerText.length",
+   "content arrives ONLY as textContent on existing divs, 0-8s: every offset is mid-arrival")
+fx("20_textContent_destroys_controls", page(
+   "<main id=m><div id=box>" + "<button>b</button>" * 10 + "</div></main>",
+   "setTimeout(()=>{document.getElementById('box').textContent='gone'},2000)"),
+   "document.querySelectorAll('#box button').length",
+   "a textContent= that REMOVES 10 real controls: the record carries elements, so it is structural")
+
+# 21 is the shape the set never had: an ATTRIBUTE-only page (so the verdict is
+# MINOR, which claims "the listing below is structurally current") that ALSO has
+# a cross-origin frame still painting. `_withBlind` rides the two QUIET paths and
+# not this one, so the structural claim is made with no caveat. The frame sits
+# OUTSIDE <main> on purpose, so the same shape also asks whether a SCOPED read
+# names a frame it deliberately excluded -- the page-level-fact leak #11 and #26
+# both had to stop, which the network clause in this same banner avoids by saying
+# PAGE-WIDE and this one does not.
+fx("21_attr_only_plus_blind_frame", page(
+   CLOCK.replace("<span id=clk>0</span>", "") + STATIC_MAIN
+   + "<div id=car style='width:50px;height:20px'></div>"
+   + "<footer><iframe src='http://ads.test/ad' width=300 height=100></iframe></footer>",
+   "let c=0;setInterval(()=>{document.getElementById('car').style.marginLeft=(++c%50)+'px'},100)"),
+   "document.getElementById('m').innerText.length",
+   "settled; carousel is attribute-only AND a cross-origin frame churns outside main")
+
 async def route_all(ctx, name, html):
     async def h(route):
         u = route.request.url
@@ -257,9 +289,21 @@ def render(items):
 def classify(n):
     if not n: return "QUIET"
     if "STILL CHANGING" in n: return "STRONG"
+    # The TEXT tier: no element was added or removed, but words inside existing
+    # elements changed. A WARNING tier, not a quiet one -- it is counted as a
+    # false quiet nowhere below, and by construction it can only ever receive
+    # reads that were STRONG before.
+    if "TEXT IS CHANGING" in n: return "TEXT"
     if "Minor DOM activity" in n: return "MINOR"
     if "DOM STABLE" in n: return "DOMSTABLE"
     if "could be attributed" in n: return "UNKNOWN"
+    # The cross-origin-frame clause (#82) rides the QUIET paths only, so a note
+    # that is ONLY that clause is the answer to "quiet, but I could not see
+    # everything". It is NOT a false quiet: it states the limit and says
+    # explicitly that it does not mean the content has arrived. Classed before
+    # FADE because the fade sentence can ride along and this is the one that
+    # bears on the readiness question.
+    if "cross-origin frame(s) are rendered" in n: return "BLIND"
     if "STILL SETTLING" in n: return "SETTLING"
     if "held at opacity" in n: return "FADE"
     return "OTHER"
@@ -293,14 +337,22 @@ async def cost_probe(browser):
     await ctx.close(); return res
 
 # ---- PATCH A: a ShadowRoot is not an Element, so its own direct children were never attributable
-PATCH_A_OLD = "const el = r.target && r.target.nodeType === 1 ? r.target : (r.target && r.target.parentElement);"
-PATCH_A_NEW = "const el = r.target && r.target.nodeType === 1 ? r.target : (r.target && (r.target.parentElement || r.target.host || null));"
-assert TAG.count(PATCH_A_OLD) == 1
-TAG_PATCHED = TAG_PROTO.replace(PATCH_A_OLD, PATCH_A_NEW)
+# SHIPPED (CLAUDE.md #82, pinned by R25c/R25d). This block used to carry the
+# experiment; it now carries the ASSERTION that the fix is still in the file,
+# because this probe's own numbers were produced against the patched ring and a
+# silent revert would make every verdict below describe a build nobody ships.
+# The probe ALSO refused to run when the fix landed -- the assertion fired, which
+# is a detector doing its job rather than skipping (PRINCIPLES 15). The arm is
+# kept so the before/after can still be produced on demand.
+PATCH_A_NEW = "const el = r.target && r.target.nodeType === 1 ? r.target\n          : (r.target && (r.target.parentElement || r.target.host || null));"
+PATCH_A_OLD = "const el = r.target && r.target.nodeType === 1 ? r.target\n          : (r.target && r.target.parentElement);"
+assert TAG.count(PATCH_A_NEW) == 1, "Patch A (ShadowRoot -> host) is not in listener_tag.js"
+TAG_UNPATCHED = TAG_PROTO.replace(PATCH_A_NEW, PATCH_A_OLD)
+assert TAG_UNPATCHED != TAG_PROTO
 
 async def patch_a(browser):
     out = {}
-    for variant, tag in (("shipped", TAG_PROTO), ("patched", TAG_PATCHED)):
+    for variant, tag in (("shipped", TAG_PROTO), ("pre-fix", TAG_UNPATCHED)):
         for mode in ("closed", "open"):
             ctx = await browser.new_context(viewport={"width": 900, "height": 700})
             await ctx.add_init_script(tag)
@@ -339,7 +391,7 @@ async def main():
                 items.append(dict(r=row['scoped'][key], net=row['net'], scope='9' + key))
     notes = render(items); k = 0
     sc_stats = {'main': [0, 0, 0], 'host': [0, 0, 0]}
-    fq = fb = hed = unk = tail = load = 0
+    fq = fb = hed = unk = tail = load = blind = 0
     print(f"{'shape':32} {'off':>5} {'net':>14} bsy prog img  mut(since/str/txt/attrs/frames)  verdict    sig  later?  err")
     for res in results:
         for row in res["rows"]:
@@ -348,10 +400,12 @@ async def main():
             for key in ("main", "host"):
                 row["scoped_notes"][key] = classify(notes[k]); k += 1
             v = classify(note); row["verdict"] = v; row["note"] = note
+            row["blind"] = "cross-origin frame(s) are rendered" in (note or "")
             m = row["r"].get("mut") or {}
             changes_later = (row["sig"] != res["final"])
             err = ""
-            if v in ("QUIET", "MINOR") and changes_later: err = "FALSE-QUIET"; fq += 1
+            if v == "BLIND" and changes_later: err = "blind-stated"; blind += 1
+            elif v in ("QUIET", "MINOR") and changes_later: err = "FALSE-QUIET"; fq += 1
             elif v == "STRONG" and not changes_later:
                 if row["off"] < 3000: err = "fb-load"; load += 1       # page parsed <3s ago: inherent
                 elif m.get("since", 0) < 1000: err = "FB-PERM"; fb += 1  # steady-state live churn
@@ -370,7 +424,7 @@ async def main():
                     sfq[key] += 1
                     if key == "main": print("  SCOPED-FALSE-QUIET", res["name"], row["off"], "main")
     print(f"\nSCOPED false-quiet (main/host): {sfq}")
-    print(f"\nFALSE-QUIET={fq}  FB-PERM={fb}  fb-tail={tail}  fb-load={load}  hedged={hed}")
+    print(f"\nFALSE-QUIET={fq}  blind-stated={blind}  FB-PERM={fb}  fb-tail={tail}  fb-load={load}  hedged={hed}")
     print("\nREGION ATTRIBUTION (item 5a prototype), per shape/offset: region=since/struct/text/attrs")
     for res in results:
         for row in res["rows"]:
@@ -382,4 +436,10 @@ async def main():
     if out_json:
         Path(out_json).write_text(json.dumps(dict(results=results, cost=cost, patch_a=pa), indent=1))
 
-asyncio.run(main())
+# GUARDED so the 18 fixtures, the routing table and the ground-truth signatures
+# can be IMPORTED by a sibling probe rather than copied. A second copy of this
+# corpus would drift from this one (PRINCIPLES 17), and the whole point of a
+# shape set is that two probes answering different questions answer them about
+# the same pages.
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -167,6 +167,19 @@ churn is *attribute* churn (`@style` on a carousel). A ticker that updates via
 node — so it trips the **strong** banner. Measured at 25 `structural` and 0
 `text` for a clock doing nothing but `textContent=`.
 
+> **AND THAT SENTENCE NAMES A MISCLASSIFICATION, NOT ONLY A GAP — measured
+> 2026-11-18, diff written, NOT APPLIED.** Chrome reports it as `childList`
+> because the DOM implements `textContent =` as remove-Text + insert-Text, and
+> the ring's own vocabulary already has a `text` kind. `Node.nodeType` decides
+> which bucket the record belongs in, so filing it as *structural* is a bug in
+> the kind assignment rather than a case scope has to work around. With the
+> renderer split into three tiers this closes **five of the six** steady-state
+> false busies `#82` measured, at a cost inside the A/A drift floor, and it
+> **cannot produce silence by construction** — a reclassified record moves
+> between two non-zero tiers. See `research/READINESS-RESIDUE-2026-11.md`;
+> scope remains the answer for the live grid whose churn is genuinely inside
+> the region being read.
+
 Scope reaches the four DOM signals (mutation recency, loading images,
 `aria-busy`, `role=progressbar`), each of which has an element so containment
 decides it exactly. **The network count is deliberately page-wide and says so**

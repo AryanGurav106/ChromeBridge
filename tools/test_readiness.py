@@ -706,10 +706,19 @@ let q=0; setInterval(()=>{sr.getElementById('sh').textContent='s'+(q++);}, 120);
               and r_content["mut"]["since"] > 3000,
               f"doc struct={r_doc['mut']['structural']} since={r_doc['mut']['since']} | "
               f"scoped struct={r_content['mut']['structural']} since={r_content['mut']['since']}")
+        # ASSERTS ITS INVARIANT, NOT A BUCKET. This read `structural > 0`, which
+        # was only ever true because a `textContent =` ticker was MISFILED as
+        # structural -- the defect R35 exists for. Its claim is that scoping to
+        # the churning region is not reported quiet, and that is what it says
+        # now; the kind is R35's business. Same rewrite as #30's TR8d, and the
+        # guard it provides for R24 ("always quiet when scoped") is unchanged,
+        # because `structural + text` is still zero for a settled region.
         check("R24b CONTROL: scoping to the CHURNING region still reports churn "
               "(without this, 'always quiet when scoped' would pass R24)",
-              r_ad["mut"]["structural"] > 0 and r_ad["mut"]["since"] < 500,
-              f"struct={r_ad['mut']['structural']} since={r_ad['mut']['since']}")
+              r_ad["mut"]["structural"] + r_ad["mut"]["text"] > 0
+              and r_ad["mut"]["since"] < 500,
+              f"struct={r_ad['mut']['structural']} text={r_ad['mut']['text']} "
+              f"since={r_ad['mut']['since']}")
         check("R24c CONTROL: a scoped region still BUILDING is never reported "
               "quiet — a false quiet is the worst direction this probe can fail in",
               r_late["mut"]["structural"] > 0 and r_late["mut"]["since"] < 500,
@@ -1050,6 +1059,133 @@ let i = 0;
               (nr or {}).get("blindFrames") == 0,
               f"blindFrames={(nr or {}).get('blindFrames')!r}")
         await np_.close()
+
+        # ------------------------------------------------------------------
+        # R35-R35e  A `textContent =` IS A RE-TEXT, NOT A STRUCTURAL CHANGE
+        #
+        # `READINESS.md` 5(b) states the gap in its own words: "a ticker that
+        # updates via textContent arrives as childList -- Chrome records it as
+        # remove+add of a text node -- so it trips the STRONG banner". The
+        # adversarial audit then measured the consequence at SIX steady-state
+        # reads (a clock, a live-value grid, a finished table beside a clock)
+        # being told "Elements were added, removed or re-texted ... do NOT
+        # conclude something is absent" about content that never changes again.
+        # That is the always-on warning #15 priced and #43 deleted `readyState`
+        # for, rebuilt one record-type over.
+        #
+        # THE FIX IS A MISCLASSIFICATION CORRECTION, NOT A NEW RULE. The ring's
+        # own vocabulary already has a `text` kind, and the banner's own words
+        # define `structural` as ELEMENTS being added or removed. `Node.nodeType`
+        # decides which one a childList record is -- a declaration, so no
+        # threshold, class name or wordlist is involved (PRINCIPLES 1).
+        #
+        # EVERY READING BELOW IS A DELTA. The fixture's own parse is a run of
+        # childList records, so an absolute `structural == 0` would measure the
+        # harness rather than the rule -- the mistake R14 exists to record. The
+        # wait first clears the parse out of the 3000ms window; the deltas then
+        # survive it either way.
+        pg = await tagged_page(
+            "<!doctype html><meta charset=utf-8><body>"
+            "<div id=t>v0</div>"
+            "<div id=box><button>b</button></div>"
+            "<div id=h></div><div id=mix></div></body>")
+        await pg.wait_for_timeout(3400)
+
+        async def step(js):
+            b = await mut(pg, 3000)
+            await pg.evaluate(js)
+            await pg.wait_for_timeout(70)
+            a = await mut(pg, 3000)
+            return (a["structural"] - b["structural"], a["text"] - b["text"])
+
+        ds, dt = await step("document.getElementById('t').textContent='v1'")
+        check("R35 a textContent= that only swaps Text nodes is recorded as a "
+              "RE-TEXT, not as structural (the ticker/live-value shape, measured "
+              "at 6 steady-state false-busy reads)",
+              ds == 0 and dt == 1, f"structural +{ds}, text +{dt}")
+
+        ds, dt = await step(
+            "document.getElementById('h').appendChild(document.createElement('p'))")
+        check("R35b CONTROL: appending an ELEMENT is still structural — without "
+              "this, 'file every childList as text' would pass R35 and delete "
+              "the signal the whole probe exists for",
+              ds == 1 and dt == 0, f"structural +{ds}, text +{dt}")
+
+        # THE CONTROL THAT EARNS ITS KEEP. A `textContent =` on a container
+        # holding real controls DESTROYS them, and the record carries them in
+        # removedNodes. A rule phrased as "a textContent assignment is a re-text"
+        # would file the loss of ten buttons as a text change; the rule is about
+        # the NODE TYPES in the record, which is why this stays structural.
+        ds, dt = await step("document.getElementById('box').textContent='gone'")
+        check("R35c CONTROL: a textContent= that REMOVES an element is still "
+              "structural — the rule reads the record's node types, not the API "
+              "that produced it",
+              ds == 1 and dt == 0, f"structural +{ds}, text +{dt}")
+
+        # A record carrying BOTH a Text node and an Element must be structural:
+        # the test is that EVERY node is Text, not that ANY node is. Written as
+        # an `any` it would under-warn on exactly the shape a framework produces
+        # when it writes a label beside a control.
+        ds, dt = await step(
+            "document.getElementById('mix').append("
+            "document.createTextNode('x'), document.createElement('b'))")
+        check("R35d CONTROL: a record carrying a Text node AND an Element is "
+              "structural (the test is EVERY node, not ANY node)",
+              ds == 1 and dt == 0, f"structural +{ds}, text +{dt}")
+
+        # The pre-existing path must be untouched: a direct characterData change
+        # was already `text` and must stay there, or this fix would have moved
+        # the boundary rather than corrected it.
+        ds, dt = await step("document.getElementById('t').firstChild.data='v2'")
+        check("R35e CONTROL: a direct characterData change is still text (the "
+              "path that already worked is unchanged)",
+              ds == 0 and dt == 1, f"structural +{ds}, text +{dt}")
+        await pg.close()
+
+        # ------------------------------------------------------------------
+        # R36/R36b  THE BLIND-FRAME COUNT RESPECTS THE SCOPE
+        #
+        # `blindFrames` (#82) is the clause a QUIET verdict carries to say what
+        # it could not see into. It was counted with `document.querySelectorAll`,
+        # i.e. page-wide, and then printed under SCOPED verdicts — so a read
+        # scoped to <main> named an ad frame sitting in the <footer>. That is the
+        # page-level fact leaking into a scoped read that #11 and #26 both had to
+        # stop, and the network clause in this same banner avoids it by saying
+        # PAGE-WIDE out loud. A frame outside the subtree cannot change what the
+        # caller is reading.
+        bf = await browser.new_page(viewport={"width": 900, "height": 700})
+        await bf.add_init_script(TAG)
+        await bf.route("**/scoped-a", lambda r: r.fulfill(
+            status=200, content_type="text/html",
+            body="<!doctype html><meta charset=utf-8><body style='margin:0'>"
+                 "<main mmid='1'><h1>Outer</h1><p>settled</p></main>"
+                 "<footer mmid='2'>"
+                 "<iframe src='http://b.test/scoped-b' style='width:400px;height:300px'>"
+                 "</iframe></footer>"))
+        await bf.route("**/scoped-b", lambda r: r.fulfill(
+            status=200, content_type="text/html",
+            body="<!doctype html><meta charset=utf-8><body>inner</body>"))
+        await bf.goto("http://a.test/scoped-a", wait_until="domcontentloaded")
+        await bf.wait_for_timeout(300)
+        await bf.evaluate("""() => {
+            const reg = new Map();
+            document.querySelectorAll('[mmid]').forEach(
+                e => reg.set(e.getAttribute('mmid'), e));
+            window.__mmidReg = reg;
+        }""")
+        b_doc = await probe(bf)
+        b_main = await probe_scoped(bf, "1")
+        b_foot = await probe_scoped(bf, "2")
+        check("R36 a frame OUTSIDE the scope is not counted — a read scoped to "
+              "<main> must not name an ad frame in the <footer>",
+              b_doc.get("blindFrames") == 1 and b_main.get("blindFrames") == 0,
+              f"doc={b_doc.get('blindFrames')} scoped-to-main="
+              f"{b_main.get('blindFrames')}")
+        check("R36b CONTROL: a frame INSIDE the scope still counts — without "
+              "this, 'scoped means zero' would pass R36 and delete the clause",
+              b_foot.get("blindFrames") == 1,
+              f"scoped-to-footer={b_foot.get('blindFrames')}")
+        await bf.close()
 
         await browser.close()
 

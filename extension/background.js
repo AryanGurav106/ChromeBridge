@@ -2816,7 +2816,16 @@ function _readinessPage(scopeMmid) {
   // two such passes disagreeing once already).
   try {
     let blind = 0;
-    for (const f of document.querySelectorAll('iframe,frame')) {
+    // SCOPED, like the other DOM signals, because a frame OUTSIDE the subtree
+    // the caller asked about cannot change what they are reading -- and naming
+    // it is the page-level-fact leak #11 and #26 both had to stop. The network
+    // clause in this same banner solves it the other way, by saying PAGE-WIDE;
+    // this one said nothing and was page-wide anyway. Measured as shape 21 of
+    // the adversarial audit: a read scoped to <main> named an ad frame sitting
+    // in the <footer>.
+    // `_scan` also reaches a cross-origin frame nested inside a same-origin one
+    // and inside a shadow root, which `document.querySelectorAll` never did.
+    for (const f of _scan('iframe,frame')) {
       let vis = true;
       try {
         vis = !f.checkVisibility ||
@@ -2827,7 +2836,10 @@ function _readinessPage(scopeMmid) {
       try { opaque = !f.contentDocument; } catch (e) { opaque = true; }
       if (!opaque) continue;
       try {
-        const r = f.getBoundingClientRect();
+        // `_topRectFor`, not the raw rect: a frame found INSIDE a same-origin
+        // frame reports frame-relative geometry, and the 30px test is about how
+        // big it is on the page. Same mapping R10 exists for.
+        const r = _topRectFor(f);
         if (r.width >= 30 && r.height >= 30) blind++;
       } catch (e) {}
     }
@@ -3094,7 +3106,20 @@ async function readinessNote(tabId, scopeMmid) {
       // is entirely readable — the always-on warning #15 priced and #43 deleted
       // readyState for being, rebuilt one unit over. Caught by measuring the ad
       // case before shipping rather than after.
-      if (m.structural || m.text) {
+      // THREE TIERS, NOT TWO, and the third is what the #70 split left out.
+      // `structural` now means ELEMENTS were added or removed; `text` means the
+      // words inside existing elements changed (a characterData record, or a
+      // childList that moved only Text nodes -- see listener_tag.js). Those are
+      // different facts needing different responses, and merging them is what
+      // made a clock, a live price and a status line emit the absence warning
+      // for ever on six measured reads.
+      //
+      // The middle tier still WARNS. It is not a quiet verdict and it never
+      // claims values are stable -- it claims only what was measured: that the
+      // SET of elements did not change in the window. A page revealing content
+      // by `el.textContent = …` lands here and is told text changed recently,
+      // which is true and is the thing to act on.
+      if (m.structural) {
         return _withFade(`*** THE DOM IS STILL CHANGING (last change ${m.since}ms ago; ` +
                `${moved}${sat} change(s) in the last ${m.win}ms: ${kinds.join(', ')}${where}` +
                (bits.length ? `; also ${bits.join('; ')}` : '') + `). ` +
@@ -3106,19 +3131,42 @@ async function readinessNote(tabId, scopeMmid) {
                `any coordinate. Refs are re-measured at click time, so acting BY REF is ` +
                `safe. ***\n`, r);
       }
+      if (m.text) {
+        // TEXT ONLY. No element was added or removed in the window, so the SET
+        // of controls below is what the page has; what is moving is the words
+        // inside them. Carries `_withBlind` for the same reason the two quiet
+        // paths do: this makes a claim about structure, and a cross-origin frame
+        // can be adding elements where we cannot see.
+        return _withBlind(_withFade(`*** TEXT IS CHANGING, STRUCTURE IS NOT (last change ${m.since}ms ` +
+               `ago; ${moved}${sat} change(s) in the last ${m.win}ms: ${kinds.join(', ')}${where}` +
+               (bits.length ? `; also ${bits.join('; ')}` : '') + `). ` +
+               `No element was added or removed in that window, so every control in the ` +
+               `listing below is still there and no new one appeared. What is moving is text ` +
+               `inside existing elements — a clock, a counter, a live price, a status line, or ` +
+               `content being written into an element that was empty. So treat any VALUE here ` +
+               `as possibly already stale, and do not conclude an element is EMPTY from this ` +
+               `read. Refs stay valid. ***\n`, r), r);
+      }
       // ATTRIBUTE CHURN ONLY — reported as a FACT, with no "may be absent"
       // warning, because nothing was added, removed or re-texted in the window.
       // That is what "structurally current" means and it is a measurement, not a
       // judgement. The attribute NAMES are printed rather than filtered: @style on
       // a carousel and @disabled on a form unlocking are both attribute-only and
       // need opposite responses. The reader can tell them apart. We cannot.
-      return _withFade(`*** Minor DOM activity (${moved}${sat} change(s) in the last ${m.win}ms: ` +
+      // `_withBlind` HERE TOO. This sentence says the listing below is
+      // STRUCTURALLY CURRENT, which is a claim about structure, and a
+      // cross-origin frame we cannot read into can be adding elements inside it.
+      // The clause rode only the two fully-quiet paths, so the one verdict that
+      // states structural completeness in words was the one making it without
+      // the caveat. Measured as shape 21 of the adversarial audit: an
+      // attribute-only carousel beside a cross-origin frame still painting.
+      return _withBlind(_withFade(`*** Minor DOM activity (${moved}${sat} change(s) in the last ${m.win}ms: ` +
              `${kinds.join(', ')}${where}` +
              (bits.length ? `; also ${bits.join('; ')}` : '') + `). ` +
              `No element was added, removed or re-texted in that window, so the listing ` +
              `below is structurally current. Attribute churn is usually animation or ` +
              `presentation — but read the names above: @disabled, @aria-expanded or ` +
-             `@value moving means page STATE is changing. ***\n`, r);
+             `@value moving means page STATE is changing. ***\n`, r), r);
     }
     if (bits.length) {
       // QUIET DOM, BUSY NETWORK. The case that produced the complaint: a page

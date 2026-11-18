@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1493 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1513 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1493 checks, ~143s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1513 checks, ~149s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -8783,44 +8783,134 @@ granted in the side panel is refused with the same message the agent gets.
     ON AN IRREVERSIBLE ACTION WAS SITTING ON THE WRONG SIDE OF IT.** `sw_info`
     has reported `server_code_changed_since_start` since #61, because a stale
     stdio process answers normally and the only symptom is a saved artefact
-    quietly missing a field a newer recorder writes (#59 paid three reconnects
-    learning that, #61 three more). **The extension half had no read at all**,
-    and it is the more expensive of the two: a `/mcp` reconnect fixes a stale
-    server in a second, while a stale service worker needs a hand-reload at
-    `chrome://extensions` and nothing anywhere said so.
+    quietly missing a field a newer recorder writes. **The extension half had no
+    read at all**, and it is the more expensive of the two: a `/mcp` reconnect
+    fixes a stale server in a second, while a stale service worker needs a
+    hand-reload at `chrome://extensions` and nothing anywhere said so.
 
     **Measured rather than supposed, and the instance is the worst available
-    one.** The observe→act submit REFUSAL — the guard that stops a trusted
-    click on a declared submit whose identity moved since the read — was
-    committed at **13:22**; the worker running in the user's Chrome had started
-    at **23:33 the previous night**. So it is shipped, fixtured, and was headed
-    `CLOSED` in `OPEN.md`, and it has never executed in a browser. #43's rule is
-    that fixtures encode what you thought of and a live pass is not optional;
-    this turns "have I had one?" from a thing to remember into a read.
+    one.** The observe→act submit REFUSAL — the guard that stops a trusted click
+    on a DECLARED submit whose identity moved since the read — was committed at
+    **13:22**; the worker running in the user's Chrome had started at **23:33
+    the previous night**. So it was shipped, fixtured, and headed `CLOSED` in
+    `OPEN.md`, and had never executed in a browser.
+
+    **THEN IT WAS RUN, and both directions hold.** On the fixture's login page,
+    with the submit's label changed between the read and the click:
+    `REFUSED: [mmid='24'] is declared a SUBMIT by this page, and it is not the
+    control you read — name "Sign in" -> "Delete everything". NOTHING was
+    clicked.` With the stamp refreshed and nothing drifted, the same click
+    **proceeded** — and #81's guard then reported `NO EFFECT` honestly, because
+    HTML validation blocked the empty form and the page really did not react.
+    Two guards verified in one call, each in both directions.
 
     **AN AGE WE CANNOT READ IS UNKNOWN, NEVER CLEAN.** `ageSec` comes from the
     extension, so it can be absent or junk, and #77's structural root is that
     *"I could not see"* must never render as *"there is nothing to see"*. The
-    helper returns `None` for that and the caller says UNKNOWN; an empty list
-    would read as a clean bill of health.
+    helper returns `None` and the caller says UNKNOWN; an empty list would read
+    as a clean bill of health.
 
     **TWO TRAPS THIS PROJECT HAS ALREADY PAID FOR, avoided deliberately.** The
     helper sits BEFORE the `@mcp.tool()` decorator — #64 bound that decorator to
     a helper inserted after it, which removed `sw_info` from the tool surface
     **while the count stayed at 31**, so the over-the-wire smoke test passed.
-    Verified over the wire again here: 31 tools, `sw_info` present, no helper
-    leaked. And the age is read from BOTH shapes `out` can take, because
-    `sw_info` builds it as `res` itself for a dict result and `{"sw": res}` for
-    a string — reading one spelling finds the age on live traffic and nothing on
-    the other, which is the string-contract class that kept `delta` dead for its
-    whole life (#30) and that #19 names as the untested link. C43e drives the
-    real extraction over all three shapes rather than grepping for it.
+    Re-verified over the wire: 31 tools, `sw_info` present, no helper leaked.
+    And the age is read from BOTH shapes `out` can take, because `sw_info`
+    builds it as `res` itself for a dict result and `{"sw": res}` for a string —
+    reading one spelling finds the age on live traffic and nothing on the other,
+    the string-contract class that kept `delta` dead for its whole life (#30).
+    C43e drives the real extraction over all three shapes rather than grepping.
 
-    Suites: 1499 checks. New — C43 (a young worker reports nothing — the control
-    that keeps it from being #15's always-on warning), C43b (an old one names
-    the files), C43c (an unreadable age is UNKNOWN), C43d (`sw_info` CALLS it —
-    the helper existing is not the same as it being wired), C43e/C43f (both
-    shapes, and junk yields no age). All fail pre-fix.
+    **Live-verified in the control direction too:** immediately after a reload
+    plus reconnect, `bridge_ms_total: 5.0` and worker age 25s, and **both**
+    staleness reads are silent — which is what keeps this from being the
+    always-on warning #15 priced.
+
+88. **A `textContent =` IS NOT A STRUCTURAL CHANGE, AND EVERY CLOCK ON THE WEB
+    WAS TELLING AGENTS THE PAGE MIGHT BE INCOMPLETE.** #82 ran an adversarial
+    matrix of 18 hostile page shapes at four offsets and left nine named
+    failures nobody had closed. Re-derived rather than trusted (#16), and the
+    shape of the residue changed under re-measurement: **two of the three false
+    QUIETS no longer reproduce** — #82's own `blindFrames` clause states the
+    cross-origin limit — and one of the six false BUSIES was misfiled, being the
+    documented window cost with `since` printed beside it rather than a
+    permanent warning.
+
+    **The six real ones are ONE misclassification.** The DOM implements
+    `textContent =` as *remove the old Text node, insert a new one*, so it
+    arrives as a `childList` record — and every clock tick, live price and
+    status line therefore tripped the STRONG *"elements were added, removed or
+    re-texted … do NOT conclude something is absent"* banner, for ever.
+    `READINESS.md` §5(b) names this as the case #70's kind-split provably does
+    not cover, and it is the always-on warning #15 priced and #43 deleted
+    `readyState` for, rebuilt one record-type over.
+
+    **The fix is a DECLARATION, not a new rule.** The ring's vocabulary already
+    had a `text` kind and the banner's own words already defined `structural` as
+    ELEMENTS being added or removed; `Node.nodeType` decides which bucket a
+    childList record belongs in. No threshold, no class name, no wordlist.
+    **STRICTLY `nodeType === 3`**, so a comment node or anything else stays
+    structural (over-warn, the safe direction), and a `textContent =` that
+    destroys real ELEMENTS still carries them in `removedNodes` and stays
+    structural.
+
+    **IT CANNOT PRODUCE SILENCE, by construction rather than by measurement:** a
+    reclassified record moves between two non-zero tiers, so a read that warned
+    before still warns — what changes is WHICH warning. The third tier says the
+    SET of controls is unchanged and the VALUES may be stale, which are
+    different facts needing different responses.
+
+    **Priced with both arms computed from the same ring at the same instant**, a
+    `retext` bit beside each record, so run-order drift cannot align with an arm
+    (#19). 9 flips / 0 losses on 21 shapes; **FB-PERM 6 → 1**; 9 of 84 rows
+    changed and **none into QUIET or MINOR**. Cost at 40,000 mutations in one
+    batch is inside its own A/A floor on all three paths, and a second run flips
+    the sign — which is what unmeasurable looks like. On 105 frozen sites
+    **27.6% of in-window childList records are re-texts**, so a read printing
+    `906 structural` was really `413 structural, 493 text`; 4.8% of reads change
+    tier at 4s and **0.0% at 1.5s**, i.e. a page that is BUILDING is never
+    demoted.
+
+    **A LIVE SHIPPING DEFECT FOUND ON THE WAY, in the server.** `_BANNER_TIERS`
+    is a hand-kept list with no tripwire, and `"DOM STABLE, NETWORK BUSY"`
+    matched **nothing** on a scoped read — the extension emits `DOM STABLE IN
+    THE SUBTREE YOU SCOPED TO, NETWORK BUSY`. `_banner_tier` then fell back to
+    raw-string equality, which the mutation counter defeats, reinstating eval
+    7's duplicate-banner defect (~1,200 characters of near-identical prose).
+    Confirmed by driving the real `readinessNote`, not by reading it. **C44**
+    now requires every marker to appear in the interpolation-free head of a
+    banner the extension really emits, with C44b as the planted-violation
+    control. A scoped read is the documented way to go deep into a page, so that
+    was the half that mattered.
+
+    **TWO MORE, both the page-level-fact leak this project keeps re-finding.**
+    `_withBlind` rode only the two fully-quiet paths, so the MINOR tier — the
+    one verdict that claims *"the listing below is structurally current"* IN
+    WORDS — was the one making that claim without the cross-origin caveat. And
+    `blindFrames` was page-wide and did not say so, naming an ad frame in the
+    `<footer>` on a read scoped to `<main>`, which is #11/#26's leak in the same
+    banner whose network clause avoids it by saying PAGE-WIDE.
+
+    **LIVE-VERIFIED, all three tiers, after a reload.** 40 `textContent`
+    assignments and nothing else → `*** TEXT IS CHANGING, STRUCTURE IS NOT (…
+    32 text) ***`, where the identical page state produced the absence warning
+    before. The CONTROL: 30 re-texts plus **one** appended element → `1
+    structural, 30 text` and the STRONG banner, so "text wins whenever text is
+    present" would have failed there. And a plain page load reports
+    `18 structural, 14 text` — a split that did not exist this morning.
+
+    **The one still-real false quiet is recorded as DON'T BUILD with its
+    number**: a page that is silent, has nothing in flight, and will paint from
+    a timer is indistinguishable from one that has finished, and the only
+    mechanism that reaches it (wrapping `setTimeout` at document_start) would
+    put the line on **55.2% of settled pages** at a 2000ms window.
+
+    **One existing check was rewritten to its invariant.** R24b asserted
+    `structural > 0` for a churning scoped region — true only because that
+    region's ticker was MISFILED. It asserts `structural + text > 0` now and
+    passes in both arms (#30's TR8d case). And the controls were proven
+    non-vacuous by breaking the rule two ways: "ANY node is Text" fails R35c and
+    R35d, "addedNodes only" fails R35c.
 
 
 ## Debugging starting points
@@ -8927,6 +9017,9 @@ granted in the side panel is refused with the same message the agent gets.
 | A flow step reports `matched href=…` | By design since #61 — the recorded name no longer matches and the step resolved on the link's declared destination instead. Deterministic, nothing guessed and nothing asked, but NOT a clean pass: the page's labels moved, and the proposed patch says to what. Recorded only where the href was unique at record time, and only for `<a>`/`<area>` |
 | A flow step that reports `matched href=…` is also SLOW | By design since #61 — the recorded descriptor gets its whole settle window first, because a name that has not RENDERED yet is not a name that CHANGED (#59), and routing around it early proposes a mid-render patch. Measured at 6.58s against 0.4s clean. Only a genuinely drifted step pays it; applying the proposed patch removes it |
 | A recorded flow has no `alt` key on a link target | The MCP server was loaded before #61. It reads `descriptor.py` and `core/flows/*` at CONNECT time, and the old one answers normally while writing a slightly older format — `/mcp` reconnect, then CHECK THE SAVED FILE rather than the live result |
+| A readiness banner says `TEXT IS CHANGING, STRUCTURE IS NOT` | By design since #88 — no element was added or removed in the window, so every control in the listing is still there and none appeared; what is moving is text inside existing elements (a clock, a counter, a live price, a status line, or content being written into something that was empty). Treat a VALUE as possibly stale; do not conclude an element is EMPTY. Refs stay valid. One structural record still outranks any amount of text |
+| A `setInterval` ticker you injected stops firing, so a readiness probe reads QUIET | Not a defect — the agent's tab is hidden BY DESIGN (#12) and Chrome throttles a hidden page's timers. Drive churn with a page ACTION inside one `browser_batch` instead; a probe that has stopped looks exactly like a settled page (#15) |
+| An A/B probe under `tools/` fails with `AssertionError: anchor drifted` | It builds its arms by patching a source anchor and the fix it was measuring has SHIPPED, so the anchor is gone. Correct behaviour, not a bug — it refuses rather than silently measuring a build nobody runs. The number it produced is not re-derivable without reverting; see `docs/MEASUREMENT.md` for the rule that earns |
 | An extension change seems to have no effect | `sw_info` answers this since #87: `extension_code_changed_since_worker_start` names every `extension/` file whose mtime is later than the RUNNING worker's start. **A `/mcp` reconnect does NOT fix this** — reload at chrome://extensions. `extension_stale_note: UNKNOWN` means the worker reported no readable age, which is not the same as clean |
 | Server-side edits seem to have no effect | `sw_info` answers this since #61: `server_code_changed_since_start` names every file whose mtime is later than this process's import. Empty means the running server IS the code on disk. The client must reconnect (`/mcp`); nothing else picks it up, and the stale process keeps answering normally, which is what made this cost six reconnects across #59 and #61 |
 | A flow says a step FAILED but the action plainly worked | Fixed in #60 — the postcondition window was a flat 6s and a real app's create -> table-refresh took longer, so the flow reported FAILED for a record that HAD been created. Each step now carries `settle_ms`, measured at record time from the timestamps the recorder already kept, and the replay allows the default PLUS that. A flow recorded before #60 carries 0 and is unchanged |

@@ -824,7 +824,16 @@ def _merge_text_banner(out: str, text: str) -> tuple[str, str]:
 # on regardless, wait on the network, or go and find out.
 _BANNER_TIERS = (
     "THE DOM IS STILL CHANGING",
-    "DOM STABLE, NETWORK BUSY",
+    "TEXT IS CHANGING, STRUCTURE IS NOT",
+    # "DOM STABLE", NOT "DOM STABLE, NETWORK BUSY". The extension emits
+    # `DOM STABLE IN THE SUBTREE YOU SCOPED TO, NETWORK BUSY` on a scoped read,
+    # so the longer marker matched NOTHING there and `_banner_tier` fell back to
+    # the raw banner string -- which the mutation counter defeats, reinstating
+    # the duplicate-banner defect eval 7 measured (~1,200 characters of
+    # identical-in-substance prose in one response). Confirmed by driving the
+    # real `readinessNote`, not by reading it. A scoped read is the documented
+    # way to go deep into a page, so that was the half that mattered.
+    "DOM STABLE",
     "Minor DOM activity",
     "No DOM change could be attributed",
     "PAGE IS STILL SETTLING",

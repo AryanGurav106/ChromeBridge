@@ -2088,6 +2088,70 @@ const FIELDS3 = () => ([
       /WRAPPED/.test(String(r.result)) && String(r.result).includes("40ms"),
       String(r.result).slice(0, 200));
 
+    // R-TEXT — THE THIRD TIER, and the branch is here rather than in the ring.
+    // listener_tag.js now files a childList record that moved only Text nodes
+    // as a RE-TEXT (R35), but that reclassification changes nothing an agent
+    // reads unless this function stops folding `text` into the structural
+    // sentence. #19 is explicit that the renderer is where a feature ships
+    // inert: `detail="brief"` and `delta` both did exactly that.
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0,
+      mut: _mut({ structural: 0, text: 30 }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("R-TEXT text-only churn -> TEXT IS CHANGING, STRUCTURE IS NOT, and "
+          + "NOT the absence warning (the clock/live-price shape, measured at 6 "
+          + "steady-state reads told they might be incomplete)",
+      String(r.result).includes("TEXT IS CHANGING, STRUCTURE IS NOT")
+        && String(r.result).includes("30 text")
+        && !String(r.result).includes("STILL CHANGING"), JSON.stringify(r).slice(0, 220));
+
+    // CONTROL: ONE structural record still outranks any amount of text. Without
+    // it "text wins whenever text is present" would pass R-TEXT and silently
+    // demote every page that is painting while a clock ticks beside it -- which
+    // is shape 13 of the adversarial audit, and the one row of six the fix is
+    // NOT supposed to move.
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0,
+      mut: _mut({ structural: 1, text: 300 }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("R-TEXT2 CONTROL: a single structural record still produces the "
+          + "STRONG banner however much text churns beside it",
+      String(r.result).includes("THE DOM IS STILL CHANGING")
+        && !String(r.result).includes("TEXT IS CHANGING"), JSON.stringify(r).slice(0, 220));
+
+    // CONTROL: the tier never produces SILENCE. By construction a reclassified
+    // record moves between two non-zero tiers, and this is that property stated
+    // as a test rather than as an argument -- a false quiet is the worst
+    // direction this probe can fail in.
+    check("R-TEXT3 CONTROL: the text tier is a WARNING, not silence",
+      String(r.result).length > 0, String(r.result).slice(0, 80));
+
+    // R-BLIND3 — THE MINOR TIER CLAIMS STRUCTURAL COMPLETENESS, SO IT CARRIES
+    // THE CROSS-ORIGIN CAVEAT TOO. The clause rode the two fully-quiet paths
+    // only, so the one verdict that states "the listing below is structurally
+    // current" IN WORDS was the one making it with nothing said about the frame
+    // it cannot read into. Measured as shape 21 of the adversarial audit.
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0, blindFrames: 1,
+      mut: _mut({ attrs: { style: 25 } }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("R-BLIND3 the Minor tier names the cross-origin frame it could not "
+          + "see into, because its own sentence claims the listing is "
+          + "structurally current",
+      String(r.result).includes("Minor DOM activity")
+        && String(r.result).includes("cross-origin frame"), JSON.stringify(r).slice(0, 220));
+
+    // CONTROL: with no blind frame the Minor sentence is unchanged, so this did
+    // not become an always-on clause (#15, priced and deleted twice here).
+    currentStubs["_readinessPage"] = () => ({
+      ready: "complete", imgs: 0, prog: 0, busy: 0, blindFrames: 0,
+      mut: _mut({ attrs: { style: 25 } }) });
+    r = await callOp("page_readiness", { tabId: 1 });
+    check("R-BLIND4 CONTROL: with no blind frame the Minor tier says nothing "
+          + "about one",
+      String(r.result).includes("Minor DOM activity")
+        && !String(r.result).includes("cross-origin frame"), JSON.stringify(r).slice(0, 220));
+
     currentStubs["_readinessPage"] = () => ({
       ready: "complete", imgs: 0, prog: 0, busy: 0,
       mut: _mut({ attrs: { style: 25 } }) });

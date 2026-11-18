@@ -192,3 +192,37 @@ an anecdote with a p-value.**
   strong model. Two 2026 results disagree about which way that cuts (one
   measures +14.6 to +17.5pp for full HTML over a compact tree, another −10.2pp),
   so it is unsettled rather than alarming — and unmeasured here either way.
+
+## An A/B probe that patches a source anchor has a LIFETIME
+
+`audit_retext_tier.py` and `audit_retext_prevalence.py` build their two arms by
+string-patching an anchor in `extension/listener_tag.js`, and they `assert` the
+anchor occurs exactly once so they cannot silently measure a build nobody runs.
+That assertion is right and it is why the adversarial auditor's #82 numbers
+could not have drifted.
+
+**It also means both probes stop working the moment the fix ships.** Verified
+2026-11-18, minutes after the re-text diff landed:
+
+    AssertionError: anchor drifted: "kd[s] = r.type === 'childList' ? 1 : (r."
+
+So the corpus figure they produced (27.6% of in-window childList records are
+re-texts, 105 frozen sites) is **not re-derivable from the repo as it now
+stands** without first reverting the patch. Nothing is wrong with the number;
+what is wrong is that the instrument has no way back to its own baseline.
+
+**The rule this earns.** A probe whose arms come from patching source must
+construct the arm that does NOT exist yet, not the one that does. Patch
+FORWARD from the shipped state (apply the candidate) rather than patching the
+candidate onto a baseline it assumes is still there — or carry both anchors and
+detect which side of the fix it is on, so it keeps working in either direction.
+Otherwise every such measurement is a one-shot that expires on commit, and the
+next reader who wants to re-derive it (PRINCIPLES 5: a result that flatters or
+damns the system gets re-derived before it is believed) finds an assertion
+instead of a number.
+
+**What was confirmed independently instead**, since the probe could not be
+re-run: a plain load of the fixture's login page reports `18 structural, 14
+text` live, a split that did not exist before the fix. That is the same
+direction and the same rough magnitude as the corpus figure, measured through
+the real extension rather than through the probe.

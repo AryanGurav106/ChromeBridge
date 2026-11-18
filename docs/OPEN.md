@@ -160,6 +160,21 @@ left is one element, and it is the intended behaviour.**
 > population is too small to bound.
 
 ### 2. 52.6% of ordinal-bearing descriptors cannot be witnessed `MEASURED CANDIDATE`
+> **A VIRTUALISED LIST IS THE WORST INSTANCE AND IT IS NEW (2026-11-18).** The
+> crowd an ordinal was counted against is the rendered WINDOW, whose size does
+> not change when it scrolls -- so `len(hits) != of`, the composition check that
+> catches a row being added or removed, **can never fire at all**. Measured live
+> on a 200-record list with a ten-row window: recorded REC-1003, replayed
+> REC-1053, no refusal and no note, and `recordAtoms` was `None` because the rows
+> render no distinguishing text. The same page with its per-row code restored is
+> SAFE -- the descriptor reaches `near="REC-1003 Select"`, needs no ordinal, and
+> refuses after the scroll -- so this is about rows that declare nothing, not
+> about virtualisation. Not fixable from declarations: the scroller is not an
+> interactive element, the rows report `clipContainerMmid: None` and
+> `scrollRegion: False`, and ARIA's `aria-setsize`/`aria-posinset` are present on
+> 3.8% of controls (#83). The `positional:` warning now names it as a third
+> mechanism beside a re-sort and churn.
+> `docs/research/FLOWS-CONCEPTUAL-BREAKS-2026-11.md` M1.
 > **Re-measured in #83 on 39 sites against #72's 24.** The unwitnessed share is
 > **52.6%**, not 59.4%, and the shipped witness covers 47.4%. #72's claim that
 > the shipped witness is ~11.6% WRONG on a re-sort is mostly #72's own mutation:
@@ -1007,7 +1022,23 @@ weigh. C20e pins it and fails pre-fix with the old sentence quoted.
 > **(a) Per-landmark attribution — DON'T BUILD** (#82). Fixes 3 of 6
 > steady-state false-busies, leaves every false quiet, costs 3.0–3.6ms per read
 > against 0.002–0.006ms, and forces an ownership rule the design exists to
-> avoid.
+> avoid. Re-confirmed 2026-11-18 at 2.88–2.91ms against 0.002–0.006ms doc-wide
+> and 0.022ms scoped.
+>
+> **(d) THE SIX STEADY-STATE FALSE BUSIES — measured, and a diff exists that is
+> NOT applied.** `docs/research/READINESS-RESIDUE-2026-11.md`. Five of the six
+> are one misclassification: a `textContent =` arrives as a `childList` record,
+> and the ring filed it as *structural*, so a clock and a live price tripped the
+> "do NOT conclude something is absent" banner for ever. `Node.nodeType` decides
+> it — the ring's `text` kind already existed — and the renderer gains a third
+> tier. 9 flips / 0 losses on 21 shapes, **it cannot produce silence by
+> construction**, cost inside the A/A floor at 40,000 mutations in one batch,
+> and 4.8% of frozen-corpus reads change tier at 4s with **0.0% at 1.5s** (so a
+> page that is building is never demoted). The sixth row was never a defect —
+> the window there genuinely still covers 280 element appends. The patch is
+> APPLIED and live-verified 2026-11-18 (#88); the commit is the diff, which
+> has been deleted so nobody re-applies it. **Before it was applied the
+> readiness suite is red by 2 (R35, R36), deliberately.** No live pass yet.
 >
 > **(b) Cross-origin frames — SHIPPED.** A quiet verdict now names the frames it
 > could not see into. Priced at **6.9%** of pages first, so 93% pay nothing.
@@ -1174,6 +1205,43 @@ hits the map, so there is no symptom. Refs re-measure and are safe; the printed
 coordinate is not.
 
 ### 9. Three unreproducible 30s+ stalls `OPEN`
+> **A FOURTH, CAUGHT LIVE 2026-11-18 WITH THE EVIDENCE #50 BUILT FOR IT.**
+> Previous sightings were memories. This one arrived with its op and its
+> neighbours, because `sw_info`'s timeout ring did its job:
+>
+> ```
+> recent_timeouts: [{op: page_fingerprint,          after_s: 30, ago_s: 39.5},
+>                   {op: get_interactive_elements,  after_s: 30, ago_s:  4.9}]
+> ```
+>
+> **What was measured, in the order the timeout message itself prescribes:**
+> `sw_info` answered in **5.9ms**, the worker was the same id at 141s and had
+> NOT been evicted, `get_url` on the stuck tab returned the correct url and
+> title instantly, and `dismiss_dialog` reported `no_dialog` — so it is not a
+> blocking dialog, not a dead extension, and not a worker restart. Every
+> page-INJECTING op into that one tab was stuck while everything worker-side
+> answered. That is the shape the message describes, and this is the first time
+> all four probes were run on a live instance.
+>
+> **The new fact, and it narrows the search away from the extension:** a
+> SECOND, freshly created tab navigated to the SAME origin also landed on an
+> error page (`title: "localhost"` — Chrome's url-display fallback, #42's
+> shape) **while `curl` to that origin returned 200 from the shell**. So at the
+> moment of the stall, Chrome could not load a page that the server was serving
+> fine. Whatever this is, it is not confined to the already-wedged tab's
+> renderer and it is visible to a tab that never ran any of our code.
+>
+> **Recovery:** closing the wedged tabs and creating a new one restored normal
+> service immediately — clean load, full listing, no reload of the extension
+> and no restart of the server. **Stated carefully: the new tab was created
+> AFTER the close, so "closing it fixed it" and "a few seconds passed" are not
+> separated by this observation.** Do not record the close as the cure.
+>
+> **What would close this:** the next sighting should additionally run
+> `debug_targets` (is a foreign CDP session on that tab?) and `curl` the origin
+> from the shell AT THE SAME MOMENT rather than afterwards, since the curl here
+> was taken after recovery had begun. Both are one call each and neither was
+> taken this time.
 Every page-injecting op hangs together while `get_url`/`sw_info`/`navigate`
 answer in milliseconds — a blocked page main thread rather than a dead
 extension; navigating recovers it. Not reproducible across four attempts. The

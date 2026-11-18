@@ -1528,6 +1528,45 @@ def main() -> int:
           "_prepend_to_listing(" in _srv2
           and not re.search(r'=\s*f?"\[scoped to the subtree[^"]*"\s*\+\s*out', _srv2),
           "scope header is composed, not concatenated")
+
+    # ---------------------------------------------------------------- C44 ---
+    # A TIER MARKER MUST SURVIVE THE BRANCH IT IS EMITTED ON, and one did not.
+    # `_BANNER_TIERS` is a hand-kept list in mcp_server.py restating the phrases
+    # background.js leads a banner with -- the same cross-half string contract
+    # C12 exists for, and the only one of them with no tripwire. Measured by
+    # driving the real `readinessNote`, not by reading it: on a SCOPED read the
+    # emitted banner is
+    #     *** DOM STABLE IN THE SUBTREE YOU SCOPED TO, NETWORK BUSY. ...
+    # so the marker `DOM STABLE, NETWORK BUSY` matched nothing, `_banner_tier`
+    # fell back to the raw banner text, and the mutation counter defeated the
+    # equality -- reinstating the duplicate-banner defect eval 7 measured, about
+    # 1,200 characters of identical-in-substance prose in one response. A scoped
+    # read is the documented way to go deep into a page, so that was the half
+    # that mattered.
+    #
+    # THE RULE IS ABOUT INTERPOLATION, which is what makes it general rather
+    # than a restatement of the list. A marker has to live in the run of text
+    # between `*** ` and the template's FIRST `${...}`; anything after that
+    # depends on which branch ran. Banners whose text carries no ticking value
+    # (the frozen-fade and cross-origin-frame sentences) need no marker at all,
+    # because exact equality already folds them -- so this asks only that every
+    # marker in the list is reachable, not that every banner has one.
+    _bgsrc = read("extension/background.js")
+    _heads = [re.sub(r"\s+", " ", h).strip()
+              for h in re.findall(r"`\*\*\* (.*?)(?:\$\{|`)", _bgsrc, re.S)]
+    _unreach = [t for t in _ms._BANNER_TIERS
+                if not any(t in h for h in _heads)]
+    check("C44 every _BANNER_TIERS marker appears in the interpolation-free "
+          "head of a banner the extension really emits — a marker split by a "
+          "${...} matches only on the branch that leaves it intact, and the "
+          "fallback is raw-string equality, which a counter defeats",
+          not _unreach,
+          f"unreachable: {_unreach}; heads: {[h[:40] for h in _heads if h]}")
+    check("C44b CONTROL: the rule can fail — a marker that no emitted banner "
+          "carries is reported, so this is not vacuously true of any list",
+          bool([t for t in ("A TIER NOBODY EMITS",)
+                if not any(t in h for h in _heads)]),
+          "planted marker is detected as unreachable")
     check("C34* ...and the rule provably fires on the concatenation that shipped",
           bool(re.search(r'=\s*f?"\[scoped to the subtree of ref_\{x\} — y]\\n"\s*\+\s*out',
                          'out = f"[scoped to the subtree of ref_{x} — y]\\n" + out')))

@@ -1,5 +1,18 @@
 # Readiness adversarial audit, 2026-11
 
+> **STATUS, 2026-11-18 — read `READINESS-RESIDUE-2026-11.md` before quoting any
+> number below.** Both of this file's top-ranked defects have since SHIPPED, so
+> the matrix and the totals here describe a build nobody runs any more: Patch A
+> (a `ShadowRoot` has no `parentElement`) is in `listener_tag.js`, and the
+> cross-origin `blindFrames` clause is in `background.js`. Re-derived on the
+> current code, **unscoped FALSE-QUIET is 1 and not 3**, and **scoped-to-main is
+> 1 and not 5**. The six steady-state false busies did reproduce, were traced to
+> a `textContent =` being filed as *structural*, and five of the six are closed
+> by a node-type reclassification — the sixth was never a defect. The probe grew
+> three shapes (19, 20, 21) and **refuses to run** if Patch A is ever reverted.
+> A retraction at the bottom of a long entry does not retract the heading
+> (`#67`), so it is at the top here.
+
 Probe: `tools/audit_readiness_adversarial.py` (`.venv/bin/python tools/audit_readiness_adversarial.py --json out.json`).
 Injects the real `_readinessPage` ALONE (no prepended helpers; C11 passes 95/95, test_readiness 44/44),
 renders the real `readinessNote` through node with `runInTab`/`_netPending` stubbed from what Playwright
