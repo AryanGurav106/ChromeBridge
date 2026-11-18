@@ -847,7 +847,7 @@ def _merge_text_banner(out: str, text: str) -> tuple[str, str]:
 # cannot shadow a longer sibling. Each names a DIFFERENT response: act now, read
 # on regardless, wait on the network, or go and find out.
 _BANNER_TIERS = (
-    "THE DOM IS STILL CHANGING",
+    "THE DOM CHANGED",
     "TEXT IS CHANGING, STRUCTURE IS NOT",
     # "DOM STABLE", NOT "DOM STABLE, NETWORK BUSY". The extension emits
     # `DOM STABLE IN THE SUBTREE YOU SCOPED TO, NETWORK BUSY` on a scoped read,

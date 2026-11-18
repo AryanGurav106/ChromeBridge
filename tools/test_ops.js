@@ -2006,8 +2006,12 @@ const FIELDS3 = () => ([
       ready: "complete", imgs: 0, prog: 0, busy: 0,
       mut: _mut({ structural: 40 }) });
     r = await callOp("page_readiness", { tabId: 1 });
-    check("page_readiness TIER structural churn -> THE DOM IS STILL CHANGING",
-      String(r.result).includes("THE DOM IS STILL CHANGING")
+    // ASSERTS THE TIER, NOT THE WORDING. This keyed on the literal
+    // "THE DOM IS STILL CHANGING" and so tracked the phrase rather than the
+    // behaviour -- the exact failure D8 and G7 each went vacuous on. The STRONG
+    // tier is identified by what only it says: the absence warning.
+    check("page_readiness TIER structural churn -> the STRONG tier",
+      /do NOT conclude something is absent/i.test(String(r.result))
         && String(r.result).includes("40 structural"), JSON.stringify(r).slice(0, 200));
 
     // R-FADE — THE SENTENCE THAT MUST SURVIVE A QUIET PAGE.
@@ -2044,7 +2048,7 @@ const FIELDS3 = () => ([
     r = await callOp("page_readiness", { tabId: 1 });
     check("R-FADE3 CONTROL: it composes with a churn banner instead of "
       + "replacing it",
-      String(r.result).includes("THE DOM IS STILL CHANGING")
+      /do NOT conclude something is absent/i.test(String(r.result))
         && String(r.result).includes("held at opacity 0"), JSON.stringify(r).slice(0, 260));
 
     // R-TENSE — THE BANNER MUST NOT ASSERT A PRESENT TENSE ITS OWN NUMBER
@@ -2075,6 +2079,21 @@ const FIELDS3 = () => ([
           + "not soften the warning into uselessness",
       /do NOT conclude something is absent/i.test(String(r.result)),
       String(r.result).slice(0, 160));
+
+    // R-TENSE3 — AND THE HEADLINE ITSELF, which is what R-TENSE did NOT reach.
+    // R-TENSE removed the words "right now" from the BODY; the first clause
+    // went on asserting "THE DOM IS STILL CHANGING" at any age, beside a
+    // `since` that could be seconds old. SEVEN independent live agents have
+    // reported ignoring this banner, one in as many words: "I ignored it each
+    // time and was right to" -- which is #15's always-on warning, and a signal
+    // agents skip is worse than none because it hides the firings that matter.
+    // The headline states the MEASUREMENT now. No threshold was introduced:
+    // the age IS the headline and the body says how to judge it.
+    check("R-TENSE3 the headline states the measured age and makes no "
+          + "present-tense claim the number beside it contradicts",
+      /THE DOM CHANGED 1512ms AGO/.test(String(r.result))
+        && !/IS STILL CHANGING/i.test(String(r.result)),
+      String(r.result).slice(0, 140));
 
     // R-BOUND — THE SCOPED-UNKNOWN BRANCH HAD NO RENDER CHECK AT ALL. R32
     // drives the DATA (since=-1, sinceAny set, saturated) and nothing drove the
@@ -2143,7 +2162,7 @@ const FIELDS3 = () => ([
     r = await callOp("page_readiness", { tabId: 1 });
     check("R-TEXT2 CONTROL: a single structural record still produces the "
           + "STRONG banner however much text churns beside it",
-      String(r.result).includes("THE DOM IS STILL CHANGING")
+      /do NOT conclude something is absent/i.test(String(r.result))
         && !String(r.result).includes("TEXT IS CHANGING"), JSON.stringify(r).slice(0, 220));
 
     // CONTROL: the tier never produces SILENCE. By construction a reclassified

@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1604 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1605 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1604 checks, ~153s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1605 checks, ~153s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -9917,7 +9917,7 @@ granted in the side panel is refused with the same message the agent gets.
     **Verified by me in both directions, not just by the report.** Shut popover
     + the shown label -> `ok:false` with an honest "no visible options were
     found" (was `ok:true`); open popover + a real option -> `ok:true` and the
-    hidden input commits. Full suite **21/21, 1604 checks, ALL GREEN**, with
+    hidden input commits. Full suite **21/21, 1605 checks, ALL GREEN**, with
     W17/W17b/W17c/W17d/W17e/W17f and OR1-OR4 all still passing.
     `audit_patterns.py` unchanged on every risky category. Zero listing-token
     cost, because the harvest runs only inside `fillDropdown`/`form_input` and
@@ -10182,6 +10182,53 @@ granted in the side panel is refused with the same message the agent gets.
     looks; FAILS against the sampling version, with ID9/ID9b/ID9c/ID9d as the
     four controls that pass in both arms).
 
+102. **SEVEN AGENTS LEARNED TO IGNORE THE BANNER, AND THEY WERE RIGHT TO.** The
+    strong readiness banner opened with **"THE DOM IS STILL CHANGING"** at ANY
+    age, beside a `since` it printed in the same breath that could be seconds
+    old. The first clause and the number next to it contradicted each other.
+
+    #80 already measured this — across six live apps at six offsets, **30 of 36
+    reads (83%) printed the strong banner and 12 of those had `since` > 1500ms**
+    — and its fix, `R-TENSE`, removed the words "right now" from the BODY. The
+    headline kept asserting it, and `R-TENSE` only ever forbade two words, so
+    nothing caught that. Agents kept reporting it: five in #65, a sixth in an
+    eval, and a seventh today in as many words — *"I ignored it each time and was
+    right to, which is the failure mode where an always-on warning trains you to
+    skip it."* **A signal agents skip is worse than none, because it hides the
+    firings that matter** — which is #15's own argument, and the reason #43
+    deleted `readyState` as a trigger.
+
+    **THE HEADLINE STATES THE MEASUREMENT NOW**, and no threshold was introduced
+    to do it: the age IS the headline. `*** THE DOM CHANGED 30ms AGO (32
+    change(s) in the last 3000ms: 18 structural, 14 text) ***`, with the body
+    unchanged — it already explains that a few ms means the page is building as
+    you read and a couple of seconds means it stopped while the window still
+    covers the build, and it still says do NOT conclude something is absent.
+    #33's rule — state the fact, do not assert — applied to the banner rather
+    than to a note. The window is NOT narrowed: R23 measured 1000ms at 50.7%
+    false-quiet in a clamped tab, and that trade is unchanged.
+
+    **THREE ASSERTIONS WERE KEYED TO THE WORDING AND ARE NOW KEYED TO THE
+    TIER.** They matched the literal `"THE DOM IS STILL CHANGING"`, so they
+    tracked the phrase rather than the behaviour — the same way D8 and G7 each
+    went vacuous when a rename emptied the string they matched on. The STRONG
+    tier is identified by what only it says: the absence warning. **`R-TENSE3`
+    is the new check and it pins the headline itself**, which is precisely what
+    `R-TENSE` did not reach.
+
+    **Live-verified through the real extension** in a throwaway profile, so the
+    owner's stale Chrome did not block it: the banner emits the measured age,
+    asserts no present tense, and still carries the absence warning. 21 suites,
+    1605 checks, ALL GREEN.
+
+    **The historical quotes in this log are left alone** — #70, #76, #78 and #88
+    record what the banner said when they were written, and rewriting them would
+    make those entries describe a build nobody ran. Only the two CURRENT-STATE
+    references moved: the debugging table here and `READINESS.md`'s tier table.
+
+    Suites: 1605 checks. New — R-TENSE3 (the headline states the measured age
+    and makes no present-tense claim its own number contradicts).
+
 ## Debugging starting points
 
 | Symptom | Where to look |
@@ -10293,7 +10340,7 @@ granted in the side panel is refused with the same message the agent gets.
 | An extension change seems to have no effect | `sw_info` answers this since #87: `extension_code_changed_since_worker_start` names every `extension/` file whose mtime is later than the RUNNING worker's start. **A `/mcp` reconnect does NOT fix this** — reload at chrome://extensions. `extension_stale_note: UNKNOWN` means the worker reported no readable age, which is not the same as clean |
 | Server-side edits seem to have no effect | `sw_info` answers this since #61: `server_code_changed_since_start` names every file whose mtime is later than this process's import. Empty means the running server IS the code on disk. The client must reconnect (`/mcp`); nothing else picks it up, and the stale process keeps answering normally, which is what made this cost six reconnects across #59 and #61 |
 | A flow says a step FAILED but the action plainly worked | Fixed in #60 — the postcondition window was a flat 6s and a real app's create -> table-refresh took longer, so the flow reported FAILED for a record that HAD been created. Each step now carries `settle_ms`, measured at record time from the timestamps the recorder already kept, and the replay allows the default PLUS that. A flow recorded before #60 carries 0 and is unchanged |
-| The banner says `THE DOM IS STILL CHANGING` | By design since #70 — the page is actively being rewritten, measured by mutation recency rather than by the network. Every other signal reads ZERO on this case (an SPA painting rows after its one fetch has resolved), which is why it was invisible for so long. The kinds are named because `40 @style` (an ad carousel) and `40 structural` (the table you are reading) are opposite facts |
+| The banner says `THE DOM CHANGED <n>ms AGO` | By design since #70, reworded in #102 — elements were added, removed or re-texted in the window, measured by mutation recency rather than by the network. **Judge it by the AGE it prints**: a few ms means the page is building as you read; a couple of seconds means it stopped and the window still covers the build. It used to say `THE DOM IS STILL CHANGING` at any age, which seven live agents reported ignoring — the headline states the measurement now and the body still says not to conclude absence |
 | A scoped read (`ref_id`) shows no readiness banner at all | Fixed in #76, and it had never worked: `mcp_server.py` prepended `[scoped to the subtree of ref_N …]` in FRONT of the banner, `_split_banner` matches anchored, and `_truncate` relies on it — so the banner became ordinary body text and was cut. Measured live: absent at max_chars 300/420/700, present at 50000 below the scope header. If it recurs, something is prepending to the listing without going through `_prepend_to_listing` (C31) |
 | A scoped read with `filter="all"` prints the same readiness banner twice | Fixed in #76 — the appended `--- TEXT INSIDE ref_N ---` block carries `get_dom_text`'s own banner, describing the same page at the same instant. Stripped on both text-append paths (C32) |
 | A `setInterval` on the agent's tab stops firing after a few minutes | Not ours. The agent's tab is hidden BY DESIGN (#12) and Chrome intensively throttles a hidden page's timers — measured live, a 120ms ticker ran 45 times and then stopped dead, with `since=19993ms`. Anything that needs recurring page activity must be driven by an ACTION, ideally inside one `browser_batch` so the model turn is not spent inside the window |

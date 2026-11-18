@@ -3156,7 +3156,20 @@ async function readinessNote(tabId, scopeMmid) {
       // by `el.textContent = …` lands here and is told text changed recently,
       // which is true and is the thing to act on.
       if (m.structural) {
-        return _withFade(`*** THE DOM IS STILL CHANGING (last change ${m.since}ms ago; ` +
+        // THE HEADLINE STATES THE MEASUREMENT, NOT A TENSE. It read "THE DOM IS
+        // STILL CHANGING" at ANY age while printing a `since` that could be
+        // seconds old, so the first clause and the number beside it
+        // contradicted each other. #80 measured 30 of 36 reads printing this
+        // banner with 12 of them over 1500ms, and R-TENSE only removed the
+        // words "right now" from the body -- the headline kept asserting it.
+        // SEVEN independent live agents have now reported ignoring this banner,
+        // one of them in as many words: "I ignored it each time and was right
+        // to". That is #15's always-on warning, and a signal agents have
+        // learned to skip is worse than none, because it hides the firings that
+        // matter. No threshold is introduced and none is needed: the age IS the
+        // headline, and the body below already says how to judge it. #33's own
+        // rule, applied to the banner rather than to a note.
+        return _withFade(`*** THE DOM CHANGED ${m.since}ms AGO (` +
                `${moved}${sat} change(s) in the last ${m.win}ms: ${kinds.join(', ')}${where}` +
                (bits.length ? `; also ${bits.join('; ')}` : '') + `). ` +
                `Elements were added, removed or re-texted in that window — the age above ` +

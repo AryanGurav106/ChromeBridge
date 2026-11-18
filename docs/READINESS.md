@@ -213,7 +213,7 @@ by the three `MutationRecord` types, which the spec declares so no list of
 
 | what was measured | what is said |
 |---|---|
-| `childList` or `characterData` in the window | **THE DOM IS STILL CHANGING** — elements are being added, removed or re-texted, so do not conclude absence |
+| `childList` or `characterData` in the window | **THE DOM CHANGED `<n>`ms AGO** — elements were added, removed or re-texted in the window, so do not conclude absence. The headline states the measured AGE rather than a present tense, because the old wording asserted "IS STILL CHANGING" beside a `since` that could be seconds old and seven live agents reported ignoring it (#102) |
 | attributes only | **Minor DOM activity** — nothing was added, removed or re-texted, so the listing is structurally current. The attribute *names* are printed |
 | DOM quiet, network busy | **DOM STABLE, NETWORK BUSY** — what is rendered is not being rewritten; whether more arrives is what those requests decide |
 | both quiet | **nothing at all** |
