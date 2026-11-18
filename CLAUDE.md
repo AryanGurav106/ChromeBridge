@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1565 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1572 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1565 checks, ~152s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1572 checks, ~151s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -9208,6 +9208,110 @@ granted in the side panel is refused with the same message the agent gets.
     candidates). **And the question this still cannot answer: whether the name
     is RIGHT. It scores `find` against the collector**, so a wrong name that
     both agree on scores a hit.
+
+
+93. **THE FIRST INDEPENDENT ORACLE FOR WHETHER THE NAME IS RIGHT — and it found
+    two defects, both one line, both measured before shipping.** #89 measured
+    whether a control SURVIVES, #92 whether it can be REACHED by the name we
+    printed. Both score our collector against our own tools: #92 says so in as
+    many words, so **a wrong name both agree on scores a hit**. #33 built the
+    only independent check that exists and ran it on ONE page (49 of 54).
+    `tools/audit_name_correctness.py`, `docs/research/NAME-CORRECTNESS-2026-11.md`.
+
+    **251 live out-of-sample sites, 580 reads (329 post-interaction), 100,332
+    rows compared against Chrome's own `Accessibility.getFullAXTree`**, joined
+    by `backendNodeId` from one `DOM.getDocument{pierce:true}`.
+
+    | | |
+    |---|---|
+    | **`src=name` — where we CLAIM an accessible name** | **0.9134** |
+    | …excluding rows Chrome has no name for at all | **0.9492** |
+    | per-site median, `src=name` (169 sites, n≥20) | **0.9722** |
+    | pooled over every row printing an identity | 0.7519 |
+
+    **DO NOT QUOTE 0.7519 AS AN ERROR RATE.** 18,486 of 24,892 disagreements are
+    rows where Chrome's ROLE forbids a name — measured empirically rather than
+    transcribed from an ARIA table (which the agent first got wrong): Chrome
+    names **0 of 2,103 `row`s, 0 of 929 `paragraph`s, 0 of 167 `article`s, 224
+    of 4,035 `generic`s**. Our row prints the element's text there, which is
+    exactly what #74 proved we must keep doing. **Chrome is an independent
+    oracle, not ground truth** — on 3,188 `punctuation-only` + `case-only` rows
+    ours is the more useful string.
+
+    **DEFECT 1 — A SLOTTED LABEL WAS INVISIBLE TO THE NAME PATH, and the correct
+    handling was already in the file and structurally unreachable.**
+    `<my-btn>Sign in</my-btn>` printed `(unlabeled)`. A `<slot>` is
+    `display: contents`, which generates NO BOX, so `checkVisibility()` returns
+    false — `_namable` rejected it, and `_deepText`'s `<slot>` branch, which
+    exists precisely to resolve `assignedNodes`, **was never reached from
+    `_contentName`**. Asking the BOX question of a boxless element answers the
+    wrong question, and it is not only slots: a `display:contents` wrapper
+    inside a button loses the button's name the same way, and that is ordinary
+    modern CSS. Fires on **0.154% of rows at first paint and 0.432% after an
+    interaction — 2.8x — because design systems render slotted controls when you
+    open something.**
+
+    **DEFECT 2 — `title` WAS CONSULTED TOO EARLY.** `accessibleName` read
+    `(title || alt)`. HTML-AAM maps `alt` to AccName 1.2 step 2E and `title` to
+    2I, whose own note says a tooltip is used *"only if nothing else, including
+    subtree content, has provided results"* (fetched and quoted, not recalled).
+    Live cost: 21 images named after a **photographer's copyright credit**, and
+    **"opens in a new window" in the identity slot for 153 links**. **Only the
+    unambiguous half shipped** — a pair on ONE element (106 rows). The harder
+    half, a title beating name-from-content (283 rows), is deliberately NOT
+    touched, because there Chrome's spec-correct answer is often the less useful
+    string (a thumbnail named `影片縮圖` instead of the video's title).
+
+    **BOTH SHIPPED TOGETHER ON THE MEASUREMENT, both arms from the SAME page
+    load:** 53 sites, 15,504 rows, **improved 80 — all 80 rows where Chrome HAS
+    a name. "Regressed" 83 — all 83 where Chrome has NO name at all. Rows where
+    a correct name is broken: 0.** Entries unchanged, **+0.15% listing chars.**
+
+    **#28'S PREMISE IS WRONG, and it is recorded rather than fixed.** #28 added
+    an unconditional space between element children on the stated grounds that
+    *"per the spec each child contribution is space-delimited"*. **AccName 1.2
+    step 2F.4 is "Append the result to the accumulated text"** — no space.
+    Fixture, five cases: Chrome matches the rendered text 5/5, ours 3/5, and the
+    two it misses are exactly the digit-adjacency case #28 was written for.
+    Live screen oracle: Chrome 28/29, ours 1/29. **NOT shipped** — 83 rows, and
+    the right fix is display-awareness, which needs #28's own N5/N5b fixtures
+    rewritten to their invariant first.
+
+    **MY FIXTURE FOR DEFECT 1 WAS VACUOUS TWICE, AND THE SAME FALLBACK DEFEATED
+    BOTH ASSERTIONS.** Asserting `"Sign in" in listing` passed pre-fix, because
+    the text is still reachable through the `near=` hint:
+    `button (unlabeled) near="Sign in"`. Asserting the QUOTED `"Sign in"` ALSO
+    passed, because `near="Sign in"` contains that substring. What separates the
+    arms is the ROW SHAPE, `button "Sign in"`. Found by dumping both arms rather
+    than reasoning about why it passed — the ninth and tenth vacuous fixtures in
+    this project, both mine, in one sitting.
+
+    **FOUR MEASUREMENT BUGS THE AGENT CAUGHT IN ITSELF**, all by re-deriving:
+    a `fmt_drift = 881` that was its own escaping assumption (and which found a
+    real small defect — `_fmtLine` emits `name=` through `JSON.stringify` but
+    the bare-text identity by raw interpolation, so a label containing `"`
+    cannot be parsed back unambiguously); a `new` population keyed on the
+    identity STRING, so **every `(unlabeled)` row counted as
+    revealed-by-the-interaction and none as carried**, concentrating a defect
+    class in one arm *by construction* and making its first draft's evidence
+    tautological; a `--fire` whose 22 of 24 sentinels landed on non-entries
+    while reporting PASS; and a `--candidate-ab` reading "80 improved / 83
+    regressed — a wash", a coherent verdict with a direction, which only the
+    chrome-empty split made readable.
+
+    **Floors and proofs:** drift **0.0015** pooled over 59 sites twice (NOT
+    saturated, unlike #92's); oracle stability 6,915 disagreement rows re-read,
+    **8 moved (0.12%)**; live firing 56/56 planted names reported; the
+    out-of-sample guard shown refusing. **Not measured:** 14 of 265 candidates
+    (9 timeouts, 1 reset, 4 an AX tree too small — reported unusable, not as
+    zero, per #34), the ~180 consent- and bot-walled candidates inherited from
+    #85/#89, 97 of 251 sites offering nothing to interact with, one path per
+    site.
+
+    **Whether revealed controls are named WORSE is NOT settled** and the agent
+    said so rather than banking it: 0.6628 vs 0.7370 on the full sample, but
+    most of that is composition, and a 34-site run with the corrected code built
+    in reverses the sign (0.8150 vs 0.8001) with overlapping intervals.
 
 
 ## Debugging starting points

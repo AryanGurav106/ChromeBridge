@@ -6983,6 +6983,26 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     try {
       if (!n || n.nodeType !== 1) return true;
       if (_NAME_SKIP[String(n.tagName || '').toUpperCase()]) return false;
+      // `display: contents` GENERATES NO BOX, so checkVisibility() is false for it while
+      // its CHILDREN render normally. A <slot> is display:contents by default, so this
+      // line rejected EVERY slot before `_deepText`'s slot branch -- which exists exactly
+      // to resolve assignedNodes -- could ever be reached from `_contentName`. The correct
+      // handling was already in the file and structurally unreachable, which is why
+      // `<my-btn>Sign in</my-btn>` printed `(unlabeled)`.
+      //
+      // Asking the BOX question of a boxless element answers the wrong question. It is not
+      // only slots: `<button><span style="display:contents">Label</span></button>` loses
+      // its name the same way, and display:contents is ordinary modern CSS. `visibility`
+      // is still asked, because visibility IS inherited and does hide the children.
+      //
+      // Measured: fires on 0.154% of compared rows at first paint and 0.432% AFTER an
+      // interaction -- 2.8x -- because design systems render slotted controls when you
+      // open something.
+      let _disp = '';
+      try { _disp = getComputedStyle(n).display; } catch (e) {}
+      if (_disp === 'contents') {
+        try { return getComputedStyle(n).visibility !== 'hidden'; } catch (e) { return true; }
+      }
       if (n.checkVisibility && !n.checkVisibility({ visibilityProperty: true })) return false;
     } catch (e) {}
     return true;
@@ -8686,7 +8706,19 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         // Same remedy as #23's data-testid: keep using it (it beats nothing on an
         // unlabelled control) and SAY WHERE IT CAME FROM. The mechanism already
         // exists; this is a third source flowing into it.
-        const _titleAlt = ((!hasText ? (el.getAttribute('title') || el.getAttribute('alt')) : '') || '').trim();
+        // HTML-AAM maps `alt` to AccName 1.2's step 2E (host-language label) and `title`
+        // to step 2I (tooltip), whose own note says a tooltip is used "only if nothing
+        // else, including subtree content, has provided results". Reading them the other
+        // way round named 21 oebb images after the PHOTOGRAPHER'S COPYRIGHT CREDIT rather
+        // than after the alt text describing the photo, and put "opens in a new window"
+        // in the identity slot for 153 links on two government sites.
+        //
+        // ONLY THE UNAMBIGUOUS HALF. This reorders a pair where BOTH exist on the same
+        // element (106 rows). It deliberately does NOT touch the harder half -- a title
+        // beating name-from-content, 283 rows -- where Chrome's spec-correct answer is
+        // often the less useful string (a thumbnail named "video thumbnail" instead of the
+        // video's title). That needs both halves measured together, per #41/#44.
+        const _titleAlt = ((!hasText ? (el.getAttribute('alt') || el.getAttribute('title')) : '') || '').trim();
         const _nameAttr = ((formyTags.has(tagL) ? el.getAttribute('name') : '') || '').trim();
         accessibleName = (_titleAlt || _nameAttr || '').trim();
         if (!_titleAlt && _nameAttr) {

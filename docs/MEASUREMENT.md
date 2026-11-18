@@ -43,6 +43,7 @@ looked Pareto-positive at +1.1% chars and turned out to be +18.7% tokens for
 | `audit_descriptors.py`, `audit_flow_resolve.py` | locator uniqueness and survival under mutation | mis-binds under the mutations it models | **any mutation it does not model** — see §4 |
 | `tools/bench_turns/` | live head-to-head, turns, pre-registered | what a real agent costs | anything below the ~47s/task wall-clock drift floor |
 | `inspect_site.py` | `lost_identities` — a visible control named nowhere | identity loss | sufficiency: whether what survived is *enough* |
+| `audit_name_correctness.py` | our derived accessible name against **Chrome's own** `Accessibility.getFullAXTree`, at first paint and after up to four declared interactions | whether the name we print is the name the browser computes — the only independent oracle in the repo, since every other ruler scores the collector against our own tools | whether a name BOTH derivations get wrong is wrong; the 20,691 rows Chrome ignores and the 11,753 with no AX node; anything behind a consent wall |
 | `measure_sufficiency.py` | **decision sufficiency** — is the human-labelled target *distinguishable* among the rows we printed, and which printed field carries the discrimination | a listing that is complete and still does not determine the action | whether an agent succeeds; anything about **prose**, which the source paper measures as the largest contributor; the 84 targets that were never printed |
 
 ### The one that is missing — half built
@@ -119,11 +120,14 @@ Each of these produced a clean, plausible, wrong number.
 | 78.7% marker cost | numerator from the whole-page **structured** set, denominator from the viewport-scoped **string** listing |
 | 36/38 correct, wrong on **both** arms | a transcription error in the answer key. A falsifier firing identically on both arms is a broken ruler, not a broken system |
 | markers inflated by repeated content | the cap detector counted **occurrences**; one genuine 99-char label repeated 39 times is a textbook cap signature for a value that is not cut at all. It counts **distinct values** now |
+| "a revealed control is named far worse", 0.6215 vs 0.7370 | the NEW population is keyed on the identity STRING (mmids are additive), and an unnamed row's identity is `""`, which is never in the seen set — so **every `(unlabeled)` row counted as revealed-by-the-interaction and none as carried**, and a defect class concentrated itself in one arm by construction. Corrected: 0.6628 against 0.7370, most of which is composition rather than wrong names — and a smaller run with the fix built in reverses the sign, so the effect is not established either way |
+| "the name fix is a wash: 80 improved, 83 regressed" | all 83 "regressions" are rows where Chrome's role permits **no name at all** and ours now prints the element's TEXT — the `chrome-empty` population #74 requires us to keep printing. Split on whether Chrome has a name: **80/80 improvements real, 0 correct names broken** |
 | 1.65x tree token cost | `format` was never passed, so **every corpus token figure ever produced described the FLAT listing** — and the table divided two medians drawn from different sites. The real per-site figure is **1.09×** |
 
-Eleven measurement bugs. Nine were found by re-deriving a number that looked too
-clean or too damning; two by a falsifier firing where it should not. **None was
-found by reading the code.**
+Fourteen measurement bugs — the count is the rows of the table above, which is
+the only place it can be read from (PRINCIPLES 16). Twelve were found by
+re-deriving a number that looked too clean or too damning; two by a falsifier
+firing where it should not. **None was found by reading the code.**
 
 ---
 

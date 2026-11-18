@@ -2471,6 +2471,100 @@ async def main():
         check("NR2c a RENDERED <style> is still not a name (the spec rule, not the "
               "visibility test)",
               "cls-1" not in nr3 and "Themes" in nr3, f"leaked={'cls-1' in nr3}")
+        # ---- NR3: A SLOTTED LABEL IS PART OF THE HOST'S NAME ----------------
+        # `<my-btn>Sign in</my-btn>` printed `(unlabeled)`. A <slot> is
+        # `display: contents`, which generates NO BOX, so `checkVisibility()`
+        # returns false for it -- and `_namable` rejected it before
+        # `_deepText`'s <slot> branch, which exists precisely to resolve
+        # assignedNodes, could ever be reached from `_contentName`. The correct
+        # handling was already in the file and structurally unreachable.
+        #
+        # Asking the BOX question of a boxless element answers the wrong
+        # question, and it is NOT only slots: a `display:contents` wrapper
+        # inside a button loses the button's name the same way, and that is
+        # ordinary modern CSS. Found by comparing our names against Chrome's own
+        # AX tree across 251 live sites; it fires on 0.154% of compared rows at
+        # first paint and 0.432% AFTER an interaction -- 2.8x -- because design
+        # systems render slotted controls when you open something.
+        await nrp.set_content(
+            "<main>"
+            "<my-btn id=s1>Sign in</my-btn>"
+            "<button id=s2><span style='display:contents'>Check out</span></button>"
+            "<button id=s3><span style='display:contents;visibility:hidden'>Ghost</span>"
+            "</button>"
+            "</main>"
+            "<script>customElements.define('my-btn', class extends HTMLElement {"
+            "  connectedCallback(){ const r=this.attachShadow({mode:'open'});"
+            "  r.innerHTML='<button><slot></slot></button>'; } });</script>")
+        await nrp.wait_for_timeout(200)
+        nr4 = str(await nrp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        # ASSERT ON THE NAME, NOT ON THE STRING ANYWHERE. The first version of
+        # these two checked `"Sign in" in nr4` and PASSED against the pre-fix
+        # collector -- because the text is still reachable through the `near=`
+        # FALLBACK: `ref_5 | button (unlabeled) near="Sign in"`. The string was
+        # present by a different mechanism, which is how a fixture proves
+        # nothing while looking right.
+        #
+        # THE SECOND VERSION WAS ALSO VACUOUS: asserting the QUOTED `"Sign in"`
+        # still matched, because `near="Sign in"` contains that substring. The
+        # same fallback defeated two successive assertions. What distinguishes
+        # the arms is the ROW SHAPE -- pre-fix `button (unlabeled) near="Sign
+        # in"`, post-fix `button "Sign in"` -- so that is what is asserted.
+        # Measured by dumping both arms rather than reasoning about why it
+        # passed.
+        # Hoisted out of the f-strings below: a backslash in an f-string
+        # EXPRESSION is a SyntaxError before 3.12 and pyproject.toml advertises
+        # >=3.10. C45 caught this on its own author, hours after being added.
+        _nr3_slot = 'button "Sign in"' in nr4
+        _nr3_disp = 'button "Check out"' in nr4
+        check("NR3 a label arriving through a <slot> NAMES its host — a slot is "
+              "display:contents, so the BOX test rejected it before the slot "
+              "branch that exists to resolve it could run",
+              _nr3_slot, f"named={_nr3_slot}")
+        check("NR3b ...and so does a display:contents wrapper, which is ordinary "
+              "modern CSS and not a web-component special case",
+              _nr3_disp, f"named={_nr3_disp}")
+        # THE CONTROL. `visibility` IS inherited and does hide the children, so
+        # the fix must keep asking it -- otherwise "stop testing visibility at
+        # all" would pass NR3 and NR3b while undoing #37's NR1b.
+        check("NR3c CONTROL: a visibility:hidden display:contents wrapper still "
+              "contributes NOTHING — the fix exempts the box test, not the "
+              "visibility test",
+              "Ghost" not in nr4, f"leaked={'Ghost' in nr4}")
+
+        # ---- TA2: `alt` OUTRANKS `title` ON THE SAME ELEMENT -----------------
+        # `accessibleName` read `(title || alt)`. HTML-AAM maps `alt` to AccName
+        # 1.2's step 2E (host-language label) and `title` to 2I (tooltip), and
+        # 2I's own note says a tooltip is used "only if nothing else, including
+        # subtree content, has provided results". Reading them the other way
+        # round named 21 oebb images after the PHOTOGRAPHER'S COPYRIGHT CREDIT
+        # rather than after the alt text describing the photo.
+        #
+        # ONLY THE UNAMBIGUOUS HALF is fixed and pinned here: a pair on ONE
+        # element. A title beating name-from-content is measured (283 rows) and
+        # deliberately left alone, because there Chrome's spec-correct answer is
+        # often the less useful string.
+        await nrp.set_content(
+            "<main>"
+            "<a href=/p><img id=t1 title='(c) Harald Eisenberger' "
+            "alt='Skiers at Salzburg station'></a>"
+            "<a href=/q><img id=t2 title='Only a tooltip'></a>"
+            "</main>")
+        await nrp.wait_for_timeout(150)
+        nr5 = str(await nrp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        check("TA2 with BOTH on one element, `alt` wins over `title` — a tooltip "
+              "is step 2I and a host-language label is 2E",
+              "Skiers at Salzburg station" in nr5
+              and "Harald Eisenberger" not in nr5,
+              f"alt={'Skiers at Salzburg station' in nr5} "
+              f"title={'Harald Eisenberger' in nr5}")
+        # Without it, "never read title" would pass TA2 while deleting the
+        # fallback #37 added for an icon control that declares nothing else.
+        check("TA2b CONTROL: with no alt, `title` is still used",
+              "Only a tooltip" in nr5, f"present={'Only a tooltip' in nr5}")
+
         await nrp.close()
 
         # ---- SH1/SH1b: A HOST'S CONTENT IS ITS SHADOW CONTENT. #29 taught the child
