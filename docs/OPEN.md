@@ -158,8 +158,21 @@ left is one element, and it is the intended behaviour.**
 > shipped-OR-record coverage to **69.0%** and cutting re-sort WRONG from 11.6%
 > to 0.4%. Attribute atoms raise coverage further and are REJECTED: Angular
 > Material mis-bound 4 of 120 with no mutation at all, on a per-load generated
-> `id` that a two-load stability check does not catch. Not applied — it changes
-> what a flow stores and wants a live record-and-replay pass.
+> `id` that a two-load stability check does not catch.
+>
+> **SHIPPED AND LIVE-VERIFIED (#83), and this blockquote said "Not applied" for
+> a day after it was** — the stale-heading class #67 names, in the file that
+> exists to stop it. `atoms_map` is in `descriptor.py`, `build()` stores the
+> text atoms unique to each crowd member, and `_resolve_recorded` decides by
+> them FIRST, ignoring `of` and never falling back to the ordinal.
+> `flows/live-atoms-resort.flow.json` carries one (`['Acme Ltd', 'INV-1001']`)
+> and was proved in BOTH directions against three rows identical in every
+> declared field and in their surroundings: with atoms it deleted INV-1001 and
+> said so; with the atoms stripped from the same file it deleted INV-1003 — the
+> wrong invoice — and only the postcondition caught it. That second row
+> understates the danger: the recorder reports ~23% of recorded steps carry no
+> postcondition at all, and such a step would have reported PASSED.
+> The heading's 52.6% is still the right number for what is LEFT.
 The re-sort mis-bind is **closed on the `resort` arm, for the witnessed
 minority** (#72): `resort` on a witnessed descriptor is **0.0% WRONG at 94.3%
 CORRECT**, for +0.2pp refusals on the six pre-existing mutations. What remains

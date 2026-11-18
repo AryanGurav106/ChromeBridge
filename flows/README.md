@@ -173,17 +173,22 @@ changes and the step refuses. It does **not** survive a RE-SORT on its own:
 same elements, same count, a different one at position N.
 
 So a step that records an ordinal also records what tells its member from the
-rest of the crowd — the controls its own row carries, or a field the descriptor
-ignores. On a replay the element is found by that, at whatever position it now
-sits:
+rest of the crowd: the text its own RECORD renders that no sibling record does
+(`Acme Ltd`, `INV-1001`), the controls its own row carries, or a field the
+descriptor ignores. The record text is tried first and never falls back to the
+ordinal — on a list re-sorted underneath a flow, that is the difference between
+deleting the invoice you recorded and deleting whichever one arrived at
+position N. On a replay the element is found by that, at whatever position it
+now sits:
 
 ```
   1 step(s) found their element at a DIFFERENT position than the recording did…
 ```
 
 When nothing distinguishes the members — identical controls in identical
-surroundings, which is about 59% of tied crowds on the frozen corpus — no
-witness can be recorded and the step rests on position alone.
+surroundings AND identical record text, which is about half of tied crowds on
+the frozen corpus (52.6%, measured on 39 sites) — no witness can be recorded
+and the step rests on position alone.
 `record_flow(action="stop")` says so for that step, and the file carries a
 `review` line, because that is a flow a re-sort will quietly redirect.
 
