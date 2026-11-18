@@ -9114,6 +9114,86 @@ granted in the side panel is refused with the same message the agent gets.
     control). All fail pre-fix except the control.
 
 
+92. **PRESENT IS NOT REACHABLE, AND NOW BOTH ARE MEASURED AFTER THE PAGE HAS
+    BEEN USED.** #89 proved 2,106 controls that exist only BECAUSE of an
+    interaction were never lost. It could not say whether any of them could be
+    REACHED by the name the listing printed for them — which is #74's class, the
+    one no presence ruler can see: 118 elements once sat in every presence
+    metric this project has and were unreachable by their own label.
+    `tools/measure_findability_at_stage.py`,
+    `docs/research/FINDABILITY-AT-STAGE-2026-11.md`.
+
+    **254 live out-of-sample sites, 581 reads (327 post-interaction), 13,682
+    probes on the PRINTED arm, 0 misses — 1.0000, with 0 descendant credit, 0
+    ancestor credit and 0 weak-tier hits.** Rule-of-three upper bound ≤0.00022.
+
+    | population | probes | strict | 95% bound |
+    |---|---|---|---|
+    | `s0` first paint | 5,996 | 1.0000 | ≤0.0005 |
+    | **`new` — exists only because of the interaction** | **1,957** | **1.0000** | ≤0.0015 |
+    | `carried` — the control arm | 5,844 | 1.0000 | ≤0.0005 |
+
+    The bounds differ only by sample size, so **a revealed control is no harder
+    to reach than one that was always there**. `new` is genuinely revealed
+    content rather than churn — it concentrates in menu-popup (567), expandable
+    controls (461), expandable (386), tab (179), dialog-trigger (148). All 14
+    script families and all 9 interaction kinds: 1.0000.
+
+    **THE 1.0000 IS EARNED, AND THE REASON IS FOUR FIRING PROOFS.** A zero is
+    worth nothing until the metric has been seen to report a miss (PRINCIPLES 5).
+    Verified directly rather than taken from the report: a planted revealed
+    control whose identity is moved off its element returns `No elements matched
+    "Revealed Item Zeta"`, and **#74's own defect is reproduced** by stripping
+    `subtreeNameSole` from the entry — putting `find` in its pre-#74 state
+    without touching the extension — which returns `No elements matched "36 Kr
+    Krypton 83.798"`, the live symptom of #74 verbatim. Plus `--fire` on live
+    markup at the deepest stage (5/5 sites, 8/8 hits → 0) and a planted
+    in-corpus host flagging the out-of-sample check.
+
+    **THE POPULATION IS SPLIT, AND THE SPLIT IS PRINCIPLED RATHER THAN
+    FLATTERING.** 2,371 rows have their identity REMOVED ON PURPOSE (#74's
+    blanking rule: `subtreeName && !subtreeNameSole`), so they pose no "is the
+    printed identity reachable" question at all. They get a separate, fairer
+    one — does asking for the words return the row or anything inside it — and
+    score **0.8916**. Its two miss classes are both `find`'s own result caps
+    (136 of 240 returned exactly the 5-ref weak list) and lone letters/digits
+    that F41d correctly drops. **Quote 1.0000 only with the blanked arm beside
+    it.**
+
+    **THE AGENT NEARLY PUBLISHED A FALSE PRODUCT FINDING, and catching it is the
+    most valuable thing in the run.** `detail="full"` scored **0.5806** against
+    `compact`'s 1.0000 on tab rows — a coherent result carrying a mechanism
+    (*"full's media rows crowd the controls out"*), which is exactly what makes
+    that class dangerous. `find` reads its bridge from a MODULE GLOBAL, so with
+    sites measured concurrently one site's query was scored against another
+    site's entries. Re-derived on a single page, both arms matched every time;
+    properly measured they are **identical, 3,059/3,059, twice**. Now in
+    `MEASUREMENT.md` §3 as the twelfth way an instrument here has lied, with a
+    scoring lock and a `bridge_race` counter that reads 0.
+
+    **Two smaller ruler findings.** `measure_findability.py` tests for a hit
+    BEFORE testing for a shared identity, so a contested probe counts in both
+    numerator and denominator while an uncontested one is excluded from both —
+    a small upward bias, reported as a `unique-only` rate beside the inherited
+    number rather than by changing the frozen tool (both 1.0000 here, 52% of
+    live probes have a shared identity). And its summary line had always pointed
+    at a `--dump` flag **that did not exist** (PRINCIPLES 15); it does now.
+
+    **The drift floor is SATURATED and is stated rather than banked:** 54 sites
+    in both passes, pooled delta 0.0000, 46/54 same stage count. #19 is explicit
+    that a saturated metric cannot detect regression, so 0.0 is near-worthless
+    AS a floor — what it establishes is that the driver and sample are stable
+    enough for the result to mean something.
+
+    **Not measured, stated not passed:** 11 of 265 sites (8 navigation timeouts,
+    3 under five probeable rows), the ~180 consent- and bot-walled candidates
+    inherited from #85/#89, one path per site, hover-only menus, cross-origin
+    frames, logins, and 257 printed identities skipped for length (0.00–0.25% of
+    candidates). **And the question this still cannot answer: whether the name
+    is RIGHT. It scores `find` against the collector**, so a wrong name that
+    both agree on scores a hit.
+
+
 ## Debugging starting points
 
 | Symptom | Where to look |

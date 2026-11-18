@@ -1240,6 +1240,28 @@ On OpenStreetMap the same ref reported clicks 1,097px apart, and a missed click
 hits the map, so there is no symptom. Refs re-measure and are safe; the printed
 coordinate is not.
 
+### 17. `find` is unbounded in query tokens x entries x fields `MEASURE FIRST`
+> `find` scores every query token against every entry across every field, with
+> no bound on either. Measured incidentally while #92 ran: **144 seconds** on
+> ynet's 29,422-character `<body>` accessible name against 3,293 entries, and
+> ~5s at 500 tokens.
+>
+> **Flagged, NOT called a defect**, which is the honest status: neither input is
+> reachable by a query an agent would plausibly type. The long side comes from a
+> blanked container's concatenated-paragraph identity, which is a probe's query,
+> not an agent's.
+>
+> It is here because the cost model has a hole. #38 priced the model turn
+> (~3,600ms), the bridge leg (~162ms) and collection (40ms–1.6s) and **never
+> priced `find` itself**, so a tool that can take 144s sits inside a system whose
+> published arithmetic assumes every server-side step is free.
+>
+> **What would settle it:** the distribution of real query lengths and entry
+> counts from the eval transcripts in `tools/bench_turns/`, against which the
+> tail is either unreachable (record it and move on) or not (bound it). Do that
+> before adding any bound, because a cap chosen without the distribution is the
+> kind of number #27/#28 removed from every deciding path.
+
 ### 16. `_flow_entries` does not say WHICH tab it read `MEASURE FIRST`
 > The residue of #90's popup case: a tab the PAGE opened steals `active`, and a
 > flow step that names no `tabId` then reads it. The explicit half is closed

@@ -203,6 +203,15 @@ exist (`extension/sidepanel.js` — the file is `panel.js`), and a `--check-only
 flag that validated zero files and exited 0 are the same shape. — #30, #39, #66,
 #67
 
+**Its sibling is a WAITER that can never finish**, and it has now caught two
+different agents in one session, the second of whom had just read the first's
+account of it: `until ! pgrep -f <pattern>; do sleep; done`, where the pattern
+occurs in the waiter's OWN command line, so `pgrep -f` matches the waiter and
+the condition can never clear. Wait on a PID when one is in hand; a pattern is
+for when it is not. Two capable agents walking into the identical shell idiom
+after reading about it is the evidence that prose does not stop this class. —
+#83, #92
+
 ### 16. A count is not an inventory
 
 Three instances in three different tools: a decorator binding to a helper made

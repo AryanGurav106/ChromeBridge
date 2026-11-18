@@ -73,33 +73,55 @@ class _FB:
 
 
 
-async def _descendant_returned(page, mmid, out):
-    """Did find return an element INSIDE the one we asked for?
+async def _relation_returned(page, mmid, out):
+    """Did find return a DESCENDANT or an ANCESTOR of the element we asked for?
 
-    Acting on it does what acting on the target would -- that is the whole
-    reason the descendants are listed separately. Descendant only, never
-    ancestor: an ancestor claiming credit is how a page-sized container would
-    score a hit for everything it contains.
+    ONE helper for both directions, because they are one question asked twice
+    and two spellings is what PRINCIPLES 17 forbids -- `_descendant_returned`
+    below is a thin wrapper so the frozen-corpus number keeps its definition.
+
+    The two are reported SEPARATELY and are not interchangeable:
+      * a DESCENDANT may be credited -- acting on it does what acting on the
+        target would, which is the reasoning #18 and #73 use on Mind2Web.
+      * an ANCESTOR may NOT be folded into a headline. A page-sized container
+        would score a hit for everything it contains, which is exactly the
+        false credit #73 had to withdraw on ikea. It is measured because
+        "find returned the wrapper instead" is a real and different outcome
+        from "find returned nothing", and naming it is the point.
+
+    NOT `except: return ...`. That is how the descendant arm came to report 0 on
+    every site: `one()` closed the context in a `finally` BEFORE the probe
+    loop ran, so every evaluate raised on a dead page, every call swallowed it
+    and answered "no", and #75 recorded the resulting 0 as having REFUTED the
+    label-plus-badge theory. It had measured a closed browser. A question that
+    could not be ASKED is not an answer of no, so it raises.
     """
     refs = set(re.findall(r"\bref_(\d+)\b", out or ""))
     refs.discard(str(mmid))
     if not refs:
-        return False
-    # NOT `except: return False`. That is how this arm came to report 0 on
-    # every site: `one()` closed the context in a `finally` BEFORE the probe
-    # loop ran, so every evaluate raised on a dead page, every call swallowed it
-    # and answered "no descendant", and #75 recorded the resulting 0 as having
-    # REFUTED the label-plus-badge theory. It had measured a closed browser.
-    # A question that could not be ASKED is not an answer of no, so it raises.
-    return bool(await page.evaluate(
+        return {"descendant": False, "ancestor": False}
+    return await page.evaluate(
         """([m, rs]) => {
-            const r = window.__mmidReg; if (!r) return false;
-            const t = r.get(String(m)); if (!t) return false;
-            return rs.some(x => { const n = r.get(String(x));
-                                  return n && n !== t && t.contains(n); });
-        }""", [str(mmid), list(refs)]))
+            const r = window.__mmidReg;
+            const out = { descendant: false, ancestor: false };
+            if (!r) return out;
+            const t = r.get(String(m)); if (!t) return out;
+            for (const x of rs) {
+                const n = r.get(String(x));
+                if (!n || n === t) continue;
+                if (t.contains(n)) out.descendant = true;
+                else if (n.contains(t)) out.ancestor = true;
+            }
+            return out;
+        }""", [str(mmid), list(refs)])
 
-async def one(browser, name, url, cap, extra_wait=None):
+
+async def _descendant_returned(page, mmid, out):
+    """The frozen-corpus arm's question, unchanged: a returned DESCENDANT only."""
+    return bool((await _relation_returned(page, mmid, out))["descendant"])
+
+
+async def one(browser, name, url, cap, extra_wait=None, dump=False):
     ctx = await browser.new_context(viewport=VIEWPORT)
     try:
         har = FROZEN / f"{name}.har"
@@ -166,15 +188,39 @@ async def one(browser, name, url, cap, extra_wait=None):
             # descendant, never an ancestor, so a page-sized container cannot
             # claim credit for everything inside it.
             desc_hit += 1
-        elif len(misses) < 4:
-            misses.append({"mmid": e.get("mmid"), "tag": e.get("tag"),
-                           "identity": q[:60], "shared_by": _ident_count.get(q, 1)})
+            if dump:
+                # RECORDED SO THE LINK CAN BE MEASURED RATHER THAN INFERRED.
+                # #92 claims this ruler's 0.9797 residual and the staged probe's
+                # blanked arm are the SAME population -- `OPEN.md` item 0 says 53
+                # of 54 strict misses are the label-plus-badge shape, which IS
+                # `subtreeName && !subtreeNameSole`. That was an inference from a
+                # classification, not a measurement, because this branch
+                # incremented and moved on without recording. `cls` uses the same
+                # key name the staged probe writes, so one classifier reads both.
+                misses.append({"site": name, "mmid": e.get("mmid"), "tag": e.get("tag"),
+                               "role": e.get("role"), "cls": "descendant-credited",
+                               "identity": q[:120],
+                               "shared_by": _ident_count.get(q, 1),
+                               "subtreeName": bool(e.get("subtreeName")),
+                               "subtreeNameSole": bool(e.get("subtreeNameSole"))})
+        elif dump or len(misses) < 4:
+            # --dump keeps EVERY miss. The summary line has pointed at `--dump`
+            # since this file was written and the flag did not exist -- a message
+            # naming something the reader cannot run, which is PRINCIPLES 15's
+            # shape and #67's (`--check-only` validating zero files and exiting
+            # 0). Both halves now exist.
+            misses.append({"site": name, "mmid": e.get("mmid"), "tag": e.get("tag"),
+                           "role": e.get("role"), "identity": q[:120],
+                           "shared_by": _ident_count.get(q, 1),
+                           "subtreeName": bool(e.get("subtreeName")),
+                           "subtreeNameSole": bool(e.get("subtreeNameSole")),
+                           "found_head": str(out).split("\n")[0][:120]})
     await ctx.close()
     return {"tried": tried, "hit": hit, "contested": contested,
             "desc_hit": desc_hit, "misses": misses}
 
 
-async def main(n, cap):
+async def main(n, cap, dump=None):
     rows = []
     async with async_playwright() as pw:
         b = await pw.chromium.launch()
@@ -185,7 +231,7 @@ async def main(n, cap):
         for _site in SITES[:n]:
             name, url = _site[0], _site[1]
             _wait = _site[2] if len(_site) > 2 else None
-            r = await one(b, name, url, cap, _wait)
+            r = await one(b, name, url, cap, _wait, dump=bool(dump))
             if r and r["tried"]:
                 _uniq = r["tried"] - r["contested"]
                 rate = r["hit"] / max(1, _uniq)
@@ -220,6 +266,12 @@ async def main(n, cap):
               f"on the target would (#18, #73); it is reported separately and "
               f"never folded in. {T - H - D} miss(es) are reachable by neither "
               f"— see --dump to classify them.")
+    if dump:
+        allm = [m for _n, r in rows for m in r["misses"]]
+        Path(dump).parent.mkdir(parents=True, exist_ok=True)
+        Path(dump).write_text(json.dumps(allm, indent=1, ensure_ascii=False),
+                              encoding="utf-8")
+        print(f"  wrote {len(allm)} miss record(s) -> {dump}")
     worst = sorted(rows, key=lambda x: x[1]["hit"]
                    / max(1, x[1]["tried"] - x[1]["contested"]))[:3]
     for nm, r in worst:
@@ -287,10 +339,13 @@ if __name__ == "__main__":
     ap.add_argument("--cap", type=int, default=40, help="entries probed per site")
     ap.add_argument("--self-test", action="store_true",
                     help="prove the ruler fires, with no browser and no corpus")
+    ap.add_argument("--dump", default=None, metavar="PATH",
+                    help="write EVERY miss to a JSON file so the residue can be "
+                         "classified (the summary line has always pointed here)")
     a = ap.parse_args()
     if a.self_test:
         sys.exit(asyncio.run(self_test()))
-    asyncio.run(main(a.n, a.cap))
+    asyncio.run(main(a.n, a.cap, a.dump))
 
 
 # ---------------------------------------------------------------------------

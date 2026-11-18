@@ -103,6 +103,7 @@ waiting to import labels that cost ~2,700 model inferences to build.
 ---
 
 ## 3. How these instruments have lied
+| `detail="full"` scores **0.5806** against `compact`'s 1.0000 on tab rows, i.e. *"full's media rows crowd the controls out"* | `find` reads its bridge from a **module global**, so with sites measured concurrently one site's query was scored against another site's entries. The result was coherent and carried a mechanism, which is what made it dangerous. Re-derived on a single page both arms matched every time; properly measured they are **identical, 3,059/3,059, twice**. A scoring lock and a `bridge_race` counter now exist, and it reads 0. |
 
 Each of these produced a clean, plausible, wrong number.
 
