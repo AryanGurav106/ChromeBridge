@@ -9529,9 +9529,26 @@ granted in the side panel is refused with the same message the agent gets.
     the opposite direction from usual. Added where the fact is known, and only
     when the notation really appears.
 
-    **Still unfixed, with evidence:** frame rows remain unreachable by
-    `find`/`search_page`, which ask for the structured array while the frame
-    block is string-only.
+    **AND THE LAST ONE: a frame's controls were LISTED, ACTIONABLE, AND
+    UNREACHABLE BY NAME.** The cross-frame append was gated on
+    `!params?.structured`, so the block existed only as a string — present in
+    the one surface an agent READS and absent from the one it SEARCHES. `find`
+    scores over the structured array, so `find("XORIGINB button")` missed a row
+    the listing had just printed as `ref_f6:5`.
+    The entries were being built and thrown away after formatting:
+    `collectCrossFrames` already runs the per-frame collection with
+    `structured=true`. It returns `{ text, entries }` now — string callers take
+    `.text` exactly as before, structured callers take `.entries`, at **no extra
+    round trip** — and the structured mmid carries the SAME `f<fid>:<n>`
+    spelling the row prints, because a second vocabulary there would be #21
+    again. The scope rule is mirrored, so a scoped read still does not import
+    frames from outside its scope. Live: `find` MISSES → **REACHES**.
+
+    **Still unfixed, with evidence:** `search_page` greps rendered text in the
+    top document only, so in-frame text is not searchable; `query_elements`
+    likewise, though it now WARNS that its count is partial. Both would need
+    per-frame injection with result merging, which is a larger change than
+    either of today's and is not started.
 
 
 ## Debugging starting points

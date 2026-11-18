@@ -5426,7 +5426,7 @@ function _frameShellsPage() {
 // selector [mmid='f<frameId>:<n>'] — resolveFrameSelector routes the ops.
 async function collectCrossFrames(tabId, geometry) {
   let frames = [];
-  try { frames = await chrome.webNavigation.getAllFrames({ tabId }) || []; } catch (e) { return ''; }
+  try { frames = await chrome.webNavigation.getAllFrames({ tabId }) || []; } catch (e) { return { text: '', entries: [] }; }
   // ANY DEPTH, NOT JUST DEPTH 1. `parentFrameId === 0` kept only frames whose
   // parent is the top document, so a cross-origin frame nested inside another
   // frame was SILENTLY ABSENT -- measured at 3 of 3 controls lost on two
@@ -5443,7 +5443,7 @@ async function collectCrossFrames(tabId, geometry) {
   // coordinate is the right trade against dropping the controls.
   const children = frames.filter(f => f.frameId !== 0 &&
                                        f.url && !f.url.startsWith('about:'));
-  if (!children.length) return '';
+  if (!children.length) return { text: '', entries: [] };
   let shells = [];
   try { shells = await runInTab(tabId, _frameShellsPage) || []; } catch (e) { shells = []; }
   const shellMap = new Map();
@@ -5482,8 +5482,9 @@ async function collectCrossFrames(tabId, geometry) {
     }
     cs.forEach((fr, i) => shellMap.set(fr.frameId, ss[i]));
   }
-  if (!shellMap.size && !unanchored.length) return '';
+  if (!shellMap.size && !unanchored.length) return { text: '', entries: [] };
   const offsets = new Map();
+  const entries = [];
   let text = '';
   const _todo = [...shellMap.entries(), ...unanchored.map((f) => [f, null])];
   for (const [fid, shell] of _todo) {
@@ -5496,6 +5497,12 @@ async function collectCrossFrames(tabId, geometry) {
     let host = '';
     try { host = new URL(shell ? shell.src : (frames.find((f) => f.frameId === fid) || {}).url).hostname; } catch (e) {}
     const lines = [];
+    // KEPT FOR THE STRUCTURED CALLERS. `find` and
+    // `measure_findability` score over the structured array, and the frame
+    // block was string-only -- so a control inside a cross-origin frame was
+    // listed, actionable by its `ref_f<fid>:<n>`, and UNREACHABLE BY NAME.
+    // The entries exist right here and were thrown away after formatting.
+    const _structForFrame = [];
     // PRIORITISE before capping, then say what was cut. The old code did a blind
     // slice(0,40) and printed the kept count as though it were complete — so a TCF
     // consent frame with dozens of vendor toggles hid its "Save & Exit"/"Accept"
@@ -5544,7 +5551,16 @@ async function collectCrossFrames(tabId, geometry) {
       const _xbox = (geometry && shell)
         ? ` | box(${e.x + shell.x},${e.y + shell.y},${e.w},${e.h})` : '';
       lines.push(_raw.replace(/ \| box\([^)]*\)/, '') + _xbox);
+      // The mmid IS the ref the agent acts with, so the structured copy carries
+      // the SAME spelling the row prints -- `resolveFrameSelector` routes it,
+      // and a second vocabulary here would be #21 again.
+      _structForFrame.push(Object.assign({}, e, {
+        mmid: `f${fid}:${e.mmid}`,
+        line: lines[lines.length - 1],
+        section: e.section || 'iframe',
+      }));
     }
+    if (_structForFrame.length) entries.push(..._structForFrame);
     if (lines.length) {
       text += `\n[CROSS-ORIGIN IFRAME f${fid}${(shell && shell.title) ? ` ${JSON.stringify(shell.title)}` : ''}${host ? ` (${host})` : ''}${shell ? '' : ' — NESTED, so its position on the page is not knowable from here and its rows carry no box(); acting BY REF still works, because a ref re-measures at click time'} — ` +
               `${lines.length} of ${raw.length} element(s) shown; act with ref f${fid}:N]\n` + lines.join('\n') +
@@ -5567,7 +5583,10 @@ async function collectCrossFrames(tabId, geometry) {
             ` invalidates every ref_f<frameId>:<n> above.`;
   }
   _frameShells.set(tabId, offsets);
-  return text;
+  // BOTH SHAPES FROM ONE PASS. String callers take `.text` as before; structured
+  // callers take `.entries`, at no extra round trip, because the per-frame
+  // collection already ran with structured=true.
+  return { text, entries };
 }
 
 // --------------------- WebMCP: tools the PAGE declares ---------------------
@@ -15420,9 +15439,26 @@ async function handleOp({ id, op, params }) {
         // CROSS-ORIGIN IFRAMES (consent CMPs, embedded checkouts): inject the
         // collector per-frame and append their elements with f<frameId>:
         // prefixed mmids — resolveFrameSelector routes the agent's actions.
+        // THE STRUCTURED PATH GETS THEM TOO. `find` and every structured
+        // consumer asked for the array, the frame block was string-only, and so
+        // a control inside a cross-origin frame was LISTED, actionable by its
+        // `ref_f<fid>:<n>`, and UNREACHABLE BY NAME -- present in the one
+        // surface an agent reads and absent from the one it searches. The same
+        // scope rule applies: a scoped read must not import frames from outside
+        // the scope, and scoping TO a frame shell is the documented escalation.
+        if (params?.structured && Array.isArray(result)) {
+          try {
+            const _fx = await collectCrossFrames(t.id, !!params?.geometry);
+            if (_fx.entries.length
+                && (!params?.scopeMmid
+                    || result.some((e) => e && e.crossFrame))) {
+              result = result.concat(_fx.entries);
+            }
+          } catch (e) {}
+        }
         if (!params?.structured && typeof result === 'string') {
           try {
-            const extra = await collectCrossFrames(t.id, !!params?.geometry);
+            const extra = (await collectCrossFrames(t.id, !!params?.geometry)).text;
             // A SCOPED READ MUST NOT IMPORT FRAMES FROM OUTSIDE THE SCOPE. This
             // pass runs AFTER the scope filter and used to append unconditionally,
             // so a read scoped to an <input> in a page header came back carrying a
