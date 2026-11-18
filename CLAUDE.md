@@ -10307,6 +10307,50 @@ granted in the side panel is refused with the same message the agent gets.
     did not break what was measured, at first paint or after four interactions.
     It does not restate #85/#89's 255–260 site claim and is not offered as one.**
 
+105. **THE FULL-SCALE NUMBER, ON TODAY'S CODE.** #103 and #104 were samples and
+    said so — 26 sites at first paint, 30 through four interactions. This is the
+    whole corpus re-run after the session's 48 commits, which is the difference
+    between "the day broke nothing we sampled" and "the claim still holds".
+
+    | | |
+    |---|---|
+    | candidates / **usable** | 445 / **258** |
+    | light-DOM controls | 34,427 |
+    | piercing open+closed shadow roots and same-origin frames | 34,841 |
+    | shadow roots / frames walked | **2,148 / 501** |
+    | entries produced | **74,784** |
+    | **identities lost — core / deep / declared** | **0 / 0 / 0** |
+    | sites with any loss | **0** |
+    | drop reasons outside the permitted set | **0** |
+    | languages represented | **36** |
+
+    258 usable against #85's 260 on the same corpus, so this is the same
+    measurement at the same scale rather than a smaller one dressed up. Spread:
+    en 211, ja 21, es 19, ko 19, de 15, he-RTL 14, ru 14, th 11, ar-RTL 11,
+    zh-Hans 11, and 26 further codes.
+
+    **187 did not render, and they are counted as UNMEASURED rather than as
+    passes:** 133 bot or consent walls returning 0–3 elements, 39 navigation
+    timeouts, 14 HTTP/2 or network errors, 1 other. **No user-agent spoofing and
+    no bot-check evasion** — a measurement that needed evading a site's own
+    controls is not one this project would quote, so those sites are absent from
+    the numerator AND the denominator. That is also the standing sample bias:
+    the corpus skews toward pages that let a headless browser in.
+
+    **The probe was shown able to fire before the run**, which is the only thing
+    that makes three zeros worth printing (PRINCIPLES 5): `--selftest` detects
+    planted losses and passes.
+
+    **What this does and does not say.** It says the collector's identity
+    guarantee survives everything shipped today — including the five commits
+    that changed `_collectInteractivePage`, which I had been about to assert were
+    none (#103). It is first paint; #104 is the post-interaction arm at 30 sites.
+    It does not say the representation is perfect, and no measurement here can:
+    `lost_identities` asks whether a rendered, non-hidden control reaches a row
+    of its own, and #74 is the standing reminder that an element can be present
+    in every presence metric and unreachable by the name printed for it — which
+    is why `measure_findability` and the AX-tree oracle (#93) exist beside this.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
