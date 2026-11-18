@@ -1358,6 +1358,32 @@ coordinate is not.
 > pre-fix (a recording whose active tab moves under it) and the control that a
 > flow whose tab never moves acquires no review line.
 
+### 19. The fixture's edge-case LAB has no recorded flow at all `OPEN`
+> `tools/saas_playground.py` serves `/lab/frames`, `/lab/shadow`, `/lab/virtual`,
+> `/lab/confirm` and `/lab/popup` — the five shapes this project has spent the
+> most effort on — and **not one of the 14 tracked flows touches any of them**.
+> Every flow drives the ordinary app: login, table, modal, filter, sort,
+> drill-down.
+>
+> That matters most for `/lab/virtual`. CLAUDE.md #90 measured a virtualised
+> list binding to the WRONG record with NO refusal (recorded `REC-1003`,
+> replayed `REC-1053`), because the crowd IS the window, its size is constant,
+> and so the `len(hits) != of` composition check can never fire. #99 re-measured
+> the declaration that would fix it and recorded **DON'T BUILD** — `aria-rowcount`
+> on 0 of 2,531 tied crowds. So the hazard is known, priced and deliberately
+> unfixed, and there is no flow that DEMONSTRATES it. A recorded flow against
+> `/lab/virtual` would turn a paragraph into a reproduction.
+>
+> **NOT recorded now, deliberately.** Recording goes through the MCP server into
+> the user's own Chrome, and at the time of writing BOTH halves of that stack
+> are stale: the extension predates #97/#98/#101/#102, and `sw_info` reports
+> `core/flows/descriptor.py` and `core/flows/secrets.py` changed since the server
+> imported them. `build()` lives in `descriptor.py`, so the witnesses and atoms
+> in a flow recorded now would be written by code that is not what ships — the
+> "stale server writes a slightly older format" trap #59 paid three reconnects
+> to learn. Record these after a reload and a `/mcp` reconnect, and check a
+> saved artefact before trusting the result.
+
 ### 18. A navigate PASSED and the tab was `about:blank` one step later `OPEN`
 > **CI-ONLY, ONE SIGHTING, NOT REPRODUCIBLE LOCALLY.** The `--chaos badge` arm
 > of the flow replay failed on `live-atoms-resort` with:

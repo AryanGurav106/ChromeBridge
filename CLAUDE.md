@@ -10268,6 +10268,45 @@ granted in the side panel is refused with the same message the agent gets.
     claim. It says the day did not break what was measured; it does not restate
     the measurement.
 
+104. **AND THE SAME CHECK "AT ANY STAGE", WHICH IS THE HALF #103 DID NOT
+    COVER.** #103 was first paint only and said so. This is the post-interaction
+    arm — `tools/audit_stage_generality.py`, 30 live out-of-sample sites, up to
+    four COMPOUNDING interactions each, every interaction chosen from a
+    DECLARATION and counted only when the page's own declared state flipped.
+
+    | stage | sites | entries | lost core | lost deep | lost declared | revealed BY the interaction | of those, lost |
+    |---|---|---|---|---|---|---|---|
+    | s0 | 30 | 10,323 | 0 | 0 | 0 | — | — |
+    | s1 | 16 | 4,920 | 0 | 0 | 0 | 170 | **0** |
+    | s2 | 11 | 3,979 | 0 | 0 | 0 | 43 | **0** |
+    | s3 | 7 | 2,122 | 0 | 0 | 0 | 30 | **0** |
+    | s4 | 5 | 1,649 | 0 | 0 | 0 | 5 | **0** |
+
+    **30 of 30 usable, 22,993 entries, 0 identities lost at every stage on all
+    three definitions, 0 strict rows without a row of their own, 0 drop reasons
+    outside the permitted set, and 248 controls that existed ONLY because of an
+    interaction — none lost.** 1,113 shadow roots and 86 frames walked at s0.
+    Seven interaction kinds were tried and flipped: menu-popup (10), tab (7),
+    expandable-controls (6), expandable (5), text-input (5), dialog-trigger (5),
+    select (1). The probe was shown able to fire first — `--selftest` reports
+    `strict_fired_on: ["Menu Item Alpha"]` against a planted loss.
+
+    **A datum that fell out of it and is worth keeping.** `readiness_fired`
+    is **24 of 30 at first paint, 17 of them the STRONG tier** — i.e. the strong
+    banner on 57% of s0 reads, which corroborates #80's 83% on a different
+    sample and is the thing #102 reworded. It drops with depth (s2: 5 strong of
+    11, s4: 2 of 5), which is what you would expect if the 3000ms window is
+    mostly catching the page's own build.
+
+    **Stated rather than smoothed:** the funnel is real — 30 sites reach s1 as
+    16, s4 as 5 — because a site is only carried forward while it keeps offering
+    a DECLARED disclosure to open, and most do not offer four. So s4's zero is
+    five sites, not thirty. Hover-only menus remain structurally unpickable (a
+    CSS `:hover` submenu declares no state flip), there are no logins, and it is
+    one path per site. **Together with #103 this says the session's 48 commits
+    did not break what was measured, at first paint or after four interactions.
+    It does not restate #85/#89's 255–260 site claim and is not offered as one.**
+
 ## Debugging starting points
 
 | Symptom | Where to look |
