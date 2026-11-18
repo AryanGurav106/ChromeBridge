@@ -1358,6 +1358,37 @@ coordinate is not.
 > pre-fix (a recording whose active tab moves under it) and the control that a
 > flow whose tab never moves acquires no review line.
 
+### 20. The Claude-in-Chrome arm cannot run: its extension DEREGISTERED `BLOCKED ON A RELOAD`
+> `tools/bench_turns/eval13` has one arm and no comparison because the other
+> toolset never answered a single command — 8 calls, every one a timeout, 0
+> productive. Four things were ruled out, each by a measurement rather than a
+> guess:
+>
+> | ruled out | how |
+> |---|---|
+> | the app being down | no page was ever touched |
+> | a permission refusal | ChromeBridge's are fast explicit messages, never timeouts |
+> | the machine or Chrome being asleep | **ChromeBridge's `sw_info` answered in 7.6ms with `recent_timeouts: []`, same browser, same minute** |
+> | browser selection | `list_connected_browsers` returned one local browser, `inUse: true` |
+>
+> **And it has since got worse, which is the useful part.** Re-checked ~40
+> minutes later: `tabs_context_mcp` now reports *"Selected Chrome extension
+> disconnected"* rather than timing out, and **`list_connected_browsers` returns
+> `[]`** where it returned one healthy entry before. So the extension has
+> DEREGISTERED, not merely wedged — which closes the last unexplored path, since
+> `select_browser` has nothing to select. Everything reachable from this side has
+> been tried: retry, the lightest op (`createIfEmpty:false`, which creates
+> nothing and touches no page), the diagnostic, and re-selection.
+>
+> **Nothing on this side can evict an MV3 worker another extension owns.** It
+> needs a hand reload at `chrome://extensions`. Recorded here so the next reader
+> does not repeat the four calls that establish it.
+>
+> Worth keeping from the same run: `inUse: true` reads as a working channel and
+> reflects REGISTRATION only — a browser can be registered, local and selected
+> while its extension answers nothing. That was the one signal pointing
+> optimistically the wrong way.
+
 ### 19. The fixture's edge-case LAB has no recorded flow at all `OPEN`
 > `tools/saas_playground.py` serves `/lab/frames`, `/lab/shadow`, `/lab/virtual`,
 > `/lab/confirm` and `/lab/popup` — the five shapes this project has spent the
