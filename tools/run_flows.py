@@ -58,6 +58,19 @@ EXT = ROOT / "extension"
 FLOWS = ROOT / "flows"
 PORT = 8901          # outside the default span, on purpose -- see the docstring
 
+# ONE SPELLING OF THE FIXTURE'S ADDRESS, and one of "a loopback host".
+# `localhost:8787` and `127.0.0.1:8787` are the SAME server, and a literal
+# substring test knows only the spelling it was written with. Measured: a flow
+# recorded through an MCP session against `localhost:8787` was SELECTED by
+# --local-only -- whose own test does know all three spellings -- and then had
+# its secret silently withheld by _fixture_secret_names, which knew one. The
+# run failed naming the missing env var, so the reader exports it by hand and
+# never learns the harness was supposed to. #21, in the harness.
+PG_HOST, PG_PORT = "127.0.0.1", 8787
+PG_BASE = f"http://{PG_HOST}:{PG_PORT}"
+LOOPBACK = r"(?:127\.0\.0\.1|localhost|\[::1\])"
+FIXTURE_RE = re.compile(rf"^https?://{LOOPBACK}:{PG_PORT}\b")
+
 
 def _load_server():
     """The REAL mcp_server, tools and all.
@@ -115,7 +128,10 @@ def _fixture_secret_names(flows) -> list:
     out, pre = [], "${CHROMEBRIDGE_SECRET:"
     for f in flows:
         blob = json.dumps([s_.to_json() for s_ in f.steps], default=str)
-        if "127.0.0.1:8787" not in (f.origin or "") and "127.0.0.1:8787" not in blob:
+        # Reuse _origins rather than re-deriving the URLs: it already reads
+        # f.origin, every step url and every require value, and a second
+        # extraction here is the drift this constant was introduced to end.
+        if not any(FIXTURE_RE.match(o) for o in _origins([f])):
             continue
         for frag in blob.split(pre)[1:]:
             out.append(frag.split("}")[0])
@@ -141,9 +157,9 @@ def _pg_reset(chaos: str = "") -> str:
     """
     import urllib.request as _u
     try:
-        _u.urlopen(_u.Request("http://127.0.0.1:8787/api/reset", method="POST"), timeout=5)
+        _u.urlopen(_u.Request(PG_BASE + "/api/reset", method="POST"), timeout=5)
     except Exception as exc:
-        return (f"the fixture app at 127.0.0.1:8787 did not accept /api/reset "
+        return (f"the fixture app at {PG_HOST}:{PG_PORT} did not accept /api/reset "
                 f"({type(exc).__name__}: {exc}). It answered when the run started, so "
                 f"it has since died or stopped responding. Nothing was replayed from "
                 f"this point: a flow run against an un-reset fixture asserts against "
@@ -152,7 +168,7 @@ def _pg_reset(chaos: str = "") -> str:
     if not flags:
         return ""
     try:
-        _u.urlopen(_u.Request("http://127.0.0.1:8787/api/chaos", method="POST",
+        _u.urlopen(_u.Request(PG_BASE + "/api/chaos", method="POST",
                               data=json.dumps({"flags": flags}).encode(),
                               headers={"Content-Type": "application/json"}), timeout=2)
         return ""
@@ -168,9 +184,10 @@ async def main() -> int:
     ap.add_argument("--playground", action="store_true",
                     help="start tools/saas_playground.py for the run and stop it after")
     ap.add_argument("--local-only", action="store_true",
-                    help="skip flows that touch a non-loopback origin; what CI wants, "
-                         "because a suite that needs the public internet fails for "
-                         "reasons that are not the code's")
+                    help="replay only the flows this harness can SERVE — the ones "
+                         "pointed at the fixture --playground starts. What CI "
+                         "wants, because a flow needing a server nobody started "
+                         "fails for reasons that are not the code's")
     ap.add_argument("--chaos", default="",
                     help="comma-separated saas_playground chaos flags to set AFTER "
                          "the reset (needs --playground). Use it to script a "
@@ -255,12 +272,22 @@ async def main() -> int:
     flows = [flow_load(p) for p in paths]
     if args.local_only:
         keep, skipped = [], []
+        # THE TEST IS "CAN THIS HARNESS SERVE IT", NOT "IS IT LOOPBACK", and the
+        # two came apart the moment a flow was recorded against a DIFFERENT local
+        # server. `bench-grocery-add-to-cart` points at localhost:8080
+        # (WebPageBench, ~GB and not in this repo): loopback, kept, and then
+        # failed on every CI run with "this flow's precondition could not be
+        # evaluated" -- which is true, unhelpful, and exactly the class this flag
+        # exists to keep out of the build. The flag's own help text said "what CI
+        # wants"; what CI can actually provide is the fixture --playground starts,
+        # so that is the rule, and a flow needing anything else is SKIPPED with
+        # the reason visible rather than failing the build.
         for f, pth in zip(flows, paths):
-            ext = [o for o in _origins([f])
-                   if not re.match(r"^https?://(127\.0\.0\.1|localhost|\[::1\])\b", o)]
+            ext = [o for o in _origins([f]) if not FIXTURE_RE.match(o)]
             (skipped if ext else keep).append((f, pth, ext))
         for f, _pth, ext in skipped:
-            print(f"  SKIP  {f.name:<28} needs {', '.join(ext)}")
+            print(f"  SKIP  {f.name:<28} needs {', '.join(ext)} "
+                  f"— not a server this harness starts")
         flows = [f for f, _p, _e in keep]
         paths = [p_ for _f, p_, _e in keep]
         if not flows:
@@ -290,7 +317,7 @@ async def main() -> int:
             if pg.poll() is not None:
                 break
             try:
-                urllib.request.urlopen("http://127.0.0.1:8787/api/state", timeout=0.5)
+                urllib.request.urlopen(PG_BASE + "/api/state", timeout=0.5)
                 up = True
                 break
             except Exception:
@@ -309,11 +336,11 @@ async def main() -> int:
                     err = _lines[-1][:300] if _lines else ""
                 except Exception:
                     pass
-            print(f"FAIL: the fixture app never answered on 127.0.0.1:8787 after "
+            print(f"FAIL: the fixture app never answered on {PG_HOST}:{PG_PORT} after "
                   f"{waited:.0f}s"
                   + (f" — it exited with code {pg.returncode}" if pg.poll() is not None
                      else " — it is still running but not serving")
-                  + ". Nothing was replayed. The usual cause is port 8787 already "
+                  + f". Nothing was replayed. The usual cause is port {PG_PORT} already "
                     "being in use by an earlier run."
                   + (f"\n  its stderr: {err}" if err else ""))
             pg.terminate()

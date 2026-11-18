@@ -597,7 +597,7 @@ async def main():
         # the length test outright would pass OR1 and OR2 while making every
         # container pickable.
         _wrap = await ap.evaluate(
-            "()=>document.querySelector('#portal2 > div').innerText.replace(/\s+/g,' ').trim()")
+            r"()=>document.querySelector('#portal2 > div').innerText.replace(/\s+/g,' ').trim()")
         _cr = await ap.evaluate(
             "(function(){ " + PICK + "; return _pickOptionPage(" + repr(_wrap) + ", '#trig2'); })()")
         check("OR3 CONTROL: the wrapper CONTAINING the rows is not itself pickable "

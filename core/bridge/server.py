@@ -256,7 +256,17 @@ class ExtensionBridge:
     # ---- ingress sanitation ------------------------------------------------
     @staticmethod
     def _scrub_surrogates(obj):
-        """Replace UNPAIRED UTF-16 surrogates with U+FFFD, everywhere, once.
+        # RAW, AND THAT IS NOT COSMETIC. This docstring SPELLS the escape it is
+        # about, so as an ordinary string it did not describe a lone surrogate,
+        # it CONTAINED one -- and from Python 3.13 `compile()` refuses a
+        # docstring holding one outright (it encodes while dedenting), so every
+        # suite that imports mcp_server died at this import with
+        # `UnicodeEncodeError ... position 312`. Green on 3.12, red on the 3.13
+        # floor `pyproject.toml` advertises and CI exists to check, for three
+        # days, because the failure is invisible to the version I run. An
+        # ordinary string constant elsewhere is still fine -- C41's own dirty
+        # fixture is one -- so the rule is about docstrings, and C42 enforces it.
+        r"""Replace UNPAIRED UTF-16 surrogates with U+FFFD, everywhere, once.
 
         A LONE SURROGATE IN ANY TOOL RESULT KILLED THIS PROCESS. Measured end to
         end: a JS string is UTF-16 and may legally hold an unpaired surrogate, a

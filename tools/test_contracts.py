@@ -1631,6 +1631,76 @@ def main() -> int:
           len(_loads) >= 2 and all("_scrub_surrogates(" in ln for ln in _loads),
           " | ".join(x.strip()[:60] for x in _loads))
 
+    # ---- C42: A DOCSTRING THAT SPELLS AN ESCAPE BECOMES IT -----------------
+    # From Python 3.13 `compile()` refuses a docstring containing a lone
+    # surrogate -- it encodes to UTF-8 while dedenting -- so a module with one
+    # cannot be imported at all. `pyproject.toml` advertises >=3.10 and CI runs
+    # the unit group on 3.10 AND 3.13 for exactly that reason, and the
+    # _scrub_surrogates docstring (which is ABOUT lone surrogates, and spelled
+    # one) killed every suite that imports mcp_server on the 3.13 leg for three
+    # days while staying green on the 3.12 I develop on. A version-specific
+    # break is invisible to the developer by construction; this makes it visible
+    # on whatever version is running the suite.
+    #
+    # DOCSTRINGS ONLY, deliberately. An ordinary string constant holding a lone
+    # surrogate compiles fine on every version, and C41's own dirty fixture is
+    # one -- forbidding those would fail the test that proves the scrub works.
+    import ast as _ast
+    _lone = lambda t: any(0xD800 <= ord(c) <= 0xDFFF for c in t)
+    _rt = _Path(ROOT)
+    _roots = [_rt / "mcp_server.py", _rt / "config.py",
+              _rt / "core", _rt / "tools"]
+    _pys = []
+    for _r in _roots:
+        _pys.extend(sorted(_r.rglob("*.py")) if _r.is_dir() else [_r])
+    _offenders, _scanned, _probed = [], 0, 0
+    for _py in _pys:
+        if "__pycache__" in _py.parts:
+            continue
+        try:
+            _tree = _ast.parse(_py.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        _scanned += 1
+        for _n in _ast.walk(_tree):
+            if not isinstance(_n, (_ast.Module, _ast.ClassDef,
+                                   _ast.FunctionDef, _ast.AsyncFunctionDef)):
+                continue
+            _d = _ast.get_docstring(_n, clean=False)
+            if _d is None:
+                continue
+            _probed += 1
+            if _lone(_d):
+                _offenders.append(f"{_py.relative_to(_rt)}:{_n.lineno}")
+    check("C42 no docstring in the project contains a lone UTF-16 surrogate — "
+          "from 3.13 that is a compile error, so the module cannot be imported "
+          "on a version pyproject.toml advertises",
+          not _offenders and _scanned > 20 and _probed > 100,
+          f"scanned={_scanned} files, {_probed} docstrings; offenders={_offenders}")
+    # THE DETECTOR HAS TO BE SHOWN FIRING, or "0 offenders" is worth nothing
+    # (#21's rule for audit_patterns.py). Planted in memory, never on disk, and
+    # as the ESCAPE rather than the character -- that distinction IS the bug:
+    # source text holding a real lone surrogate is refused by `ast.parse` on
+    # every version, while source holding `\ud83d` inside a docstring compiles
+    # on 3.12 and is refused from 3.13. So the control accepts EITHER outcome:
+    # our scan finding it, or the compiler refusing it outright, which is the
+    # stronger detection and is what the 3.13 CI leg does.
+    _bs = chr(92)
+    _planted_src = 'def f():\n    """talks about ' + _bs + 'ud83d for real"""\n'
+    try:
+        _pt = _ast.parse(_planted_src)
+        _hit = [1 for _n in _ast.walk(_pt)
+                if isinstance(_n, _ast.FunctionDef)
+                and _lone(_ast.get_docstring(_n, clean=False) or "")]
+        _how = f"our scan, {len(_hit)} hit(s)"
+        _fired = len(_hit) == 1
+    except UnicodeEncodeError:
+        _how, _fired = "the compiler refused it (3.13+ behaviour)", True
+    check("C42b CONTROL: a planted violation is caught — by this scan, or by "
+          "the compiler refusing it — so the clean result above is evidence "
+          "rather than an empty loop",
+          _fired, f"caught by {_how}")
+
     print(f"\n{passed} passed, {failed} failed, {passed + failed} total checks")
     if failures:
         print("failing: " + ", ".join(failures))
