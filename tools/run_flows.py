@@ -468,6 +468,17 @@ async def main() -> int:
                     print(f"        step {d['step']} {d['name']}: name "
                           f"{(d.get('was') or {}).get('name')!r} is gone; matched "
                           f"href={(d.get('alt') or {}).get('href')!r}")
+                for _pos in (res.get("positional") or []):
+                    # A PASS PINNED BY POSITION IS NEWS, and this is the only
+                    # place most replays happen. `_positional_note()` goes into
+                    # `reason`, which is printed ONLY on a failure -- so the
+                    # note shipped and CI never showed it. Same shape as the
+                    # drift line above: a pass that is still worth reading.
+                    print(f"        {_pos} was pinned by POSITION alone — nothing "
+                          f"distinguishes its target from its siblings, so a "
+                          f"re-sort, a churning list or a virtualised window "
+                          f"moves what it acts on WITHOUT changing the count. A "
+                          f"pass is not evidence the right element was acted on.")
                 if res["status"] != PASSED:
                     print(f"        {res['reason']}")
         finally:

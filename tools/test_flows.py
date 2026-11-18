@@ -3442,6 +3442,32 @@ async def record_and_replay():
           "there is not evidence the right element was acted on",
           _pr["status"] == PASSED and "POSITION alone" in (_pr.get("reason") or ""),
           f'{_pr["status"]}: {(_pr.get("reason") or "")[:120]}')
+    # FR28c — THE STORED LINE IS RE-CHECKED, NOT TRUSTED. A `positional:` review
+    # line records what was true WHEN THE FLOW WAS RECORDED, so a flow written
+    # before the content witness existed carries one on a step the witness now
+    # resolves. Measured on the real `live-atoms-resort.flow.json`: step 2 has
+    # both the line AND `atoms=['Acme Ltd','INV-1001']`, and
+    # `unwitnessed_ordinal()` is False for that target. Reporting it would
+    # announce "pinned by POSITION alone" about a WITNESSED step -- the #15
+    # noise FR28b guards against, arriving through the FILE instead of the code.
+    _wit = Flow(name="wit", steps=[Step(
+        name="computer", input={"action": "left_click"},
+        targets={"ref": {"level": 6, "of": 3, "nth": 0,
+                         "atoms": ["Acme Ltd", "INV-1001"],
+                         "desc": {"tag": "button", "role": "", "type": "",
+                                  "name": "Delete"}}},
+        review=["positional: ref is one of 3 controls that are identical in "
+                "every declared field AND in their surroundings"])])
+    _wb = FakeBridge([E(1, "button", name="Delete", atoms=["Acme Ltd", "INV-1001"]),
+                      E(2, "button", name="Delete", atoms=["Globex", "INV-1002"]),
+                      E(3, "button", name="Delete", atoms=["Initech", "INV-1003"])])
+    _wr = await start(_wit, 1, _wb.call, _wb.entries_fn)
+    check("FR28c a stale `positional:` line on a step the content witness now "
+          "resolves is NOT reported — the line records what was true at RECORD "
+          "time and the descriptor is asked instead",
+          _wr["status"] == PASSED and "POSITION alone" not in (_wr.get("reason") or ""),
+          f'{_wr["status"]}: {(_wr.get("reason") or "")[:90]!r}')
+
     # THE CONTROL. Without it "say it on every run" would pass FR28 while making
     # the line the always-on warning #15 priced.
     _npb = FakeBridge([E(1, "button", name="Delete")])

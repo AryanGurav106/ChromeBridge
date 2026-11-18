@@ -38,7 +38,7 @@ from urllib.parse import urlsplit
 from typing import Any, Callable, Optional
 
 from . import secrets
-from .descriptor import Unresolved, build, resolve
+from .descriptor import Unresolved, build, resolve, unwitnessed_ordinal
 from .model import (NAVIGATIONAL, VAR_RE, Flow, Step, created_tab as _created_tab,
                     resolve_vars, set_ref)
 from .recorder import (no_effect, query_first_attrs, query_first_text,
@@ -549,12 +549,28 @@ class Run:
         Silent when no step carries one, which is what keeps it from being the
         always-on warning #15 priced.
         """
+        # THE STORED LINE IS RE-CHECKED, NOT TRUSTED. A `positional:` review line
+        # records what was true WHEN THE FLOW WAS RECORDED, and a flow written
+        # before the content witness existed carries one on a step that the
+        # witness now resolves. Measured on `live-atoms-resort.flow.json`: its
+        # step 2 carries the line AND `atoms=['Acme Ltd','INV-1001']`, and
+        # `unwitnessed_ordinal()` returns False for that target -- so reporting
+        # it would announce "pinned by POSITION alone" about a step that is
+        # witnessed, which is the #15 noise FR28b's control exists to prevent,
+        # arriving through the file instead of through the code.
+        #
+        # Asking the descriptor directly also makes this self-correcting for
+        # every flow already on disk rather than only for re-recorded ones.
         hits = []
         for n, st in enumerate(self.flow.steps):
-            for r in (getattr(st, "review", None) or []):
-                if str(r).startswith("positional:"):
-                    hits.append(f"step {n} ({st.name})")
-                    break
+            _flagged = any(str(r).startswith("positional:")
+                           for r in (getattr(st, "review", None) or []))
+            if not _flagged:
+                continue
+            if not any(unwitnessed_ordinal(t) for t in (st.targets or {}).values()):
+                continue
+            hits.append(f"step {n} ({st.name})")
+        self._positional = list(hits)
         if not hits:
             return ""
         return (f'{len(hits)} step(s) were pinned by POSITION alone and passed: '
@@ -1205,7 +1221,7 @@ class Run:
             "at": self.i, "of": len(self.flow.steps), "reason": reason,
             "candidates": candidates or [],
             "log": self.log, "patches": self.patches, "drifted": self.drifted,
-            "moved": self.moved,
+            "moved": self.moved, "positional": list(getattr(self, "_positional", [])),
             "seconds": round(self.elapsed, 2),
         }
 

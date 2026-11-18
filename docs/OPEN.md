@@ -228,7 +228,16 @@ closed anyway.** The refusal was the wrong thing to be solving for. The
 recorder already writes a `positional:` line naming the three mechanisms, and
 since this entry the RUNNER says it too — a step pinned by position that
 PASSES now reports that it was, because a pass there is not evidence the right
-element was acted on. That costs no collector field, no round trip and no
+element was acted on. **In BOTH renderers**: `run_flows.py` printed `reason`
+only on a FAILURE, so the note shipped and CI — where nearly every replay
+happens — never showed it. It has its own result key now.
+**And the stored review line is RE-CHECKED, not trusted**: a `positional:` line
+records what was true at RECORD time, so a flow written before the content
+witness existed carries one on a step the witness now resolves.
+`live-atoms-resort.flow.json` is exactly that — the line AND
+`atoms=['Acme Ltd','INV-1001']` on one target — and reporting it would have
+announced "pinned by POSITION alone" about a witnessed step. The descriptor is
+asked instead, which self-corrects every flow already on disk. That costs no collector field, no round trip and no
 threshold: it reads a decided fact off the step, the way the `unevidenced:`
 guard already does, and it is silent when no step carries one (FR28/FR28b).
 So "silently wrong" is now "stated at replay"; what remains unbuilt is only
