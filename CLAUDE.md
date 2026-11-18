@@ -10229,6 +10229,45 @@ granted in the side panel is refused with the same message the agent gets.
     Suites: 1605 checks. New — R-TENSE3 (the headline states the measured age
     and makes no present-tense claim its own number contradicts).
 
+103. **REGRESSION CHECK AFTER A 48-COMMIT SESSION, BECAUSE I HAD ASSUMED THE
+    COLLECTOR WAS UNTOUCHED AND IT WAS NOT.** The day's fixes were in the WRITE
+    path (#97/#98), the flow resolver (#99), the action guard (#101) and the
+    banner's wording (#102) — none of which is the collector. I was about to say
+    so. Hashing the extracted `_collectInteractivePage` at the session's first
+    commit against HEAD says otherwise: **it changed in five commits** (the name
+    oracle's two one-line fixes, the Hebrew quoting fix, #28's rule correction,
+    and the frame row work). Each was measured when it landed; the CUMULATIVE
+    state had not been.
+
+    `tools/audit_generality_live.py`, 42 live out-of-sample sites:
+
+    | | |
+    |---|---|
+    | attempted / **usable** | 42 / **26** |
+    | light-DOM controls | 2,027 |
+    | piercing open+closed shadow roots and same-origin frames | 2,059 |
+    | shadow roots / frames walked | 161 / 54 |
+    | entries produced | 3,918 |
+    | **identities lost — core** | **0** |
+    | **identities lost — deep** | **0** |
+    | **identities lost — declared** | **0** |
+    | sites with any loss | **0** |
+    | drop reasons outside the permitted set | **0** |
+
+    **The probe was shown able to fire BEFORE the run** (`--selftest` passes,
+    detecting planted losses), which is the only thing that makes a zero worth
+    printing (PRINCIPLES 5).
+
+    **Stated rather than smoothed over: 16 of 42 did not render** — four
+    navigation timeouts, two `ERR_HTTP2_PROTOCOL_ERROR`, and the rest bot walls
+    or consent walls returning 0–3 elements. They are **NAMED in the output and
+    counted as UNMEASURED, never as passes**, and no user-agent spoofing or
+    bot-check evasion was used to reach them, which is the standing rule here.
+    This is also **first paint only** — #89's post-interaction arm was not
+    re-run — and 26 sites is a regression check, not #85's 260-site generality
+    claim. It says the day did not break what was measured; it does not restate
+    the measurement.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
