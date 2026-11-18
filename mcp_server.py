@@ -1770,6 +1770,49 @@ def _changed_since_start() -> list:
     return out
 
 
+def _ext_changed_since_worker(age_sec) -> list:
+    """Extension files whose mtime is later than the RUNNING worker's start.
+
+    THE SERVER HALF OF THIS EXISTS AND THE EXTENSION HALF DID NOT, which is the
+    more expensive gap of the two: `_changed_since_start` catches a stale stdio
+    process, and a `/mcp` reconnect fixes that in a second, while a stale
+    extension needs a hand-reload at chrome://extensions and nothing anywhere
+    said so. Measured the day this was written: the observe->act submit REFUSAL
+    -- a guard on an irreversible action -- was committed 13:22 and the running
+    worker had started at 23:33 the previous night, so it was shipped,
+    fixtured, documented CLOSED, and had never executed in a browser. #43's
+    rule is that fixtures encode what you thought of and a live pass is not
+    optional; this is the read that tells you whether you have had one.
+
+    A FACT, not a guess, and the same fact the server half reports: these files
+    have an mtime later than the moment the worker started. Empty in every
+    normal run (#15).
+
+    `age_sec` COMES FROM THE EXTENSION, so it can be missing or unparseable --
+    and "I could not see" must never render as "there is nothing to see" (#77).
+    An unusable age returns the sentinel None, which the caller reports as
+    UNKNOWN rather than as clean.
+
+    AT MODULE LEVEL deliberately, and BEFORE the @mcp.tool() decorator: #64
+    bound that decorator to a helper inserted after it, which removed sw_info
+    from the tool surface while the COUNT stayed at 31 (C24 exists for that).
+    """
+    try:
+        started = time.time() - float(age_sec)
+    except (TypeError, ValueError):
+        return None
+    out = []
+    for f in sorted((Path(_ROOT) / "extension").glob("*.js")) + \
+             sorted((Path(_ROOT) / "extension").glob("*.html")) + \
+             [Path(_ROOT) / "extension" / "manifest.json"]:
+        try:
+            if f.stat().st_mtime > started:
+                out.append(str(f.relative_to(_ROOT)))
+        except OSError:
+            continue
+    return out
+
+
 @mcp.tool()
 async def sw_info(
     tabId: Annotated[int, Field(description="Any tab id (unused; the answer is per-extension).")] = 0,
@@ -1851,6 +1894,42 @@ async def sw_info(
                     "new code until the client reconnects (/mcp in Claude Code). "
                     "The running process answers normally meanwhile, which is "
                     "what makes this worth saying.")
+        except Exception:
+            pass
+        # AND WHETHER THE LOADED EXTENSION IS STILL THE CODE ON DISK. Same fact
+        # as above, far more expensive to miss: a reconnect fixes a stale
+        # server, a stale extension needs a hand-reload at chrome://extensions
+        # and nothing said so. An age we cannot read is reported as UNKNOWN,
+        # never as clean (#77).
+        try:
+            # BOTH SHAPES, because `out` is `res` itself when the bridge
+            # returns a dict and `{"sw": res}` when it returns a string -- the
+            # line that builds it is 20 above. Reading only one is the
+            # string-contract class that kept `delta` dead for its whole life
+            # (#30) and that #19 names as the untested link.
+            _agesrc = out if "ageSec" in out else {}
+            if not _agesrc and isinstance(out.get("sw"), str):
+                try:
+                    _agesrc = json.loads(out["sw"]) or {}
+                except ValueError:
+                    _agesrc = {}
+            elif not _agesrc and isinstance(out.get("sw"), dict):
+                _agesrc = out["sw"]
+            _ext = _ext_changed_since_worker(_agesrc.get("ageSec"))
+            if _ext is None:
+                out["extension_stale_note"] = (
+                    "UNKNOWN whether the loaded extension matches the code on "
+                    "disk: the worker did not report a readable age. Reload it "
+                    "at chrome://extensions if you have edited extension/ "
+                    "since it started.")
+            elif _ext:
+                out["extension_code_changed_since_worker_start"] = _ext[:12]
+                out["extension_stale_note"] = (
+                    "The RUNNING service worker started before these files "
+                    "changed, so nothing you do exercises them. A /mcp "
+                    "reconnect does NOT fix this — reload the extension at "
+                    "chrome://extensions. The old worker answers normally "
+                    "meanwhile, which is what makes this worth saying.")
         except Exception:
             pass
         return json.dumps(out, default=str, ensure_ascii=False)

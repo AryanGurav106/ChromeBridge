@@ -478,6 +478,7 @@ def main() -> int:
     _ms = _ilu.module_from_spec(_spec)
     try:
         _spec.loader.exec_module(_ms)
+        _ms2 = _ms
         _fresh = _ms._changed_since_start()
         check("C22 CONTROL: a server importing the code on disk reports NOTHING "
               "stale — a notice that fired every run would be the noise #15 priced",
@@ -494,6 +495,69 @@ def main() -> int:
             _os.utime(_victim, (_was, _was))
     except Exception as _e:
         check("C22 the staleness probe runs", False, f"{type(_e).__name__}: {_e}")
+
+    # C43: A STALE EXTENSION IS WORSE THAN A STALE SERVER, and had no read at
+    # all. A `/mcp` reconnect fixes C22's case in a second; the loaded service
+    # worker needs a HAND-RELOAD at chrome://extensions, and nothing anywhere
+    # said so. Measured the day this was written: the observe->act submit
+    # REFUSAL -- a guard on an irreversible action -- was committed at 13:22
+    # while the running worker had started 23:33 the previous night, so it was
+    # shipped, fixtured, documented CLOSED, and had never executed in a
+    # browser. #43's rule is that a live pass is not optional; this is the read
+    # that tells you whether you have had one.
+    try:
+        _ext_fresh = _ms2._ext_changed_since_worker(1)       # worker born 1s ago
+        check("C43 CONTROL: a worker younger than every extension edit reports "
+              "nothing — a notice that fired every run would be the noise #15 "
+              "priced",
+              _ext_fresh == [], f"reported {(_ext_fresh or [])[:4]}")
+        _ext_old = _ms2._ext_changed_since_worker(10 ** 9)   # worker born in 1938
+        check("C43b ...and a worker older than the files names them, so "
+              "'shipped' and 'running' stop being the same word",
+              isinstance(_ext_old, list)
+              and "extension/background.js" in _ext_old,
+              f"reported {(_ext_old or [])[:4]}")
+        # THE AGE COMES FROM THE EXTENSION, so it can be absent or junk, and
+        # "I could not see" must never render as "there is nothing to see"
+        # (#77's structural root). None is the sentinel the caller reports as
+        # UNKNOWN; an empty list would read as CLEAN.
+        check("C43c an unreadable worker age reports UNKNOWN, never clean",
+              all(_ms2._ext_changed_since_worker(_v) is None
+                  for _v in (None, "", "soon", {})),
+              "sentinel holds for None/''/'soon'/{}")
+        _srv5 = read("mcp_server.py")
+        check("C43d ...and sw_info actually CALLS it — #19/#30: the helper "
+              "existing is not the same as it being wired",
+              "_ext_changed_since_worker(" in _srv5.split("async def sw_info(")[1],
+              "called inside sw_info")
+        # BOTH SHAPES OF `out`. `sw_info` builds it as `res` itself when the
+        # bridge returns a dict and `{"sw": res}` when it returns a string, so
+        # reading one spelling finds the age on live traffic and nothing on the
+        # other -- the string-contract class that kept `delta` dead for its
+        # whole life (#30). Driven over the real extraction rather than grepped.
+        import textwrap as _tw
+        _sw_body = _srv5.split("async def sw_info(")[1].split("@mcp.tool()")[0]
+        _ls = _sw_body.splitlines()
+        _a = next(i for i, l in enumerate(_ls) if "_agesrc = out if" in l)
+        _b = next(i for i, l in enumerate(_ls) if "_ext_changed_since_worker(_agesrc" in l)
+        _frag = _tw.dedent("\n".join(_ls[_a:_b]))
+        def _age_of(_out):
+            _ns = {"out": _out, "json": __import__("json"), "_agesrc": {}}
+            exec(_frag, _ns)
+            return _ns["_agesrc"].get("ageSec")
+        check("C43e the worker age is found in BOTH shapes sw_info can build — "
+              "a dict result and a JSON string under 'sw'",
+              _age_of({"ageSec": 42}) == 42
+              and _age_of({"sw": '{"ageSec": 42}'}) == 42
+              and _age_of({"sw": {"ageSec": 42}}) == 42,
+              "dict / json-string / nested-dict all resolve")
+        check("C43f CONTROL: junk under 'sw' yields no age, so it reports "
+              "UNKNOWN rather than inventing a clean answer",
+              _age_of({"sw": "not json"}) is None and _age_of({}) is None,
+              "unparseable and absent both give None")
+    except Exception as _e:
+        check("C43 the extension-staleness probe runs", False,
+              f"{type(_e).__name__}: {_e}")
 
     # C23: NO AGENT-FACING json.dumps MAY ESCAPE NON-ASCII. Four times now:
     # #11(d) fixed `find`, #42 fixed `query_elements`, and #63 found `get_url`
