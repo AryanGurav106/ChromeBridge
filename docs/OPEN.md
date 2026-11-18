@@ -130,6 +130,24 @@ left is one element, and it is the intended behaviour.**
 > `fill_form` and could not be made to fire under the mock; moving it is both
 > cheaper and the thing that works. The only caller that opts in is the submit.
 > SB1 fails against the pre-fix code; SB2 and SB3 pass in both arms.
+>
+> **The SECOND irreversible case shipped too**: a click on a control HTML itself
+> declares a submit (`type=submit|image`, or a `<button>` with no type inside a
+> real `<form>` — #24's rule). SB4 fails pre-fix; SB5 and SB6 keep it scoped.
+>
+> **THE THIRD IS DELIBERATELY NOT SHIPPED.** The design also named a WebMCP tool
+> declaring `readOnlyHint:false`. It is a DIFFERENT mechanism: there is no
+> element and no stamp, so the comparison would be between what `page_tools`
+> reported and what the page declares at call time — a tool redeclaring itself,
+> not a control being swapped. **The 0-of-54 measurement says nothing about that
+> population**, and shipping a refusal on the strength of an analogy is the move
+> this project does not make. `MEASURE FIRST`, and the probe that settles it:
+> cache each tool's name, schema and annotations at `page_tools`, re-read them
+> at `call_page_tool`, and count how often any of the three differ across a real
+> model turn on pages that declare tools at all. Today that is **zero corpus
+> pages** (WM1 pins that the line costs nothing on the current web), so the
+> probe needs a fixture that redeclares, and the honest answer may be that the
+> population is too small to bound.
 
 ### 2. 52.6% of ordinal-bearing descriptors cannot be witnessed `MEASURED CANDIDATE`
 > **Re-measured in #83 on 39 sites against #72's 24.** The unwitnessed share is
