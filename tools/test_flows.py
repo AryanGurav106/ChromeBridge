@@ -1932,6 +1932,28 @@ async def record_and_replay():
     check("FS6c CONTROL: an app that answered at once records no extra margin",
           f7.steps[0].settle_ms < 500, f"settle_ms={f7.steps[0].settle_ms}")
 
+    # ---- FS8: THE REFUSAL MUST NAME A CHANNEL THE READER CAN USE --------
+    # A live agent recorded a login flow and then could not replay it: the
+    # refusal said "export the variable and run it again", which is shell advice
+    # to a reader who has no shell, so it concluded the feature was unusable
+    # from inside a session and spent four calls proving it. The mechanism was
+    # never broken -- `mcp_server.py` calls `load_dotenv`, so a `CB_SECRET_…`
+    # line in the gitignored `.env`, beside BRIDGE_TOKEN, reaches `os.environ`
+    # and satisfies `resolve` (verified directly). Only the message was wrong.
+    # Same class as C16, where a message named a tool that does not exist: text
+    # the reader is meant to ACT on has to be actionable from where they are.
+    # Untested until now, so it could drift back in silence.
+    _sm = FS.missing_message(["CB_SECRET_ACME_TOP_INVOICE_PASSWORD"])
+    check("FS8 the missing-secret refusal names `.env`, the channel that works "
+          "without a shell, and says the server reads it at START",
+          ".env" in _sm and "CB_SECRET_ACME_TOP_INVOICE_PASSWORD" in _sm
+          and ("reconnect" in _sm.lower() or "restart" in _sm.lower()),
+          f"{_sm[:120]!r}")
+    check("FS8b ...and it still refuses rather than offering to type a blank, "
+          "which is the property the message exists to protect",
+          "empty string" in _sm or "blank password" in _sm,
+          f"...{_sm[-90:]!r}")
+
     # ---- FT: A FLOW MAY SPAN TABS ---------------------------------------
     #
     # `tabs_create_mcp` is already an ACTION (it is in MUTATES), so the recorder

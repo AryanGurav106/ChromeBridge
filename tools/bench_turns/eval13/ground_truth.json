@@ -1,0 +1,9 @@
+{
+  "task": "highest-amount invoice: reference code + customer name",
+  "derived_by": "urllib over plain HTTP, before the prompt existed",
+  "invoice": "INV-1008",
+  "customer": "Wayne Ent",
+  "amount": "31,990",
+  "reference": "REF-3381",
+  "note": "12 invoices, 5 rows a page; the answer is not on page one as loaded"
+}
