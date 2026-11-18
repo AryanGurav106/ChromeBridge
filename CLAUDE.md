@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1580 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1582 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1580 checks, ~153s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1582 checks, ~153s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -9757,6 +9757,19 @@ granted in the side panel is refused with the same message the agent gets.
     server CI cannot serve is SKIPPED with its reason, not failed) had landed
     and the only thing still red was this. **Three days of red is what it costs
     to report "CI is fixed" from the change you made rather than from the run.**
+
+    Suites: 1582 checks. New — FR29/FR29b (a raise carries what the step
+    before it returned, with the nothing-before-it control). That exists for a
+    CI-only flow failure this did NOT reproduce locally and is therefore not
+    guessed at: `step 1 (javascript_tool) raised: ChromeBridge cannot act on
+    about:blank`, after step 0 — a navigate — had PASSED. Every step is forced
+    into `self.cur_tab`, so the wrong-tab theory was excluded outright; what
+    remained was "navigate reported a commit that never happened" (#40's
+    class) against "the page went away afterwards", and nothing printed could
+    separate them, because the previous step's result was discarded. A
+    faithful full-arm local run is 12/12 including that flow, so per #50 the
+    trace is the answer rather than a fix: the next occurrence arrives with
+    what navigate claimed, instead of a memory.
 
 ## Debugging starting points
 

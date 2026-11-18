@@ -2766,6 +2766,49 @@ async def record_and_replay():
           eX is None and rX["status"] == FAILED and rX["at"] == 0
           and "RAN" in rX["reason"],
           f'{eX or rX["status"]}: {(rX or {}).get("reason", "")[:120]!r}')
+    # ---- FR29: WHAT THE STEP BEFORE SAID TRAVELS WITH THE RAISE. A CI-only
+    # failure read `step 1 (javascript_tool) raised: ChromeBridge cannot act on
+    # about:blank` after step 0, a navigate, had PASSED. Both steps run in the
+    # same tab (`inp["tabId"] = self.cur_tab`, unconditional), so the wrong-tab
+    # theory was already excluded, and what remained -- "navigate reported a
+    # commit that never happened" (#40's class) against "the page went away
+    # afterwards" -- could not be told apart, because the previous step's
+    # result was discarded. Not reproducible locally over a faithful 12/12
+    # full-arm run, so per #50 it is not guessed at; it is made to leave a
+    # trace. Without this check the next refactor drops the trace in silence,
+    # which is the half-contract failure this repo has found six times.
+    _trace_calls = []
+    async def _trace_call(name, inp):
+        _trace_calls.append(name)
+        if len(_trace_calls) == 1:
+            return "Navigated to http://localhost:8787/, title: Acme Ops"
+        raise RuntimeError("ChromeBridge cannot act on about:blank")
+    async def _trace_entries(_t):
+        return []
+    _tf = Flow(name="trace", origin="http://localhost:8787",
+               steps=[Step(name="navigate", input={"url": "http://localhost:8787/"}),
+                      Step(name="javascript_tool",
+                           input={"action": "javascript_exec", "text": "1"})])
+    _tr = await start(_tf, 1, _trace_call, _trace_entries)
+    check("FR29 a step that RAISES names what the step before it returned, so "
+          "'the tool lied' and 'the page went away' stop reading the same",
+          _tr["status"] == FAILED
+          and "step 0 (navigate) had returned" in _tr["reason"]
+          and "Navigated to" in _tr["reason"],
+          f'{_tr["status"]}: {_tr["reason"][:150]!r}')
+
+    _t0_calls = []
+    async def _t0_call(name, inp):
+        _t0_calls.append(name)
+        raise RuntimeError("boom on the very first step")
+    _tf0 = Flow(name="trace0", origin="http://localhost:8787",
+                steps=[Step(name="navigate", input={"url": "http://localhost:8787/"})])
+    _tr0 = await start(_tf0, 1, _t0_call, _trace_entries)
+    check("FR29b CONTROL: a raise on step 0 claims nothing about a step before "
+          "it, because there is none",
+          _tr0["status"] == FAILED and "had returned" not in _tr0["reason"],
+          f'{_tr0["status"]}: {_tr0["reason"][:120]!r}')
+
     _preflow = Flow(name="p", require={"search": {"pattern": "Welcome", "min": 1}},
                     steps=[Step(name="computer", input={"action": "left_click"},
                                 targets={"ref": {"level": 1,

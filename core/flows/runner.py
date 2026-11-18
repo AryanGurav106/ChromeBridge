@@ -135,6 +135,8 @@ class Run:
         # tab that has lost its trusted-input channel IS a new tab, and a flow
         # could not perform it.
         self.cur_tab = tab_id
+        self._last_result = None   # see the raise handler: the fact that is always missing
+        self._last_name = ""
         self.call = call
         self.viewport_fn = viewport_fn
         self._env = None
@@ -410,8 +412,27 @@ class Run:
             try:
                 result = await self.call(step.name, inp)
             except Exception as exc:
+                # WHAT THE STEP BEFORE SAID IS THE FACT THAT IS ALWAYS MISSING.
+                # A CI-only failure read `step 1 (javascript_tool) raised:
+                # ChromeBridge cannot act on about:blank` after step 0, a
+                # navigate, had PASSED -- and `inp["tabId"]` is set from
+                # `self.cur_tab` on every step, so both ran in the same tab and
+                # the obvious wrong-tab theory was already excluded. That leaves
+                # "navigate reported a commit that did not happen" (#40's class)
+                # against "the page went away afterwards", and nothing in the
+                # output could tell them apart, because the previous step's
+                # result was never kept. Unreproducible locally over 12/12 on a
+                # faithful full-arm run, so per #50 it is not guessed at -- it
+                # is made to leave a trace. Costs one string on the failure path
+                # and nothing on a passing run.
+                _prev = ""
+                if self.i and self._last_result is not None:
+                    _prev = (f"  [step {self.i - 1} ({self._last_name}) had"
+                             f" returned: {str(self._last_result)[:220]}]")
                 return self._stop(FAILED,
-                                  f"step {self.i} ({step.name}) raised: {exc}")
+                                  f"step {self.i} ({step.name}) raised: {exc}"
+                                  + _prev)
+            self._last_result, self._last_name = result, step.name
 
             # A TOOL THAT SAID IT DID NOT ACT STOPS THE FLOW HERE, rather than
             # being left for a postcondition that may not exist. None of these

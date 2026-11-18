@@ -1358,6 +1358,50 @@ coordinate is not.
 > pre-fix (a recording whose active tab moves under it) and the control that a
 > flow whose tab never moves acquires no review line.
 
+### 18. A navigate PASSED and the tab was `about:blank` one step later `OPEN`
+> **CI-ONLY, ONE SIGHTING, NOT REPRODUCIBLE LOCALLY.** The `--chaos badge` arm
+> of the flow replay failed on `live-atoms-resort` with:
+>
+> ```
+> FAIL  live-atoms-resort            1/3 step(s) in 0.03s
+>       step 1 (javascript_tool) raised: ChromeBridge cannot act on about:blank
+> ```
+>
+> Step 0 is `navigate` to `http://localhost:8787/` and it **PASSED**. The whole
+> flow took 0.03s, which is far too fast for a real commit.
+>
+> **What is already excluded, by reading rather than guessing.** The runner sets
+> `inp["tabId"] = self.cur_tab` on EVERY step unconditionally, so steps 0 and 1
+> ran in the same tab and the obvious wrong-tab theory is out. And
+> `NAVIGATION DID NOT COMMIT` is one of the refusal markers the runner stops on
+> (#62/FD19), so had navigate reported a non-commit the flow would have failed
+> AT STEP 0 naming it. It did not: navigate claimed success.
+>
+> **So what remains is two possibilities nothing printed could separate:**
+> navigate reported a commit that never happened (#40's class, under CI timing
+> the #40 fix was not measured against), or the document went away between the
+> two steps.
+>
+> **IT IS A FLAKE, AND THAT IS MEASURED RATHER THAN ASSUMED: re-running the
+> SAME commit with NO code change came back green on all four jobs** (attempt
+> 2 of run 44340479809). A re-run passing is the only evidence that
+> distinguishes a flake from a deterministic CI-only defect, and it is worth
+> more than any amount of local passing.
+>
+> **Not reproducible:** `--playground --local-only --chaos badge` is **12/12
+> locally including this flow**, and the flow alone under the same flag is 3/3.
+> The chaos arm itself is working — `acme-nav-badge` passes in the same CI run
+> and reports `name 'Projects 4' is gone; matched href='/projects'`, which is
+> #61's fallback doing exactly its job — so this is not the badge chaos.
+>
+> **Per #50 it is not guessed at; it is made to leave a trace.** A raise now
+> carries what the step before it returned, so the next occurrence reads
+> `... raised: ... [step 0 (navigate) had returned: Navigated to ...]` and says
+> on its face which of the two it is. Pinned by FR29, with FR29b the control
+> that a raise on step 0 claims nothing about a step before it. **Do not
+> "fix" this from the two theories above — wait for a sighting that carries
+> the navigate's own words.**
+
 ### 9. Three unreproducible 30s+ stalls `OPEN`
 > **A FOURTH, CAUGHT LIVE 2026-11-18 WITH THE EVIDENCE #50 BUILT FOR IT.**
 > Previous sightings were memories. This one arrived with its op and its
