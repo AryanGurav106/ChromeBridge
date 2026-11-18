@@ -1,5 +1,25 @@
 # Eval 10 — pre-registration
 
+> **STATUS 2026-11-19 — UNRUN, and `eval13` has since answered its question on
+> a different sample.** This design needs four PUBLIC origins
+> (`datatables.net`, `books.toscrape.com`, `www.scrapethissite.com`, `oeis.org`)
+> that ChromeBridge's per-origin consent gate refuses until the owner grants
+> them in the side panel. That was re-checked and still refused.
+>
+> **It was wrong to call the repeatability QUESTION blocked, and it was called
+> that for hours.** Only the public-site sample was blocked: both toolsets reach
+> `localhost`, so `tools/bench_turns/eval13` ran this design against a local app
+> and its pre-registered prediction FAILED — the replay cost four calls and
+> returned nothing, because the agent could not discover how to supply the
+> recorded flow's secret. With it supplied the same flow replays in **one call,
+> 0.56s, zero model calls** against a nine-call first pass.
+>
+> So what is still missing here is the SAMPLE, not the answer: eval13 is n=1 on
+> this project's own fixture and supports no generality claim. Run this one when
+> the grants land. Its Claude-in-Chrome arm will also need that extension
+> reloaded — in eval13 it never answered a single command.
+
+
 Written and committed BEFORE any task exists and before any run.
 
 ## Why this one is not another turn count
