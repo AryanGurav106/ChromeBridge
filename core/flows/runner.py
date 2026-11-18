@@ -500,7 +500,8 @@ class Run:
                              "asserted": sorted(step.expect) or None})
             self.i += 1
 
-        return self._stop(PASSED, self._moved_note())
+        return self._stop(PASSED, " ".join(
+            x for x in (self._moved_note(), self._positional_note()) if x))
 
     def _missing_vars(self, *objs) -> list:
         """Every {{name}} in these that this run has no value for."""
@@ -516,6 +517,53 @@ class Run:
                 f"no value for — pass it to run_flow, or re-record. Nothing was "
                 f"substituted, so the placeholder would have been typed, searched "
                 f"for or looked up as written.")
+
+    def _positional_note(self) -> str:
+        """Steps that PASSED while pinned by position alone, said at replay.
+
+        THE RECORDER ALREADY KNOWS THIS AND THE RUNNER NEVER SAID IT. #72/#83
+        leave ~53% of ordinal-bearing descriptors with nothing to witness them,
+        and the recorder writes a `positional:` review line naming the three
+        mechanisms that break one without a user — a re-sort, CHURN, and a
+        VIRTUALISED list, where the crowd is the rendered WINDOW so the
+        composition check (`len(hits) != of`) can never fire at all. That line
+        is in the file, where a reviewer reading a diff sees it. It was NOT in
+        the run, which is the one moment a reader is asking "did this do what I
+        think it did".
+
+        A REFUSAL WAS MEASURED AND REJECTED FIRST, which is why this is a note.
+        `tools/audit_scroll_window.py` over 96 frozen sites: 854 tied crowds,
+        135 unwitnessed, 8 inside a declared `overflow:auto|scroll` ancestor
+        with overflowing content — 5.9% of the unwitnessed population, i.e.
+        under 1% of all descriptors, for three halves of plumbing across the
+        extension, the descriptor and the runner. (The first reading, on 19
+        sites, said 16.7% and would have justified building it. Running wider
+        before acting is the only thing that caught that.)
+
+        So this costs NOTHING — no collector field, no round trip, no
+        threshold, no new vocabulary. It reads a decided fact off the step the
+        same way the `unevidenced:` guard above does, and it converts "the
+        replay acted on position and said nothing" into "the replay acted on
+        position and said so".
+
+        Silent when no step carries one, which is what keeps it from being the
+        always-on warning #15 priced.
+        """
+        hits = []
+        for n, st in enumerate(self.flow.steps):
+            for r in (getattr(st, "review", None) or []):
+                if str(r).startswith("positional:"):
+                    hits.append(f"step {n} ({st.name})")
+                    break
+        if not hits:
+            return ""
+        return (f'{len(hits)} step(s) were pinned by POSITION alone and passed: '
+                f'{", ".join(hits)}. Nothing distinguishes their target from its '
+                f'siblings, so a re-sort, a churning list, or a virtualised '
+                f'window moves what they act on WITHOUT changing the count — '
+                f'which is the one thing this runner checks. A pass here is not '
+                f'evidence the right element was acted on. The `positional:` '
+                f'line on those steps in the flow file says which.')
 
     def _moved_note(self) -> str:
         if not self.moved:

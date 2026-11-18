@@ -223,7 +223,18 @@ recorder warns at record time instead, and the step carries a `review` line.
 **Flows recorded before #72 carry no witness** and keep the old behaviour until
 re-recorded.
 
-**THE VIRTUALISED SUB-CASE: measured and DON'T BUILD.** #90's one remaining
+**THE VIRTUALISED SUB-CASE: the REFUSAL is DON'T BUILD, and the silence is
+closed anyway.** The refusal was the wrong thing to be solving for. The
+recorder already writes a `positional:` line naming the three mechanisms, and
+since this entry the RUNNER says it too — a step pinned by position that
+PASSES now reports that it was, because a pass there is not evidence the right
+element was acted on. That costs no collector field, no round trip and no
+threshold: it reads a decided fact off the step, the way the `unevidenced:`
+guard already does, and it is silent when no step carries one (FR28/FR28b).
+So "silently wrong" is now "stated at replay"; what remains unbuilt is only
+the automatic REFUSAL, priced below.
+
+**THE REFUSAL ITSELF: measured and DON'T BUILD.** #90's one remaining
 silently-wrong case is a crowd that IS a rendered window — its size does not
 change when it scrolls, so `len(hits) != of` can never fire. The recorder
 already warns (`positional:` names the scrolling window and says the

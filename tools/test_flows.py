@@ -3413,6 +3413,47 @@ async def record_and_replay():
           "— a redirect must not be reported as the tab being on the wrong page",
           "different PATH" not in _rx4["reason"], _rx4["reason"][:160])
 
+    # ---- FR28: a step pinned by POSITION says so when it PASSES -----------
+    # The recorder writes a `positional:` review line for a target nothing can
+    # witness -- ~53% of ordinal-bearing descriptors (#72/#83) -- naming the
+    # three mechanisms that break one without a user: a re-sort, CHURN, and a
+    # VIRTUALISED list, where the crowd is the rendered WINDOW so the
+    # composition check `len(hits) != of` can never fire. That line was in the
+    # FILE and never in the RUN, which is the one moment a reader is asking
+    # whether the replay did what they think it did.
+    #
+    # A REFUSAL WAS MEASURED FIRST AND REJECTED: 96 frozen sites, 135
+    # unwitnessed crowds, 8 inside a real scrolling window -- 5.9%, i.e. under
+    # 1% of all descriptors, for three halves of plumbing. (At 19 sites it read
+    # 16.7% and would have justified building it; running wider is what caught
+    # that.) So this is a NOTE, and it costs nothing: it reads a decided fact
+    # off the step, the same way the `unevidenced:` guard does.
+    _posflow = Flow(name="pos", steps=[Step(
+        name="computer", input={"action": "left_click"},
+        targets={"ref": {"level": 6, "of": 4, "nth": 1,
+                         "desc": {"tag": "button", "role": "", "type": "",
+                                  "name": "Delete"}}},
+        review=["positional: ref is one of 4 controls that are identical in "
+                "every declared field AND in their surroundings"])])
+    _pb = FakeBridge([E(1, "button", name="Delete"), E(2, "button", name="Delete"),
+                      E(3, "button", name="Delete"), E(4, "button", name="Delete")])
+    _pr = await start(_posflow, 1, _pb.call, _pb.entries_fn)
+    check("FR28 a step pinned by POSITION alone SAYS SO when it passes — a pass "
+          "there is not evidence the right element was acted on",
+          _pr["status"] == PASSED and "POSITION alone" in (_pr.get("reason") or ""),
+          f'{_pr["status"]}: {(_pr.get("reason") or "")[:120]}')
+    # THE CONTROL. Without it "say it on every run" would pass FR28 while making
+    # the line the always-on warning #15 priced.
+    _npb = FakeBridge([E(1, "button", name="Delete")])
+    _npr = await start(Flow(name="nopos", steps=[Step(
+        name="computer", input={"action": "left_click"},
+        targets={"ref": {"level": 1, "desc": {"tag": "button", "role": "",
+                                              "type": "", "name": "Delete"}}})]),
+        1, _npb.call, _npb.entries_fn)
+    check("FR28b CONTROL: a step with nothing positional about it says nothing",
+          _npr["status"] == PASSED and "POSITION alone" not in (_npr.get("reason") or ""),
+          f'{_npr["status"]}: {(_npr.get("reason") or "")[:80]!r}')
+
     # ---- FR27: an overlay that appears only on the REPLAY ----------------
     # A consent sheet or an onboarding tour fires on a fresh profile and on no
     # other run, and it marks the rest of the document aria-hidden, so every
