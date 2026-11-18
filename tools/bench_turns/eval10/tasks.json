@@ -1,0 +1,57 @@
+[
+  {
+    "id": "S1",
+    "site": "www.timeanddate.com",
+    "start": "https://www.timeanddate.com/",
+    "prompt": "Using the site's date-to-date duration calculator, work out how many days there are from 14 March 2015 to 2 November 2019, with the end date included in the count. Set the start date, the end date and the 'include end date' option yourself in the form, then submit it. Report the number of days.",
+    "steps": 5,
+    "answer": "1695",
+    "onpage": "1695 days",
+    "repeatable": true,
+    "why": "Needs the calculator reached from the home page, six date selectors plus a checkbox set correctly, and the include-end-date option changes the result by one."
+  },
+  {
+    "id": "S2",
+    "site": "www.timeanddate.com",
+    "start": "https://www.timeanddate.com/",
+    "prompt": "Use the site's date calculator (the add/subtract one, not the duration one) to add 1000 days to 1 January 2020. Enter the start date and the number of days into the form and submit it. Tell me which day of the week the resulting date falls on.",
+    "steps": 5,
+    "answer": "Tuesday",
+    "onpage": "Tuesday, September 27, 2022 (wording and date order vary by locale; the result date is 27 Sep 2022)",
+    "repeatable": true,
+    "why": "The agent must tell the add/subtract calculator from the near-identical duration calculator, fill several fields, and read the weekday from a result sentence."
+  },
+  {
+    "id": "S3",
+    "site": "www.timeanddate.com",
+    "start": "https://www.timeanddate.com/sun/",
+    "prompt": "Find the sunrise time in Reykjavik, Iceland on 21 June 2019. Use the site's sun calculator section: search for the city, then choose June 2019 in the month and year selectors and read the row for the 21st. Give me the sunrise time as shown.",
+    "steps": 5,
+    "answer": "02:55",
+    "onpage": "02:55",
+    "repeatable": true,
+    "why": "Requires a city search, picking a past month and year from dropdowns, and reading one cell of a dense daily table among many numeric columns (sunrise vs sunset vs day length)."
+  },
+  {
+    "id": "S4",
+    "site": "oeis.org",
+    "start": "https://oeis.org/",
+    "prompt": "Search the On-Line Encyclopedia of Integer Sequences for the sequence that begins 1, 1, 2, 3, 5, 7, 11, 15, 22, 30. Open the matching entry titled as the partition numbers and, counting the first listed term as the term for n = 0, find a(30). Report that number.",
+    "steps": 4,
+    "answer": "5604",
+    "onpage": "5604",
+    "repeatable": true,
+    "why": "Typing a comma-separated sequence into the search box, choosing the right result among near-duplicates (A332280 looks similar), then indexing into a long data line by position."
+  },
+  {
+    "id": "S5",
+    "site": "oeis.org",
+    "start": "https://oeis.org/",
+    "prompt": "Search the On-Line Encyclopedia of Integer Sequences for the sequence that begins 1, 2, 5, 14, 42, 132, 429. Open the result named 'Catalan numbers' and, with the first listed term counted as n = 0, find a(15). Report that number.",
+    "steps": 4,
+    "answer": "9694845",
+    "onpage": "9694845",
+    "repeatable": true,
+    "why": "The correct entry is not the only plausible result (other sequences share the prefix), and a(15) sits on the wrapped second line of the data, so the agent must count terms carefully."
+  }
+]

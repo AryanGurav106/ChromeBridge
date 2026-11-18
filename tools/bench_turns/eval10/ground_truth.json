@@ -1,0 +1,32 @@
+[
+ {
+  "id": "S1",
+  "answer": "1695",
+  "confirmed": false,
+  "why": "no date-calculator link reachable from home: Locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiti"
+ },
+ {
+  "id": "S2",
+  "answer": "Tuesday",
+  "confirmed": false,
+  "why": "no date-calculator link reachable from home: Locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiti"
+ },
+ {
+  "id": "S3",
+  "answer": "02:55",
+  "confirmed": false,
+  "why": "city search unreachable: Locator.fill: Timeout 30000ms exceeded.\nCall log:\n  - waitin"
+ },
+ {
+  "id": "S4",
+  "answer": "5604",
+  "confirmed": true,
+  "why": "search results"
+ },
+ {
+  "id": "S5",
+  "answer": "9694845",
+  "confirmed": true,
+  "why": "search results"
+ }
+]
