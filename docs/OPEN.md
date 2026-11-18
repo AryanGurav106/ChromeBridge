@@ -977,25 +977,42 @@ cannot say which record each belongs to, and that containment is the only thing
 telling them apart. A trade a parameter does not name is one the caller cannot
 weigh. C20e pins it and fails pre-fix with the old sentence quoted.
 
-### 5. SPA readiness, the remaining half `MEASURED — DON'T BUILD (a)`
-The mutation-recency signal (#70) separates "still building" from "ready but
-chatty" — measured 9–18ms vs 907–3514ms with no overlap. Still open:
-- ~~**scoped attribution.**~~ **BUILT (#76).** A scoped read now scopes the
-  readiness answer to the same subtree: measured at `since=4013ms / 0 structural`
-  for the table a caller scoped to, at the instant the document read
-  `since=48ms / 110 structural`. It also covers a case the kind-split provably
-  does NOT — a ticker updating via `textContent` arrives as `childList`, not as
-  an attribute write, so `@style` damping never saw it (measured: 25 structural,
-  0 text, for a clock). **Residual: landmark attribution for an UNSCOPED read**,
-  which is a different problem (which landmark owns a record, and how to print
-  several), tracked in `READINESS.md`'s own list.
-- **a per-ref primitive.** Playwright's actionability has one — *same bounding
-  box for two consecutive animation frames* — and it is the cheapest readiness
-  check anywhere. We have nothing equivalent.
-- **nobody has measured whether telling the model helps.** We and browser-use
-  are the only two projects that expose a settling signal to the model, and
-  there is no published evidence it improves anything. A cheap A/B with
-  `bench_turns`.
+### 5. SPA readiness — all three false-quiets now answered `CLOSED`
+> The adversarial audit left three unscoped false-quiets. All three now have an
+> answer, two of them a measurement rather than a fix.
+>
+> **(a) Per-landmark attribution — DON'T BUILD** (#82). Fixes 3 of 6
+> steady-state false-busies, leaves every false quiet, costs 3.0–3.6ms per read
+> against 0.002–0.006ms, and forces an ownership rule the design exists to
+> avoid.
+>
+> **(b) Cross-origin frames — SHIPPED.** A quiet verdict now names the frames it
+> could not see into. Priced at **6.9%** of pages first, so 93% pay nothing.
+>
+> **(c) A late paint after a silent gap — MEASURED, DON'T BUILD.** The idea was
+> sound and the mechanism works: wrap `setTimeout`/`setInterval` at
+> document_start the way `listener_tag.js` already wraps `addEventListener` and
+> `attachShadow`, and "the page has work booked" becomes a FACT it declared.
+> The control confirms it separates the cases — the late-paint fixture reports 1
+> pending timer, the settled fixture 0.
+> **It does not survive the real web.** `tools/audit_pending_timers.py`, 29
+> frozen sites, counted 4s after load:
+>
+> | window | settled pages that would carry the line |
+> |---|---|
+> | timers due within 2000ms | **55.2%** |
+> | timers due within 300ms | **31.0%** |
+>
+> More than half of settled pages have work booked, because polling is normal.
+> That is the always-on warning #15 priced and #43 deleted `readyState` for.
+> **And tightening the window does not rescue it — it removes the point.** The
+> shape this exists to catch paints 2,500ms out, so a 300ms window misses it
+> while still firing on a third of pages: strictly worse on both axes at once.
+>
+> What remains is a genuine limit, stated rather than papered over: a page that
+> is silent, has no network in flight, and will paint from a timer is
+> indistinguishable from one that has finished. The probe is kept so the next
+> person does not re-derive it.
 
 ### 6. A CSS transition is not waited for — PREMISE INVERTED, MEASURED
 
