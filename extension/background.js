@@ -3429,8 +3429,14 @@ function _fieldKindPage(selector) {
   // which the old role-only check classified as TEXT — typing into a button
   // silently no-ops). Input-comboboxes (autocomplete) also route to
   // fillDropdown: its click → type-in-search → pick flow commits a selection.
+  // dup:combokind -- see fill_form's fieldKinds probe. Both mirror the
+  // COLLECTOR's hasPopup rule; this copy and that one had drifted from it,
+  // which is how a declared popup trigger was classified as a text field.
   const hp = (el.getAttribute('aria-haspopup') || '').toLowerCase();
-  const popupTrigger = ['listbox', 'menu', 'true'].includes(hp) && tag !== 'input' && tag !== 'textarea';
+  const typeable = tag === 'input' || tag === 'textarea';
+  const popupTrigger = !typeable
+    && (['listbox', 'menu', 'true'].includes(hp)
+        || (el.hasAttribute('aria-expanded') && el.hasAttribute('aria-controls')));
   return {
     tag, role,
     is_native_select: tag === 'select',
@@ -16256,11 +16262,39 @@ async function handleOp({ id, op, params }) {
             // KEEP IN SYNC with _fieldKindPage's classifier. (input-comboboxes
             // stay 'combobox': fillDropdown's click → type-in-search → pick
             // flow is what commits a selection on autocomplete widgets.)
+            // dup:combokind -- the COLLECTOR's own hasPopup rule, which already
+            // treats aria-expanded + aria-controls on a non-typeable element as a
+            // popup trigger and prints "(opens menu/popup)" for it. This copy
+            // stopped at aria-haspopup, so an rc-select/antd-shaped
+            // <button data-combo-trigger aria-expanded aria-controls> (no role, no
+            // haspopup) fell through to TEXT and fill_form TYPED INTO A BUTTON and
+            // reported ok:true. Measured live: form_input REFUSED the identical
+            // element while fill_form -- the tool the docs call "strongly
+            // preferred" -- reported success and the field never landed.
             const hp = (el.getAttribute('aria-haspopup') || '').toLowerCase();
-            const popupTrigger = ['listbox', 'menu', 'true'].includes(hp) && tag !== 'input' && tag !== 'textarea';
+            const typeable = tag === 'input' || tag === 'textarea';
+            const popupTrigger = !typeable
+              && (['listbox', 'menu', 'true'].includes(hp)
+                  || (el.hasAttribute('aria-expanded') && el.hasAttribute('aria-controls')));
             if (role === 'combobox' || role === 'listbox' || role === 'menubutton' || popupTrigger) return { kind: 'combobox' };
             if (role === 'checkbox' || role === 'switch' ||
                 (tag === 'input' && (el.type === 'checkbox' || el.type === 'radio'))) return { kind: 'checkbox' };
+            // THE NET, for everything the classifier cannot name. The batched
+            // TEXT pass is the one route that does not go through fillField, so
+            // it is the one route with no writability check -- which is why a
+            // misclassification here is SILENT rather than refused. Anything that
+            // declares neither text entry nor contenteditable is handed back as
+            // 'unwritable'; that is not 'text', so dispatch routes it to
+            // fillField, whose existing guard writes the refusal. One spelling of
+            // the rule, not a second copy of the message (#21).
+            const NONTEXT = ['button', 'submit', 'reset', 'checkbox', 'radio', 'file',
+                             'image', 'hidden', 'range', 'color'];
+            let writable = el.isContentEditable === true;
+            if (!writable) {
+              if (tag === 'textarea' || tag === 'select') writable = true;
+              else if (tag === 'input') writable = NONTEXT.indexOf(String(el.type || 'text').toLowerCase()) < 0;
+            }
+            if (!writable) return { kind: 'unwritable' };
             return { kind: 'text' };
           });
         }, [fields.map(f => f.selector)]) || fields.map(() => ({ kind: 'text' }));

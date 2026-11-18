@@ -817,6 +817,42 @@ def main() -> int:
           "planted name reported as unrouted" if _c47_fires
           else "PLANTED NAME WENT UNREPORTED — the set difference is not deciding this")
 
+    # ---- C48: THE WRITE PATH'S COMBOBOX RULE IS THE COLLECTOR'S. Three copies
+    # of one question -- "is this a click-then-pick dropdown?" -- live in
+    # background.js, because each is injected with chrome.scripting and so
+    # cannot share a closure (C11). Two of them had drifted from the third and
+    # it was found LIVE, not here: the COLLECTOR's `hasPopup` already returns
+    # true for aria-expanded + aria-controls and the listing prints
+    # "(opens menu/popup)", while `_fieldKindPage` and fill_form's `fieldKinds`
+    # probe stopped at aria-haspopup. So an rc-select/antd trigger with no role
+    # and no haspopup was classified TEXT, fill_form TYPED INTO A BUTTON and
+    # reported ok:true with the value read back, while form_input REFUSED the
+    # identical element. The repo's answer to a FORCED duplicate is byte-equal
+    # copies plus a check (OC7, MC1, P2's i18n: tags); this is that check.
+    _bgsrc = read("extension/background.js")
+    _dupsites = [m.start() for m in re.finditer(r"dup:combokind", _bgsrc)]
+    _rules = []
+    for _i in _dupsites:
+        _seg = _bgsrc[_i:_i + 1400]
+        _m = re.search(r"popupTrigger\s*=\s*(.*?);", _seg, re.S)
+        if _m:
+            _rules.append(re.sub(r"\s+", " ", _m.group(1)).strip())
+    # The collector's own rule, which is the one the other two must mirror.
+    _hp = re.search(r"hasPopup:\s*\(\(\)\s*=>\s*\{(.*?)\}\)\(\)", _bgsrc, re.S)
+    _hp_body = re.sub(r"\s+", " ", _hp.group(1)) if _hp else ""
+    _collector_has = bool(_hp) and "aria-expanded" in _hp_body and "aria-controls" in _hp_body
+
+    check("C48 every dup:combokind copy states the SAME popup-trigger rule",
+          len(_rules) >= 2 and len(set(_rules)) == 1,
+          f"{len(_dupsites)} tagged site(s), {len(set(_rules))} distinct rule(s)"
+          + ("" if len(set(_rules)) == 1 else f": {sorted(set(_rules))[:2]}"))
+
+    check("C48b ...and it is the COLLECTOR's rule, not a third one — "
+          "aria-expanded + aria-controls, which is what prints (opens menu/popup)",
+          _collector_has and bool(_rules)
+          and all("aria-expanded" in r and "aria-controls" in r for r in _rules),
+          f"collector={_collector_has} write-path={[('aria-expanded' in r and 'aria-controls' in r) for r in _rules]}")
+
     check("C47c docs/README.md's catch-up row names the newest CLAUDE.md entry",
           _names_head,
           f"row does not mention #{_head}" if _catchup and not _names_head

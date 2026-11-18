@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1582 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1587 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1582 checks, ~153s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1587 checks, ~153s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -9770,6 +9770,96 @@ granted in the side panel is refused with the same message the agent gets.
     faithful full-arm local run is 12/12 including that flow, so per #50 the
     trace is the answer rather than a fix: the next occurrence arrives with
     what navigate claimed, instead of a memory.
+
+97. **`fill_form` TYPED INTO A BUTTON, REPORTED `ok:true`, AND THE FIELD NEVER
+    LANDED — found by driving a head-to-head, not by a fixture.** Both arms of a
+    comparison can reach `http://localhost:8787` (ChromeBridge is granted there;
+    Claude-in-Chrome navigated there), so with the four public origins still
+    ungranted the comparison was run against the local app. Driving the "create a
+    project" task, the modal's Region control took the value and the server
+    received the default.
+
+    | same element, same value | result |
+    |---|---|
+    | `form_input` | `NOT DONE: [mmid='79'] cannot hold typed text: it is a <button>, which declares neither text entry nor contenteditable — nothing was written.` |
+    | **`fill_form`** | **`ok:true, actual:"eu-west-1", msg:"typed"`** |
+    | the hidden input carrying the value, after both | **`value=""`** |
+
+    `fill_form` is the tool its own docstring calls "strongly preferred" for
+    multi-field forms, so the whole field was dropped under a success sentence —
+    and the recorder would have compiled that into a flow as a PASSING step.
+    Reproduced four ways before anything was changed: by ref and by selector,
+    with a FAKE option ("EU", which does not exist) and with a REAL one
+    ("eu-west-1"). All four reported success; the hidden input never moved.
+
+    **THE RULE WAS ALREADY RIGHT IN THE ONE PLACE THAT READS, AND WRONG IN BOTH
+    PLACES THAT WRITE.** The collector's `hasPopup` is `aria-haspopup`, **or
+    `aria-expanded` AND `aria-controls`** — which is why the listing printed
+    `button name="Region" (opens menu/popup) (collapsed)` for this very element.
+    `_fieldKindPage` and fill_form's `fieldKinds` probe both stopped at
+    `aria-haspopup`, and the trigger is the rc-select/antd shape with **no role
+    and no haspopup**: `<button data-combo-trigger aria-expanded="false"
+    aria-controls="{decoy}">`. So it fell through to `kind: 'text'`. Both
+    classifiers carry a comment reading **KEEP IN SYNC**, and both had drifted
+    from the third copy — the one that was correct. #18's asymmetry again: the
+    collector knows, the write path does not ask.
+
+    **WHY IT WAS SILENT RATHER THAN REFUSED, which is the part worth carrying.**
+    Every kind except `text` routes to `fillField`, and `fillField` is where
+    #40's W21 writability guard lives. The batched TEXT pass is the ONE route
+    that does not go through it — so it is the one route with no writability
+    check, and a misclassification there cannot be caught downstream. The fix
+    returns an `'unwritable'` kind for anything declaring neither text entry nor
+    contenteditable; that is not `'text'`, so dispatch routes it to `fillField`
+    and the refusal comes from the single existing message rather than a second
+    copy of it (#21).
+
+    **The fixture that should have caught this modelled the easier variant.**
+    W17 is the rc-select decoy case and ITS trigger declares `role=combobox`, so
+    it never exercised the role-less shape — "a fixture encodes what you thought
+    of", and this one had been green over the defect since #29. W17f adds the
+    live shape, with a text input and a plain button as controls so the rule
+    stays "the declaration, not the tag". **Ablated against the pre-fix
+    classifier: `is_combobox: False`, so W17f fails without the fix.** Full suite
+    **21/21 ALL GREEN at 1587**, so widening the classifier regressed nothing.
+
+    **C48/C48b make the forced duplicate enforceable** — the repo's answer to a
+    duplicate that cannot share a closure (OC7, MC1, P2's `i18n:` tags), applied
+    to a third concept. Both sites are tagged `dup:combokind`, both must state
+    the same rule, and that rule must be the COLLECTOR's. Shown firing:
+    reverting one copy reports `2 distinct rule(s)` and prints both.
+
+    **WHAT THIS FIX DOES AND DOES NOT DO — measured, not assumed.** Driving
+    `_pickOptionPage` against the REAL running widget (Playwright at
+    `127.0.0.1:8787`, logged in, modal opened the way a user opens it) the pick
+    still does not commit: `ok:false`, hidden input `"" -> ""`, and the message
+    is *no option matched "eu-west-1". Visible options are: "Select a region",
+    "⌄"* with `dbg {via: harvest-clickable, found: 2, scope: null}`. Those two
+    "options" are the TRIGGER'S OWN SPANS. So after correctly rejecting the
+    decoy listbox (#29), the harvest never reaches the real `.pop` container —
+    although a genuine click on the trigger DOES open it (`hidden` removed,
+    `display: block`, `aria-expanded: true`).
+    **So the classification fix converts a SILENT WRONG SUCCESS into a LOUD
+    FAILURE, which is the whole direction this codebase chooses, and it does not
+    make the field fillable.** #25 recorded "Ant Design v6 defeats the option
+    picker entirely" and #29 rewrote the picker for it; this says the rc-select
+    shape is still not picked when the trigger declares no role. Handed on with
+    the exact reproduction rather than guessed at.
+
+    **NOT LIVE-VERIFIED, and that is a READ rather than a thing to remember.**
+    The running service worker predates this edit and `sw_info`'s
+    `extension_code_changed_since_worker_start` (#87) says so; a `/mcp` reconnect
+    does NOT fix it, only a reload at chrome://extensions does. **Also observed
+    in the same run and NOT explained:** a submit click reported `NO EFFECT` on a
+    click that demonstrably worked (the project WAS created), with the next batch
+    step failing `Frame with ID 0 was removed` — i.e. the page was navigating.
+    That is #81's guard shape; whether the running worker predates #81's
+    `_navSeq` fix or there is a residual race is not knowable from one sighting,
+    so it is recorded rather than guessed at.
+
+    Suites: 1587 checks. New — W17f/W17f2/W17f3 (the role-less popup trigger,
+    with the text-input and plain-button controls), C48/C48b (the duplicate rule,
+    with the planted-drift demonstration).
 
 ## Debugging starting points
 

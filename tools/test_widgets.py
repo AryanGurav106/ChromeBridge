@@ -805,6 +805,56 @@ async def main():
               f"ok={_mr2.get('ok')} actual={_mr2.get('actual')!r}")
         await mp.close()
 
+        # ---- W17f: THE WRITE PATH MUST NOT BE NARROWER THAN THE COLLECTOR ----
+        # Found LIVE, not by a fixture. The fixture app's region picker is the
+        # rc-select shape with NO role and NO aria-haspopup -- just
+        # `<button data-combo-trigger aria-expanded aria-controls=decoy>` -- and
+        # W17 above models the EASIER variant that declares role=combobox, so
+        # nothing here covered it. The COLLECTOR already calls it a popup trigger
+        # (its `hasPopup` returns true for aria-expanded + aria-controls, and the
+        # listing prints "(opens menu/popup)"), while BOTH write-path classifiers
+        # stopped at aria-haspopup and fell through to TEXT.
+        #
+        # Measured on the running app, same element, same value:
+        #     form_input  -> NOT DONE: ... it is a <button>, nothing was written
+        #     fill_form   -> ok:true, actual:"eu-west-1", msg:"typed"
+        # and the hidden input carrying the value stayed "". fill_form is the tool
+        # the docs call "strongly preferred" for multi-field forms, so the whole
+        # field was silently dropped under a success sentence -- and a recorded
+        # flow would have baked that in as a passing step.
+        kp = await browser.new_page(viewport={"width": 900, "height": 700})
+        await kp.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await kp.goto("about:blank")
+        await kp.set_content(
+            "<!doctype html><meta charset=utf-8><body>"
+            "<button id=trig type=button data-combo-trigger aria-expanded=false"
+            " aria-controls=decoy aria-label='Region'><span>Select a region</span></button>"
+            "<ul id=decoy role=listbox hidden style='display:none'></ul>"
+            "<button id=plain>Save</button>"
+            "<input id=txt type=text>"
+            "<div id=disc aria-expanded=false aria-controls=panel>More</div>"
+            "<div id=panel hidden></div>"
+            "</body>")
+        await kp.wait_for_timeout(120)
+        FK = extract("_fieldKindPage")
+        async def _kind(sel):
+            return await kp.evaluate("(function(){ " + FK + "; return _fieldKindPage(" + repr(sel) + "); })()")
+        _k_trig = await _kind("#trig")
+        check("W17f a role-less, haspopup-less aria-expanded+aria-controls trigger "
+              "is a COMBOBOX to the write path, as it already is to the collector",
+              bool((_k_trig or {}).get("is_combobox")),
+              f"{_k_trig}")
+        _k_txt = await _kind("#txt")
+        check("W17f2 CONTROL: a real text input is NOT reclassified",
+              not (_k_txt or {}).get("is_combobox") and not (_k_txt or {}).get("is_native_select"),
+              f"{_k_txt}")
+        _k_plain = await _kind("#plain")
+        check("W17f3 CONTROL: a plain button declaring nothing is not a combobox "
+              "either — the rule is the declaration, not the tag",
+              not (_k_plain or {}).get("is_combobox"),
+              f"{_k_plain}")
+        await kp.close()
+
         # ---- W16: which tab is selected, decided by DECLARATIONS -------------
         # `(current)/(selected)` tells the agent "already active; don't re-click",
         # so a wrong one suppresses a real action. It used to be answered, after
