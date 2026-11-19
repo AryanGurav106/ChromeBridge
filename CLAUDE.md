@@ -10632,6 +10632,40 @@ granted in the side panel is refused with the same message the agent gets.
     Completion") and it is recorded as unextractable so nobody re-reads it
     hoping for more.
 
+110. **EVERY MIND2WEB MISS HAS VISIBLE TEXT, AND THE TARGETS WITH NONE ARE AT
+    100%.** #109's survey proposed splitting the headline recall on whether the
+    gold target carries an accessible name, on the theory that unnamed targets
+    might be where the residue lives. The data and the ruler were both already
+    local, so it was one pass. **The split runs the other way.**
+
+    | | n | recall | exact |
+    |---|---|---|---|
+    | gold target has NO text | **48** | **1.000** | 0.854 |
+    | gold target HAS text | 138 | 0.935 | 0.870 |
+    | all | 186 | 0.952 | 0.866 |
+
+    **All nine misses are in the text-bearing half**, and by tag they are
+    `div` x5, `span` x2, `h1`, `li` — generic containers to a one. The
+    text-free half, which is icons and image controls, is **perfect**, because
+    an element with no text has to declare SOMETHING to be rendered usefully at
+    all: a role, an `aria-label`, an `alt`. It declares, so we list it.
+
+    **That sharpens #79's characterisation rather than repeating it.** #79
+    audited the nine one signal at a time and found 0 of 9 declaring any of the
+    eight admitting signals. This adds the half that makes them tempting: **they
+    all carry text a human can read.** They are visually obvious — which is
+    exactly why a human clicked them — and structurally mute. So the residue is
+    precisely the gap between "a person can see this is a control" and "the
+    document says so", and closing it needs a rule keyed on size, position or
+    class, which is the kind this project removed from every path that decides
+    existence. The nine are the measured price of that rule, now priced from two
+    directions.
+
+    The headline reproduced unchanged on the way (`recall 0.9516`, `exact
+    0.8656`, n=186), which is the cross-check that the split is a view of the
+    same measurement rather than a different one.
+
+
 ## Debugging starting points
 
 | Symptom | Where to look |
