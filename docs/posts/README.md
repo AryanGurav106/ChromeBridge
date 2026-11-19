@@ -4,7 +4,7 @@ The brief was to post REGULARLY so people get the idea, "not just numbers".
 One draft is not a cadence, so this is the pipeline: each post below is already
 backed by an artefact in this repo, so writing it is an hour, not a project.
 
-**Twelve are drafted now (001, 002, 003, 004, 006, 009, 010, 013, 014, 015, 016, 017).** At one a week that is over a
+**Fourteen are drafted now (001, 002, 003, 004, 006, 009, 010, 013, 014, 015, 016, 017, 018, 019).** At one a week that is over a
 month of cadence already sitting in the repo, which was the point of building a
 queue rather than writing one post well.
 
