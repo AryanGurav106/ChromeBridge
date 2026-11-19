@@ -28,6 +28,13 @@
 > HEAD, not four, and **two of them change the printed identity STRING itself** rather than
 > only whether a name exists. One of those is visible in #92's own quoted symptom, which no
 > longer reproduces verbatim.
+>
+> **§12 then removes this paper's own stated weakness.** A stride sample of 8.7% could hide
+> a defect on a concentrated shape, so the causal A/B was widened to **every site the whole
+> name diff touches**, read out of each fix's own artefact: **37 / 37 carrier sites across
+> all five fixes, 40 distinct sites, 2,695 and 2,682 probes, 0 misses in either arm, 0
+> sites where the arms differ.** And at element level, matched by mmid, **0 rows went from
+> PRINTED to BLANKED** — the blanked class grows only by addition.
 
 ---
 
@@ -141,9 +148,15 @@ ruler feeds it) **on the same page load at the same stage**, so run-order drift 
 align with an arm. Three populations: `s0`, `new` (identity string never seen earlier —
 the control exists *because of* the interaction) and `carried`.
 
-**Source pinning.** `extension/background.js` was hashed before the run
-(`13895f12be4b359c`) and re-hashed after, so a concurrent editor could not have reached the
-collector mid-run — #73's hazard, which #112 handled with a `git archive` shadow checkout.
+**Source pinning, and it was not precautionary.** `extension/background.js` was hashed
+before the main run (`13895f12be4b359c`) and re-hashed after every arm — #73's hazard,
+which #112 handled with a `git archive` shadow checkout. Another process **did** edit this
+tree during the session (`tools/audit_name_correctness.py`, +584 lines, and a commit
+`4d1cec0` landing CLAUDE.md, `docs/README.md` and this paper), so the check earned itself:
+neither touched `extension/background.js`, the hash is unchanged, and the carrier-list
+artefacts this paper reads (`temp/accname2f/`, `temp/name_at_stage/`) are all timestamped
+**before** the first read of them, so no list was derived from a concurrently regenerated
+file.
 
 ---
 
@@ -332,6 +345,14 @@ changes.
 | **w2_nationwide** | base+head | 1.0000 (96/96) | **1.0000** (96/96) | **3/6** | **0/6** | 683/683 |
 | w2_pko | head+base | 1.0000 (96/96) | **1.0000** (96/96) | 17/21 | 17/21 | 903/903 |
 | **pooled** | | **518/518 = 1.0000** | **511/511 = 1.0000** | **78/99** | **66/99** | 6987 / 6987 |
+
+**What the two arms do NOT share, and it is deliberate.** The denominators differ slightly
+(`wc_webawesome` 110 against 103) because `choose()` picks each arm's probes from **that
+arm's own** printed identities. A row that prints `(unlabeled)` under base and carries a
+name under head has an identity under two characters in one arm and a real one in the
+other, so it is only probed where it exists. That is the right question — *can a reader
+reach what THIS listing printed* — but it means the A/B is not a paired test over one fixed
+row set, and a row gained by the fix is tested only in the head arm.
 
 **Three things this settles that the cross-run table could not.**
 
@@ -565,16 +586,19 @@ control) at 0%. Nor that the name is RIGHT. Nor anything about hover-only menus,
 paywalls, cross-origin frames, second paths, or the ~180 consent- and bot-walled candidates
 absent before this probe starts.
 
-### The single thing I am least sure of
+### The single thing I was least sure of — and it was then measured, in §12
 
 **That this run had the power to detect the regression it was looking for.** It samples
 8.7% of entries by stride, and the name changes under test are concentrated on a handful of
 sites — #116 moves 24 of 251, #115 puts 70% of a class on two. A defect confined to a rare
 shape could sit entirely under the sampling and this run would read 1.0000 either way.
-§7's A/B is the answer to that and it is six sites; `wc_webawesome`, the heaviest carrier,
-is 1.0000 in both arms on 110 and 103 probes, which is the most load-bearing single cell in
-this paper. What would settle it properly is an A/B over all 24 of #116's touched sites,
-which was not run.
+§7's A/B was six sites; `wc_webawesome`, the heaviest carrier, was the most load-bearing
+single cell in the paper.
+
+**§12 answers it.** The A/B was widened to **every site the whole name diff touches** —
+read out of each fix's own artefact, not chosen — and came back **37 / 37 carrier sites
+measured, every one 1.0000 in both arms, 0 sites differing**. What is left is a *sample*
+limit rather than a *sampling* limit, and §12's closing paragraph states it.
 
 Second, smaller: the blanked-arm floor is derived from **back-to-back** passes while the
 cross-run comparison is a **day apart**, so "5× the floor" overstates its own significance.
@@ -582,7 +606,169 @@ The A/B is what carries that conclusion, not the floor comparison.
 
 ---
 
-## 12. Reproducing
+## 12. APPENDIX — the A/B widened to every site the name diff touches
+
+§11 named one thing as least certain: this probe stride-samples **8.7% of entries**, the
+changes under test are concentrated, and §7's causal arm was six sites. A pooled 1.0000
+over a handful of sites cannot rule out one site losing reachability. So the A/B was
+widened — same design, same baseline collector, order rotated per site, both collectors on
+the same DOM at the same stage.
+
+### Choosing the population from the artefact rather than from memory
+
+The 24 sites are not a guess: they are **every site whose listing moves under #116's own
+A/B**, read out of `temp/accname2f/guarded2/candidate_ab.json` by comparing `chars_base`
+against `chars_cand` per site. That reproduces #116's published "24 of 251" exactly, which
+is what licenses calling it the touched population.
+
+**A near-miss worth recording.** The first launch passed the 24 names through an unquoted
+shell variable; **zsh does not word-split unquoted expansions**, so the script received one
+argument. It reported `asked for 24 sites, resolved 0; NOT IN POOL: …` and measured
+nothing — the guard printed the failure instead of quietly running one site and reporting a
+clean number. Had that line not existed this would have been a 1.0000 over an empty
+denominator (PRINCIPLES 15).
+
+### Results, per site — because a pooled figure can hide one site
+
+| site | order | base strict | **head strict** | base blanked | head blanked | entries b/h |
+|---|---|---|---|---|---|---|
+| he_ynet | base+head | 1.0000 (20/20) | **1.0000** (19/19) | 5/6 | 5/6 | 3229/3246 |
+| ko_daum | base+head | 1.0000 (118/118) | **1.0000** (119/119) | 28/30 | 27/30 | 8323/8336 |
+| tix_eventbrite | base+head | 1.0000 (48/48) | **1.0000** (48/48) | 10/12 | 10/12 | 995/995 |
+| tix_songkick | head+base | 1.0000 (119/119) | **1.0000** (119/119) | 30/30 | 30/30 | 1655/1655 |
+| vi_tuoitre | head+base | 1.0000 (24/24) | **1.0000** (24/24) | 4/6 | 4/6 | 1045/1045 |
+| w2_allstate | head+base | 1.0000 (120/120) | **1.0000** (120/120) | 10/10 | 10/10 | 754/754 |
+| w2_argentina | base+head | 1.0000 (48/48) | **1.0000** (48/48) | 10/12 | 10/12 | 118/118 |
+| w2_berkeley_cls | base+head | 1.0000 (72/72) | **1.0000** (72/72) | 18/18 | 18/18 | 801/801 |
+| w2_citi | base+head | 1.0000 (48/48) | **1.0000** (48/48) | 2/2 | 2/2 | 258/258 |
+| w2_courts_ca | head+base | 1.0000 (72/72) | **1.0000** (72/72) | 18/18 | 18/18 | 657/657 |
+| w2_cuhk | base+head | 1.0000 (48/48) | **1.0000** (48/48) | 12/12 | 12/12 | 280/280 |
+| w2_du_bd | base+head | 1.0000 (71/71) | **1.0000** (71/71) | 18/18 | 18/18 | 1543/1544 |
+| w2_icbc | head+base | 1.0000 (48/48) | **1.0000** (48/48) | 12/12 | 12/12 | 674/674 |
+| w2_itu | head+base | 1.0000 (48/48) | **1.0000** (48/48) | 2/2 | 2/2 | 229/229 |
+| w2_keio | base+head | 1.0000 (24/24) | **1.0000** (24/24) | 4/6 | 4/6 | 598/598 |
+| w2_oebb | base+head | 1.0000 (72/72) | **1.0000** (72/72) | 18/18 | 18/18 | 671/675 |
+| w2_technion | head+base | 1.0000 (120/120) | **1.0000** (120/120) | 27/30 | 27/30 | 1445/1445 |
+| w2_ticketpro | base+head | 1.0000 (114/114) | **1.0000** (115/115) | 30/30 | 30/30 | 1718/1724 |
+| w2_tokyo_metro | head+base | 1.0000 (96/96) | **1.0000** (96/96) | 22/24 | 21/24 | 1080/1086 |
+| w2_tpia | head+base | 1.0000 (48/48) | **1.0000** (48/48) | 12/12 | 12/12 | 948/948 |
+| w2_unimelb_hb | head+base | 1.0000 (24/24) | **1.0000** (24/24) | 6/6 | 6/6 | 40/40 |
+| wc_lit | head+base | 1.0000 (48/48) | **1.0000** (48/48) | 0/0 | 0/0 | 282/282 |
+| wc_webawesome | base+head | 1.0000 (110/110) | **1.0000** (103/103) | 25/30 | 25/30 | 3616/3616 |
+| **pooled** | | **1,560/1,560 = 1.0000** | **1,554/1,554 = 1.0000** | 323/344 | 321/344 | 30,959 / 31,006 |
+
+**23 of 24 measured. Every site 1.0000 in BOTH arms. `SITES WHERE THE TWO ARMS DIFFER ON
+THE PRINTED QUESTION: 0`.** Zero misses, zero descendant credit, zero ancestor credit, zero
+weak-tier hits in either arm. `bridge_races = 0`.
+
+**UNMEASURED and named, never a pass: `w2_pku`** — `net::ERR_TIMED_OUT` at
+`https://www.pku.edu.cn/`. It was retried in the next arm and timed out again. So the
+population is **23 of #116's 24**, and the one missing site is named rather than folded in.
+
+### The blanked class grows by ADDITION, not by demoting a printed row
+
+The blanked arm moves by 2 probes here (323/344 → 321/344), and `blanked-entries` moves
+**+10 of 3,899** — concentrated on `he_ynet` (+8), `ko_daum` (+1), `w2_oebb` (+1), which are
+also the only three sites whose ENTRY count grows. §6 argued from source that `_declName`
+cannot newly trip `subtreeName`; the six-site arm showed membership identical; this arm
+shows it moving slightly, so the claim was checked at element level rather than at the
+count:
+
+| matched by mmid, one DOM, both collectors | `he_ynet` | `w2_oebb` |
+|---|---|---|
+| mmids present in both arms | 3,186 | 207 |
+| blanked under base → under head | 864 → **864** | 23 → **23** |
+| **PRINTED under base, BLANKED under head** | **0** | **0** |
+| blanked under base, printed under head | 0 | 0 |
+| entries only in head (added by the fix) | 20 — of which blanked **4** | 0 |
+
+**No element that printed an identity lost it.** The growth is entirely new entries, a few
+of which happen to be borrowed-name containers — which is #116's own measured +0.116%
+entries arriving, not a demotion. That is the direction that would have mattered, and it is
+zero.
+
+### Then the same arm over every site the OTHER four name fixes touch
+
+Closing the power question for #116 alone would have left the limitation standing for
+#114's three fixes and #93's slot fix, which land on different sites. Those carrier lists
+are also in artefacts rather than in anyone's memory — `temp/name_at_stage/abt_<candidate>/`
+— so the remaining 11 sites were read out and run with the identical design (plus a retry
+of `w2_pku`, which succeeded this time).
+
+| site | order | base strict | **head strict** | base blanked | head blanked | entries b/h |
+|---|---|---|---|---|---|---|
+| uni_chula | base+head | 1.0000 (24/24) | **1.0000** (24/24) | 6/6 | 6/6 | 969/969 |
+| w2_athens | head+base | 1.0000 (50/50) | **1.0000** (50/50) | 9/18 | 9/18 | 11739/11739 |
+| w2_dhaka | base+head | 1.0000 (48/48) | **1.0000** (48/48) | 12/12 | 12/12 | 377/377 |
+| w2_jr_west | head+base | 1.0000 (24/24) | **1.0000** (24/24) | 2/3 | 2/3 | 301/302 |
+| w2_moscow | head+base | 1.0000 (72/72) | **1.0000** (72/72) | 18/18 | 16/18 | 1101/1088 |
+| w2_onlinebooks | base+head | 1.0000 (15/15) | **1.0000** (15/15) | 0/0 | 0/0 | 15/15 |
+| w2_pku | base+head | 1.0000 (24/24) | **1.0000** (24/24) | 6/6 | 6/6 | 184/184 |
+| w2_tinkoff | base+head | 1.0000 (72/72) | **1.0000** (72/72) | 9/10 | 9/10 | 667/667 |
+| w2_titech | head+base | 1.0000 (48/48) | **1.0000** (48/48) | 10/12 | **12/12** | 490/490 |
+| w2_tra_tw | base+head | 1.0000 (96/96) | **1.0000** (96/96) | 0/0 | 0/0 | 400/400 |
+| w2_uba | head+base | 1.0000 (24/24) | **1.0000** (24/24) | 4/6 | 4/6 | 95/95 |
+| wc_salesforce | head+base | 1.0000 (120/120) | **1.0000** (120/120) | 30/30 | 30/30 | 1127/1127 |
+| **pooled** | | **617/617 = 1.0000** | **617/617 = 1.0000** | 106/121 | 106/121 | 17,465 / 17,453 |
+
+**12 of 12 measured, 0 UNMEASURED, 0 sites differ, `bridge_races = 0`.** The blanked arm is
+identical pooled, and `w2_titech` is the one cell where HEAD is *better* (10/12 → 12/12).
+
+### Carrier coverage, stated as a fact rather than a hope
+
+Each fix's touched sites were read from that fix's own A/B artefact:
+
+| name-path fix | entry | carrier sites | **measured in a causal A/B** |
+|---|---|---|---|
+| `child-declared-name` (guarded) | #116 | 24 | **24 / 24** |
+| `live-label-not-clone` | #114 | 8 | **8 / 8** |
+| `labelledby-non-html` | #114 | 2 | **2 / 2** |
+| `br-is-a-separator` | #114 | 4 | **4 / 4** |
+| `contents-is-not-invisible` | #93 | 4 | **4 / 4** |
+| **union** | | **37** | **37 / 37** |
+
+Across the three arms: **40 distinct sites, 41 site-runs, 2,695 base-arm and 2,682 head-arm
+printed probes, 0 misses in either arm, 0 sites where the arms differ, 0 bridge races.**
+
+### What this licenses, and what it does not
+
+**It licenses** closing §11's power question for **every CONCENTRATED name-path fix**, not
+just #116: each one's own touched-site list has been measured end to end with both
+collectors on the same DOM at the same stage, and the printed question is 1.0000 in both
+arms on every site. The stride sample can no longer be the reason a defect went unseen on
+those sites, because those sites were not sampled — they were all run.
+
+**It does not license** any of the following, and the distinctions are not pedantic:
+
+* **It says nothing about the two BROAD changes.** `7a443db` (quoting) and `0a35600` (the
+  display-aware join) have no touched-site list because they are not concentrated — they
+  reach any label containing `"` and any container with inline element children. A targeted
+  A/B is the wrong instrument for those and the 257-site stride-sampled run in §5 is the
+  right one, which has power precisely because the change is broad. **Concentrated change →
+  targeted A/B; broad change → corpus run.** Both were done, for different reasons.
+* **It is not a paired test over a fixed row set.** Each arm probes its OWN printed
+  identities, so a row that gains a name is tested only under HEAD (§7).
+* **It says nothing about whether the names are RIGHT** — that is
+  `audit_name_correctness.py`'s question, and #114/#115/#116 answer it.
+* **It does not touch either coverage gap in §8**: discrimination is unmeasured at every
+  stage, and name correctness on hover-revealed content has no instrument.
+* **The inherited sample bias is unchanged.** These 40 sites come from the same
+  survivorship-biased `usable85` pool, with one path per site and declaration-only
+  interactions.
+
+### What the least-sure point becomes
+
+§11's concern was that 8.7% stride sampling could hide a defect on a concentrated shape.
+That is now closed for the shapes with a known carrier list. **What remains uncertain is
+narrower and I would state it this way:** a name-path defect that is *neither* broad enough
+for the corpus run to catch *nor* on any site its own A/B flagged as touched would still be
+invisible — for instance a shape that exists only on a page outside the `usable85` pool, or
+only behind a login or a second interaction path. That is a sample limit, not a sampling
+limit, and no arrangement of these three arms reaches it.
+
+---
+
+## 13. Reproducing
 
 ```bash
 # the fixture firing proof (must PASS, and the #74 reproduction must score a miss)
@@ -607,8 +793,13 @@ arms differ, and calls `measure_findability_at_stage`'s own `choose` / `score_ar
 the first collector to run stamps the mmids.
 
 **Artefacts:** `temp/findability_stage/main2/pass0.json` (main run),
-`temp/findability_stage/ab/ab.json` (the causal A/B, with both arms' miss records),
+`temp/findability_stage/ab/ab.json` (§7's six-site causal A/B, with both arms' miss
+records), `temp/findability_stage/ab24/ab.json` (§12, #116's 24 touched sites),
+`temp/findability_stage/ab11/ab.json` (§12, the other four fixes' carriers),
 `temp/findability_stage/fire2/fire.json` (the live firing proof).
+The touched-site lists are derived, not typed: `temp/accname2f/guarded2/candidate_ab.json`
+for #116 and `temp/name_at_stage/abt_<candidate>/candidate_ab.json` for the other four,
+comparing `chars_base` against `chars_cand` per site.
 **Baseline:** `temp/findability_stage/main/pass0.json` (#92) and
 `temp/findability_stage/drift/pass{0,1}.json` (#92's drift passes, the source of the two
 floors in §7).

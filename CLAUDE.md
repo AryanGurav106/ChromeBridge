@@ -11324,6 +11324,74 @@ granted in the side panel is refused with the same message the agent gets.
     before the probe starts; one path per site; cross-origin frames, logins and
     hover not reached.
 
+    **THE POWER QUESTION IS CLOSED FOR EVERY CONCENTRATED NAME-PATH FIX, and
+    the agent removed the limitation instead of stating it.** I asked for the
+    A/B over #116's 24 touched sites and for a sentence saying what a clean
+    result would NOT license. It read the carrier lists for #114's three fixes
+    and #93's slot fix out of their own A/B artefacts and ran those too —
+    **37 of 37 carrier sites across five fixes, 40 distinct sites, 42
+    site-runs** — so the limitation I asked it to write down no longer applies.
+
+    | arm | sites | base strict | head strict | sites that DIFFER |
+    |---|---|---|---|---|
+    | #116's touched sites | 24/24 | 1.0000 | **1.0000** | **0** |
+    | #114 x3 and #93's carriers | 12 | 1.0000 | **1.0000** | **0** |
+    | the original six | 6 | 1.0000 | **1.0000** | **0** |
+
+    **I re-derived it from the raw artefacts and hit the same trap I had just
+    recorded.** Summing `tried` against `hit` shows eight sites apparently below
+    1.0 and 128 misses — and `tried` is not the denominator, for the reason
+    written three paragraphs above this one. On the tool's own formula it is
+    **base 1,147/1,147 and head 1,070/1,070, both exactly 1.0, with zero
+    site-stages below it**, and **all 128 misses carry a `blanked-*` class with
+    none in the printed arm**. Making the same reading error twice in one
+    evening, having written the correction down in between, is the argument for
+    the formula living in the tool rather than in a reader's head.
+
+    **The honest asymmetry, which the paper states and I would otherwise have
+    missed:** this is NOT a paired test over a fixed row set. Each arm probes
+    its own printed identities, so a row the fix GAINS is tested only under
+    HEAD — which is why `wc_webawesome` reads 110 against 103 and why that is
+    a gain rather than a loss.
+
+    **CONCENTRATED → TARGETED A/B; BROAD → CORPUS RUN.** Two of the five
+    changes have no touched-site list because they are not concentrated (the
+    quoting fix and the display-aware join). A targeted A/B is the wrong
+    instrument for those and the 257-site stride run is the right one,
+    **precisely because a broad change gives a stride sample power**. Both were
+    run, for different reasons, and that pairing is the generalisable rule.
+
+    **A near-miss that would have been a clean number over an empty
+    denominator.** The first 24-site launch passed site names through an
+    unquoted shell variable; zsh does not word-split unquoted expansions, so
+    the script received one argument, resolved **0 sites**, and would have
+    reported 1.0000 over nothing. It was caught by a guard the agent had added
+    ten minutes earlier for an unrelated reason. PRINCIPLES 15, and the second
+    time today that a shell quirk nearly produced a flattering zero.
+
+    **A bonus the widened arm settled.** The 24-site run showed
+    `blanked-entries` +10 where the six-site run had shown 0, so rather than
+    assume, it matched BY MMID on one DOM: **0 rows that printed an identity
+    under the baseline are blanked under HEAD**, on both sites checked. The
+    blanked class grows only by addition — #116's new entries arriving — never
+    by demotion.
+
+    **AND I SWEPT AN AGENT'S IN-PROGRESS PAPER INTO A COMMIT FOR THE SECOND
+    TIME TODAY.** `4d1cec0` carries an earlier version of
+    `FINDABILITY-AT-STAGE-2026-11b.md`, committed while its author was still
+    writing; 201 further lines existed only in the working tree. The agent
+    flagged it rather than reverting, which is the right call. The first
+    instance was recorded this morning and I did it again anyway, which is what
+    a `git add -A` beside a running agent costs. **Nothing was lost and the
+    commit message is still true of what it describes** — the fix is to stage
+    paths rather than to resolve harder.
+
+    **Still open, and it is narrower than before: a SAMPLE limit rather than a
+    SAMPLING one.** A name-path defect neither broad enough for the 257-site
+    run to catch nor on any site its own A/B flagged as touched would remain
+    invisible — a shape living outside the usable pool, behind a login, or down
+    a second interaction path. No arrangement of these three arms reaches it.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
