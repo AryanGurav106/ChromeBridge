@@ -3912,6 +3912,121 @@ async def main():
               bool(_lone) and "INV-1001" in _lone, f"{_lone!r}")
         await ra.close()
 
+        # ---- CD1-CD9: ACCNAME 2F TAKES EACH CHILD'S *NAME*; `_contentName` TAKES ITS
+        # *TEXT*. They are the same string for almost all markup, and come apart when a
+        # child's identity is an ATTRIBUTE and it renders no text -- an icon. #34 recorded
+        # it as a characterisation; #115 found its degenerate case live, where there is no
+        # other text at all so the ROW carries no identity: 54 rows, and of 24 on one site
+        # 10 had the name on a row INSIDE the control, 5 only elsewhere, and 9 NOWHERE in
+        # the listing. The last nine are #74's defect class with live instances.
+        #
+        # THE ROW SHAPE IS THE ASSERTION, NOT THE PRESENCE OF THE STRING. `near=` carries
+        # neighbouring text, so `"Search" in listing` passes against the BROKEN collector
+        # and proves nothing -- #93 found three vacuous fixtures on this exact code path
+        # for exactly that reason, two of them its own.
+        cdp_ = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await cdp_.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        await cdp_.goto("about:blank")
+        CD_WC = ("<script>"
+                 "customElements.define('zz-icon', class extends HTMLElement {});"
+                 "customElements.define('zz-button', class extends HTMLElement {"
+                 " connectedCallback(){ if (this.shadowRoot) return;"
+                 " this.attachShadow({mode:'open'}).innerHTML ="
+                 " '<button part=base type=button><slot></slot></button>'; }});"
+                 "</script>"
+                 "<style>zz-icon,.ic{display:inline-block;width:18px;height:18px;"
+                 "background:#444}</style>")
+
+        async def _cd_row(html, needle):
+            await cdp_.set_content(CD_WC + html)
+            await cdp_.wait_for_timeout(150)
+            lst = str(await cdp_.evaluate(
+                "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+            return next((l for l in lst.splitlines() if needle in l), "")
+
+        # The live shape: the row we print is the host's SHADOW button, and the named icon
+        # sits in the host's LIGHT dom behind a <slot>. Measured on the shipped collector:
+        # innerText '', textContent '', and `querySelector('[aria-label]')` -- synthLabel's
+        # rescue -- FALSE, because a querySelector does not cross a slot boundary.
+        _cd1 = await _cd_row("<zz-button><zz-icon aria-label='Search'></zz-icon></zz-button>",
+                             "button")
+        check("CD1 a named icon behind a SLOT boundary names the control",
+              'button "Search"' in _cd1, f"row={_cd1.strip()[:90]!r}")
+        # CD1b IS A SECOND FIX ASSERTION, NOT A CONTROL, and it is labelled that way
+        # because it FAILS on the pre-fix collector -- #114 made the identical mistake
+        # with LB3 and had to relabel it. Its job is to close the vacuity CD1 cannot:
+        # `"Search" in listing` passes pre-fix, because the word survives in the `near=`
+        # hint on a neighbouring row. Pre-fix this row reads `button (unlabeled)`.
+        check("CD1b ...and the row's own identity slot holds it, not a near= hint",
+              "(unlabeled" not in _cd1, f"row={_cd1.strip()[:90]!r}")
+
+        # synthLabel has an aria-label branch and NO aria-labelledby branch at all, so
+        # this one is missed in the light DOM too.
+        _cd2 = await _cd_row("<button><span class=ic aria-labelledby=cdlb></span></button>"
+                             "<span id=cdlb hidden>Delete row</span>", "button")
+        check("CD2 a child's aria-labelledby names the control",
+              'button "Delete row"' in _cd2, f"row={_cd2.strip()[:90]!r}")
+
+        # synthLabel's querySelector returns the FIRST match only, so the second named
+        # child was silently dropped; AccName concatenates and Chrome answers "Prev Next".
+        _cd3 = await _cd_row("<button><span class=ic aria-label='Prev'></span>"
+                             "<span class=ic aria-label='Next'></span></button>", "button")
+        check("CD3 every named child contributes, not just the first",
+              'button "Prev Next"' in _cd3, f"row={_cd3.strip()[:90]!r}")
+
+        # CONTROL. A child that HAS text keeps contributing its text. This is also the
+        # shape `audit_name_correctness.py`'s firing proof stands on, so a change here is
+        # a change to the instrument as well as to the collector.
+        _cd4 = await _cd_row("<a href=#cdx>Deadline <button aria-label='Why this deadline'>"
+                             "?</button></a>", "Deadline")
+        check("CD4 CONTROL: a child that HAS text still contributes its text",
+              '"Deadline ?"' in _cd4, f"row={_cd4.strip()[:90]!r}")
+
+        _cd5 = await _cd_row("<button><span>Submit form</span></button>", "Submit form")
+        check("CD5 CONTROL: an ordinary labelled control is unchanged",
+              'button "Submit form"' in _cd5, f"row={_cd5.strip()[:90]!r}")
+
+        # A NESTED CONTROL IS NOT ITS CONTAINER'S LABEL. An icon-only dismiss button
+        # inside a card link renders no text, so a rule keyed only on "the child
+        # contributes no text" absorbs its label and renames the link. synthLabel decided
+        # this once already -- "A PARENT HOLDING A SECOND CONTROL IS A GROUP, AND ITS TEXT
+        # LABELS THE GROUP, NOT THIS CONTROL" -- measured in eval 7 on a quantity stepper
+        # where both buttons came back named after the QUANTITY. This passes on the
+        # pre-fix collector AND on the fix, and FAILS on the unguarded variant, which is
+        # what stops a later simplification reintroducing it.
+        _cd6 = await _cd_row("<a href=#cdy>Read the report <button aria-label='Dismiss this card'>"
+                             "<svg width=10 height=10><rect width=10 height=10/></svg>"
+                             "</button></a>", "Read the report")
+        check("CD6 CONTROL: a nested CONTROL's label is not absorbed by its container",
+              '"Read the report"' in _cd6 and "Dismiss" not in _cd6,
+              f"row={_cd6.strip()[:90]!r}")
+
+        # CONTROLS that keep this a DECLARATION rule (PRINCIPLES 1): a `_declName` that
+        # returned a tag name, a class token or anything it invented would satisfy
+        # CD1-CD3 and nothing else here would notice.
+        _cd7 = await _cd_row("<button><span class=ic></span></button>", "button")
+        check("CD7 CONTROL: a child that declares nothing still names nothing",
+              "(unlabeled" in _cd7, f"row={_cd7.strip()[:90]!r}")
+        _cd8 = await _cd_row("<zz-button><zz-icon></zz-icon></zz-button>", "button")
+        check("CD8 CONTROL: an UNnamed icon behind a slot stays unlabeled",
+              "(unlabeled" in _cd8, f"row={_cd8.strip()[:90]!r}")
+
+        # CD9 -- AccName step 2A: a HIDDEN node contributes nothing, and
+        # `aria-hidden="true"` is hidden. `_namable` asks the RENDERING question, which an
+        # aria-hidden icon passes: it is painted, it is just declared absent from the
+        # accessibility tree. This is the live markup that made
+        # `BREAKS_A_CORRECT_NAME` read 5 -- Ant Design's `anticon` ships `aria-label` and
+        # `aria-hidden` on the SAME element, so it is a library idiom and not one page's
+        # mistake. Passes on HEAD (which never reads the attribute) and on the fix;
+        # FAILS on a version of the fix without the 2A rule.
+        _cd9 = await _cd_row("<label><span>Search Keyword(s)</span>"
+                             "<i class=ic aria-label='icon: search' aria-hidden='true'></i>"
+                             "<input></label>", "Search Keyword")
+        check("CD9 CONTROL: an aria-hidden child donates no name (AccName 2A)",
+              '"Search Keyword(s)"' in _cd9 and "icon: search" not in _cd9,
+              f"row={_cd9.strip()[:90]!r}")
+        await cdp_.close()
+
         await browser.close()
 
     passed = sum(1 for _, ok, _ in results if ok)

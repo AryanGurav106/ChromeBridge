@@ -7311,6 +7311,105 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       return true;
     } catch (e) { return false; }
   };
+  // ACCNAME 2F TAKES EACH CHILD'S *NAME*; THE LOOP BELOW TAKES ITS *TEXT*. For almost
+  // all markup those are the same string, which is why this survived from the first
+  // commit and why #34 recorded it as a characterisation of a gap rather than a defect.
+  // They come apart when a child's identity is an ATTRIBUTE and it renders no text --
+  // an icon.
+  //
+  // REPRODUCED LIVE against the shipped collector before anything was written, on the
+  // shape #115 measured (38 of its 54 rows were this one site's design system):
+  //
+  //     <wa-button>                                  <- host, LIGHT dom
+  //       <wa-icon aria-label="Search"></wa-icon>
+  //     shadowRoot:
+  //       <button part=base><slot></slot></button>   <- the row we print
+  //
+  //       btn.innerText                        ''
+  //       btn.textContent                      ''
+  //       btn.querySelector('[aria-label]')    FALSE
+  //       slot.assignedNodes({flatten:true})   [WA-ICON[aria-label=Search]]
+  //       ours  `button (unlabeled)`           chrome  "Search"
+  //
+  // THE MECHANISM IS NARROWER THAN "WE TAKE TEXT", and measuring it is what showed
+  // that. `synthLabel` ALREADY rescues an icon-only control with
+  // `querySelector('svg[aria-label], [aria-label]')`, which is why
+  // `<button><span aria-label=Search></span></button>` prints "Search" today. A
+  // querySelector does not cross a SLOT boundary, and `_deepText` -- which does cross
+  // it -- is looking for text, of which an icon has none. So the hole is exactly: a
+  // node that contributes no TEXT may still DECLARE a name, and the composed tree is
+  // where to look for it. Two shapes synthLabel never covered at all come with it: a
+  // child declaring `aria-labelledby` (there is no such branch there), and a SECOND
+  // named child (its querySelector returns the first match only, so a toolbar whose
+  // accessible name is "Prev Next" printed as "Prev").
+  //
+  // NO RECURSION, THEREFORE NO DEPTH BOUND. Measured on a three-deep slot-forwarding
+  // chain (x-outer -> x-mid -> x-inner): `assignedNodes({flatten:true})` returns the
+  // FINAL assigned node and never a slot, so this reads attributes off nodes one hop
+  // away and there is no cycle to close. A chosen depth number would have been an
+  // argument against the change; there is none to choose.
+  //
+  // A CHILD THAT IS ITSELF A DECLARED CONTROL IS NOT ITS CONTAINER'S LABEL, and that is
+  // a deliberate divergence from AccName, which recurses into controls too -- which is
+  // why Chrome names `<a>Read the report <button aria-label="Dismiss this card">x</button></a>`
+  // "Read the report Dismiss this card". This codebase decided that question once
+  // already, in `synthLabel`: "A PARENT HOLDING A SECOND CONTROL IS A GROUP, AND ITS
+  // TEXT LABELS THE GROUP, NOT THIS CONTROL" -- measured in eval 7 on a quantity
+  // stepper where both buttons came back named after the QUANTITY. Using the same rule
+  // here is PRINCIPLES 17 rather than a second judgement, and the guard sits INSIDE
+  // `_declName` so it reaches a slot-assigned node and a direct child in ONE spelling.
+  // Without it the container absorbs the label of any nested control that renders no
+  // text, which is an icon-only dismiss button inside a card link -- a common shape,
+  // and one the fixture pins (CD6).
+  //
+  // ACCNAME STEP 2A: A HIDDEN NODE CONTRIBUTES NOTHING, AND `aria-hidden="true"` IS
+  // HIDDEN. `_namable` asks the RENDERING question (`checkVisibility`), which an
+  // `aria-hidden` icon passes -- it is painted, it is just declared absent from the
+  // accessibility tree. Found by the one counter that would stop this change:
+  // `BREAKS_A_CORRECT_NAME` read 5, all of them one element on one site, and reading the
+  // live markup rather than guessing gave
+  //     <i aria-label="icon: search" class="anticon anticon-search" aria-hidden="true">
+  // inside the <label> of a search field, so the field's name became
+  // "Search Keyword(s) icon: search" where Chrome says "Search Keyword(s)". Ant Design's
+  // `anticon` ships `aria-label` and `aria-hidden` on the SAME element, so that is a
+  // whole library's idiom rather than one page's mistake. With the rule added the counter
+  // reads 0.
+  //
+  // The node's OWN attribute is enough and no ancestor walk is needed, because the only
+  // descent this helper makes is through a <slot> and the slot branch re-enters here --
+  // so every node whose attributes are read has been through this test.
+  //
+  // DECLARATIONS ONLY: `aria-labelledby` (AccName 2B) and `aria-label` (2C). NOT `alt`
+  // and NOT `title` -- both already have `synthLabel` branches for the light-DOM case,
+  // and a second spelling of a rule that already exists is the thing PRINCIPLES 17
+  // forbids. The residual is stated rather than hidden: an `<img alt>` or a titled icon
+  // behind a SLOT is still missed.
+  const _DECL_CTL_TAG = { A: 1, BUTTON: 1, INPUT: 1, SELECT: 1, TEXTAREA: 1, SUMMARY: 1 };
+  const _declName = (n) => {
+    try {
+      if (!n || n.nodeType !== 1) return '';
+      if (n.getAttribute('aria-hidden') === 'true') return '';
+      if (_DECL_CTL_TAG[n.tagName] || _roleHit(n.getAttribute('role'))) return '';
+      if (n.tagName === 'SLOT' && n.assignedNodes) {
+        let s = '';
+        for (const a of (n.assignedNodes({ flatten: true }) || [])) {
+          if (!a || a.nodeType !== 1 || !_namable(a)) continue;
+          const d = _declName(a);
+          if (d) s = s ? s + ' ' + d : d;
+        }
+        return s;
+      }
+      const lb = n.getAttribute('aria-labelledby');
+      if (lb) {
+        const r = (n.getRootNode && n.getRootNode().getElementById) ? n.getRootNode() : document;
+        const s = lb.split(/\s+/)
+          .map((id) => { const q = r.getElementById(id); return q ? ((typeof q.innerText === 'string' ? q.innerText : q.textContent) || '').trim() : ''; })
+          .filter(Boolean).join(' ');
+        if (s) return s;
+      }
+      return (n.getAttribute('aria-label') || '').trim();
+    } catch (e) { return ''; }
+  };
   const _contentName = (node, skip) => {
     try {
       // A HOST'S CONTENT IS ITS SHADOW CONTENT. #29 taught the child loop below to
@@ -7381,6 +7480,13 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
             const _d = _deepText(n, 0, skip);
             if (_d && _d.trim().length > t.trim().length) t = _d;
           }
+          // A CHILD THAT CONTRIBUTES NO TEXT MAY STILL DECLARE A NAME -- see
+          // `_declName` above. ONLY when it contributes no text: AccName's own
+          // order puts a declared name AHEAD of the child's content, and applying
+          // that absorbs a nested control's label into a container that has
+          // perfectly good text of its own. Measured, that arm also expires the
+          // name oracle's own firing proof, which is how the two were told apart.
+          if (!t.trim()) t = _declName(n);
           // SEPARATE ON BOX GENERATION, NOT UNCONDITIONALLY. #28 added a space
           // between every element child citing the spec; AccName 1.2 step 2F.4
           // is "Append the result to the accumulated text" -- no separator --

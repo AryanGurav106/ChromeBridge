@@ -55,11 +55,29 @@ comparison nobody has seen disagree is worth nothing. Two arms:
   * `--fire` does the planted arm on LIVE pages at the deepest stage reached, because a
     fixture is what you thought of.
 
+A/B-ING A CANDIDATE FIX. `--candidate-ab` runs BOTH collectors on the SAME page load and
+scores them against ONE oracle read, so run-order drift cannot align with the arm (R3) and
+the oracle cannot move between them. It reports MOVEMENT rather than a level: `improved`,
+`regressed`, and the one number that would stop a change -- `BREAKS_A_CORRECT_NAME`, a row
+where Chrome HAS a name, we had it right, and the candidate breaks it. It also grades the
+BENEFIT, which a rate cannot show: every row that GAINS an identity is bucketed by where
+that name was in the BASE listing -- `inside` the control (a click bubbles, so the cost
+today is low), `elsewhere` (attributed to the wrong control), or `nowhere` (the only
+outright loss, and #74's defect class). Both halves in one pass is what #41/#44 require.
+
+A ZERO FROM `BREAKS_A_CORRECT_NAME` IS ONLY WORTH SOMETHING ONCE IT HAS FIRED
+(PRINCIPLES 15). Two sabotage candidates exist for that and are never shipped;
+`sabotage-drop-name-arialabel` is the one that lands in the compared population.
+
 Run:  python tools/audit_name_correctness.py --selftest
       python tools/audit_name_correctness.py --fire --only gov_au leg_perldoc
       python tools/audit_name_correctness.py --pool usable85 --conc 6 --stages 4
       python tools/audit_name_correctness.py --compare --only ...     # drift floor
       python tools/audit_name_correctness.py --report temp/name_correctness/main/pass0.json
+      python tools/audit_name_correctness.py --candidate-ab --ab-only child-declared-name \
+             --ab-arm guarded --conc 5 --stages 4 --out temp/accname2f/guarded
+      python tools/audit_name_correctness.py --candidate-ab \
+             --ab-only sabotage-drop-name-arialabel --every 9    # the counter fires
 
 Findings: docs/research/NAME-CORRECTNESS-2026-11.md
 """
@@ -341,6 +359,166 @@ _CONTENTS_BLOCK = (
     "      }\n")
 
 
+# --------------------------------------------------------------------------------------
+# ACCNAME 2F TAKES EACH CHILD'S *NAME*; `_contentName` TAKES ITS *TEXT*.  (#34, #115)
+#
+# For almost all markup those are the same string, which is why this survived from the
+# first commit. They come apart when a child's identity is an ATTRIBUTE and it renders no
+# text -- an icon. Reproduced live against the shipped collector before anything was
+# written:
+#
+#     <wa-button>                                   <- host, LIGHT dom
+#       <wa-icon aria-label="Search"></wa-icon>
+#     shadowRoot:
+#       <button part="base"><slot></slot></button>  <- the row we print
+#
+#       btn.innerText                  ''
+#       btn.textContent                ''
+#       btn.querySelector('[aria-label]')   FALSE      <- synthLabel's rescue, see below
+#       slot.assignedNodes({flatten:true})  [WA-ICON[aria-label=Search]]
+#       ours  `button (unlabeled)`     chrome  "Search"
+#
+# THE MECHANISM IS NARROWER THAN "WE TAKE TEXT", and measuring it is what showed that.
+# `synthLabel` ALREADY rescues an icon-only control by `querySelector('[aria-label]')`,
+# which is why `<button><span aria-label=Search></span></button>` prints "Search" today.
+# A `querySelector` does not cross a SLOT boundary, and `_deepText` -- which does cross it
+# -- is looking for text, of which an icon has none. So what is missing is exactly: a
+# node that contributes no TEXT may still DECLARE a name, and the composed tree is where
+# to look for it.
+#
+# NO RECURSION, THEREFORE NO DEPTH BOUND. Measured on a three-deep slot-forwarding chain
+# (x-outer -> x-mid -> x-inner): `assignedNodes({flatten:true})` returns the FINAL
+# assigned node and never a slot, so this reads attributes off nodes one hop away and
+# there is no cycle to close. A chosen depth number would have been an argument against
+# the fix; there is none to choose.
+#
+# A CHILD THAT IS ITSELF A DECLARED CONTROL IS NOT ITS CONTAINER'S LABEL -- the `guarded`
+# arm, and a deliberate divergence from AccName, which recurses into controls too and is
+# why Chrome names `<a>Read the report <button aria-label="Dismiss this card">x</button></a>`
+# "Read the report Dismiss this card". This codebase has already decided that question
+# once, in `synthLabel`: *"A PARENT HOLDING A SECOND CONTROL IS A GROUP, AND ITS TEXT
+# LABELS THE GROUP, NOT THIS CONTROL"* -- measured live in eval 7 on a quantity stepper
+# where both buttons came back named after the QUANTITY. Using the same rule here is
+# PRINCIPLES 17 rather than a new judgement; the guard sits INSIDE `_declName` so it
+# applies to a slot-assigned node and a direct child in one spelling.
+_DECL_CTL_GUARD = (
+    "      if (_DECL_CTL_TAG[n.tagName] || _roleHit(n.getAttribute('role'))) return '';\n")
+_DECL_CTL_TAGS = (
+    "  const _DECL_CTL_TAG = { A: 1, BUTTON: 1, INPUT: 1, SELECT: 1, TEXTAREA: 1, SUMMARY: 1 };\n")
+
+#
+# ACCNAME STEP 2A: A HIDDEN NODE CONTRIBUTES NOTHING, AND `aria-hidden="true"` IS HIDDEN.
+# `_namable` asks the RENDERING question (`checkVisibility`), which an `aria-hidden` icon
+# passes -- it is painted, it is just declared absent from the accessibility tree. Found
+# by the one counter that would stop this change: `BREAKS_A_CORRECT_NAME` read 5, all of
+# them one element on one site, and reading the live markup rather than guessing gave
+#     <i aria-label="icon: search" class="anticon anticon-search" aria-hidden="true">
+# inside the <label> of a search field, so the field's name became
+# "Search Keyword(s) icon: search" where Chrome says "Search Keyword(s)". Ant Design's
+# `anticon` ships `aria-label` and `aria-hidden` on the SAME element, so this is a whole
+# library's idiom rather than one page's mistake.
+#
+# The node's OWN attribute is enough and an ancestor walk is not needed, because the only
+# descent this helper makes is through a <slot>, and the slot branch re-enters here -- so
+# every node whose attributes are read has been through this test.
+_DECLNAME_DEF = (
+    "  const _declName = (n) => {\n"
+    "    try {\n"
+    "      if (!n || n.nodeType !== 1) return '';\n"
+    "      if (n.getAttribute('aria-hidden') === 'true') return '';\n"
+    "      if (n.tagName === 'SLOT' && n.assignedNodes) {\n"
+    "        let s = '';\n"
+    "        for (const a of (n.assignedNodes({ flatten: true }) || [])) {\n"
+    "          if (!a || a.nodeType !== 1 || !_namable(a)) continue;\n"
+    "          const d = _declName(a);\n"
+    "          if (d) s = s ? s + ' ' + d : d;\n"
+    "        }\n"
+    "        return s;\n"
+    "      }\n"
+    "      const lb = n.getAttribute('aria-labelledby');\n"
+    "      if (lb) {\n"
+    "        const r = (n.getRootNode && n.getRootNode().getElementById) ? n.getRootNode() : document;\n"
+    "        const s = lb.split(/\\s+/)\n"
+    "          .map((id) => { const q = r.getElementById(id); return q ? ((typeof q.innerText === 'string' ? q.innerText : q.textContent) || '').trim() : ''; })\n"
+    "          .filter(Boolean).join(' ');\n"
+    "        if (s) return s;\n"
+    "      }\n"
+    "      return (n.getAttribute('aria-label') || '').trim();\n"
+    "    } catch (e) { return ''; }\n"
+    "  };\n")
+
+# ONLY WHEN THE CHILD CONTRIBUTES NO TEXT -- the NARROW arm, and the one proposed.
+_DECLNAME_NARROW = (
+    "          if (!t.trim()) t = _declName(n);\n")
+# THE SPEC'S OWN ORDER: a declared name outranks the child's content -- the BROAD arm,
+# measured so the narrow one is a choice with a number rather than a preference. This is
+# the arm that absorbs a nested control's label into its container.
+_DECLNAME_BROAD = (
+    "          { const _dn = _declName(n); if (_dn) t = _dn; }\n")
+
+_DECL_ANCHOR_PRE = (
+    "          if (!t.trim() || _hasShadow) {\n"
+    "            const _d = _deepText(n, 0, skip);\n"
+    "            if (_d && _d.trim().length > t.trim().length) t = _d;\n"
+    "          }\n")
+
+# Two anchors, applied as ONE change: the helper's definition and its single call site.
+# `_DECL_POST[1]` is swapped in place by `--ab-broad`, so which arm ran is a property of
+# the run rather than of the reader's memory.
+_DECL_PRE = ["  const _contentName = (node, skip) => {", _DECL_ANCHOR_PRE]
+_DECL_POST = [_DECLNAME_DEF + "  const _contentName = (node, skip) => {",
+              _DECL_ANCHOR_PRE + _DECLNAME_NARROW]
+
+CANDIDATES.append(("child-declared-name", None, None, _DECL_PRE, _DECL_POST))
+
+
+def _set_arm(arm):
+    """Which of the three arms `child-declared-name` means, recorded in the output so it
+    is never inferred. `narrow` is the proposal; the other two exist so that it is a
+    choice with a number beside it rather than a preference (#41/#44)."""
+    defn = _DECLNAME_DEF
+    if arm == "guarded":
+        # AFTER the aria-hidden line, not before it, so the arm this probe measures is
+        # byte-identical to the proposed patch. Both are early returns with no side
+        # effects, so the order cannot change behaviour -- but "functionally identical"
+        # is the kind of claim PRINCIPLES 18 is about, and `verify_patch` compares bytes.
+        defn = _DECL_CTL_TAGS + defn.replace(
+            "      if (n.getAttribute('aria-hidden') === 'true') return '';\n",
+            "      if (n.getAttribute('aria-hidden') === 'true') return '';\n" + _DECL_CTL_GUARD)
+    _DECL_POST[0] = defn + "  const _contentName = (node, skip) => {"
+    _DECL_POST[1] = _DECL_ANCHOR_PRE + (
+        _DECLNAME_BROAD if arm == "broad" else _DECLNAME_NARROW)
+
+# A SABOTAGE ARM FOR `BREAKS_A_CORRECT_NAME`. A zero from a counter nobody has seen fire
+# is worth nothing (PRINCIPLES 15), and #114 earned this the same way: it planted a
+# candidate that discards every wrapping-label name and watched the counter read 2.
+# This one discards the name `synthLabel` recovers from a descendant's `aria-label` --
+# the path that today carries the icon-only controls this fix is about, so it breaks
+# exactly the population the real candidate touches. NEVER SHIPPED; `--ab-only
+# sabotage-drop-aria-label` is the firing proof and nothing else selects it.
+CANDIDATES.append((
+    "sabotage-drop-aria-label",
+    None, None,
+    ["      const svgAL = el.querySelector('svg[aria-label], [aria-label]');"],
+    ["      const svgAL = null && el.querySelector('svg[aria-label], [aria-label]');"],
+))
+
+# ...AND IT DID NOT FIRE, WHICH IS A FACT ABOUT THE INSTRUMENT WORTH KEEPING.
+# Over 30 sites and 7,673 compared rows it moved `chars` by +0.08% and `name_changed` by
+# ZERO: `synthLabel`'s aria-label rescue fires on controls that have no name from any
+# other source, and Chrome mostly IGNORES those rows, so the damage landed outside the
+# compared population entirely. A sabotage that changes nothing the comparator looks at
+# is not a firing proof, so it is kept (the null is the evidence for the sentence above)
+# and a second one is aimed at the population the counter actually watches: the
+# `aria-label` read in `accessibleName`, which is the commonest name source on the web.
+CANDIDATES.append((
+    "sabotage-drop-name-arialabel",
+    None, None,
+    ["      if (!accessibleName) accessibleName = (el.getAttribute('aria-label') || '').trim();"],
+    ["      if (!accessibleName) accessibleName = '' && (el.getAttribute('aria-label') || '').trim();"],
+))
+
+
 def _collector_src(with_fix, only=None):
     """`with_fix=False` returns the collector WITHOUT these changes, `True` WITH them --
     whichever side of the fix `extension/background.js` currently sits on.
@@ -429,6 +607,9 @@ def _collector_src(with_fix, only=None):
         "live-label-not-clone": "accessibleName = _contentName(wrap, el);",
         "labelledby-non-html": "typeof n.innerText === 'string' ? n.innerText : n.textContent",
         "br-is-a-separator": "parts.push('\\n'); continue;",
+        "child-declared-name": "const _declName = (n) => {",
+        "sabotage-drop-aria-label": "const svgAL = null &&",
+        "sabotage-drop-name-arialabel": "accessibleName = '' && (el.getAttribute('aria-label')",
     }
     for name, marker in want.items():
         if only is not None and name not in only:
@@ -1009,6 +1190,7 @@ async def candidate_ab(browser, name, url, arch, lang, nstages, only=None):
     # oracle read, one extra key.
     by_stage = collections.Counter()
     moved = []
+    gained = []
     try:
         await ctx.add_init_script(path=TAG_JS)
         page = await ctx.new_page()
@@ -1037,6 +1219,19 @@ async def candidate_ab(browser, name, url, arch, lang, nstages, only=None):
             tot["joined"] += len(set(A) & set(B))
             for mm in set(A) & set(B):
                 ax = chrome.get(mm)
+                # IDENTITY GAINS OUTSIDE THE COMPARED POPULATION STILL COUNT FOR THE
+                # AGENT. The buckets below are scored only where Chrome also has a name,
+                # which is the conservative subset: there a gain is VERIFIED correct. But
+                # a row that stops saying `(unlabeled)` is a gain to the reader whether or
+                # not Chrome has an opinion, and Chrome IGNORES a great many icon
+                # controls -- so the graded figure is a LOWER bound and this counter is
+                # what says by how much.
+                _oa, _sa = ours_identity(A[mm])
+                _ob, _sb = ours_identity(B[mm])
+                if not _oa.strip() and _ob.strip():
+                    tot["gained_identity_any"] += 1
+                    if not ax or ax.get("ignored"):
+                        tot["gained_identity_chrome_ignores"] += 1
                 if not ax or ax.get("ignored"):
                     continue
                 theirs = ax.get("name") or ""
@@ -1080,10 +1275,36 @@ async def candidate_ab(browser, name, url, arch, lang, nstages, only=None):
                     # we had it right, and the candidate breaks it.
                     if named and ca == "exact" and cb != "exact":
                         tot["BREAKS_A_CORRECT_NAME"] += 1
+                    # THE BENEFIT, GRADED. A row that had no identity and now has one is
+                    # the only shape where the agent's row changes from `(unlabeled)` to
+                    # something actionable; everything else is a wording change. Collect
+                    # them and ask WHERE that name was in the BASE listing.
+                    if not oa.strip() and ob.strip():
+                        gained.append({"mmid": mm, "name": ob, "tag": A[mm].get("tag"),
+                                       "chrome": theirs, "stage": stage})
                     if len(moved) < 25:
                         moved.append({"mmid": mm, "tag": A[mm].get("tag"),
                                       "base": oa[:120], "cand": ob[:120],
                                       "chrome": theirs[:120], "cls": [ca, cb]})
+            if gained:
+                others = []
+                for k, e in A.items():
+                    i, _s = ours_identity(e)
+                    if i.strip():
+                        others.append({"mmid": k, "id": i})
+                try:
+                    where = await page.evaluate(_WHERE_JS, {
+                        "rows": [{"mmid": g["mmid"], "name": g["name"]}
+                                 for g in gained if g.get("stage") == stage],
+                        "others": others})
+                except Exception:
+                    where = {}
+                for g in gained:
+                    if g.get("stage") != stage or "where" in g:
+                        continue
+                    g["where"] = where.get(g["mmid"], "unresolved")
+                    tot["where_" + g["where"]] += 1
+                    by_stage["s%d|where_%s" % (stage, g["where"])] += 1
             stage += 1
             if stage > nstages:
                 break
@@ -1104,12 +1325,79 @@ async def candidate_ab(browser, name, url, arch, lang, nstages, only=None):
             if not v.get("flipped"):
                 break
         return {"site": name, "lang": lang, "counts": dict(tot), "moved": moved,
-                "by_stage": dict(by_stage), "stages": stage}
+                "gained": gained[:60], "by_stage": dict(by_stage), "stages": stage}
     finally:
         try:
             await ctx.close()
         except Exception:
             pass
+
+
+# WHERE WAS THE NAME BEFORE? -- the benefit half, graded rather than counted.
+#
+# A row that GAINS an identity is not uniformly valuable. #115 graded the same class by
+# composed-tree containment and found the three buckets cost an agent very different
+# amounts:
+#   INSIDE    the name already sat on a row nested within this control, so an agent that
+#             acted on it still hit the right thing -- a click bubbles. Low cost.
+#   ELSEWHERE the name was on some unrelated row. Reachable by `find`, attributed to the
+#             wrong control: #93's "the words survive on a NEIGHBOURING row".
+#   NOWHERE   the name was in the listing nowhere at all. This is the only outright loss,
+#             and it is #74's defect class with live instances.
+# Graded against the BASE listing, because that is the one the agent would have been
+# handed. `__mmidReg` is the collector's own registry, so containment is asked of the
+# elements it actually stamped rather than re-derived from a selector (#99's lesson).
+_WHERE_JS = r"""
+(req) => {
+  // mmid -> element by WALKING, not from `window.__mmidReg`. The collector runs inside a
+  // `(function(){...})()` in this evaluate, so its registry is not on `window` here and
+  // the first version of this grading returned `unresolved` for 100% of rows -- a clean,
+  // plausible, entirely wrong benefit figure. `_RENDERED_JS` below already walks; this is
+  // the same walk rather than a second idea (PRINCIPLES 17).
+  const reg = {};
+  (function walk(root, d) {
+    let all; try { all = root.querySelectorAll('[mmid]'); } catch (e) { return; }
+    for (const el of all) { const m = el.getAttribute('mmid'); if (m && !reg[m]) reg[m] = el; }
+    if (d > 6) return;
+    let every; try { every = root.querySelectorAll('*'); } catch (e) { return; }
+    let budget = 20000;
+    for (const e of every) {
+      if (--budget < 0) break;
+      const sr = e.shadowRoot || e.__abClosedRoot;
+      if (sr) walk(sr, d + 1);
+      if (e.tagName === 'IFRAME') { try { const doc = e.contentDocument; if (doc) walk(doc, d + 1); } catch (x) {} }
+    }
+  })(document, 0);
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  // Composed-tree containment: `contains` does not cross a shadow boundary, so walk up
+  // through hosts the way the collector's own `composedParent` does.
+  const inside = (anc, el) => {
+    let n = el, hops = 0;
+    while (n && hops++ < 200) {
+      if (n === anc) return true;
+      n = n.parentNode || null;
+      if (n && n.nodeType === 11) n = n.host || null;      // DocumentFragment -> host
+    }
+    return false;
+  };
+  const out = {};
+  for (const r of (req.rows || [])) {
+    const el = reg[r.mmid];
+    const want = norm(r.name);
+    if (!el || !want) { out[r.mmid] = 'unresolved'; continue; }
+    let verdict = 'nowhere';
+    for (const o of (req.others || [])) {
+      if (String(o.mmid) === String(r.mmid)) continue;
+      if (norm(o.id).indexOf(want) === -1) continue;
+      const oe = reg[o.mmid];
+      if (oe && inside(el, oe)) { verdict = 'inside'; break; }
+      verdict = 'elsewhere';
+    }
+    out[r.mmid] = verdict;
+  }
+  return out;
+}
+"""
 
 
 _RENDERED_JS = r"""
@@ -1911,6 +2199,18 @@ SELFTEST_HTML = r"""
 
 <!-- aria-labelledby pointing at HIDDEN text: AccName says the referenced text IS used. -->
 <button id=d5 aria-labelledby="hid">Visible text</button><span id=hid hidden>Hidden name wins</span>
+
+<!-- #114'S CLASS F -- `title` against name-from-content, where the content is an icon
+     font's generated glyph. The element renders NO text of its own, so we take the
+     title and are USEFUL; Chrome takes the content and is SPEC-CORRECT and useless.
+     Measured at 139 elements, ALL of which render no text, 22 of them (16%) a
+     Private-Use-Area glyph exactly like this one -- which is why #114 recorded the class
+     as a DECIDED don't-build rather than a deferred item. The `font-family` is left
+     alone deliberately: setting it to `none` suppresses the generated box and Chrome's
+     name comes back EMPTY, which turns a two-sided disagreement into a one-sided one
+     and the proof into something weaker than it looks. -->
+<style>.ico::before{content:"\e978"} .ico{display:inline-block;width:20px;height:20px}</style>
+<a href="#f" id=d6 class=ico title="Facebook"></a>
 """
 
 
@@ -1956,19 +2256,47 @@ async def _selftest():
         #    probe-lifetime rule: an A/B whose firing proof is a DEFECT expires
         #    when the defect ships a fix.
         #
-        #    `chrome-superset` is #34's measured shape -- Chrome's name absorbs a
-        #    nested control's `aria-label` where ours stops at the link's own
-        #    text, and per AccName 2F Chrome is right and we stop short. It is
-        #    recorded as a characterisation of the gap, not a bug queued for
-        #    fixing, so it is a disagreement that should still be here. If it is
-        #    ever closed, this proof expires too -- rewrite it rather than
-        #    deleting it, and say what replaced it.
-        if not any(row["cls"] == "chrome-superset"
-                   and "Deadline" in (row["ours"] or "") for row in r["rows"]):
+        #    IT HAS NOW BEEN REWRITTEN A SECOND TIME, FOR THE SAME REASON ONE
+        #    STEP EARLIER. It stood on #34's `chrome-superset` shape -- Chrome's
+        #    name absorbs a nested control's `aria-label` where ours stops at the
+        #    link's own text. #34 is exactly the gap `child-declared-name` closes,
+        #    so standing the proof on it meant the proof's life was tied to a
+        #    change already in flight. MEASURED rather than assumed, by running
+        #    `_selftest` with AGL.COLLECT swapped for each candidate arm:
+        #
+        #        shipped   PASS   chrome-superset  'Deadline ?'
+        #        narrow    PASS   chrome-superset  'Deadline ?'
+        #        guarded   PASS   chrome-superset  'Deadline ?'
+        #        broad     FAIL   -- no disagreement at all
+        #
+        #    So the NARROW arm would have left it standing and the SPEC-FAITHFUL
+        #    one kills it. "It happens to survive the arm we shipped" is not a
+        #    property to rely on.
+        #
+        #    THE ANCHOR IS NOW #114'S CLASS F, and the reason it is the right one
+        #    is that it can never be closed. Class F is `title` against
+        #    name-from-content where the content is an icon font's PUA glyph:
+        #    following the spec there would replace a real identity ("Facebook")
+        #    with a character that identifies nothing, on a sixth of the class,
+        #    which #114 measured and recorded as a DECIDED don't-build. A proof
+        #    anchored on a decision outlives a proof anchored on a backlog item.
+        #    It is also the same permanent floor #114 names: a metric reading
+        #    1.000 here would mean we had stopped printing identities that #74
+        #    requires, so this disagreement is load-bearing rather than residual.
+        #
+        #    #34's shape is still in the fixture and still REPORTED, because it
+        #    is the shape the next reader will want to see, and because losing it
+        #    silently is how the first expiry went unnoticed. It is no longer
+        #    what the pass depends on.
+        _classf = [x for x in r["rows"]
+                   if "Facebook" in (x["ours"] or "") and (x["theirs"] or "").strip()]
+        if not _classf:
             fails.append("the comparator reported NO genuine disagreement on a "
-                         "shape that is known to disagree (#34's nested-label "
-                         "case): %s"
+                         "shape that is known to disagree AND decided not to fix "
+                         "(#114's class F, `title` against an icon-font glyph): %s"
                          % [(x["ours"], x["theirs"], x["cls"]) for x in r["rows"]][:6])
+        _nested = [x for x in r["rows"] if "Deadline" in (x["ours"] or "")]
+        report_nested = [(x["ours"], x["theirs"], x["cls"]) for x in _nested]
         # 2. THE CONTROLS MUST AGREE. Without this a probe that reports EVERYTHING as a
         #    disagreement would pass check 1 and the agreement rate would be meaningless.
         for want in ("Save changes", "Documentation", "Email address", "Password", "Close dialog"):
@@ -1997,6 +2325,10 @@ async def _selftest():
     print("selftest", "PASS" if not fails else "FAIL")
     print(json.dumps({
         "ax_info": ax, "counts": r["counts"],
+        # REPORTED, NOT REQUIRED -- see check 1. #34's nested-control shape is the one a
+        # reader will look for, and it is the one `child-declared-name` is about, so it
+        # is printed whether or not it still disagrees.
+        "nested_label_34": report_nested,
         "disagreements": [{k: x[k] for k in ("ours", "theirs", "cls", "tag", "src")}
                           for x in report_rows],
         "planted_moved": len(r2["planted"]), "planted_reported": len(planted_rows),
@@ -2066,6 +2398,19 @@ def main():
                     help="isolate ONE candidate: every other one stays exactly as the "
                          "source has it. Without this, an A/B run while two fixes are "
                          "already shipped and a third is not measures all three at once.")
+    ap.add_argument("--ab-arm", default="guarded",
+                    choices=("narrow", "guarded", "broad"),
+                    help="which arm `child-declared-name` means. `narrow`: a child's "
+                         "DECLARED name is used only when that child contributes no text. "
+                         "`guarded`: ...and the child is not itself a declared control, "
+                         "which is synthLabel's existing group rule in a second place. "
+                         "`broad`: AccName's own order -- a declared name outranks the "
+                         "child's text, which is the arm that absorbs a nested control's "
+                         "label into its container. Measuring all three is how the "
+                         "proposal becomes a choice with a number (#41/#44). The "
+                         "DEFAULT is `guarded` because that is what the write-up "
+                         "proposes -- a reader re-deriving the published figure with no "
+                         "flag must get the arm the figure describes.")
     ap.add_argument("--oracle-recheck", action="store_true",
                     help="re-read Chrome's AX tree after each comparison and count how "
                          "many REPORTED rows moved -- a direct bound on the page "
@@ -2076,6 +2421,7 @@ def main():
     a = ap.parse_args()
     global RECHECK
     RECHECK = bool(a.oracle_recheck)
+    _set_arm(a.ab_arm)
     if a.selftest:
         return asyncio.run(_selftest())
     if a.report:
@@ -2161,11 +2507,14 @@ def main():
             agg.update(r.get("counts") or {})
             agg_stage.update(r.get("by_stage") or {})
         (out / "candidate_ab.json").write_text(
-            json.dumps({"totals": dict(agg), "by_stage": dict(agg_stage), "sites": res},
+            json.dumps({"totals": dict(agg), "by_stage": dict(agg_stage),
+                        "arm": a.ab_arm,
+                        "only": a.ab_only, "sites": res},
                        indent=1, ensure_ascii=False),
             encoding="utf-8")
-        print("CANDIDATE A/B over %d sites (%d errored):" % (
-            len(res), sum(1 for r in res if "error" in r)))
+        print("CANDIDATE A/B over %d sites (%d errored)  arm=%s only=%s:" % (
+            len(res), sum(1 for r in res if "error" in r),
+            a.ab_arm.upper(), a.ab_only))
         print(json.dumps(dict(agg), indent=1))
         if agg["compared"]:
             print("agree base %.4f -> cand %.4f ; improved %d regressed %d ; chars %+.2f%%" % (
@@ -2187,6 +2536,17 @@ def main():
                 bk = agg_stage.get(st + "|BREAKS_A_CORRECT_NAME", 0)
                 print("%-5s %9d %9d %9d %9d   %9.2f" % (
                     st, c, ch, im, bk, 1000.0 * im / c if c else 0.0))
+        # THE BENEFIT, GRADED. Only `nowhere` is an outright loss today; `inside` is a row
+        # an agent could already act on, because a click bubbles.
+        g = {k: agg.get("where_" + k, 0) for k in
+             ("inside", "elsewhere", "nowhere", "unresolved")}
+        if sum(g.values()):
+            print("\nROWS THAT GAIN AN IDENTITY, by where that name was in the BASE listing:")
+            print(" ", json.dumps(g), " total", sum(g.values()))
+        for r in res:
+            for e in (r.get("gained") or [])[:3]:
+                print("  gained %-16s %-9s %-5s %r" % (
+                    r["site"], e.get("where"), e.get("tag"), (e.get("name") or "")[:60]))
         return 0
     runs = [asyncio.run(run_pass(sites, a.conc, a.stages, a.examples, a.fire))]
     if a.compare:

@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1625 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1635 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1625 checks, ~153s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1635 checks, ~153s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -11115,6 +11115,122 @@ granted in the side panel is refused with the same message the agent gets.
     had made its own result look WEAKER. It also caught itself writing a
     replication table it had not read (invented 42/7/6/29 against a real
     38/6/2/30) and corrected it.
+116. **I COMMISSIONED THIS FOR A REASON THAT TURNED OUT TO BE FALSE, AND IT
+    SHIPPED ON A DIFFERENT ONE.** #115 measured `<wa-button><wa-icon
+    aria-label="Search">` as a live instance of #34's gap and graded 24 on one
+    site at **9 "name nowhere in the listing"**. I briefed this as a reach
+    defect — controls an agent cannot reach by name, #74's class with live
+    instances. **Across 251 live out-of-sample sites it is 2 rows.** The agent
+    said so in its own headline: *"if the only argument were reach, the answer
+    would be DON'T BUILD."* `#115`'s figure was one site, and `elsewhere`
+    overstates itself too, because grading matches by name STRING so 29
+    identical `Remove` buttons each score the others as reachable-elsewhere.
+
+    | where the gained name already was | rows |
+    |---|---|
+    | `inside` the control (a click bubbles, so the cost is low) | 143 (63.6%) |
+    | `elsewhere` | 80 (35.6%) |
+    | **`nowhere` — genuinely unreachable** | **2 (0.9%)** |
+
+    **WHAT IT SHIPPED ON IS CORRECTNESS, NOT REACH**, and the entry says so
+    rather than quoting the number I went looking for. AccName 2F says each
+    element child contributes its **NAME**; `_contentName` concatenates child
+    **TEXT**. **159 rows become exact Chrome matches, 0 broken, +0.133% pooled
+    chars, median site +0.000%, 24 of 251 sites move, 0 identity loss on the
+    touched sites in both arms, and no chosen number anywhere** — no depth
+    bound, no cap, no threshold, no list. Same shape #31's constraints shipped
+    on: free where nothing is declared, worth most exactly where it fires.
+
+    **THE MECHANISM IS NARROWER THAN MY FRAMING AND REPRODUCING IT FIRST IS WHY
+    THE FIX IS SMALL.** `synthLabel` ALREADY rescues an icon-only control, via
+    `querySelector('svg[aria-label],[aria-label]')` — **and a querySelector does
+    not cross a SLOT boundary**, while `_deepText`, which does, is looking for
+    text and an icon has none. Measured on the shipped collector:
+    `btn.innerText ''`, `btn.querySelector('[aria-label]')` **false**,
+    `slot.assignedNodes({flatten:true})` → the named icon. Two more shapes came
+    free: a child's `aria-labelledby` (`synthLabel` has no such branch), and a
+    SECOND named child — `Prev Next` was printing as `Prev`.
+
+    **`BREAKS_A_CORRECT_NAME` READ 5 BEFORE IT READ 0, AND THE 5 WERE A REAL
+    DEFECT.** One live `<input>` went `'Search Keyword(s)'` →
+    `'Search Keyword(s) icon: search'`, because `<i aria-label="icon: search"
+    aria-hidden="true">` ships both attributes on one element. **AccName step 2A
+    says a hidden node contributes nothing**, and `_namable` asks the RENDERING
+    question, which an aria-hidden icon passes. One declaration-only line, and
+    **CD9 fails without it** — so the sub-rule is ablated separately rather than
+    riding along. The zero is evidence because the counter was planted first:
+    sabotage **fires at 756**.
+
+    **THE UNGUARDED ARM "WINS" 41 TO 2 AND ALL 41 ARE JUNK.** Without the
+    declared-control guard, carousel containers absorb every child button's
+    label — `div "Go to slide 1 Go to slide 2 …"`, and the same in Japanese and
+    German, on 16 live sites — where those children are already listed with
+    their own refs and names. **Nothing is recovered and the metric is what was
+    wrong:** `nowhere` matches the whole string, so a concatenation of
+    already-printed names scores as novel. The agent found that in its own
+    ruler rather than banking the bigger number.
+
+    **A FIRING PROOF ANCHORED ON A DECISION OUTLIVES ONE ANCHORED ON A
+    BACKLOG ITEM.** #107 re-based this probe's proof onto #34 precisely because
+    #34 was measured-and-deliberately-unfixed — and this change fixes a corner
+    of #34, so the trap #107 recorded fired again, on one arm. It is rebased
+    onto **#114's class F** (`title` versus name-from-content where the content
+    is an icon-font PUA glyph), which #114 measured at 139 elements and recorded
+    as a **DECIDED don't-build**. That is the generalisable rule and it is now
+    written down.
+
+    **Ablation, three arms, run by me rather than read:** HEAD **295/299** with
+    exactly CD1, CD1b, CD2, CD3 failing and the live symptoms in the messages
+    (`button (unlabeled)`, and `"Prev"` where both children are named); patched
+    **299/299**; patched with the 2A line deleted, 298/299 with exactly CD9.
+    Six controls pass in both arms. **CD1b is labelled a fix assertion, not a
+    control, because it fails on HEAD** — #114 had to make the identical
+    relabel. Row SHAPE is asserted, not string presence, because `"Search" in
+    listing` passes pre-fix through the `near=` hint.
+
+    **No framework name reaches the code**, which I checked rather than assumed:
+    the four hits are in comments citing the markup that motivated the rule, and
+    the rule itself is HTML's own interactive tag set, the existing `_roleHit`,
+    AccName 2A, the slot API and AccName's own label order.
+
+    **Still open, and it is the agent's own least-sure: whether the guard's
+    BOUNDARY is right.** An `<a>` with no `href` is skipped though it is not
+    really a control; a `role=group` wrapper is not skipped though it sometimes
+    is. Neither appeared across 251 sites, which is evidence of rarity and not
+    of correctness, and card-dense commerce layouts are thin in this corpus. On
+    one site the fix prefixes an artist link with an adjacent element's label
+    and **Chrome agrees exactly on 32 rows**, so a composite name is sometimes
+    right.
+
+    **A live pass is owed** (PRINCIPLES 12) and could not be run from the
+    agent's side.
+
+    **LIVE-VERIFIED in the user's own Chrome after a reload** (worker `u38cb0`,
+    age 19s, staleness read silent, and `bridge_ms_total` did NOT reset — the
+    extension reloaded and the server stayed, which is what the two detectors
+    should say about an extension-only change). Against a controlled probe
+    injected into a granted origin, all five shapes:
+
+    | shape | row |
+    |---|---|
+    | named icon behind a SLOT boundary | `ref_29 \| button "Search"` |
+    | a child's `aria-labelledby` | `ref_33 \| button "Open filters"` |
+    | TWO named children | `ref_38 \| button "Prev Next"` |
+    | CONTROL: `aria-hidden` child (AccName 2A) | `ref_43 \| button "Search Keyword(s)"` — the icon donates nothing |
+    | CONTROL: a nested control's declared name | `ref_48 \| a "Read the report"` with `ref_49 \| button name="Dismiss this card"` on its own row |
+
+    **One probe of mine was the wrong shape and I checked before reporting it.**
+    My first guard control used `<button>Dismiss</button>` — TEXT — and the
+    container row read `div "Read the report Dismiss"`, which looks like the
+    guard failing. It is not: a child's TEXT goes through the long-standing
+    name-from-content concatenation, while the guard governs a child's DECLARED
+    name. Re-run with CD6's actual shape (an `aria-label` on a text-less
+    button), the guard holds. Reporting the first row as a regression would have
+    been a measurement error, not a finding.
+
+    Suites: 1635 checks. New — CD1/CD1b/CD2/CD3 (the four fix assertions, all
+    FAILING on HEAD) and CD4–CD9 as the six controls, CD6 being the one that
+    fails on the unguarded arm and CD9 the one that fails without the 2A line.
 
 ## Debugging starting points
 
