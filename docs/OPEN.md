@@ -1396,6 +1396,25 @@ zero controls whose name provenance CHANGES between two reads of one document,
 this is a latent defect with no instances and should be recorded as such rather
 than fixed. `docs/research/NAME-RESIDUE-2026-11.md` section 9.
 
+> **MEASURED 2026-11-19 — the falsifier FIRES, with the limit stated.**
+> `docs/research/NAME-AT-STAGE-2026-11.md` section 9. A staged name run IS the pass
+> this asks for: the interaction driver breaks on a url change, so every stage reads
+> ONE document. Over 130 sites, **82 of them read 2+ times, 100 elements carrying a
+> synth marker were seen at 2 or more reads, and 0 had their provenance change** —
+> 0 markers that stayed while the name under them moved, and 0 markers that cleared.
+>
+> **The denominator is the point and is why this is not vacuous.** The first version
+> of that check counted only CHANGES, so it printed `0` for the population as well and
+> read exactly like a fired falsifier while proving nothing (PRINCIPLES 16, in the
+> check written to test this item).
+>
+> **It does NOT close the item.** The condition needs a label to ARRIVE between two
+> reads — an SPA hydrating a form, a field unlocking after another is filled — and a
+> declaration-driven interaction (open a menu, flip a tab) rarely causes that. So the
+> reading is "no instances found by the pass the item asked for", not "the hazard does
+> not exist". 100 repeat-seen marked elements is a small population. A two-read fixture
+> is still owed.
+
 ### 20. The Claude-in-Chrome arm cannot run — DEREGISTRATION CLEARED, a NEW block `BLOCKED ON THE USER`
 
 > **UPDATE 2026-11-19: the deregistration is GONE.** After the user's reload,

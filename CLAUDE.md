@@ -10854,10 +10854,25 @@ granted in the side panel is refused with the same message the agent gets.
     **What this closes and what it does not.** It closes "works at any stage" at
     full scale on current code. It does NOT close the name axis, which is where
     5 of the 13 hunks landed, and the `display:contents` fix is measured firing
-    **2.8x more after an interaction** than at first paint — while
-    `audit_name_correctness.py` and `measure_findability.py` both run at first
-    paint only. A post-interaction name run is the highest-value next step and
-    is named here so it is not re-derived.
+    **2.8x more after an interaction** than at first paint.
+
+    **THE NEXT SENTENCE HERE WAS FALSE AND IS CORRECTED IN PLACE (#115).** It
+    read: *"while `audit_name_correctness.py` and `measure_findability.py` both
+    run at first paint only. A post-interaction name run is the highest-value
+    next step."* **`audit_name_correctness.py` has never run at first paint
+    only.** Verified by hand: it imports `audit_stage_generality` as its
+    interaction driver at `audit_name_correctness.py:82` and calls `STAGE_PICK`
+    at :955, its own docstring gives "no post-interaction evidence at all" as
+    its REASON FOR EXISTING, and **#108's artefact — the run behind the 0.9766
+    headline — holds 329 post-interaction reads** (s1 154, s2 82, s3 53, s4 40).
+    `measure_findability.py` is first-paint, but `measure_findability_at_stage.py`
+    exists and #92 ran it over 254 sites.
+    The claim was written here from reading rather than running, repeated into a
+    subagent brief and into a reply to the user, and nobody checked it until
+    #115 did — the failure #25 and #67 both name, in a paper that was otherwise
+    unusually rigorous about its OWN instrument. What was genuinely missing is
+    narrower and is what #115 measured: the published stage table pools every
+    `src`, so the HEADLINE statistic had never been read per stage.
 113. **THE LIVE PASS, in the user's own Chrome, after a reload — and
     limitation #12 fired on the way and its documented recovery worked.** #43
     made a live pass non-optional after 15 fixtured fixes produced 7
@@ -11009,6 +11024,97 @@ granted in the side panel is refused with the same message the agent gets.
     (the five fix assertions, all FAILING against the pre-fix collector) with
     LB3b/LB4/LB5/LB6/LBY2/LBY3/BR2/BR3 as the eight controls that pass in BOTH
     arms.
+115. **THE PREMISE WAS FALSE, AND CHECKING IT FIRST IS WHAT MADE THE RUN WORTH
+    DOING.** #112 and `STAGE-GENERALITY-2026-11b.md` both state that
+    `audit_name_correctness.py` runs at first paint only and both name a
+    post-interaction name run as the highest-value next step. **It has never
+    run at first paint only.** I verified this myself rather than relaying it:
+    it imports `audit_stage_generality` as its interaction driver at line 82
+    and calls `STAGE_PICK` at line 955, its docstring gives "no
+    post-interaction evidence at all" as its REASON FOR EXISTING, and **#108's
+    own artefact holds 329 post-interaction reads** (s1 154, s2 82, s3 53,
+    s4 40). The claim was written from reading rather than running, I repeated
+    it into a subagent brief AND into a reply to the user, and nobody checked
+    it until now — #25 and #67's failure, inside a paper that had been
+    unusually rigorous about its own instrument. #112 is corrected in place.
+
+    **What was genuinely missing is narrower: the published stage table pools
+    every `src`, so the HEADLINE statistic had never been read per stage.**
+    256 sites, 600 reads, 344 post-interaction, 103,223 rows, `fmt_drift=0`.
+    **I re-derived this table from the raw artefact and it matches to the
+    digit:**
+
+    | stage | reads | `src=name` rows | **pooled** | **per-site median** | sites |
+    |---|---|---|---|---|---|
+    | s0 | 261 | 9,419 | 0.9399 | **0.9815** | 129 |
+    | s1 | 161 | 5,635 | 0.9265 | **0.9791** | 86 |
+    | s2 | 86 | 3,305 | 0.9159 | **0.9853** | 56 |
+    | s3 | 55 | 1,906 | 0.9087 | **0.9938** | 36 |
+    | s4 | 42 | 1,505 | 0.9169 | **1.0000** | 28 |
+
+    **THE TWO COLUMNS POINT IN OPPOSITE DIRECTIONS AND THAT IS THE RESULT.**
+    Pooled falls 3.1pp with depth while the per-site median RISES to 1.0000,
+    and the reason is #114's floor rather than any degradation: `chrome-empty`'s
+    share of disagreements goes **44.5% → 68.0%**, so **the deeper you drive a
+    page, the more of what is left is the part that can never close** — rows
+    where Chrome's role forbids a name and we print the author's string because
+    #74 requires it. Headline per-site median **0.9749 against #108's 0.9766**,
+    replication 0.9793: **#114's "the headline will not visibly change"
+    prediction, confirmed post-fix.**
+
+    **REVEALED-VS-CARRIED IS SETTLED AS "NOT WORSE", AND #93'S DIRECTION
+    REVERSES.** #93 asked whether controls revealed by an interaction are named
+    worse, got 0.6628 against 0.7370, said most of it was composition, then saw
+    a 34-site re-run REVERSE the sign, and wrote it down as unsettled. Paired
+    WITHIN one read of one page so composition cannot explain it: `src=name`
+    **11 better / 3 worse / 13 identical**, and with both arms restricted to
+    post-interaction reads `new|name` **0.9648 vs carried 0.9171**, replicated
+    at 0.9913 vs 0.9223. **It is not a `src` mix** — that was the agent's first
+    explanation and its own table refutes it (21.8% vs 23.4% name share); the
+    pooled "worse" lives entirely in the TEXT arm, where `chrome-empty` is 87%
+    of revealed disagreements against 77% carried. Stated as the evidence
+    supports: **not worse, probably better** — p=0.0574 does not clear 0.05 and
+    this exact question has reversed between runs before.
+
+    **#114'S FOUR FIXES BY STAGE: ONE PAYS A PREMIUM, AND RATES ALONE WOULD
+    HAVE CLAIMED THREE.** Only the slot fix has a real post-interaction premium
+    — **2.84x, with the COUNT rising 13 → 28 while the denominator falls**.
+    `labelledby`'s count is flat at 9/9/8/8 and its rate only triples because
+    `compared` shrinks 464 → 120; `live-label` puts 16 of its 31 at one depth on
+    one site; `br` is a first-paint fix. **`BREAKS_A_CORRECT_NAME` is 0 in every
+    cell**, and all four stride arms reproduce #114's published random numbers
+    exactly. **A stride sample can exclude every carrier of the shape:**
+    `--every 3` reads 0 changes across 31,504 rows for a fix that demonstrably
+    works, because it skips all five carrier sites. Both arms are reported
+    rather than the flattering one.
+
+    **A NEW CLASS, AND HALF OF WHAT LOOKS LIKE IT IS NOT OURS.** `ours-empty`
+    runs 0.099% → 0.190%. About half is rows where **Chrome's "name" identifies
+    nothing** — Private-Use-Area icon glyphs, and a site whose `aria-label` is
+    the literal string `undefined` — where printing nothing is right. The real
+    half (54 rows, 70% on two component-library sites) is **#34's gap in its
+    degenerate case**: `<wa-button><wa-icon aria-label="Search">`, where AccName
+    2F takes each child's NAME and we concatenate child TEXT, of which there is
+    none. Graded by composed-tree containment: of 24 on one site, 10 have the
+    name on a row INSIDE the control (a click bubbles, so the cost is low), 5
+    only elsewhere, and **9 have the name nowhere in the listing** — live
+    instances of the blind spot #112 could only demonstrate on a fixture. NOT
+    proposed as a fix: #34 touches `_contentName` and #41/#44 require both
+    halves measured first.
+
+    **`OPEN.md` ITEM 21'S FALSIFIER FIRES AND THE ITEM STAYS OPEN.** A staged
+    run IS the two-reads-of-one-document pass that item asks for: 82 sites, 100
+    marked elements seen at 2+ reads, **0 provenance changes**. Recorded, not
+    closed — the driver rarely creates the condition, which is a label ARRIVING
+    between two reads.
+
+    **Four measurement bugs the agent caught in itself**, and the fourth is the
+    one worth repeating: **its population×src table compared a post-only arm
+    against one containing s0** — the exact composition error the section was
+    written to expose — and fixing it moved the gap +3.8pp → +4.8pp, so the flaw
+    had made its own result look WEAKER. It also caught itself writing a
+    replication table it had not read (invented 42/7/6/29 against a real
+    38/6/2/30) and corrected it.
 
 ## Debugging starting points
 

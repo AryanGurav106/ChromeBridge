@@ -421,6 +421,29 @@ The most valuable is a post-interaction run of the **name** rulers, since both o
 currently measure first paint and today's changes are measured to fire 2.8× more after an
 interaction than before it.
 
+> **CORRECTION, 2026-11-19 — the second half of that sentence is FALSE and was asserted
+> about an instrument this paper did not run.** `audit_name_correctness.py` has driven the
+> stage interactions since the day it was written: it imports this paper's own driver
+> (`audit_stage_generality.STAGE_PICK` / `_act` / `STAGE_VERIFY`), its docstring gives
+> "no post-interaction evidence at all" as its reason for existing, #93 published a
+> by-stage table over **329 post-interaction reads**, and the run behind the 0.9766
+> headline (#108) carries **333**. `measure_findability.py` is first-paint, but
+> `measure_findability_at_stage.py` exists and #92 ran it over 254 sites and 327
+> post-interaction reads.
+>
+> The recommendation was still worth following for a narrower reason, and
+> `docs/research/NAME-AT-STAGE-2026-11.md` is the result: the published stage table pools
+> every `src`, so the statistic the headline quotes had never been read per stage, and
+> both the stage gradient and the revealed-vs-carried comparison were pooled across sites
+> — the one shape that cannot answer either question. Paired, both effects are
+> composition.
+>
+> The irony is worth keeping rather than editing away: this paper is unusually careful
+> about the limits of its OWN instrument — it converted a one-line disclaimer into a
+> demonstrated control pair and printed a coverage table — and the false claim is about
+> the neighbour it had not run. PRINCIPLES §V: verify a file, function or flag still does
+> what you are about to recommend around it.
+
 ---
 
 ## Artefacts

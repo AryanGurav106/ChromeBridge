@@ -842,6 +842,23 @@ async def read_once(page, cdp, label, seen_names, want_examples, plant=False,
         "stage": label, "entries": len(ents), "ax_info": info, "fmt_drift": fmt_drift,
         "counts": dict(counts), "by_src": {k: dict(v) for k, v in by_src.items()},
         "by_pop": dict(by_pop),
+        # NAME PROVENANCE PER ELEMENT, for `OPEN.md` item 21's falsifier -- which names a
+        # corpus pass over TWO READS OF ONE DOCUMENT, and that is exactly what a staged
+        # run is (the driver breaks on a url change, so every stage reads one document).
+        #
+        # `__abSynthAttr` is set at five sites in the collector and cleared at none, so a
+        # control read once before its label exists keeps `(post-key)` for the life of the
+        # document -- a FALSE PROVENANCE CLAIM in the one field whose purpose is
+        # provenance, pointing the wrong way: it tells an agent to distrust a name that is
+        # now authored and correct. Item 21 says it needs a prevalence number before
+        # anything is changed, and records the falsifier: zero controls whose provenance
+        # changes between two reads means a latent defect with no instances.
+        #
+        # Only entries that HAVE a synth marker are kept, so this is a few percent of
+        # entries rather than all of them; keyed by mmid, which is stable for an element
+        # already stamped in this document.
+        "synth_map": {str(e.get("mmid")): (e.get("synth") or "") + "|" + (ours_identity(e)[0] or "")[:60]
+                      for e in ents if e.get("synth")},
         "cls_roles": dict(cls_roles), "role_named": dict(role_named),
         "rows": rows[:want_examples], "rows_total": len(rows),
         "planted": planted, "planted_disposition": disp, "_all_ours": all_ours,
@@ -984,6 +1001,13 @@ async def candidate_ab(browser, name, url, arch, lang, nstages, only=None):
                 " return { blob: blob, chars: String(listing).length }; })()")
 
     tot = collections.Counter()
+    # THE SAME A/B, ATTRIBUTED TO THE STAGE IT HAPPENED AT. `tot` pools every stage, so
+    # "is this fix worth more after an interaction?" could not be read off it -- and that
+    # is the question these three candidates exist to answer: #114's `display:contents`
+    # hunk was measured firing 2.8x more post-interaction than at first paint, because
+    # design systems render slotted controls when you OPEN something. Same rows, same
+    # oracle read, one extra key.
+    by_stage = collections.Counter()
     moved = []
     try:
         await ctx.add_init_script(path=TAG_JS)
@@ -1026,8 +1050,18 @@ async def candidate_ab(browser, name, url, arch, lang, nstages, only=None):
                 tot["compared"] += 1
                 tot["exact_base"] += 1 if ca == "exact" else 0
                 tot["exact_cand"] += 1 if cb == "exact" else 0
+                sk = "s%d|" % stage
+                by_stage[sk + "compared"] += 1
                 if oa != ob:
                     tot["name_changed"] += 1
+                    by_stage[sk + "name_changed"] += 1
+                    _named = bool((theirs or "").strip())
+                    if ca != "exact" and cb == "exact":
+                        by_stage[sk + ("improved_chrome_named" if _named
+                                       else "improved_chrome_empty")] += 1
+                    elif ca == "exact" and cb != "exact":
+                        by_stage[sk + ("BREAKS_A_CORRECT_NAME" if _named
+                                       else "regressed_chrome_empty")] += 1
                     # SPLIT ON WHETHER CHROME HAS A NAME AT ALL. A row where Chrome's role
                     # permits no name (ARIA: `generic` prohibits it, most roles are
                     # author-only) cannot be "named wrongly" -- our row prints the
@@ -1070,7 +1104,7 @@ async def candidate_ab(browser, name, url, arch, lang, nstages, only=None):
             if not v.get("flipped"):
                 break
         return {"site": name, "lang": lang, "counts": dict(tot), "moved": moved,
-                "stages": stage}
+                "by_stage": dict(by_stage), "stages": stage}
     finally:
         try:
             await ctx.close()
@@ -1445,17 +1479,51 @@ def stage_report(paths):
                 for k, v in (rd.get("by_src") or {}).items():
                     pss[rd["stage"]][k].update(v)
 
+    # PER-SITE MEDIAN PER STAGE, beside the pooled rate. #93 measured a 7pp gap between
+    # pooled and per-site median on ONE corpus, from composition alone, so a pooled figure
+    # cannot be compared across stages either -- the stages are different site mixtures.
+    med = collections.defaultdict(list)
+    for r in ok:
+        for rd in r.get("reads") or []:
+            n = (rd.get("by_src") or {}).get("name") or {}
+            if n.get("compared", 0) >= 20:
+                med[rd["stage"]].append(n["exact"] / n["compared"])
+
+    def _median(xs):
+        if not xs:
+            return None
+        xs = sorted(xs)
+        h = len(xs) // 2
+        return xs[h] if len(xs) % 2 else (xs[h - 1] + xs[h]) / 2
+
     o.append("\n### `src=name` per stage (pooled -- read with the paired table below)\n")
-    o.append("| stage | reads | name compared | name exact | **name agree** | "
-             "text compared | text agree |")
-    o.append("|---|---|---|---|---|---|---|")
+    o.append("| stage | reads | name compared | name exact | **name agree (pooled)** | "
+             "**per-site median** | sites n>=20 | text compared | text agree |")
+    o.append("|---|---|---|---|---|---|---|---|---|")
     nreads = collections.Counter(rd["stage"] for r in ok for rd in r.get("reads") or [])
     for st in sorted(pss):
         n = dict((pss[st].get("name") or {}))
         t = dict((pss[st].get("text") or {}))
-        o.append("| %s | %d | %d | %d | **%s** | %d | %s |" % (
+        m = _median(med.get(st) or [])
+        o.append("| %s | %d | %d | %d | **%s** | **%s** | %d | %d | %s |" % (
             st, nreads.get(st, 0), n.get("compared", 0), n.get("exact", 0),
-            _rate(n), t.get("compared", 0), _rate(t)))
+            _rate(n), "n/a" if m is None else "%.4f" % m, len(med.get(st) or []),
+            t.get("compared", 0), _rate(t)))
+
+    # CLASS HISTOGRAM PER STAGE, on the headline population. The rate alone cannot say
+    # WHICH disagreement moved, and `chrome-empty` is the permanent floor (#114) rather
+    # than a defect -- so a stage where the floor's share rises is not a stage where names
+    # got worse.
+    o.append("\n### `src=name` disagreement classes per stage (exact, uncapped)\n")
+    classes = [c for c in DISAGREE if any((pss[st].get("name") or {}).get(c)
+                                          for st in pss)]
+    o.append("| stage | disagree | %s |" % " | ".join(classes))
+    o.append("|" + "---|" * (len(classes) + 2))
+    for st in sorted(pss):
+        n = dict((pss[st].get("name") or {}))
+        dis = n.get("compared", 0) - n.get("exact", 0)
+        o.append("| %s | %d | %s |" % (
+            st, dis, " | ".join(str(n.get(c, 0)) for c in classes)))
 
     # THE STAGE GRADIENT, PAIRED. Deeper stages are reached by FEWER and DIFFERENT sites,
     # so a pooled decline across the stage column is the sample changing under the
@@ -1496,12 +1564,23 @@ def stage_report(paths):
     if not pr:
         o.append("*(artefact predates `paired_reads` -- re-run to get this table)*")
     else:
-        for label, kc, ke, cc, ce, floor in (
-                ("all `src`", "new_c", "new_e", "car_c", "car_e", None),
+        # The `src=name` arm uses a LOWER per-read threshold than the all-src arm, and the
+        # reason is power rather than taste: a read carries ~9 revealed rows in total and
+        # only a fraction of those resolve an accessible name, so a >=10 cut would report
+        # n=0 and read as "no effect" when it means "not measured". The count at each
+        # threshold is printed so the reader can see which it is (PRINCIPLES 15 -- a
+        # comparison that cannot fire also asserts that nothing is wrong).
+        for label, kc, ke, cc, ce, floor, thr in (
+                ("all `src`", "new_c", "new_e", "car_c", "car_e", None, 10),
                 ("`src=name` only", "new_name_c", "new_name_e",
-                 "car_name_c", "car_name_e", ("new_name_ce", "car_name_ce"))):
-            rows = [x for x in pr if x[kc] >= 10 and x[cc] >= 10]
-            o.append("\n**%s**, reads with >=10 rows in BOTH arms: n=%d\n" % (label, len(rows)))
+                 "car_name_c", "car_name_e", ("new_name_ce", "car_name_ce"), 5)):
+            rows = [x for x in pr if x[kc] >= thr and x[cc] >= thr]
+            avail = {t: sum(1 for x in pr if x[kc] >= t and x[cc] >= t)
+                     for t in (3, 5, 10, 20)}
+            o.append("\n**%s**, reads with >=%d rows in BOTH arms: n=%d "
+                     "(reads available at >=3/5/10/20: %d/%d/%d/%d)\n"
+                     % (label, thr, len(rows),
+                        avail[3], avail[5], avail[10], avail[20]))
             if not rows:
                 o.append("*(none)*")
                 continue
@@ -1534,6 +1613,95 @@ def stage_report(paths):
             v = pp.get(k) or {}
             if v.get("compared"):
                 o.append("| %s | %d | %d | %s |" % (k, v["compared"], v["exact"], _rate(v)))
+
+    # IS THERE A DISAGREEMENT CLASS THAT ONLY APPEARS AFTER AN INTERACTION?
+    #
+    # A control revealed by opening a menu or a dialog can be named through a path that
+    # never runs at first paint -- an `aria-labelledby` pointing into a portal, a dialog
+    # naming itself from its own heading. Nobody has looked, and the rate tables above
+    # cannot show it: they are rates, and a brand-new mechanism with 40 instances moves a
+    # rate by nothing while being exactly the thing worth finding.
+    #
+    # Counted from `cls_roles` (class x Chrome-role x src), which the read function builds
+    # UNCAPPED, rather than from `rows`, which is capped per read and in document order --
+    # a head slice of each page would make a mechanism's absence at s0 unfalsifiable
+    # (PRINCIPLES 16).
+    s0c, postc = collections.Counter(), collections.Counter()
+    s0n = postn = 0
+    for r in ok:
+        for idx, rd in enumerate(r.get("reads") or []):
+            tgt = s0c if idx == 0 else postc
+            tgt.update(rd.get("cls_roles") or {})
+            if idx == 0:
+                s0n += (rd.get("counts") or {}).get("compared", 0)
+            else:
+                postn += (rd.get("counts") or {}).get("compared", 0)
+    if s0n and postn:
+        o.append("\n### a disagreement shape that is NEW after an interaction?\n")
+        o.append("Rate per 10,000 compared rows, so the two columns are comparable "
+                 "despite s0 being read on every site. "
+                 "`compared` s0=%d post=%d.\n" % (s0n, postn))
+        o.append("| class \\| Chrome role \\| src | s0 n | s0 /10k | post n | post /10k | ratio |")
+        o.append("|---|---|---|---|---|---|")
+        rows_ = []
+        for k in set(s0c) | set(postc):
+            a_, b_ = s0c.get(k, 0), postc.get(k, 0)
+            if a_ + b_ < 25:
+                continue
+            ra, rb = 10000.0 * a_ / s0n, 10000.0 * b_ / postn
+            rows_.append((rb / ra if ra else float("inf"), k, a_, ra, b_, rb))
+        for ratio, k, a_, ra, b_, rb in sorted(rows_, reverse=True)[:12]:
+            o.append("| `%s` | %d | %.2f | %d | %.2f | %s |" % (
+                k, a_, ra, b_, rb, "inf" if ratio == float("inf") else "%.2fx" % ratio))
+
+    # OPEN.md ITEM 21: does a name's declared PROVENANCE go stale across two reads?
+    # Its falsifier, verbatim: "if a corpus pass finds zero controls whose name provenance
+    # CHANGES between two reads of one document, this is a latent defect with no instances
+    # and should be recorded as such rather than fixed." A staged run IS that pass.
+    have_synth = any(rd.get("synth_map") for r in ok for rd in r.get("reads") or [])
+    if have_synth:
+        stale = []          # synth stayed, the NAME under it changed
+        cleared = 0         # the marker went away by itself
+        kept_same = 0
+        seen_twice = 0      # THE DENOMINATOR. Without it this prints "0 of 0", which is
+                            # vacuous and reads exactly like "0 of many" -- the falsifier
+                            # only fires if the population it ran over is non-empty
+                            # (PRINCIPLES 15, 16).
+        for r in ok:
+            rds = r.get("reads") or []
+            if len(rds) < 2:
+                continue
+            first = {}
+            for idx, rd in enumerate(rds):
+                sm = rd.get("synth_map") or {}
+                for mm, v in sm.items():
+                    s, _, ident = v.partition("|")
+                    if mm not in first:
+                        first[mm] = (idx, s, ident)
+                        continue
+                    i0, s0_, id0 = first[mm]
+                    seen_twice += 1
+                    if s == s0_ and ident != id0:
+                        kept_same += 1
+                        if len(stale) < 40:
+                            stale.append((r["site"], rds[idx]["stage"], s, id0, ident))
+                    elif s != s0_:
+                        cleared += 1
+        o.append("\n### `OPEN.md` item 21: does a `(post-key)` claim go STALE across reads?\n")
+        o.append("| | |\n|---|---|")
+        o.append("| sites with >= 2 reads of one document | %d |"
+                 % sum(1 for r in ok if len(r.get("reads") or []) > 1))
+        o.append("| elements carrying a synth marker, seen at 2+ reads | %d |" % seen_twice)
+        o.append("| **marker UNCHANGED while the name under it CHANGED** | **%d** |" % kept_same)
+        o.append("| marker itself changed between reads | %d |" % cleared)
+        if stale:
+            o.append("\nExamples (site, stage, marker, name then -> name now):\n")
+            for s in stale[:8]:
+                o.append("- `%s` %s `%s`: %r -> %r" % s)
+        else:
+            o.append("\n**Zero instances** — item 21's own falsifier fires: a latent "
+                     "defect with no instances on this corpus, to be recorded rather "
+                     "than fixed.")
 
     # PER-POPULATION x SRC, pooled but EXACT (not the head-sliced `rows` list).
     pps = agg.get("per_pop_src") or {}
@@ -1883,6 +2051,10 @@ def main():
     ap.add_argument("--compare", action="store_true")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--report", nargs="+")
+    ap.add_argument("--stage-report", nargs="+",
+                    help="the name axis AFTER an interaction: `src=name` per stage, the "
+                         "stage gradient PAIRED per site, and revealed-vs-carried PAIRED "
+                         "per read -- the comparisons the pooled tables cannot make")
     ap.add_argument("--quoting", action="store_true",
                     help="measure the two quoting conventions in _fmtLine by PARSING "
                          "each printed row back the way a reader would")
@@ -1908,6 +2080,9 @@ def main():
         return asyncio.run(_selftest())
     if a.report:
         print(report(a.report))
+        return 0
+    if a.stage_report:
+        print(stage_report(a.stage_report))
         return 0
     sites = ASG._pool(a.pool, a.only)
     if a.plant_in_corpus:
@@ -1981,10 +2156,13 @@ def main():
                 return r
         res = asyncio.run(go_ab())
         agg = collections.Counter()
+        agg_stage = collections.Counter()
         for r in res:
             agg.update(r.get("counts") or {})
+            agg_stage.update(r.get("by_stage") or {})
         (out / "candidate_ab.json").write_text(
-            json.dumps({"totals": dict(agg), "sites": res}, indent=1, ensure_ascii=False),
+            json.dumps({"totals": dict(agg), "by_stage": dict(agg_stage), "sites": res},
+                       indent=1, ensure_ascii=False),
             encoding="utf-8")
         print("CANDIDATE A/B over %d sites (%d errored):" % (
             len(res), sum(1 for r in res if "error" in r)))
@@ -1994,6 +2172,21 @@ def main():
                 agg["exact_base"] / agg["compared"], agg["exact_cand"] / agg["compared"],
                 agg["improved"], agg["regressed"],
                 100.0 * (agg["chars_cand"] - agg["chars_base"]) / max(1, agg["chars_base"])))
+        # WHERE THE FIX PAYS. Rows improved per 1,000 rows compared, by stage -- a RATE,
+        # because s0 is read on every site and s4 on the few that go that deep, so raw
+        # counts fall with depth whatever the fix does.
+        stages = sorted({k.split("|")[0] for k in agg_stage})
+        if stages:
+            print("\n%-5s %9s %9s %9s %9s   %s" % (
+                "stage", "compared", "changed", "improved", "breaks", "improved/1k"))
+            for st in stages:
+                c = agg_stage.get(st + "|compared", 0)
+                ch = agg_stage.get(st + "|name_changed", 0)
+                im = (agg_stage.get(st + "|improved_chrome_named", 0)
+                      + agg_stage.get(st + "|improved_chrome_empty", 0))
+                bk = agg_stage.get(st + "|BREAKS_A_CORRECT_NAME", 0)
+                print("%-5s %9d %9d %9d %9d   %9.2f" % (
+                    st, c, ch, im, bk, 1000.0 * im / c if c else 0.0))
         return 0
     runs = [asyncio.run(run_pass(sites, a.conc, a.stages, a.examples, a.fire))]
     if a.compare:
