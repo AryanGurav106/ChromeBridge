@@ -98,6 +98,12 @@ sys.path.insert(0, str(ROOT / "tools"))
 from playwright.async_api import async_playwright  # noqa: E402
 import audit_generality_live as AGL  # noqa: E402  (sample, exclusions, collector)
 import audit_stage_generality as ASG  # noqa: E402  (the interaction driver)
+# THE HOVER DRIVER, REUSED RATHER THAN RESTATED (PRINCIPLES 17). #94 built the picker,
+# the before/after element-identity diff and the did-the-hover-survive check, and #117
+# named "name correctness on hover-revealed content" as a gap because THIS probe has no
+# hover arm -- not because that driver was missing. Writing a third picker here is the
+# failure #36 and #37 both record, and #117 found an instance of it this week.
+import audit_hover_stage as AHS  # noqa: E402  (HOVER_PICK / HOVER_DIFF / APPEARED_MMIDS)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -821,11 +827,27 @@ async def ax_names(cdp):
 
 # --------------------------------------------------------------------------------------
 async def read_once(page, cdp, label, seen_names, want_examples, plant=False,
-                    recheck=False):
+                    recheck=False, hov_fn=None, plant_only=None):
     """ONE read: collector -> declarations -> Chrome AX tree -> compare. The collector runs
-    FIRST because it is what stamps the mmid attributes the join uses."""
+    FIRST because it is what stamps the mmid attributes the join uses.
+
+    `hov_fn` is an awaitable returning the mmids of the elements a HOVER was OBSERVED to
+    reveal (#94's before/after element-identity diff, held in page memory). It is called
+    HERE, between the collector and the compare loop, because those mmids do not exist
+    until the collector has stamped them and must exist before the loop that tallies them
+    -- the ordering #94's own `APPEARED_MMIDS` comment states. A failure is RECORDED as
+    `hov_error`, never swallowed into an empty set: a driver that silently revealed
+    nothing would otherwise produce a clean rate over an empty population, which is the
+    exact shape PRINCIPLES 15 is about.
+    """
     res = await page.evaluate(_collect_js())
     ents = json.loads(res["blob"])
+    hov_mmids, hov_error = set(), None
+    if hov_fn is not None:
+        try:
+            hov_mmids = {str(m) for m in (await hov_fn()) if m}
+        except Exception as e:
+            hov_error = str(e)[:140]
     decls = await page.evaluate(DECLS_JS)
     planted = []
     if plant:
@@ -837,6 +859,14 @@ async def read_once(page, cdp, label, seen_names, want_examples, plant=False,
         cand = [str(e.get("mmid")) for e in ents
                 if ours_identity(e)[1] in ("name", "text", "label", "label-contains-text")
                 and ours_identity(e)[0]]
+        # RESTRICTED TO A NAMED SET WHEN ONE IS GIVEN. The hover firing proof has to plant
+        # on rows the HOVER revealed, not on whatever the page happens to list first: a
+        # sentinel that lands on the page header proves the comparator works and says
+        # nothing about the hover arm, which is the population whose emptiness is the
+        # hazard here.
+        if plant_only is not None:
+            keep = {str(m) for m in plant_only}
+            cand = [m for m in cand if m in keep]
         planted = await page.evaluate(_PLANT_JS, {"sentinel": PLANT, "mmids": cand[:400]})
     chrome, info = await ax_names(cdp)
 
@@ -869,6 +899,19 @@ async def read_once(page, cdp, label, seen_names, want_examples, plant=False,
     # by splitting, rather than becoming a third nesting level nobody walks (#107 records
     # a rollup that existed only three levels down being read as missing data).
     by_pop = collections.Counter()
+    # THE SAME SPLIT ON A SECOND, TIGHTER AXIS: `hov` is an element a hover was WATCHED to
+    # reveal (element identity, before and after, in page memory), `pre` is everything
+    # else in THIS READ. Both arms therefore come from one read of one page, which is the
+    # design #115 used to settle revealed-vs-carried and the only one that removes
+    # composition by construction rather than by argument.
+    #
+    # IT IS KEPT ALONGSIDE `by_pop` RATHER THAN REPLACING IT, because the two answer
+    # different questions and have disagreed before. `by_pop`'s `new` is keyed on the
+    # IDENTITY STRING (#89/#92's definition, because mmids are additive) and so counts a
+    # control that was always on the page but whose identity happened not to appear at s0
+    # as "revealed"; `hov` is keyed on an observation. Reporting both is what makes the
+    # difference between them readable instead of a choice made silently.
+    by_hov = collections.Counter()
     # EXACT, UNCAPPED role histogram per disagreement class. The `rows` list is capped for
     # file size and is in document order, so counting roles from it would be a head slice
     # of each page -- a count that is not an inventory (PRINCIPLES 16). Chrome's ROLE is
@@ -967,6 +1010,13 @@ async def read_once(page, cdp, label, seen_names, want_examples, plant=False,
             by_pop[pop + "|" + src + "|exact"] += 1
         else:
             by_pop[pop + "|" + src + "|c:" + cls] += 1
+        if hov_fn is not None:
+            hp = "hov" if mm in hov_mmids else "pre"
+            by_hov[hp + "|" + src + "|compared"] += 1
+            if cls == "exact":
+                by_hov[hp + "|" + src + "|exact"] += 1
+            else:
+                by_hov[hp + "|" + src + "|c:" + cls] += 1
         if mm in track:
             disp[mm] = "compared:" + cls + (":SENTINEL" if PLANT in theirs else "")
         if cls != "exact":
@@ -981,6 +1031,7 @@ async def read_once(page, cdp, label, seen_names, want_examples, plant=False,
                 "decl": {k: v for k, v in d.items() if k != "html" and v not in ("", 0, False)},
                 "html": d.get("html", "")[:260],
                 "new": (seen_names is not None and ours not in seen_names),
+                "hov": (mm in hov_mmids),
             })
     # IS THE ORACLE ITSELF STABLE? The collector runs, then DOM.getDocument and
     # getFullAXTree run -- tens to hundreds of milliseconds later on a big page. On a live
@@ -1019,10 +1070,21 @@ async def read_once(page, cdp, label, seen_names, want_examples, plant=False,
     # a count is not an inventory).
     for mm in track:
         disp.setdefault(mm, "not-an-entry")
+    out_hov = {}
+    if hov_fn is not None:
+        ent_mm = {str(e.get("mmid")) for e in ents}
+        # THE POPULATION'S OWN FUNNEL, so a clean rate can never be read without the size
+        # it came from. `revealed` is what the diff observed, `as_entries` what the
+        # collector listed, and the `hov|*|compared` keys what reached the oracle. #117's
+        # brief asks for exactly this and PRINCIPLES 16 is why it is three numbers rather
+        # than one.
+        out_hov = {"by_hov": dict(by_hov), "hov_error": hov_error,
+                   "hov_revealed": len(hov_mmids),
+                   "hov_as_entries": len(hov_mmids & ent_mm)}
     return {
         "stage": label, "entries": len(ents), "ax_info": info, "fmt_drift": fmt_drift,
         "counts": dict(counts), "by_src": {k: dict(v) for k, v in by_src.items()},
-        "by_pop": dict(by_pop),
+        "by_pop": dict(by_pop), **out_hov,
         # NAME PROVENANCE PER ELEMENT, for `OPEN.md` item 21's falsifier -- which names a
         # corpus pass over TWO READS OF ONE DOCUMENT, and that is exactly what a staged
         # run is (the driver breaks on a url change, so every stage reads one document).
@@ -1563,6 +1625,175 @@ async def one(browser, name, url, arch, lang, nstages, examples, plant_at_end):
             pass
 
 
+# --------------------------------------------------------------------------------------
+# THE HOVER ARM. #117 named "name correctness on hover-revealed content" as one of two
+# shapes that fall between the three stage rulers: #94 drives hover for PRESENCE and
+# REACHABILITY (528 revealed controls on 38 sites, 0 owning no row, find at 0.913) and
+# the name ORACLE has never driven hover at all. So for every control that exists only
+# while something is hovered, nobody has asked whether the name we print is the name
+# Chrome computes -- and that population is the one most likely to be odd, because a
+# hover menu is built by a component library at the moment of hover.
+#
+# WHY THIS IS NOT A THIRD DRIVER. `AHS.HOVER_PICK` / `HOVER_DIFF` / `APPEARED_MMIDS` /
+# `MAX_HOVERS` / `SETTLE_MS` are #94's, used verbatim. The only thing written here is the
+# sequencing: hover -> verify something appeared -> read_once (which is the oracle) ->
+# resolve the revealed mmids. #94's docstring makes the rule this rests on explicit -- a
+# CSS `:hover` submenu declares no state flip so the PRODUCT must not guess at one
+# (PRINCIPLES 1), but a PROBE may put the mouse somewhere deliberately and then ask what
+# happened.
+# --------------------------------------------------------------------------------------
+async def hover_one(browser, name, url, arch, lang, examples, plant=False):
+    t0 = time.time()
+    ctx = await browser.new_context(viewport=VIEWPORT, ignore_https_errors=True,
+                                    user_agent=None, locale="en-US")
+    base = {"site": name, "url": url, "archetype": arch, "lang": lang}
+    try:
+        await ctx.add_init_script(path=TAG_JS)
+        page = await ctx.new_page()
+        try:
+            resp = await page.goto(url, wait_until="domcontentloaded", timeout=GOTO_MS)
+            status = resp.status if resp else None
+        except Exception as e:
+            return dict(base, error="goto: " + str(e)[:120])
+        try:
+            await page.wait_for_load_state("networkidle", timeout=7000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(2000)
+        cdp = await ctx.new_cdp_session(page)
+        try:
+            r0 = await read_once(page, cdp, "s0", None, examples, recheck=RECHECK)
+        except Exception as e:
+            return dict(base, error="read: " + str(e)[:160], status=status)
+        out = dict(base, status=status, reads=[r0], hovers=[])
+        seen_names = _names_of(r0)
+        r0.pop("_all_ours", None)
+
+        async def still_hovered():
+            try:
+                return await page.evaluate(
+                    "() => { const r = window.__abHover && window.__abHover.el;"
+                    " try { return !!(r && r.matches(':hover')); } catch (e) { return null; } }")
+            except Exception:
+                return None
+
+        done = 0
+        for attempt in range(AHS.MAX_HOVERS):
+            h = {"attempt": attempt}
+            try:
+                pick = await page.evaluate(AHS.HOVER_PICK + "(" + json.dumps({}) + ")")
+            except Exception as e:
+                h["pick_error"] = str(e)[:140]
+                out["hovers"].append(h)
+                break
+            if not pick or pick.get("none"):
+                h["no_candidates"] = True
+                h.update({k: pick.get(k) for k in ("sheetsRead", "sheetsBlocked", "cssRoots")}
+                         if pick else {})
+                out["hovers"].append(h)
+                break
+            h.update({"tier": pick["tier"], "why": pick.get("why"), "tag": pick.get("tag"),
+                      "sheets_read": pick.get("sheetsRead"),
+                      "sheets_blocked": pick.get("sheetsBlocked")})
+            # Mark used BEFORE moving, so a crash cannot loop on one element (#94).
+            await page.evaluate("() => { if (window.__abHover) "
+                                "window.__abHoverUsed.push(window.__abHover.el); }")
+            try:
+                await page.mouse.move(pick["x"], pick["y"])
+                await page.wait_for_timeout(120)
+                await page.mouse.move(pick["x"] + 1, pick["y"] + 1)
+            except Exception as e:
+                h["hover_error"] = str(e)[:110]
+                out["hovers"].append(h)
+                continue
+            await page.wait_for_timeout(AHS.SETTLE_MS)
+            try:
+                diff = await page.evaluate(AHS.HOVER_DIFF)
+            except Exception as e:
+                h["diff_error"] = str(e)[:110]
+                out["hovers"].append(h)
+                continue
+            h.update({"appeared": len(diff["appeared"]), "n_before": diff["nBefore"],
+                      "n_now": diff["nNow"],
+                      "off_screen_arrivals": diff.get("offScreenArrivals", 0),
+                      "root_still_hovered": diff["rootStillHovered"],
+                      "in_root": sum(1 for d in diff["appeared"] if d["inRoot"])})
+            if not diff["appeared"]:
+                # NOTHING APPEARED IS RECORDED, NOT SKIPPED. A run whose reveals all came
+                # back empty must be visible as such rather than as a clean small sample
+                # -- #94's own reason for counting this, and the failure mode PRINCIPLES 15
+                # describes for a detector that cannot fire.
+                h["nothing_appeared"] = True
+                out["hovers"].append(h)
+                continue
+
+            # SOMETHING APPEARED. Measure while the mouse is still there. The hover is
+            # asked of the DOM both before and after the read, because `read_once` runs a
+            # collector evaluate, a declarations evaluate and two CDP calls, which on a
+            # large page is hundreds of milliseconds -- long enough for a menu to shut.
+            h["hover_before_read"] = await still_hovered()
+            raw = {}
+
+            async def _hov():
+                mm = await page.evaluate(AHS.APPEARED_MMIDS)
+                raw["mm"] = mm
+                # UNFILTERED ON PURPOSE. Filtering to elements still visible NOW would
+                # quietly drop any element whose menu shut between the collector run and
+                # this call, shrinking the population instead of reporting that it did --
+                # a zero for the wrong reason. Visibility and connectedness are recorded
+                # beside the set so a diluted read is detectable at aggregation time.
+                return [m.get("mmid") for m in mm if m.get("mmid")]
+
+            try:
+                r = await read_once(page, cdp, "h%d" % done, seen_names, examples,
+                                    recheck=RECHECK, hov_fn=_hov)
+            except Exception as e:
+                h["read_error"] = str(e)[:140]
+                out["hovers"].append(h)
+                continue
+            h["hover_after_read"] = await still_hovered()
+            mm = raw.get("mm") or []
+            h.update({"revealed_with_mmid": sum(1 for m in mm if m.get("mmid")),
+                      "revealed_connected": sum(1 for m in mm if m.get("connected")),
+                      "revealed_visible": sum(1 for m in mm if m.get("visible")),
+                      "hov_as_entries": r.get("hov_as_entries"),
+                      "hov_error": r.get("hov_error"),
+                      "tier_used": pick["tier"]})
+            r["hover"] = h
+            for row in r["rows"]:
+                row["new"] = (row["ours"] not in seen_names)
+            seen_names |= _names_of(r)
+            r.pop("_all_ours", None)
+            out["reads"].append(r)
+            out["hovers"].append(h)
+            done += 1
+            if plant:
+                # THE LIVE FIRING PROOF FOR THIS ARM, planted on the HOVER-REVEALED rows
+                # only. A sentinel on an arbitrary row proves the comparator fires and
+                # says nothing about whether this driver ever reached the population.
+                hv = [m.get("mmid") for m in mm if m.get("mmid")]
+                try:
+                    out.setdefault("fire", []).append(
+                        await read_once(page, cdp, "fire%d" % done, set(), 12,
+                                        plant=True, plant_only=hv))
+                except Exception as e:
+                    out.setdefault("fire", []).append({"error": str(e)[:160]})
+            try:
+                await page.mouse.move(2, VIEWPORT["height"] - 2)
+                await page.wait_for_timeout(350)
+            except Exception:
+                pass
+            if done >= 2:
+                break
+        out["seconds"] = round(time.time() - t0, 1)
+        return out
+    finally:
+        try:
+            await ctx.close()
+        except Exception:
+            pass
+
+
 def _names_of(r):
     """Every identity this read compared or would have compared -- used only to decide the
     NEW population, so it must not depend on whether the row agreed."""
@@ -2012,6 +2243,419 @@ def stage_report(paths):
     return "\n".join(o)
 
 
+# --------------------------------------------------------------------------------------
+# THE HOVER REPORT. Every table here is built from `by_hov`, which is exact and uncapped
+# and whose two arms come from ONE read of ONE page -- so site composition, page weight
+# and which sites happened to offer a hover menu cancel by construction. #115 established
+# that design after its own pooled revealed-vs-carried table compared two different
+# mixtures of pages, and #93's version of the same question reversed sign between runs.
+# --------------------------------------------------------------------------------------
+def _hov_cell(bh, arm, src):
+    """compared / exact / per-class, for one arm and one src, out of a `by_hov` dict."""
+    pre = arm + "|" + src + "|"
+    comp = bh.get(pre + "compared", 0)
+    ex = bh.get(pre + "exact", 0)
+    cls = {k[len(pre) + 2:]: v for k, v in bh.items()
+           if k.startswith(pre + "c:")}
+    return comp, ex, cls
+
+
+def _hov_reads(sites):
+    """Every read that carries a hover population, with its funnel intact.
+
+    Gated on the project's own `usable()` for the same reason the funnel is: a site that
+    rendered three elements is not a site this ruler measured."""
+    out = []
+    for s in sites:
+        if not usable(s):
+            continue
+        for r in s.get("reads") or []:
+            if "by_hov" not in r:
+                continue
+            out.append((s, r))
+    return out
+
+
+def hover_report(paths):
+    o = []
+    sites = []
+    for p in paths:
+        sites += json.loads(Path(p).read_text(encoding="utf-8")).get("sites") or []
+    attempted = len(sites)
+    errored = [s for s in sites if "error" in s]
+    # `usable` IS THE PROJECT'S, NOT A LOOSER ONE WRITTEN HERE. The first version of this
+    # report used `"error" not in s`, which counts a site that rendered three elements as
+    # a pass -- a restated definition drifting from the one every other table in this file
+    # uses (PRINCIPLES 17; #36 records the permitted-drop-reason set drifting exactly this
+    # way, and #117 found an instance this week).
+    ok = [s for s in sites if usable(s)]
+    thin = [s for s in sites if "error" not in s and not usable(s)]
+    reads = _hov_reads(sites)
+    with_reveal = {s["site"] for s, _r in reads}
+    # ------------------------------------------------------------------ the funnel
+    # PRINTED FIRST AND NEVER FOLDED INTO THE RATE. #117's brief asks how big the
+    # measurable population actually is, and a rate over a population nobody stated is the
+    # shape PRINCIPLES 16 is about. #94 reached 63 reveals on 38 of 120 sites; if the
+    # oracle arm reaches a fraction of that, this table is why the reader knows.
+    nothing = sum(1 for s in ok for h in (s.get("hovers") or []) if h.get("nothing_appeared"))
+    nocand = sum(1 for s in ok for h in (s.get("hovers") or []) if h.get("no_candidates"))
+    revealed = sum(r.get("hov_revealed", 0) for _s, r in reads)
+    as_ent = sum(r.get("hov_as_entries", 0) for _s, r in reads)
+    hov_err = [(_s["site"], r.get("hov_error")) for _s, r in reads if r.get("hov_error")]
+    fmt_drift = sum(r.get("fmt_drift", 0) for s in ok for r in (s.get("reads") or []))
+    axf = sum(1 for s in ok for r in (s.get("reads") or [])
+              if (r.get("ax_info") or {}).get("error"))
+    o.append("## The measurable population\n")
+    o.append("| | |")
+    o.append("|---|---|")
+    o.append("| sites attempted | %d |" % attempted)
+    o.append("| sites UNMEASURED -- goto/read failed, named below | %d |" % len(errored))
+    o.append("| sites that rendered too little to compare (not a pass) | %d |" % len(thin))
+    o.append("| sites usable (`usable()`, the same rule every other table here uses) | %d |"
+             % len(ok))
+    o.append("| **sites where a hover revealed something** | **%d** |" % len(with_reveal))
+    o.append("| **reveals measured (one oracle read each)** | **%d** |" % len(reads))
+    o.append("| hover attempts that revealed nothing | %d |" % nothing)
+    o.append("| sites offering no hover candidate at all | %d |" % nocand)
+    o.append("| **controls observed to appear** | **%d** |" % revealed)
+    o.append("| ...of those, listed as entries by the collector | %d |" % as_ent)
+    _hovc = sum(v for _s, r in reads for k, v in (r.get("by_hov") or {}).items()
+                if k.startswith("hov|") and k.endswith("|compared"))
+    # THE GAP IS STATED AND ITS CAUSES LISTED, never attributed (PRINCIPLES 6). An entry
+    # drops out of the COMPARED population for reasons `read_once` already counts but does
+    # not split by this axis: the row's identity is blanked on purpose (#74's rule), the
+    # row leads with value=/placeholder= so it shows no identity, Chrome ignores the node,
+    # or neither side produced a string. Which one applies here is not measured.
+    o.append("| ...of those, reaching the COMPARED population | %d |" % _hovc)
+    if as_ent > _hovc:
+        o.append("| &nbsp;&nbsp;the %d-row gap: blanked identity, contents-only row, "
+                 "Chrome-ignored node, or both sides empty — NOT attributed here | |"
+                 % (as_ent - _hovc))
+    o.append("| `fmt_drift` (non-zero voids every number below) | %d |" % fmt_drift)
+    o.append("| reads whose AX call errored | %d |" % axf)
+    # THE TALLY RECONCILES, PRINTED RATHER THAN LEFT TO BE RE-DERIVED. For every arm and
+    # every `src`, `compared` must equal `exact` plus the sum of the per-class counts --
+    # the numerator and the denominator of every rate below come from one population, and
+    # #22 records a figure going wrong because they did not. A mismatch here voids the
+    # tables the same way a non-zero `fmt_drift` does.
+    tot = collections.Counter()
+    for _s, r in reads:
+        tot.update(r.get("by_hov") or {})
+    recon_bad = []
+    for arm in ("hov", "pre"):
+        for src in {k.split("|")[1] for k in tot}:
+            c = tot.get("%s|%s|compared" % (arm, src), 0)
+            e = tot.get("%s|%s|exact" % (arm, src), 0)
+            cl = sum(v for k, v in tot.items() if k.startswith("%s|%s|c:" % (arm, src)))
+            if c != e + cl:
+                recon_bad.append("%s|%s %d != %d" % (arm, src, c, e + cl))
+    o.append("| **compared == exact + classes, every arm x src** | **%s** |"
+             % ("OK" if not recon_bad else "*** MISMATCH: %s ***" % recon_bad))
+    if hov_err:
+        o.append("| **hov_fn ERRORS (population is understated)** | %s |" % hov_err[:6])
+    # THE ONE CONFOUND THIS DRIVER HAS, QUANTIFIED RATHER THAN ARGUED. The before/after
+    # set is every visible on-screen control, so anything that arrives during the 900ms
+    # settle for a reason OTHER than the hover -- a lazy-load, a carousel advancing -- is
+    # counted as revealed. An element INSIDE the hovered root cannot be that. The share
+    # is therefore a bound on how much of the population is really the hover, and it is
+    # printed because the alternative is a sentence saying it is probably fine.
+    inroot = sum(r["hover"].get("in_root", 0) for _s, r in reads if r.get("hover"))
+    app = sum(r["hover"].get("appeared", 0) for _s, r in reads if r.get("hover"))
+    o.append("| **appeared INSIDE the hovered element** (bound on the lazy-load confound) "
+             "| **%d of %d = %.1f%%** |" % (inroot, app, 100.0 * inroot / max(1, app)))
+    tiers = collections.Counter(r["hover"]["tier_used"] for _s, r in reads
+                                if r.get("hover", {}).get("tier_used"))
+    o.append("| tier that produced the reveal | %s |" % json.dumps(dict(tiers)))
+    surv = collections.Counter(
+        "after=%s" % r.get("hover", {}).get("hover_after_read") for _s, r in reads)
+    o.append("| hover still held AFTER the oracle read | %s |" % json.dumps(dict(surv)))
+
+    # ---------------------------------------------------------------- the `src` MIX
+    # PRINTED BEFORE THE RATES, because it is the first thing that can explain a gap
+    # between them and #115 had to refute exactly this reading of its own pooled table
+    # (its answer was 21.8% against 23.4%, i.e. not a mix effect). It is also how big the
+    # HEADLINE population is: `src=name` is the only arm 0.9766 quotes, and if a hover
+    # menu is made of plain links named by their own text then that population is small
+    # by NATURE rather than by sampling, which is a different sentence.
+    mix = {"hov": collections.Counter(), "pre": collections.Counter()}
+    for _s, r in reads:
+        for k, v in (r.get("by_hov") or {}).items():
+            arm, src, rest = k.split("|", 2)
+            if rest == "compared":
+                mix[arm][src] += v
+    if mix["hov"]:
+        o.append("\n## Where the identity came from, in each arm\n")
+        o.append("| `src` | hover n | hover share | carried n | carried share |")
+        o.append("|---|---|---|---|---|")
+        th, tp = sum(mix["hov"].values()), sum(mix["pre"].values())
+        for src in sorted(set(mix["hov"]) | set(mix["pre"]),
+                          key=lambda k: -mix["hov"].get(k, 0)):
+            o.append("| `%s` | %d | %.1f%% | %d | %.1f%% |" % (
+                src, mix["hov"].get(src, 0), 100.0 * mix["hov"].get(src, 0) / max(1, th),
+                mix["pre"].get(src, 0), 100.0 * mix["pre"].get(src, 0) / max(1, tp)))
+        o.append("| **total compared** | **%d** | | **%d** | |" % (th, tp))
+
+    # ------------------------------------------------- the headline, within-read paired
+    o.append("\n## `src=name` on hover-revealed rows, against the carried rows of the SAME read\n")
+    for src in ("name", "text"):
+        hc = he = pc = pe = 0
+        hcls, pcls = collections.Counter(), collections.Counter()
+        # SITES PER CLASS, exact (taken from `by_hov`, not from the capped `rows`). A
+        # ratio produced by ONE site is a site effect wearing a population effect's
+        # clothes -- #115 caught exactly that reading `live-label-not-clone`'s 16-of-31 at
+        # one depth as a stage premium. Printing the site count beside every ratio makes
+        # that unmissable instead of a thing the reader has to go and check.
+        hcls_sites = collections.defaultdict(set)
+        per_site = collections.defaultdict(lambda: [0, 0, 0, 0])
+        paired = []
+        for s, r in reads:
+            bh = r.get("by_hov") or {}
+            a, b, ac = _hov_cell(bh, "hov", src)
+            c, d, cc = _hov_cell(bh, "pre", src)
+            hc += a; he += b; pc += c; pe += d
+            hcls.update(ac); pcls.update(cc)
+            for k in ac:
+                hcls_sites[k].add(s["site"])
+            ps = per_site[s["site"]]
+            ps[0] += a; ps[1] += b; ps[2] += c; ps[3] += d
+            if a >= 5 and c >= 5:
+                paired.append((b / a, d / c))
+        if not hc:
+            o.append("**no `src=%s` rows in the hover arm at all** -- nothing to report.\n" % src)
+            continue
+        lo, hi = _wilson(he, hc)
+        plo, phi = _wilson(pe, pc)
+        o.append("### src=%s\n" % src)
+        o.append("| arm | compared | exact | **agree** | 95% CI |")
+        o.append("|---|---|---|---|---|")
+        o.append("| **hover-revealed** | %d | %d | **%.4f** | %.4f-%.4f |" % (hc, he, he / hc, lo, hi))
+        o.append("| carried (same reads) | %d | %d | **%.4f** | %.4f-%.4f |" % (
+            pc, pe, pe / pc if pc else 0.0, plo, phi))
+        o.append("| difference | | | **%+.4f** | |" % ((he / hc) - (pe / pc if pc else 0)))
+        # AND THE SAME RATE WITH THE DISPOSITIONED CLASSES REMOVED FROM BOTH ARMS. #114
+        # took the whole residue apart class by class: `chrome-empty` is Chrome's ROLE
+        # forbidding a name while we print the author's string (#74 requires that),
+        # `punctuation-only` is a `::before` glyph or a zero-width mark where ours is the
+        # better string for this reader, and `case-only` is CSS `text-transform`, which
+        # `find` folds. None of the three is a wrong name. Removing them from the
+        # DENOMINATOR as well as the numerator is what makes this a rate rather than a
+        # credit, and it is EXACT because the class totals are uncapped.
+        _ND = ("chrome-empty", "punctuation-only", "case-only")
+        hnd = sum(hcls.get(k, 0) for k in _ND)
+        pnd = sum(pcls.get(k, 0) for k in _ND)
+        if (hc - hnd) > 0 and (pc - pnd) > 0:
+            o.append("| **excluding `chrome-empty`/`punctuation-only`/`case-only`** "
+                     "(#114: none is a wrong name) | | | | |")
+            o.append("| &nbsp;&nbsp;hover | %d | %d | **%.4f** | |"
+                     % (hc - hnd, he, he / (hc - hnd)))
+            o.append("| &nbsp;&nbsp;carried | %d | %d | **%.4f** | |"
+                     % (pc - pnd, pe, pe / (pc - pnd)))
+        # PER-SITE MEDIAN, because #93 measured a 7pp pooled-vs-median gap from composition
+        # alone and the project's headline quotes the median.
+        meds_h = [v[1] / v[0] for v in per_site.values() if v[0] >= 20]
+        meds_p = [v[3] / v[2] for v in per_site.values() if v[2] >= 20]
+        if meds_h:
+            o.append("| per-site median, hover (n>=20 rows) | %d sites | | **%.4f** | |"
+                     % (len(meds_h), statistics.median(meds_h)))
+        if meds_p:
+            o.append("| per-site median, carried (n>=20 rows) | %d sites | | **%.4f** | |"
+                     % (len(meds_p), statistics.median(meds_p)))
+        # LEAVE-ONE-SITE-OUT, AND IT IS NOT OPTIONAL HERE. A pooled rate over an arm whose
+        # rows come from a handful of sites is a measurement of those sites. #73 quotes
+        # Mind2Web's headline with a LOSO span for the same reason, and #115's own history
+        # on revealed-vs-carried is a sign that reversed between runs. This drops the
+        # largest contributing sites one at a time and prints what happens: if the
+        # difference survives, it is a population effect; if it inverts, it is those sites.
+        order = sorted(per_site, key=lambda k: -per_site[k][0])
+        if len([k for k in order if per_site[k][0]]) >= 2:
+            o.append("\n**Leave-one-site-out** (the hover arm's rows come from %d site(s); "
+                     "the top 3 carry %.1f%% of them):\n"
+                     % (len([k for k in order if per_site[k][0]]),
+                        100.0 * sum(per_site[k][0] for k in order[:3]) / max(1, hc)))
+            o.append("| dropped | hover n | hover | carried | difference |")
+            o.append("|---|---|---|---|---|")
+            for n in range(0, min(4, len(order))):
+                drop = set(order[:n])
+                a = sum(per_site[k][0] for k in per_site if k not in drop)
+                b = sum(per_site[k][1] for k in per_site if k not in drop)
+                c = sum(per_site[k][2] for k in per_site if k not in drop)
+                dd = sum(per_site[k][3] for k in per_site if k not in drop)
+                if not a or not c:
+                    continue
+                o.append("| %s | %d | %.4f | %.4f | **%+.4f** |" % (
+                    ("none" if not n else ", ".join("`%s`" % x for x in order[:n])),
+                    a, b / a, dd / c, b / a - dd / c))
+        if paired:
+            w = sum(1 for a, b in paired if a > b)
+            l = sum(1 for a, b in paired if a < b)
+            t = sum(1 for a, b in paired if a == b)
+            o.append("\n**Paired within one read** (both arms >=5 `src=%s` rows): "
+                     "hover better %d, carried better %d, identical %d, "
+                     "median paired difference %+.4f, sign test p = %.4f\n"
+                     % (src, w, l, t,
+                        statistics.median([a - b for a, b in paired]), _sign_p(w, l)))
+        # AND THE SAME TEST AT SITE LEVEL, because two reads of one site are not two
+        # independent pairs: the CARRIED arm is the same page both times, so pooling reads
+        # treats one site's agreement as two observations. A sign test over correlated
+        # pairs reports a p-value it has not earned.
+        sp = [(v[1] / v[0], v[3] / v[2]) for v in per_site.values() if v[0] >= 5 and v[2] >= 5]
+        if sp:
+            w = sum(1 for x, y in sp if x > y)
+            l = sum(1 for x, y in sp if x < y)
+            o.append("**Paired per SITE** (both arms >=5 rows): hover better %d, "
+                     "carried better %d, identical %d, median %+.4f, p = %.4f\n"
+                     % (w, l, len(sp) - w - l,
+                        statistics.median([x - y for x, y in sp]), _sign_p(w, l)))
+        # ------------------------------------------------------- the class histogram
+        o.append("\n| class | hover n | **hover sites** | hover /10k | carried n | carried /10k | ratio |")
+        o.append("|---|---|---|---|---|---|---|")
+        for cls in sorted(set(hcls) | set(pcls),
+                          key=lambda k: -(hcls.get(k, 0) / max(1, hc))):
+            a, c = hcls.get(cls, 0), pcls.get(cls, 0)
+            ra = 10000.0 * a / hc
+            rc = 10000.0 * c / pc if pc else 0.0
+            o.append("| `%s` | %d | **%d** | %.1f | %d | %.1f | %s |" % (
+                cls, a, len(hcls_sites.get(cls, ())), ra, c, rc,
+                ("%.2fx" % (ra / rc)) if rc else ("inf" if ra else "-")))
+        o.append("")
+    # ------------------------------------------------ over-representation, ALL src pooled
+    # The rate tables above cannot show a brand-new MECHANISM: 40 instances of one move a
+    # rate by nothing while being the thing worth finding (#115's section 8). This is the
+    # same cut on class x Chrome-role, which is where a component library's shape shows up.
+    o.append("\n## Classes over-represented on hover-revealed content (all `src`, per 10k)\n")
+    hall = pall = 0
+    hk, pk = collections.Counter(), collections.Counter()
+    hk_sites = collections.defaultdict(set)
+    for _s, r in reads:
+        bh = r.get("by_hov") or {}
+        for k, v in bh.items():
+            arm, src, rest = k.split("|", 2)
+            tgt_n = (hk, pk)[arm == "pre"]
+            if rest == "compared":
+                if arm == "hov":
+                    hall += v
+                else:
+                    pall += v
+                continue
+            if rest.startswith("c:"):
+                tgt_n[rest[2:] + "|" + src] += v
+                if arm == "hov":
+                    hk_sites[rest[2:] + "|" + src].add(_s["site"])
+    if hall and pall:
+        o.append("| class \\| src | hover n | **sites** | hover /10k | carried /10k | ratio |")
+        o.append("|---|---|---|---|---|---|")
+        rows = []
+        for k in set(hk) | set(pk):
+            ra = 10000.0 * hk.get(k, 0) / hall
+            rc = 10000.0 * pk.get(k, 0) / pall
+            rows.append((ra / rc if rc else (1e9 if ra else 0), k, hk.get(k, 0), ra, rc))
+        for ratio, k, n, ra, rc in sorted(rows, reverse=True)[:14]:
+            o.append("| `%s` | %d | **%d** | %.1f | %.1f | %s |" % (
+                k, n, len(hk_sites.get(k, ())), ra, rc,
+                ("%.2fx" % ratio) if rc else ("inf" if ra else "-")))
+        o.append("\nhover compared (all src) %d, carried %d\n" % (hall, pall))
+        # EXAMPLES FOR THE TOP CLASSES, from the saved rows, LABELLED AS A SAMPLE. The
+        # rows list is capped and in document order, so this is an illustration of a
+        # mechanism and never a count -- the two are kept apart throughout (#114's rule).
+        # WHAT THE DIFFERENCE IS MADE OF. A class name says which SHAPE the two strings
+        # are in, not which side is right -- #114 dispositioned `punctuation-only` as OURS
+        # BETTER precisely because the characters Chrome adds there are `::before` glyphs
+        # and zero-width marks that identify nothing. So the characters are the evidence,
+        # and categorising them is what separates "a class is over-represented because we
+        # are right more often here" from "a new defect concentrates here". Computed over
+        # the saved rows, so it is a SAMPLE of the mechanism and never a count of it.
+        def _chars(s):
+            k = collections.Counter()
+            for ch in s:
+                o_ = ord(ch)
+                if 0xE000 <= o_ <= 0xF8FF or 0xF0000 <= o_ <= 0x10FFFD:
+                    k["private-use glyph (an icon font's ::before)"] += 1
+                elif ch in "​‌‍﻿ 　":
+                    k["invisible/space mark"] += 1
+                elif ch.isspace():
+                    k["whitespace"] += 1
+                elif unicodedata.category(ch).startswith(("P", "S")):
+                    k["punctuation/symbol"] += 1
+                else:
+                    k["letter or digit"] += 1
+            return k
+        mech = collections.defaultdict(collections.Counter)
+        msites = collections.defaultdict(set)
+        for s, r in reads:
+            for x in r.get("rows") or []:
+                if not x.get("hov"):
+                    continue
+                a, bq = _ws(x["ours"]), _ws(x["theirs"])
+                extra = bq.replace(a, "") if a and a in bq else ""
+                missing = a.replace(bq, "") if bq and bq in a else ""
+                key = x["cls"] + "|" + x["src"]
+                msites[key].add(s["site"])
+                if extra:
+                    for kk, v in _chars(extra).items():
+                        mech[key]["CHROME HAS, we do not: " + kk] += v
+                elif missing:
+                    for kk, v in _chars(missing).items():
+                        mech[key]["WE HAVE, Chrome does not: " + kk] += v
+                else:
+                    mech[key]["neither string contains the other"] += 1
+        if mech:
+            o.append("\n### What the hover-arm disagreements are MADE OF "
+                     "(saved rows: a sample of the mechanism, not a count)\n")
+            for key in sorted(mech, key=lambda k: -sum(mech[k].values())):
+                o.append("* `%s` (%d site(s)): %s" % (
+                    key, len(msites[key]),
+                    json.dumps(dict(mech[key].most_common(4)), ensure_ascii=False)))
+        o.append("\n### Example hover-revealed disagreements (saved rows: a SAMPLE, not a census)\n")
+        seen_eg = collections.Counter()
+        for s, r in reads:
+            for x in r.get("rows") or []:
+                if not x.get("hov"):
+                    continue
+                key = x["cls"] + "|" + x["src"]
+                if seen_eg[key] >= 2:
+                    continue
+                seen_eg[key] += 1
+                o.append("* `%s` `%s` **%s** ours=%r theirs=%r" % (
+                    x["cls"], x["src"], s["site"], x["ours"][:60], x["theirs"][:60]))
+    # ---------------------------------------------------- the LIVE firing proof (--fire)
+    # The fixture proof (`--hover-selftest`) shows the arm can fire; this shows it firing
+    # on REAL pages, on rows a REAL hover revealed. A planted name only proves something
+    # when it reached the COMPARED population -- one Chrome ignores, or one the row
+    # blanks, was never a question -- so the bar is "every comparable planted row reported
+    # the sentinel, and at least one row somewhere was comparable" (PRINCIPLES 15).
+    fires = [(s["site"], f) for s in sites for f in (s.get("fire") or [])]
+    if fires:
+        moved = reached = 0
+        missed, errs = [], []
+        for site, f in fires:
+            if "error" in f:
+                errs.append(site)
+                continue
+            disp = f.get("planted_disposition") or {}
+            moved += len(f.get("planted") or [])
+            rr = [m for m, dd in disp.items() if dd.startswith("compared:")]
+            reached += len(rr)
+            missed += [(site, m) for m in rr if "SENTINEL" not in disp[m]]
+        ok = reached > 0 and not missed and not errs
+        o.append("\n## LIVE firing proof (`--fire`): sentinels planted on HOVER-REVEALED rows\n")
+        o.append("| | |")
+        o.append("|---|---|")
+        o.append("| reveals carrying a plant | %d |" % len(fires))
+        o.append("| rows whose name was moved | %d |" % moved)
+        o.append("| ...of those, reaching the COMPARED population | %d |" % reached)
+        o.append("| **sentinels the comparator FAILED to report** | **%d** %s |"
+                 % (len(missed), missed[:5]))
+        o.append("| errored reveals | %d %s |" % (len(errs), errs[:4]))
+        o.append("| **verdict** | **%s** |" % ("PASS" if ok else "FAIL"))
+
+    # ------------------------------------------------------------- what was not measured
+    if errored:
+        o.append("\n## UNMEASURED, named (PRINCIPLES: a refused site is never a pass)\n")
+        for s in errored[:60]:
+            o.append("* `%s` -- %s" % (s["site"], s["error"][:100]))
+    return "\n".join(o)
+
+
 def _sign_p(w, l):
     """Two-tailed sign test. Reported beside every paired count because a 38/38 split and
     a 38/8 split read the same way in prose and are not the same evidence."""
@@ -2337,6 +2981,196 @@ async def _selftest():
     return 0 if not fails else 1
 
 
+HOVER_SELFTEST_HTML = r"""
+<!doctype html><meta charset=utf-8><title>hover name fixture</title>
+<style>
+  /* TIER 1 fires on this: the page's OWN CSS says hovering #menu changes `display`. */
+  #menu ul { display: none; position: absolute; left: 10px; top: 60px;
+             list-style: none; margin: 0; padding: 0; background: #fff; }
+  #menu:hover ul { display: block; }
+  #menu { padding: 20px; display: inline-block; border: 1px solid #ccc; }
+  /* #114's CLASS F, on a HOVER-REVEALED row: `title` against name-from-content where the
+     content is an icon font's Private-Use-Area glyph. A DECIDED don't-build, so a proof
+     anchored on it cannot expire the way this file's main selftest expired twice. */
+  .ico::before { content: "\e978" }
+  .ico { display: inline-block; width: 22px; height: 22px }
+  /* THE NEGATIVE CONTROL. Tier 1 picks this too (the rule touches `opacity`), the mouse
+     lands on it, and NOTHING is revealed. Without it a driver that silently reveals
+     nothing is indistinguishable from one that works -- which is the specific hazard of
+     this arm, since an empty population yields a beautiful clean rate. */
+  #decoy:hover { opacity: 0.6 }
+  #decoy { padding: 14px; margin-top: 140px; border: 1px dashed #999 }
+</style>
+<nav id=menu><span>Products</span>
+  <ul>
+    <li><a href="#a" id=r1>Revealed Alpha</a></li>
+    <li><a href="#b" id=r2 aria-label="Revealed Beta">beta</a></li>
+    <li><a href="#c" id=r3 class=ico title="Revealed Facebook"></a></li>
+  </ul>
+</nav>
+<button id=p1>Page Button</button>
+<div id=decoy>Decoy, reveals nothing</div>
+"""
+
+
+async def _hover_selftest():
+    """PROVE THE HOVER ARM FIRES, which a clean rate over an empty population cannot.
+
+    Four checks, and the two controls are the point:
+      1. a CSS `:hover` submenu is DRIVEN and its controls reach the COMPARED population
+         under the `hov` arm -- not merely "a read happened";
+      2. the comparator reports a genuine disagreement on a HOVER-REVEALED row
+         (#114's class F, decided don't-build, so it cannot expire);
+      3. CONTROL -- the hover-revealed rows whose names agree are NOT reported as
+         disagreements, or a probe that flags everything would pass check 2;
+      4. CONTROL -- a hover that reveals nothing is reported as `nothing_appeared`
+         rather than producing a clean read over zero rows.
+    """
+    fails, notes = [], {}
+    async with async_playwright() as p:
+        b = await p.chromium.launch()
+        ctx = await b.new_context(viewport=VIEWPORT)
+        await ctx.add_init_script(path=TAG_JS)
+        pg = await ctx.new_page()
+        await pg.route("https://hover.invalid/**", lambda r: asyncio.ensure_future(
+            r.fulfill(status=200, content_type="text/html; charset=utf-8",
+                      body=HOVER_SELFTEST_HTML)))
+        # A REAL NAVIGATION, not set_content: `add_init_script` only affects documents
+        # created after it and set_content reuses the existing about:blank, which is the
+        # vacuous-fixture shape C14 exists for (#31 found 25 pages in that state).
+        await pg.goto("https://hover.invalid/fixture")
+        await pg.wait_for_timeout(250)
+        cdp = await ctx.new_cdp_session(pg)
+
+        r0 = await read_once(pg, cdp, "s0", None, 60)
+        seen = _names_of(r0)
+        got, nothing, planted = [], 0, None
+        for _i in range(AHS.MAX_HOVERS):
+            pick = await pg.evaluate(AHS.HOVER_PICK + "({})")
+            if not pick or pick.get("none"):
+                break
+            await pg.evaluate("() => { if (window.__abHover) "
+                              "window.__abHoverUsed.push(window.__abHover.el); }")
+            await pg.mouse.move(pick["x"], pick["y"])
+            await pg.wait_for_timeout(120)
+            await pg.mouse.move(pick["x"] + 1, pick["y"] + 1)
+            await pg.wait_for_timeout(AHS.SETTLE_MS)
+            diff = await pg.evaluate(AHS.HOVER_DIFF)
+            if not diff["appeared"]:
+                nothing += 1
+                await pg.mouse.move(2, VIEWPORT["height"] - 2)
+                await pg.wait_for_timeout(250)
+                continue
+            raw = {}
+
+            async def _hov():
+                mm = await pg.evaluate(AHS.APPEARED_MMIDS)
+                raw["mm"] = mm
+                return [m.get("mmid") for m in mm if m.get("mmid")]
+
+            r = await read_once(pg, cdp, "h%d" % len(got), seen, 60, hov_fn=_hov)
+            r["_hovmm"] = [m.get("mmid") for m in (raw.get("mm") or []) if m.get("mmid")]
+            got.append(r)
+            # THE PLANT HAPPENS WHILE THE MOUSE IS STILL HELD, and the first version of
+            # this did not: moving away first shuts the menu, every revealed element
+            # measures 0x0, `_PLANT_JS`'s size guard skips all of them and the arm reports
+            # "tagged nothing". That read as a broken plant and was a broken FIXTURE --
+            # the vacuous-fixture class pointed at the firing proof itself.
+            if planted is None:
+                planted = await read_once(pg, cdp, "fire", set(), 60, plant=True,
+                                          plant_only=r["_hovmm"])
+            await pg.mouse.move(2, VIEWPORT["height"] - 2)
+            await pg.wait_for_timeout(250)
+
+        # ---- 1. the arm reached the compared population
+        hov_comp = sum(v for r in got for k, v in (r.get("by_hov") or {}).items()
+                       if k.startswith("hov|") and k.endswith("|compared"))
+        notes["reveals"] = len(got)
+        notes["hov_compared"] = hov_comp
+        notes["hov_revealed"] = [r.get("hov_revealed") for r in got]
+        notes["hov_as_entries"] = [r.get("hov_as_entries") for r in got]
+        if not got:
+            fails.append("no hover revealed anything at all -- the driver never fired")
+        if hov_comp < 2:
+            fails.append("the hover arm reached only %d compared rows (need >= 2): "
+                         "a rate over this population would be meaningless" % hov_comp)
+
+        # ---- 1b. THE COMPARATOR ARM EXISTS TOO. Every number this arm produces is a
+        #      hover-vs-carried comparison taken inside one read, so an empty `pre` arm
+        #      would leave the headline with nothing to compare against while every check
+        #      above still passed.
+        pre_comp = sum(v for r in got for k, v in (r.get("by_hov") or {}).items()
+                       if k.startswith("pre|") and k.endswith("|compared"))
+        notes["pre_compared"] = pre_comp
+        if pre_comp < 1:
+            fails.append("the CARRIED arm is empty -- the hover rate would have no "
+                         "comparator inside its own read")
+
+        # ---- 2. the comparator fires ON A HOVER-REVEALED ROW
+        hrows = [x for r in got for x in r["rows"] if x.get("hov")]
+        # `theirs` IS PRINTED AS repr. The class-F anchor's Chrome name is a Private-Use-Area
+        # glyph (U+E978), which renders as nothing at all in a terminal -- so with
+        # ensure_ascii=False this row looked like `"theirs": ""` and the check that passed on
+        # it read exactly like a check that should have failed. Re-derived rather than
+        # believed (PRINCIPLES 8), on a PASS rather than on a failure.
+        notes["hover_disagreements"] = [
+            {"ours": x["ours"], "theirs": repr(x["theirs"]), "cls": x["cls"], "tag": x["tag"]}
+            for x in hrows]
+        if not [x for x in hrows if "Facebook" in (x["ours"] or "") and (x["theirs"] or "").strip()]:
+            fails.append("the comparator reported NO disagreement on a hover-revealed row "
+                         "that is KNOWN to disagree (#114's class F): %s" % notes["hover_disagreements"])
+
+        # ---- 3. CONTROL: the agreeing revealed rows are not flagged
+        bad = [x["ours"] for x in hrows if x["ours"] in ("Revealed Alpha", "Revealed Beta")]
+        if bad:
+            fails.append("hover-revealed controls %s were reported as disagreements -- a "
+                         "probe that flags everything would pass check 2" % bad)
+
+        # ---- 4. CONTROL: a hover that reveals nothing is SEEN to reveal nothing
+        notes["nothing_appeared"] = nothing
+        if nothing < 1:
+            fails.append("the decoy hover (which reveals nothing) was never reported as "
+                         "such -- an empty reveal and a real one are indistinguishable")
+
+        # ---- 5. the planted arm, restricted to HOVER-REVEALED rows
+        if got:
+            rp = planted or {"planted": [], "planted_disposition": {}}
+            disp = rp["planted_disposition"]
+            reached = [m for m, d in disp.items() if d.startswith("compared:")]
+            missed = [m for m in reached if "SENTINEL" not in disp[m]]
+            notes["planted"] = {"moved": len(rp["planted"]), "reached": len(reached),
+                                "disposition": disp}
+            if not rp["planted"]:
+                fails.append("the planted arm tagged NO hover-revealed row")
+            if not reached:
+                fails.append("no planted hover-revealed row reached the compared "
+                             "population -- the plant proves nothing")
+            if missed:
+                fails.append("PLANTED NAMES DID NOT FIRE on hover-revealed rows: %s" % missed)
+        await b.close()
+    print("hover selftest", "PASS" if not fails else "FAIL")
+    print(json.dumps({**notes, "failures": fails}, indent=1, ensure_ascii=False))
+    return 0 if not fails else 1
+
+
+async def run_hover(sites, conc, examples, plant):
+    sem = asyncio.Semaphore(conc)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+
+        async def go(s):
+            async with sem:
+                try:
+                    return await asyncio.wait_for(
+                        hover_one(browser, *s, examples, plant), 200)
+                except Exception as e:
+                    return {"site": s[0], "url": s[1], "archetype": s[2], "lang": s[3],
+                            "error": "timeout/" + str(e)[:80]}
+        out = await asyncio.gather(*(go(s) for s in sites))
+        await browser.close()
+    return out
+
+
 # --------------------------------------------------------------------------------------
 def _check_sample(sites):
     bad = []
@@ -2368,6 +3202,15 @@ async def run_pass(sites, conc, nstages, examples, plant_at_end):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--hover", action="store_true",
+                    help="drive a HOVER reveal (#94's picker and before/after diff, reused) "
+                         "and ask the oracle about the controls it revealed, against the "
+                         "carried rows of the SAME read. #117 named this gap: the hover "
+                         "probe has no oracle arm and the oracle has never driven hover.")
+    ap.add_argument("--hover-selftest", action="store_true",
+                    help="the firing proof for the hover arm specifically -- a driver that "
+                         "silently reveals nothing gives a clean rate over an empty population")
+    ap.add_argument("--hover-report", nargs="+")
     ap.add_argument("--fire", action="store_true",
                     help="LIVE firing proof: plant names on real pages at the deepest stage")
     ap.add_argument("--only", nargs="*")
@@ -2424,6 +3267,11 @@ def main():
     _set_arm(a.ab_arm)
     if a.selftest:
         return asyncio.run(_selftest())
+    if a.hover_selftest:
+        return asyncio.run(_hover_selftest())
+    if a.hover_report:
+        print(hover_report(a.hover_report))
+        return 0
     if a.report:
         print(report(a.report))
         return 0
@@ -2547,6 +3395,18 @@ def main():
             for e in (r.get("gained") or [])[:3]:
                 print("  gained %-16s %-9s %-5s %r" % (
                     r["site"], e.get("where"), e.get("tag"), (e.get("name") or "")[:60]))
+        return 0
+    if a.hover:
+        res = asyncio.run(run_hover(sites, a.conc, a.examples, a.fire))
+        (out / "hover0.json").write_text(
+            json.dumps({"sites": res}, indent=1, ensure_ascii=False), encoding="utf-8")
+        print(hover_report([str(out / "hover0.json")]))
+        if a.compare:
+            res2 = asyncio.run(run_hover(sites, a.conc, a.examples, a.fire))
+            (out / "hover1.json").write_text(
+                json.dumps({"sites": res2}, indent=1, ensure_ascii=False), encoding="utf-8")
+            print("\n\n==== SECOND PASS (drift control) ====\n")
+            print(hover_report([str(out / "hover1.json")]))
         return 0
     runs = [asyncio.run(run_pass(sites, a.conc, a.stages, a.examples, a.fire))]
     if a.compare:

@@ -11391,6 +11391,89 @@ granted in the side panel is refused with the same message the agent gets.
     run to catch nor on any site its own A/B flagged as touched would remain
     invisible — a shape living outside the usable pool, behind a login, or down
     a second interaction path. No arrangement of these three arms reaches it.
+118. **THE SECOND COVERAGE GAP, CLOSED WITH A MEASUREMENT AND NO CODE
+    CHANGE — and the agent killed its own headline before I could.** #117 named
+    two shapes falling between the three rulers. This is one: for every control
+    that exists only while something is hovered, nobody had ever asked whether
+    the name we print is the name Chrome computes. #94 drives hover for
+    PRESENCE and REACHABILITY; the oracle never drove it at all.
+
+    Built as `--hover` on the existing probe, reusing #94's picker, its
+    before/after identity diff and its hover-survived check verbatim, with one
+    new axis: `hov` is a row a hover was WATCHED to reveal, `pre` is every other
+    compared row **in that same read**, so composition cancels by construction
+    (#115's design). **254 usable sites of 265, 99 revealed something, 171
+    reveals, 1,621 controls appeared, 1,518 compared — three times #94's 528.**
+
+    | | hover-revealed | carried, same reads | diff |
+    |---|---|---|---|
+    | `src=name` | 0.9771 (131 rows) | 0.9290 (7,875) | +0.0481 |
+    | `src=text` | 0.8983 (1,367) | 0.6653 (25,635) | +0.2330 |
+
+    **I RE-DERIVED EVERY FIGURE FROM THE RAW ARTEFACT AND THEY MATCH TO THE
+    DIGIT**, including the one that matters below.
+
+    **THE RETRACTION IS THE RESULT.** The agent drafted "+0.0481, better on
+    both arms" off that pooled table and then asked a question the table does
+    not answer — *how many sites?* **18 sites, 131 rows, 79.4% of them on
+    three.** Leave-one-site-out, which I ran myself from the artefact:
+    **+0.0481 → +0.0274 → −0.0194 → −0.0396.** The sign inverts after dropping
+    two sites. `src=name` on hover content is **not a result**, and it cannot
+    become one with more sites: it is **8.6% of the hover arm against 22.7%
+    carried**, structurally, because a hover menu is plain links named by their
+    own text.
+
+    **AND 93.5% OF THE OTHER GAP IS #114'S FLOOR, NOT QUALITY.** Removing
+    `chrome-empty` / `punctuation-only` / `case-only` from BOTH arms —
+    denominator included — collapses **+0.2330 to +0.0151**, because those
+    classes are **30.67% of the carried arm and 7.83% of the hover arm**.
+    Against a drift floor of 0.0069 that residual is one to two times noise.
+    **The defensible statement is "the same", not "better"**, and the agent
+    wrote that rather than the number it had.
+
+    **BOTH OVER-REPRESENTED CLASSES ARE OURS-BETTER, from one mechanism.**
+    `punctuation-only|text` is 3.14x over-represented, 87 rows on 7 sites — and
+    hover menu items are icon-prefixed, so Chrome's spec-correct name carries an
+    icon-font PUA `::before` glyph (`' 総長からのメッセージ'`) or, on an empty
+    `<a>`, **consists of nothing else**. #114 dispositions both as ours-better.
+    **No class with multi-site support is both over-represented and a defect of
+    ours** — and every ratio is printed with its SITE COUNT beside it, because
+    #115 had to correct a one-site effect read as a population effect.
+
+    **THE SINGLE UNEXPLAINED ROW RESOLVED TO A PAGE DEFECT.** A government site
+    ships `<label for=… style="font-size:0em"><span>tbx_advancedSearchBtn</span></label>`
+    — a developer placeholder as the field's label. We follow HTML-AAM (label
+    beats title); Chrome drops a 0px label. Both defensible, neither a bug.
+    **The agent found it because its fixture reproduced the markup CORRECTLY
+    and still did not reproduce the disagreement**, which is the inverse of the
+    vacuous-fixture problem and just as informative.
+
+    **Firing proofs, run and reported.** Fixture selftest PASS with two
+    controls (a decoy revealing nothing must report `nothing_appeared`); live
+    `--fire` on an independent 38-site stride planted sentinels on
+    hover-revealed rows ONLY and **115 of 115 were reported**; the
+    out-of-sample guard shown refusing before any browser; and a full second
+    pass as drift control reproducing `punctuation-only|text` at **87 rows on 7
+    sites in both**. **One firing proof proved nothing on its first run** — the
+    plant fired after the mouse had left, so the menu was shut and every
+    element measured 0x0 — and one check **passed while looking exactly like
+    one that should have failed**, because Chrome's name was `''` and an empty
+    string renders as nothing in the artefact.
+
+    **NO PRODUCT DIFF, and that is the recommendation.** The two concentrating
+    classes are ones where we are right, the single ours-side class is 2 rows on
+    1 site (#26's do-not-patch-on-n=3 rule), and the unexplained row is the
+    page's own markup.
+
+    **The claim to quote is the NEGATIVE one, in the agent's words: nothing is
+    named worse on hover-revealed content, and no defect of ours concentrates
+    there.** Its own least-sure is why: the arms are not ROLE-matched — `hov` is
+    a submenu and `pre` is the whole page — and a residual composition
+    difference could fully explain what is left after the floor is removed.
+    Role-matching needs another run, not another reading. Secondary: the
+    in-root bound came back **76.6%**, not the 90.9% a 7-site smoke suggested,
+    so ~23% of "revealed" controls may be lazy-load arrivals; the cut that
+    removes them keeps the direction on n=89 reads.
 
 ## Debugging starting points
 
