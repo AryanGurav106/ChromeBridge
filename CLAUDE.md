@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1605 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1607 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1605 checks, ~153s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1607 checks, ~153s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -9917,7 +9917,7 @@ granted in the side panel is refused with the same message the agent gets.
     **Verified by me in both directions, not just by the report.** Shut popover
     + the shown label -> `ok:false` with an honest "no visible options were
     found" (was `ok:true`); open popover + a real option -> `ok:true` and the
-    hidden input commits. Full suite **21/21, 1605 checks, ALL GREEN**, with
+    hidden input commits. Full suite **21/21, 1607 checks, ALL GREEN**, with
     W17/W17b/W17c/W17d/W17e/W17f and OR1-OR4 all still passing.
     `audit_patterns.py` unchanged on every risky category. Zero listing-token
     cost, because the harvest runs only inside `fillDropdown`/`form_input` and
@@ -10219,14 +10219,14 @@ granted in the side panel is refused with the same message the agent gets.
     **Live-verified through the real extension** in a throwaway profile, so the
     owner's stale Chrome did not block it: the banner emits the measured age,
     asserts no present tense, and still carries the absence warning. 21 suites,
-    1605 checks, ALL GREEN.
+    1607 checks, ALL GREEN.
 
     **The historical quotes in this log are left alone** — #70, #76, #78 and #88
     record what the banner said when they were written, and rewriting them would
     make those entries describe a build nobody ran. Only the two CURRENT-STATE
     references moved: the debugging table here and `READINESS.md`'s tier table.
 
-    Suites: 1605 checks. New — R-TENSE3 (the headline states the measured age
+    Suites: 1607 checks. New — R-TENSE3 (the headline states the measured age
     and makes no present-tense claim its own number contradicts).
 
 103. **REGRESSION CHECK AFTER A 48-COMMIT SESSION, BECAUSE I HAD ASSUMED THE
@@ -10536,6 +10536,101 @@ granted in the side panel is refused with the same message the agent gets.
     back-to-back while this spans ~19 hours of the live web, so the true noise
     floor is larger — which is the reason to lean on the mechanism counts rather
     than the rate delta.
+
+109. **A SURVEY READ THE SPEC AGAINST OUR SOURCE AND FOUND A SILENT WRONG
+    TARGET.** `docs/research/SURVEY-2026-11b.md`. The last survey set a watch
+    item on WebMCP with the trigger "the day `toolname` appears in the spec
+    proper". **That trigger never fired; a different set did** — four merges in
+    nine days, one of them explicitly *"to match the implementation in Blink"*.
+
+    **`call_page_tool` resolved by NAME ALONE.** Verified in our source rather
+    than relayed: `raw.find((x) => x && x.name === name)` at background.js:5785,
+    while `_pageToolsPage` has emitted `origin` per tool at :5769 since it
+    shipped. So we PRINT the disambiguator and then throw it away.
+    `getTools()` returns a traversable scope, so two same-origin subframes each
+    registering `search` both land in `raw` and the first wins, silently — and
+    the spec's own residual-risk section says a caller *"should inspect
+    RegisteredTool/origin and RegisteredTool/window … to disambiguate tools when
+    multiple subframes expose tools with the same name"*.
+
+    It is PRINCIPLES 17 in its plainest form: the submit picker refuses and
+    names candidates (#24), the MISSING-tool branch here has named its
+    alternatives since it shipped, and the AMBIGUOUS branch did not exist.
+    Two candidates is now a refusal that names them with their frame, never a
+    coin flip — and calling the wrong page tool can be irreversible, which
+    `readOnlyHint:false` is exactly the declaration for. **WM9 fails against the
+    name-alone version; WM9b is the control that a still-unique name still
+    runs**, without which "refuse whenever the page declares several tools"
+    would pass while deleting the feature.
+
+    **AND THE SIGNAL #26 ADOPTED IS NOW ATTRIBUTED.** `readOnlyHint` was taken
+    as the declared destructiveness signal #24 deleted the submit wordlists for
+    lacking, and that trade was right — the alternative was guessing from a verb
+    list. It is still **the page's claim about itself**, and a 2026-11 study
+    found native MCP annotations disagreeing with review for **118 of 481**
+    tools. So it reads `page declares: CHANGES STATE` now, the same move #23
+    made for `data-testid`: used, because it beats nothing, and SAID to be a
+    declaration so a caller can discount it rather than read it as a verdict.
+
+    **TWO SETTLED CLAIMS WEAKENED, NONE FALSIFIED.**
+    - **#38's "the lever is turns, not tokens" — in its COROLLARY, not its
+      claim.** `arXiv:2611.20873` (~1B tokens, 42 sessions, ten weeks) measures
+      cached-context reads at **94.8% of all API-reported tokens, ~260 cached
+      read per token generated**. #38 priced wall clock per CALL and is
+      untouched; what it has no slot for is that a listing emitted at step 3 of
+      a 20-step session is re-read every later turn, so payload is
+      **multiplicative in remaining turns** rather than a one-off ~10% of
+      prefill. It cuts both ways and the agent said so: fewer turns means fewer
+      re-reads, so the conclusion is reinforced while the arithmetic under it
+      changes.
+    - **The same paper reports parent-session logs undercounting a subagent's
+      tokens by 10x.** `OPEN.md` item 15 is a token-volume question and would be
+      exposed to that if ever measured from session logs.
+    - **NARROWED: the benchmark conjunction.** WebArena-Pro (`arXiv:2611.17955`,
+      NeurIPS 2026 D&B, 300 tasks, 20 self-hosted apps) adds live-ish pages,
+      intact step values and a loop — **and its harness already scores Claude
+      Code at 62.3%, which is NOT saturated** the way our own evals are at 100%.
+      It still fails the per-step-label leg (*"Success requires a final reward of
+      1"*, read from the full text), so **#78's "the four-way conjunction does
+      not exist" survives** and Mind2Web remains the only out-of-sample
+      element-recall ruler.
+    - **FLAGGED, not measured: do not stretch #79's theme-invariance into "the
+      DOM channel is safer".** `arXiv:2609.16732v2` exploits the gap between
+      human-visible and agent-observable UI at 67–77% with **0 of 195
+      participants noticing**. That is the pixel channel; ours has the same CLASS
+      of exposure, and #78's `opacity:0` work measured frequency on the benign
+      web, not adversarially. Theme-invariance says we do not read colour — not
+      that we cannot carry content a human cannot see.
+
+    **TWO PAPERS THE PREVIOUS SURVEY MISSED, both on our #1 open problem** and
+    verified genuinely absent from the repo first: **TESSARA**
+    (`arXiv:2610.25601`), the nearest published comparator to the flow recorder,
+    with **repair history as a first-class field** and selective failing-suffix
+    regeneration, neither of which we have — #83's "nothing does preconditions or
+    promoted postconditions" survives with one correction, since TESSARA does
+    auto-generate assertions, from the stated GOAL rather than from observations.
+    And **Similo/HybridSimilo** (`arXiv:2505.16424`) at 98.8% "located" — with
+    the agent's own warning not to place that beside our numbers, because a
+    scorer always returns a candidate, so "located" and CORRECT/REFUSED/WRONG
+    are different partitions and a "location" can be a confident mis-bind. That
+    is `MEASUREMENT.md` §4 in pure form.
+
+    **NULLS, stated as deliverables.** Readiness/settle: nothing new, and nobody
+    has ablated a readiness signal against task success. AccName: `w3c/accname`
+    has **0 commits since 2026-09-01**, so #108's 0.9766 is unchallenged and the
+    only moving target is Chrome's implementation, which the probe already
+    tracks. Record/replay and locator stability: nothing in the window. A
+    heuristic-free existence rule still does not exist anywhere — WebArena-Pro
+    takes existence from the AX tree.
+
+    **And a note on sources that is the right instinct.** The agent found a
+    cluster of single-author cs.SE preprints in this window whose abstracts
+    resist extraction, made no accusation, investigated no further, and decided
+    operationally that **no number from that cluster is imported** — two appear
+    in the paper for their DISTINCTIONS, not their numbers. One title is our
+    hollow/unproven problem in a phrase ("When Passing Checks Do Not Establish
+    Completion") and it is recorded as unextractable so nobody re-reads it
+    hoping for more.
 
 ## Debugging starting points
 

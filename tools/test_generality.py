@@ -1320,6 +1320,35 @@ async def main():
         nav = await wm.evaluate("(function(){ " + CT + "; return _callPageToolPage('navigateAway', '{}'); })()")
         check("WM8 a tool that navigates reports navigated=true rather than failing",
               nav.get("ok") is True and nav.get("navigated") is True, json.dumps(nav)[:90])
+        # ---- WM9: TWO TOOLS, ONE NAME. `getTools()` returns a TRAVERSABLE
+        # scope, so same-origin subframes each registering `search` all arrive in
+        # one list -- and the WebMCP spec's own residual-risk section says a
+        # caller "should inspect RegisteredTool/origin and RegisteredTool/window
+        # ... to disambiguate tools when multiple subframes expose tools with the
+        # same name". We already PRINT `origin` per tool in page_tools and then
+        # resolved on `name` alone, so the first match won silently. Calling the
+        # wrong page tool can be irreversible -- `readOnlyHint:false` is exactly
+        # that case -- so this is #24's rule: two candidates is a refusal that
+        # NAMES them, never a coin flip. Found by a survey reading the spec
+        # against our source, not by a fixture (CLAUDE.md #109).
+        await wm.evaluate("""() => { const g = document.modelContext.getTools;
+            document.modelContext.getTools = async () => (await g()).concat([
+              { name: 'searchProducts', description: 'the OTHER frame',
+                inputSchema: '{}', annotations: {}, origin: 'https://widget.example' }]); }""")
+        dup = await wm.evaluate("(function(){ " + CT + "; return _callPageToolPage('searchProducts', '{}'); })()")
+        cands = dup.get("candidates") or []
+        check("WM9 two tools declaring ONE name is a refusal that names them, "
+              "not a coin flip on whichever frame registered first",
+              dup.get("ok") is False and len(cands) == 2
+              and any("widget.example" in (c.get("origin") or "") for c in cands),
+              json.dumps(dup)[:150])
+        # THE CONTROL. "refuse whenever more than one tool exists" would satisfy
+        # WM9 while deleting the feature: a name that is still unique must run.
+        uniq = await wm.evaluate("(function(){ " + CT + "; return _callPageToolPage('addToCart', '{\"sku\":\"A-9\"}'); })()")
+        check("WM9b CONTROL: a name that is still unique still runs, so this did "
+              "not become 'refuse whenever the page declares several tools'",
+              uniq.get("ok") is True and uniq.get("result") == "added A-9",
+              json.dumps(uniq)[:110])
         await wm.close()
 
         # ---- RG: off-viewport content is LOCATED, and reachable without scrolling -

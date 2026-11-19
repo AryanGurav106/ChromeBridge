@@ -5782,7 +5782,34 @@ async function _callPageToolPage(name, argsJson) {
   try { raw = (await mc.getTools()) || []; } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
   }
-  const t = raw.find((x) => x && x.name === name);
+  // SEVERAL TOOLS MAY DECLARE ONE NAME, AND PICKING THE FIRST IS A SILENT WRONG
+  // TARGET. `getTools()` returns a traversable scope, so same-origin subframes
+  // each registering `search` all land in `raw` — and the WebMCP spec's own
+  // residual-risk section says a caller "should inspect RegisteredTool/origin
+  // and RegisteredTool/window ... to disambiguate tools when multiple subframes
+  // expose tools with the same name". We ALREADY print `origin` per tool in
+  // `page_tools` and then threw it away here, resolving on `name` alone.
+  //
+  // The missing-tool branch below has named its alternatives since it shipped;
+  // the AMBIGUOUS branch simply did not exist, which is PRINCIPLES 17 — one
+  // concept answered in one place and not the other. #24's rule applies and is
+  // the whole of the fix: two candidates is a REFUSAL that names them, never a
+  // coin flip, because calling the wrong page tool can be irreversible and
+  // `readOnlyHint:false` is exactly the case where it is.
+  const matches = raw.filter((x) => x && x.name === name);
+  if (matches.length > 1) {
+    return { ok: false,
+             error: String(matches.length) + ' tools on this page declare the name '
+                  + JSON.stringify(String(name)) + ', so this would be a coin flip. '
+                  + 'They are listed below with the frame each belongs to — the page '
+                  + 'declares them separately and nothing here can say which you meant.',
+             candidates: matches.map((x) => ({
+               name: String(x.name),
+               origin: String(x.origin || ''),
+               description: String(x.description || '').slice(0, 120),
+             })) };
+  }
+  const t = matches[0];
   if (!t) {
     // Name the alternatives rather than just refusing — the same rule the submit
     // picker follows when it cannot resolve a single candidate.
