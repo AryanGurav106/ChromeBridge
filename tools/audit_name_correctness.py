@@ -1098,8 +1098,33 @@ def aggregate(rs):
                     per_pop["new" if row.get("new") else "carried"][row["cls"]] += 1
                 if len(cls_rows[row["cls"]]) < 60:
                     cls_rows[row["cls"]].append(dict(row, site=r["site"]))
+    # PER-SITE `src` ROLLUP. The comparable statistic for this probe is the
+    # per-SITE median, not the pooled rate -- #93 measured 0.9134 pooled against
+    # 0.9722 median on ONE corpus, a 7pp gap from composition alone, so a pooled
+    # figure cannot be compared across two samples. That rollup existed only
+    # inside `sites[].reads[].by_src`, so computing it meant walking three
+    # levels, and the obvious first attempt (`site["per_src"]`) returned "0
+    # sites" and read as missing data rather than as the wrong path. #107.
+    for r in ok:
+        acc: dict = {}
+        for rd in r.get("reads") or []:
+            for k, v in (rd.get("by_src") or {}).items():
+                tgt = acc.setdefault(k, collections.Counter())
+                tgt.update(v)
+        r["per_src"] = {k: dict(v) for k, v in sorted(acc.items())}
+    _med = []
+    for r in ok:
+        n = (r.get("per_src") or {}).get("name") or {}
+        if n.get("compared", 0) >= 20:
+            _med.append(n["exact"] / n["compared"])
+    _med.sort()
     return {
         "sites_attempted": len(rs), "sites_usable": len(ok),
+        "name_rate_per_site_median": (
+            None if not _med else
+            (_med[len(_med) // 2] if len(_med) % 2
+             else (_med[len(_med) // 2 - 1] + _med[len(_med) // 2]) / 2)),
+        "name_rate_sites_counted": len(_med),
         "totals": dict(tot), "per_stage": {k: dict(v) for k, v in sorted(per_stage.items())},
         "per_pop": {k: dict(v) for k, v in per_pop.items()},
         "per_src": {k: dict(v) for k, v in sorted(per_src.items())},
