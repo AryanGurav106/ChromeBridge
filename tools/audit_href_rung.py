@@ -237,7 +237,16 @@ async def main() -> int:
     rows = []
     async with async_playwright() as p:
         browser = await p.chromium.launch()
-        for i, (name, url) in enumerate(list(SITES)[: args.sites], 1):
+        # `SITES` holds BOTH `(name, url)` and `(name, url, settle_ms)` -- 35 of
+        # the 106 entries carry a third element, the first at index 59. A
+        # two-way unpack here dies with `ValueError: too many values to
+        # unpack` the moment --sites goes past 59, which is why no
+        # flow-descriptor measurement in this project has ever seen the second
+        # half of the corpus (adminlte, syncfusion_grid, jspreadsheet, moodle,
+        # premierleague -- the closest thing it has to an admin table).
+        # RECORD-ATOMS-RECONCILIATION-2026-11.md.
+        for i, _s in enumerate(list(SITES)[: args.sites], 1):
+            name, url = _s[0], _s[1]
             try:
                 r = await run_site(browser, name, url)
             except Exception as exc:

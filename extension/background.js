@@ -10094,6 +10094,15 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           const w = document.createTreeWalker(r, NodeFilter.SHOW_TEXT);
           let n, seen = 0;
           while ((n = w.nextNode()) && seen < 40) {
+            // RENDERED TEXT ONLY, which is the same question `_namable`
+            // answers for a NAME (#37: a non-rendered subtree donates its whole
+            // text, and a closed mega-menu gave one eBay nav item 339 characters
+            // of it). An atom nobody can see is a witness to something the user
+            // cannot check, and it stops matching the moment that subtree's
+            // state changes. Measured on the frozen corpus: 22.3% of every
+            // recorded witness was invisible text, and removing it took out 16
+            // silent mis-binds while introducing 4.
+            if (!_namable(n.parentElement)) continue;
             const t = (n.nodeValue || '').replace(/\s+/g, ' ').trim();
             // A letter or a digit in ANY script. The shortest strings on a page
             // are often the answer (#29), so this is not a length test — it is
@@ -10103,6 +10112,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
             if (out.indexOf(t) < 0) { out.push(t); seen++; }
           }
           for (const im of r.querySelectorAll('img[alt]')) {
+            if (!_namable(im)) continue;   // same rule as the text walk above
             const a = (im.getAttribute('alt') || '').trim();
             if (a && out.indexOf(a) < 0 && out.length < 48) out.push(a);
           }

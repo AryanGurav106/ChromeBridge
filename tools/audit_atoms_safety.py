@@ -154,6 +154,41 @@ def resolve_gated(target: dict, entries: list[dict]) -> str:
     return D._resolve_recorded(target, entries)
 
 
+def resolve_ungated(target: dict, entries: list[dict]) -> str:
+    """The atoms branch WITHOUT the composition gate -- the behaviour that
+    shipped in #83 and was corrected in #99.
+
+    IT EXISTS ONLY SO THE FIRING PROOF CANNOT EXPIRE. The self-test originally
+    asked whether `D.resolve` -- the live resolver -- was WRONG on a
+    drop-target case, which was true while the defect was live and became
+    false the instant the gate shipped. From then on the probe printed
+    "the probe cannot fire -- it is measuring nothing" and exited 1 on a
+    codebase where nothing was wrong. That is docs/MEASUREMENT.md's
+    probe-lifetime rule: an A/B whose firing proof IS a defect expires when
+    the defect is fixed, and the way out is to carry BOTH arms rather than to
+    assume the baseline is still in the tree.
+
+    So the proof now asks a question whose answer does not move: can this
+    probe's verdict function distinguish a resolver that has the defect from
+    one that does not? If it ever cannot, the probe really is measuring
+    nothing.
+    """
+    desc = target.get("desc") or {}
+    full = target.get("full") or desc
+    pool = [e for e in entries if D._targetable(e)]
+    want = target.get("of")
+    hits = [e for e in pool if D.matches(full if want is not None else desc, e)]
+    atoms = target.get("atoms")
+    if atoms:
+        want_a = set(atoms)
+        cand = [e for e in hits if want_a & set(e.get("recordAtoms") or [])]
+        if len(cand) != 1:
+            raise D.Unresolved("atoms did not name exactly one element",
+                               D._candidates(hits))
+        return str(cand[0].get("mmid"))
+    return D._resolve_recorded(target, entries)
+
+
 def resolve_gated_alt(target: dict, entries: list[dict]) -> str:
     try:
         return resolve_gated(target, entries)
@@ -370,13 +405,24 @@ def self_test() -> int:
         ok = (g == exp)
         bad += not ok
         print(f"{label:<38} {s:>10} {g:>10}   {exp}{'' if ok else '   <-- GATE FAILS'}")
+    # THE FIRING PROOF, re-based so it cannot expire (see resolve_ungated).
+    # It used to ask whether the SHIPPED resolver is WRONG here, which stopped
+    # being true the moment the gate shipped -- and the probe then reported
+    # "measuring nothing" on a healthy tree.
     fired = any(
-        verdict(lambda a, b: D.resolve(a, b), t, ents, want) == "WRONG"
+        verdict(lambda a, b: resolve_ungated(a, b), t, ents, want) == "WRONG"
+        for label, ents, want in cases if want is None)
+    live_ok = all(
+        verdict(lambda a, b: D.resolve(a, b), t, ents, want) != "WRONG"
         for label, ents, want in cases if want is None)
     print()
-    print(f"detector fires against the SHIPPED resolver: {fired}")
+    print(f"detector fires against a resolver WITHOUT the gate: {fired}")
     if not fired:
-        print("  !! the probe cannot fire -- it is measuring nothing")
+        print("  !! the probe cannot report WRONG -- it is measuring nothing")
+        bad += 1
+    print(f"the SHIPPED resolver is clean on every drop-target case: {live_ok}")
+    if not live_ok:
+        print("  !! the gate has regressed in core/flows/descriptor.py")
         bad += 1
     return 1 if bad else 0
 

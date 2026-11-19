@@ -240,7 +240,23 @@ def mut_reorder(entries, tgt):
     for pos, i in enumerate(idx):
         moved = dict(rev[pos])
         moved["mmid"] = crowd[pos]["mmid"]   # the POSITION keeps its stamp
+        # AND SO DOES THE RECORD, or this arm cannot test a content witness.
+        # `recordAtoms` is a field ON AN ENTRY, so permuting entries carries
+        # the witness along with the logical element and the atoms branch is
+        # CORRECT by construction rather than by merit -- measured: with the
+        # field present both this arm and mut_resort came back CORRECT, and
+        # with it absent both came back WRONG, so the arm was scoring the
+        # ordinal only. This mutation's own model is that ONLY the tied
+        # controls move and the scaffold stays, so the row -- and therefore
+        # its text -- belongs to the POSITION, exactly as the mmid does.
+        moved["recordAtoms"] = crowd[pos].get("recordAtoms")
         out[i] = moved
+    # THE CONVENTION IS CONTESTED AND IS WORTH SAYING ONCE. `want` below is the
+    # LOGICAL element, so a content witness that binds to the control now
+    # sitting in the recorded ROW scores WRONG here. A user who re-sorted a
+    # table meant the row; a user whose buttons were swapped under a fixed
+    # scaffold meant the element. Nothing the page declares separates them, so
+    # the arm is read for its REFUSAL rate, not its CORRECT rate.
     want = next((e for e in out if e["_logical"] == str(tgt.get("mmid"))), None)
     return (out, want) if want is not None else (None, tgt)
 
@@ -419,7 +435,16 @@ async def main() -> int:
     rows = []
     async with async_playwright() as p:
         browser = await p.chromium.launch()
-        for i, (name, url) in enumerate(list(SITES)[: args.sites], 1):
+        # `SITES` holds BOTH `(name, url)` and `(name, url, settle_ms)` -- 35 of
+        # the 106 entries carry a third element, the first at index 59. A
+        # two-way unpack here dies with `ValueError: too many values to
+        # unpack` the moment --sites goes past 59, which is why no
+        # flow-descriptor measurement in this project has ever seen the second
+        # half of the corpus (adminlte, syncfusion_grid, jspreadsheet, moodle,
+        # premierleague -- the closest thing it has to an admin table).
+        # RECORD-ATOMS-RECONCILIATION-2026-11.md.
+        for i, _s in enumerate(list(SITES)[: args.sites], 1):
+            name, url = _s[0], _s[1]
             try:
                 r = await run_site(browser, name, url, rng)
             except Exception as exc:

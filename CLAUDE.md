@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1607 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1612 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1607 checks, ~153s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1612 checks, ~153s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -10665,6 +10665,113 @@ granted in the side panel is refused with the same message the agent gets.
     0.8656`, n=186), which is the cross-check that the split is a view of the
     same measurement rather than a different one.
 
+111. **THE CORPUS GAP THAT #83 AND #99 BOTH BLAMED ON THE SAMPLE WAS A
+    TWO-WAY UNPACK.** Both entries close by saying the frozen corpus is
+    component demos and landing pages with no admin tables or order grids,
+    which is exactly where a repeated-record witness lives, and both treat
+    that as #25's rule about a sample. **Verified here by hand: 35 of the 106
+    entries in `SITES` are `(name, url, settle_ms)` rather than `(name, url)`,
+    the first at index 59** — so `for name, url in list(SITES)[:n]` raises the
+    moment `--sites` passes 59, and **every flow-descriptor figure this project
+    has ever published stopped at site 60.** The half it never reached holds
+    `adminlte`, `datatables`, `primevue`, `syncfusion_grid`, `jspreadsheet` and
+    `premierleague` — the closest thing the corpus has to the admin tables both
+    entries said it lacked. The limitation was real and its cause was ours.
+    Fixed in all four probes.
+
+    **THE RECONCILIATION #99 ASKED FOR, AND THE RECOMMENDATION REVERSED
+    MID-DOCUMENT.** #83 shipped record-text atoms as the witness that stops a
+    replay binding to the wrong row, and #99 recorded that the number which
+    justified shipping and the code that shipped use different definitions:
+    `el.closest('tr,li,dl,article,figure,fieldset')` against the probe's
+    structural child-of-LCA. 5,062 ordinal-bearing descriptors, 81 of 93 sites,
+    all seven cells **from ONE page load** (#19), drift floor 0.1–0.6%:
+
+    | | coverage | resort WRONG | drop-target WRONG | buildable in `recordAtoms`? |
+    |---|---|---|---|---|
+    | **tag list — SHIPPED** | **18.6%** | 12.7% | 0.0% | — |
+    | + rendered-text only | 18.5% | 12.7% | **0.0%** | **yes, 2 lines** |
+    | `_climbTo` — our own record notion | 29.0% | **14.9%** | **0.7%** | yes |
+    | child-of-LCA — the probe's rule | **41.0%** | **9.0%** | 0.0% | **no** |
+
+    #99's 13.1% against 43.9% is corroborated and is now one measurement,
+    **18.6% against 41.0%**, a 22.4pp gap against a 0.12pp floor. Half of all
+    ordinal-bearing descriptors have no `tr`/`li`/`article` ancestor at all.
+
+    **AND THE RULE THAT LOOKS OBVIOUSLY RIGHT IS WRONG MORE OFTEN.**
+    `_climbTo` is the project's own record notion, `recordAtoms`'s comment
+    already *claims* to use it, and it finds a record for 90.6% of descriptors
+    against the tag list's 50.2%. It is also **WRONG more often than what
+    ships**, by a mechanism computed per member rather than argued: 61
+    descriptors that the shipped rule gets right *via its atoms* the climb rule
+    gets wrong *via the ordinal*, because a tighter record stops discriminating.
+    It is also the only definition that mis-binds when the recorded row is
+    DELETED — #99's exact hazard. **No coverage number could have shown that**,
+    and the agent's own recommendation reversed inside its document. The
+    child-of-LCA rule wins on every axis and **cannot be built**: `recordOf`
+    takes the crowd, and `recordAtoms` is computed per element before any crowd
+    exists.
+
+    **WHAT SHIPPED IS THE OTHER DIVERGENCE, which nobody had noticed.** The
+    walk took EVERY text node in the record, hidden ones included — **22.3% of
+    every recorded witness was text no user can see** (5,641 of 25,258 atoms,
+    32.1% of members). That is #37's class in the witness slot: an atom nobody
+    can see witnesses something the user cannot check, and it stops matching the
+    moment that subtree's state changes. Two lines, `_namable` on the text
+    walk and on the `img[alt]` pass — the same question `_namable` already
+    answers for a NAME, and the same answer `_obsSig` already gives by hashing
+    `innerText`. It decides uniqueness for only 0.2% and the safety arms were
+    the surprise: **it removes 16 silent mis-binds and introduces 4**, and
+    halves the shipped rule's WRONG rate on `bump-digits`.
+
+    **A third divergence is inert and is recorded so it is not re-opened:** the
+    40-atom cap touches 2.2% of members and uniqueness is 87.4% with it and
+    87.4% without.
+
+    **ALL THREE EXISTING PROBES HAD A DEFECT, and one of them is the rule this
+    repo keeps writing down.** `audit_atoms_safety.py`'s firing proof had
+    **EXPIRED** — it asked whether the live resolver is WRONG on a drop-target
+    case, which stopped being true the day #99's gate shipped, so it printed
+    *"the probe cannot fire"* and exited 1 on a healthy tree. That is
+    `MEASUREMENT.md`'s A/B-probe-lifetime rule, hit twice in one day after #107
+    hit it on the name oracle. `audit_record_witness.py` had no firing proof at
+    all and its `exist` baseline column silently became the atoms resolver the
+    day `recordAtoms` shipped, so **#83's figures cannot be re-derived from
+    it**. And my own suggested reasoning about `audit_flow_resolve.py` — that
+    its mutation arms ARE its firing proof — is **true for the ordinal and false
+    for atoms**: its mutations are entry-level and `recordAtoms` is an entry
+    field, so a content witness is CORRECT by construction. Fixing `mut_reorder`
+    moved its witnessed CORRECT rate **48.8% → 9.8%**.
+
+    **MC2 CAUGHT ME WITHIN A MINUTE.** I tagged my inserted comment
+    `dup:record` out of habit; that tag asserts a FORCED duplicate and the B
+    half has one copy, so the contracts suite failed on a singleton. It caught
+    the agent's first version the same way. A tripwire this project wrote for
+    #21 firing on two different authors in one afternoon is the argument for
+    having written it.
+
+    **RA4 AND RA7 ARE DELIBERATELY NOWHERE.** They are the checks for the
+    rejected record-rule swap, and a standing red check for a design nobody
+    shipped is the noise #15 priced and #95 records as actively harmful, because
+    it trains the reader past a real one. The standalone harness carrying all
+    seven was removed rather than kept beside the suite: the ablation here is a
+    `git archive HEAD` shadow with the suite copied over it, and two spellings
+    of one concept is what PRINCIPLES 17 deletes.
+
+    **Still open, with its evidence.** Media entries can never carry a witness —
+    two of the three entry literals set `clickable:true` and never compute
+    `recordAtoms`, which the parity assert found as 32 of 5,062 mismatches, 38
+    of 38 chased being `role:'media'`. And the agent's own least-certain claim
+    is kept as such: whether the LCA rule's advantage survives a **React
+    re-render** arm, discard-and-rebuild rather than move, is unmeasured — its
+    arms move existing nodes, which is what makes them scorable and also unlike
+    the thing fix #5 exists for.
+
+    Suites: 1612 checks. New — RA1 in `test_widgets.py` (a record's HIDDEN text
+    is not a witness; FAILS against the pre-fix collector with `HIDDENTOKEN-1`
+    in the atoms) with RA2/RA3/RA5/RA6 as the four controls that pass in BOTH
+    arms. Probes: `tools/audit_record_definition.py`,
+    `tools/audit_record_cost_live.py`, both with `--selftest`.
 
 ## Debugging starting points
 

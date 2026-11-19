@@ -3660,6 +3660,71 @@ async def main():
               f"{_rm!r}")
         await tk.close()
 
+        # ---- RA1-RA6: what `recordAtoms` may contain -------------------------
+        # A recorded flow step that resolves by ORDINAL can bind to the wrong row
+        # after a sort. `recordAtoms` is the witness that stops it (#83): the text
+        # unique to a crowd member's own record. It walked EVERY text node in that
+        # record, hidden ones included — so an atom could be a string no user can
+        # see, which is a witness to something they cannot check, and it stops
+        # matching the moment that subtree's state changes. Same question
+        # `_namable` already answers for a NAME (#37).
+        #
+        # Measured on the frozen corpus before shipping: 22.3% of every recorded
+        # witness was invisible text (5,641 of 25,258 atoms, 32.1% of members), it
+        # decided uniqueness for 0.2%, and removing it took out 16 silent
+        # mis-binds while introducing 4.
+        #
+        # RA4 and RA7 are deliberately ABSENT. They belonged to the OTHER half of
+        # that reconciliation — swapping the record rule from the declared tag list
+        # to a structural one — which was MEASURED AND REJECTED: it finds a record
+        # for 90.6% of descriptors against 50.2% and is WRONG more often, because a
+        # tighter record stops discriminating. Their evidence is in
+        # docs/research/RECORD-ATOMS-RECONCILIATION-2026-11.md, not in a standing
+        # red check for a design nobody shipped.
+        ra = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await ra.add_init_script(path=str(ROOT / "extension" / "listener_tag.js"))
+        # A NEW DOCUMENT IS REQUIRED HERE — see the note above C13.
+        await ra.goto("about:blank")
+
+        _RA_DATA = [("Acme Ltd", "INV-1001"), ("Beta Inc", "INV-1002"),
+                    ("Gamma Co", "INV-1003")]
+
+        def _ra_row(tag, co, inv, k, hidden):
+            hid = f'<div style="display:none">HIDDENTOKEN-{k}</div>' if hidden else ""
+            return (f'<{tag} class=row><span>{co}</span><span>{inv}</span>{hid}'
+                    f'<div class=acts><span>Actions</span>'
+                    f'<button onclick="void 0">Delete</button></div></{tag}>')
+
+        async def _ra_atoms(tag, hidden=True, rows=None):
+            data = _RA_DATA if rows is None else rows
+            body = "".join(_ra_row(tag, c, i, k + 1, hidden)
+                           for k, (c, i) in enumerate(data))
+            await ra.goto("about:blank")
+            await ra.set_content("<!doctype html><meta charset=utf-8><body><main>"
+                                 f"<div class=t>{body}</div></main></body>")
+            out = await ra.evaluate(
+                "(function(){ " + COLLECT
+                + "; return _collectInteractivePage(true, null, 'brief'); })()") or []
+            hits = [e for e in out if e.get("clickable")]
+            return (hits[0].get("recordAtoms") or []) if hits else []
+
+        _li = await _ra_atoms("li")
+        check("RA1 a record's HIDDEN text is not a recorded witness",
+              bool(_li) and not any("HIDDENTOKEN" in x for x in _li), f"{_li!r}")
+        check("RA2 CONTROL: the record's VISIBLE text still is",
+              "INV-1001" in _li, f"{_li!r}")
+        _plain = await _ra_atoms("li", hidden=False)
+        check("RA3 CONTROL: a row with nothing hidden is byte-identical",
+              _plain == [x for x in _li if "HIDDENTOKEN" not in x],
+              f"{_plain!r} vs {_li!r}")
+        check("RA5 CONTROL: a declared record still yields one",
+              bool(_li) and "INV-1001" in _li, f"{_li!r}")
+        _lone = await _ra_atoms("li", rows=[("Acme Ltd", "INV-1001")])
+        check("RA6 CONTROL: a lone row is still recorded, so RA1 is not "
+              "measuring an empty list",
+              bool(_lone) and "INV-1001" in _lone, f"{_lone!r}")
+        await ra.close()
+
         await browser.close()
 
     passed = sum(1 for _, ok, _ in results if ok)

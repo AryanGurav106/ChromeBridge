@@ -366,7 +366,19 @@ async def run_site(browser, name, url, rng):
     if len(members) > PER_SITE:
         members = rng.sample(members, PER_SITE)
     row = {"name": name, "crowds": len(crowds), "ords": len(members),
-           "sizes": [len(g) for g in crowds][:20]}
+           "sizes": [len(g) for g in crowds][:20],
+           # THE `exist` COLUMN IS NOT THE PRE-ATOMS BASELINE ANY MORE.
+           # `v_exist` calls D.resolve, and since 6382583 the collector emits
+           # `recordAtoms`, so D.build puts `atoms` on the target and
+           # _resolve_recorded takes the content branch BEFORE it ever looks
+           # at the witness or the ordinal. Verified in pure Python: with the
+           # field present a re-sorted crowd resolves to the recorded element;
+           # with it absent the same crowd binds the wrong one.
+           # So the numbers #83 published with this probe (shipped witness
+           # 11.6% WRONG under a re-sort against a content witness's 0.4%)
+           # cannot be re-derived here -- it would now be atoms against atoms.
+           # docs/MEASUREMENT.md, "An A/B probe ... has a LIFETIME".
+           "atoms_live": any(e.get("recordAtoms") for e in a)}
 
     gof = {m: gi for gi, g in enumerate(groups) for m in g}
     cov = Counter()
@@ -478,7 +490,16 @@ async def main() -> int:
     rows = []
     async with async_playwright() as p:
         browser = await p.chromium.launch()
-        for i, (name, url) in enumerate(list(SITES)[: args.sites], 1):
+        # `SITES` holds BOTH `(name, url)` and `(name, url, settle_ms)` -- 35 of
+        # the 106 entries carry a third element, the first at index 59. A
+        # two-way unpack here dies with `ValueError: too many values to
+        # unpack` the moment --sites goes past 59, which is why no
+        # flow-descriptor measurement in this project has ever seen the second
+        # half of the corpus (adminlte, syncfusion_grid, jspreadsheet, moodle,
+        # premierleague -- the closest thing it has to an admin table).
+        # RECORD-ATOMS-RECONCILIATION-2026-11.md.
+        for i, _s in enumerate(list(SITES)[: args.sites], 1):
+            name, url = _s[0], _s[1]
             try:
                 r = await run_site(browser, name, url, rng)
             except Exception as exc:
@@ -496,6 +517,16 @@ async def main() -> int:
     sites = [r for r in rows if r.get("cov", {}).get("n")]
     cov = tot(rows, ["cov"])
     n = cov["n"] or 1
+    if any(r.get("atoms_live") for r in rows):
+        print("\n" + "!" * 78)
+        print("  THE `exist` COLUMN IS NOT A BASELINE ON THIS TREE.")
+        print("  The collector is emitting `recordAtoms`, so D.resolve takes the CONTENT")
+        print("  branch before it reads the witness or the ordinal: `exist` is the atoms")
+        print("  resolver, not the self+anchor one it was written to measure. Every")
+        print("  `exist` row below, and every comparison against it, is atoms-vs-atoms.")
+        print("  The figures #83 published with this probe predate that field and cannot")
+        print("  be re-derived here. See docs/research/RECORD-ATOMS-RECONCILIATION-2026-11.md")
+        print("!" * 78)
     print(f"\n{'=' * 78}\nRECORD-CONTENT WITNESS — {len(rows)} sites loaded, {len(sites)} with ordinal-bearing "
           f"descriptors, {cov['n']} descriptors\n{'=' * 78}")
     print("  (#25: sites contributing a crowd at all -- the corpus is mostly landing pages)")
