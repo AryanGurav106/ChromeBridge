@@ -1563,23 +1563,64 @@ values. Its headline is that observation/action space ALONE moves success by mor
 than 30 points (GPT-5 mini 83.1% AX-tree → 48.9% pixel-only), and four arms are
 already implemented including browser-use.
 
-And it is centred on exactly the Radix / shadcn / HeadlessUI / MUI families this
+~~And it is centred on exactly the Radix / shadcn / HeadlessUI / MUI families this
 project was built around — fix #1 in CLAUDE.md exists because Radix gates on
-`pointerdown`.
+`pointerdown`.~~
 
-**NOT YET VERIFIED AT SOURCE.** #78's precedent is that WebPageBench's claims
-were checked against the released artefact by a probe that exits nonzero and
-self-tests against planted violations, because the paper is not the artefact.
-ComponentBench gets the same treatment before any number from it is quoted. The
-survey also flags one thing it could NOT establish: whether ComponentBench has
-per-step ELEMENT ground truth, which is what would also make it a successor to
-the Mind2Web recall ruler. Absence not confirmed — check, do not assume.
+**VERIFIED AT SOURCE, and two sentences above are REFUTED.** See
+`docs/research/COMPONENTBENCH-VERIFICATION-2026-11.md` and
+`tools/audit_componentbench.py` (exits nonzero on any failed claim; `--self-test`
+plants five violations and catches all five). What CONFIRMS: 2,910 / 912 tasks,
+97 canonical types, 14 families, a genuinely programmatic oracle
+(`benchmark/core/task.py` imports no model client and never reads
+`chat_messages`), benchmark mode rendering no goal text, the task API stripping
+the answer key by default, and the success predicate as a literal in the React
+component. What is REFUTED:
+
+- **It ships Ant Design (1,000), Mantine (970) and MUI (910). Radix, shadcn and
+  HeadlessUI are ABSENT from `site/package.json`.** Only MUI overlaps. The
+  conclusion survives for a better reason — antd is the family behind our worst
+  dropdown failures (#25, #29, #97, #98) and is 34% of the set, so the
+  relevance is adversarial rather than familiar — but the sentence was wrong.
+- **It DOES carry per-step ELEMENT ground truth**, undocumented, in
+  `runs_lite/human0_20260312_clean/episodes.tar` (14.7 MB): **7,773 steps over
+  2,910 episodes**, each with the target's tag / id / classes / data-testid /
+  role / name / bbox, plus the step VALUE on all 764 `type` steps — the field
+  `SUCCESS-RETENTION.md` records Mind2Web's loader discarding. 3,976 of 5,817
+  click+drag steps carry a testid or a name, on 2,191 of 2,910 tasks. The
+  released `data/human_traces/*.jsonl` carries only counts and kinds, which is
+  why reading the repo answered "no".
+  **It is NOT usable as-is:** all 7,773 steps were recorded in
+  `mode=presentation` at four viewports, none of them the harness's 1280×720,
+  so a ruler must RE-RESOLVE by identity. Measured statically, 83.0% of
+  identifiable targets have their testid or name in the rendering component;
+  **59.7% carry a name that survives the production build**, which is the key
+  that matters because `next.config.js` strips `data-testid` in production and
+  production is the documented evaluation path.
+
+**READ §3 OF THE PAPER BEFORE PLANNING AN ARM.** `data-testid` is present on a
+dev build and stripped in production, and #23 has us presenting testids as
+attributed names — so a dev-build arm reads `antd-btn-generate-report` where
+the AX-tree arm reads nothing, which the authors' own comment calls cheating.
+Dev mode also pays a 1–2 minute compile per task page.
+
+**Feasibility: one arm, modelled on `scripts/browser_use/run_and_pack.py` (a
+standalone 827-line script, not a BrowserGym mode).** Oracle is
+`query_elements("#cb-success-banner")`, so unlike every published arm ours
+needs no API key. Self-hosted on `localhost:3002`, so the gate is granted in a
+throwaway profile exactly as `run_flows.py` does. Estimated ~2.5 h serial per
+arm over 278 tasks; ~1.5–2.5 GB of `node_modules` (estimate, not measured).
+**Do not clone the HuggingFace dataset: 86.3 GB.** The subset to pre-register
+is shipped: `site/src/recording-subset-278.json`, 278 ids, one per
+(canonical_type × library), seeded, with a stated difficulty deviation — the
+same set the human traces were recorded against.
 
 **One figure to NOT import.** A search summary attributed "17.3% of tasks
 flipping between identical runs" to ComponentBench; the surveying agent checked
-and **that figure is not in the paper**. Do not place it beside
-[arXiv:2608.06171](https://arxiv.org/abs/2608.06171)'s measured 12–14% rerun
-noise floor as if it were a second data point.
+the paper and **that figure is not in it**. The verification probe checked the
+ARTEFACT and the string `17.3` appears nowhere in it either. Do not place it
+beside [arXiv:2608.06171](https://arxiv.org/abs/2608.06171)'s measured 12–14%
+rerun noise floor as if it were a second data point.
 `detail` and `format` are priced on recall and tokens, never on end-to-end
 success with a strong model.
 
