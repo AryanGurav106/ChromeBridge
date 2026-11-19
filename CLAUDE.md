@@ -10729,6 +10729,11 @@ granted in the side panel is refused with the same message the agent gets.
     `innerText`. It decides uniqueness for only 0.2% and the safety arms were
     the surprise: **it removes 16 silent mis-binds and introduces 4**, and
     halves the shipped rule's WRONG rate on `bump-digits`.
+    **The blast radius is bounded and was checked rather than assumed:**
+    `recordAtoms` is read by `core/flows/descriptor.py` and by nothing else —
+    `_fmtLine` does not mention it — so this change cannot alter a printed
+    listing, cannot move a token figure, and cannot touch any of the four
+    rulers. It is a flow-resolution change only.
 
     **A third divergence is inert and is recorded so it is not re-opened:** the
     40-atom cap touches 2.2% of members and uniqueness is 87.4% with it and
