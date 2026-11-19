@@ -1358,6 +1358,44 @@ coordinate is not.
 > pre-fix (a recording whose active tab moves under it) and the control that a
 > flow whose tab never moves acquires no review line.
 
+### 21. `(post-key)` can be a STALE claim about where a name came from `MEASURE FIRST`
+
+**Verified by hand, not inherited from a report: `__abSynthAttr` is set at
+FIVE sites in `extension/background.js` and cleared at NONE.** It is a DOM
+expando, so it survives between collector runs on the same document — the same
+class #27 records for `_note`, where an overwritten expando survived a second
+read and made the ledger report a reason decided by an earlier one.
+
+**Why it matters more than it looks.** #41 added `(post-key)` so an agent could
+DISCOUNT a name: the string shown is the HTML `name` attribute, i.e. the key
+the form posts under, not a label a human wrote. A control that is read once
+before its label exists — an SPA rendering it, a `<label>` arriving with a
+fetch, a field unlocking — carries `__abSynthAttr` for the life of that
+document. On every later read the name resolves correctly from the real label
+AND the row still says `(post-key)`. That is a false provenance claim in the
+one field whose entire purpose is provenance, and it points the wrong way: it
+tells an agent to distrust a name that is now authored and correct.
+
+**#113's label fix makes the population bigger, not smaller.** Before it, a
+`<label>` wrapping an element child resolved to `''` and the row fell through
+to the wire key — so controls that SHOULD have had a real name were getting
+`(post-key)` legitimately. Now they get the label. Any control read in the
+window before its label exists still acquires the expando.
+
+**NOT FIXED, deliberately, and the agent that found it was right not to.**
+Clearing it unconditionally at the top of each collection is the obvious move
+and it is unmeasured in both directions: nobody knows how often a control is
+read before its label arrives (the prevalence), and nobody has checked that
+the five set sites all want the same lifetime. **What it needs is a TWO-READ
+fixture** — read, render the label, read again, assert the marker is gone —
+plus a prevalence number from the corpus. Both halves before it ships
+(#41/#44's rule).
+
+**The falsifier, so this is not re-opened on a hunch:** if a corpus pass finds
+zero controls whose name provenance CHANGES between two reads of one document,
+this is a latent defect with no instances and should be recorded as such rather
+than fixed. `docs/research/NAME-RESIDUE-2026-11.md` section 9.
+
 ### 20. The Claude-in-Chrome arm cannot run: its extension DEREGISTERED `BLOCKED ON A RELOAD`
 > `tools/bench_turns/eval13` has one arm and no comparison because the other
 > toolset never answered a single command — 8 calls, every one a timeout, 0

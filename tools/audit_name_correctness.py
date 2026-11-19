@@ -193,6 +193,144 @@ CANDIDATES = [
         None,
         None,
     ),
+    (
+        # A WRAPPING <label>'S NAME WAS COMPUTED ON A DETACHED CLONE.
+        #
+        # The clone exists to implement AccName's "the labelled control's own subtree is
+        # not traversed". But `_contentName` applies `_namable` to every element child,
+        # and `_namable` asks `checkVisibility()` -- which a DETACHED node fails, because
+        # it has no box. Measured on a clone: `checkVisibility({visibilityProperty:true})`
+        # is false for a plainly-visible <span> and `getComputedStyle(n).display` comes
+        # back "". So only the label's DIRECT TEXT NODES survived, and
+        # `<label><input><span>Text</span></label>` -- the ordinary way to style a radio
+        # or checkbox label -- resolved to '' and fell through to the HTML `name`
+        # attribute, which is the POST KEY and shared by every member of a radio group.
+        #
+        # Excluding the control by IDENTITY on the LIVE tree is what the spec rule
+        # actually says, and it keeps `_namable` asking its real question of real nodes.
+        # Several anchors, applied as one unit: this is a single behavioural change.
+        "live-label-not-clone",
+        None,
+        None,
+        [
+            "  const _deepText = (node, depth) => {\n    const d = depth || 0;\n"
+            "    if (d > 6) return '';\n    try {\n"
+            "      if (node.nodeType === 3) return node.nodeValue || '';",
+            "  const _contentName = (node) => {",
+            "        const _own = _deepText(node).replace(/\\s+/g, ' ').trim();",
+            "          // See `_namable`: a non-rendered child contributes nothing, and its\n"
+            "          // innerText is NOT what is on screen \u2014 it is textContent.\n"
+            "          if (!_namable(n)) continue;",
+            "          let t = (typeof n.innerText === 'string') ? n.innerText : _deepText(n);",
+            "            const _d = _deepText(n);",
+            "          try {\n"
+            "            const clone = wrap.cloneNode(true);\n"
+            "            const ownMmid = el.getAttribute('mmid');\n"
+            "            const own = ownMmid && clone.querySelector(`[mmid=\"${ownMmid}\"]`);\n"
+            "            if (own) own.remove();\n"
+            "            else { const sameTag = clone.querySelector(el.tagName.toLowerCase()); if (sameTag) sameTag.remove(); }\n"
+            "            accessibleName = _contentName(clone);\n"
+            "          } catch (e) {\n"
+            "            accessibleName = (wrap.innerText || '').trim();\n"
+            "          }",
+        ],
+        [
+            "  const _deepText = (node, depth, skip) => {\n    const d = depth || 0;\n"
+            "    if (d > 6) return '';\n    try {\n"
+            "      if (skip && node === skip) return '';\n"
+            "      if (node.nodeType === 3) return node.nodeValue || '';",
+            "  const _contentName = (node, skip) => {",
+            "        const _own = _deepText(node, 0, skip).replace(/\\s+/g, ' ').trim();",
+            "          // The excluded control, skipped by IDENTITY on the LIVE tree.\n"
+            "          if (skip && n === skip) continue;\n"
+            "          // See `_namable`: a non-rendered child contributes nothing, and its\n"
+            "          // innerText is NOT what is on screen \u2014 it is textContent.\n"
+            "          if (!_namable(n)) continue;",
+            "          let t;\n"
+            "          if (skip && n.contains && n.contains(skip)) {\n"
+            "            // innerText cannot omit a descendant; the composed walk can.\n"
+            "            t = _deepText(n, 0, skip);\n"
+            "          } else {\n"
+            "            t = (typeof n.innerText === 'string') ? n.innerText : _deepText(n, 0, skip);\n"
+            "          }",
+            "            const _d = _deepText(n, 0, skip);",
+            "          try {\n"
+            "            accessibleName = _contentName(wrap, el);\n"
+            "          } catch (e) {\n"
+            "            accessibleName = (wrap.innerText || '').trim();\n"
+            "          }",
+        ],
+    ),
+    (
+        # `aria-labelledby` RESOLVED WITH `innerText`, WHICH AN SVG ELEMENT DOES NOT HAVE.
+        #
+        # #37 established this for `_contentName` -- "an SVG element has no innerText at
+        # all, so the name path fell through to textContent and swallowed the stylesheet"
+        # -- and fixed it THERE. The aria-labelledby resolver is the same question in a
+        # second spelling (PRINCIPLES 17) and was left behind. Measured offline against
+        # the shipped collector:
+        #     <a><svg aria-labelledby=d><desc id=d>handshake icon</desc></svg></a>
+        #       ours   (unlabeled-icon)        chrome   "handshake icon"
+        # 40 rows on one live site, all of them a design system's icon set. The row
+        # prints NO identity for a control the page named, which is the worst direction.
+        #
+        # `textContent` and NOT `_deepText`, for a reason the fixture pins: AccName 1.2
+        # step 2A excludes a hidden node UNLESS it is DIRECTLY REFERENCED, and an
+        # `aria-labelledby` target is directly referenced. `_deepText` applies `_namable`,
+        # and an SVG <desc>/<title> is `checkVisibility() === false` -- so the composed
+        # walk returns '' and the fix would not work. The HTML branch is untouched, which
+        # is what keeps `<button aria-labelledby=hidden-span>` working.
+        "labelledby-non-html",
+        None,
+        None,
+        ["          .map(id => { const n = idRoot.getElementById(id); return n ? "
+         "(n.innerText || '').trim() : ''; })"],
+        ["          .map(id => { const n = idRoot.getElementById(id); return n ? "
+         "((typeof n.innerText === 'string' ? n.innerText : n.textContent) || '').trim() : ''; })"],
+    ),
+    (
+        # A <br> RENDERS A LINE BREAK AND CONTRIBUTES NOTHING, so the two runs either
+        # side FUSE.  `document.querySelector('br').innerText === ''`, measured.
+        #
+        # This is #52's defect in a second function. #52 fixed `search_page`'s walk for
+        # exactly this -- "<br> has no children, so walk() returned '' and add() dropped
+        # it -- FUSING the lines" -- and `_contentName` has the identical hole. The screen
+        # oracle settles it: `innerText` of the element is
+        # "3420 Walnut Street\nPhiladelphia, PA 19104-6206", Chrome's name has the
+        # separator, and ours is "3420 Walnut StreetPhiladelphia, PA 19104-6206".
+        #
+        # `'\n'` rather than `' '` because that is what a <br> IS; `parts.join('')` is
+        # `\s+`-collapsed immediately afterwards, so the name slot gets a space either
+        # way. _deepText gets the same line because it answers the same question for the
+        # composed/shadow path.
+        "br-is-a-separator",
+        None,
+        None,
+        [
+            "      if (!_namable(node)) return '';\n      let s = '';\n"
+            "      const sr = node.shadowRoot || node.__abClosedRoot;",
+            "          if (!_namable(n)) continue;\n          // \"EMPTY\" IS THE WRONG TRIGGER.",
+        ],
+        [
+            "      if (!_namable(node)) return '';\n"
+            "      // A <br> renders a line break and has no text -- see `_contentName`.\n"
+            "      if (node.tagName === 'BR') return '\\n';\n"
+            "      let s = '';\n"
+            "      const sr = node.shadowRoot || node.__abClosedRoot;",
+            "          if (!_namable(n)) continue;\n"
+            "          // A <br> RENDERS A LINE BREAK AND CONTRIBUTES NO TEXT.\n"
+            "          // `document.querySelector('br').innerText === ''` (measured), so it\n"
+            "          // was dropped by the `if (t.trim())` gate below and the two runs\n"
+            "          // either side FUSED: `3420 Walnut Street<br>Philadelphia` came back\n"
+            "          // as one word. #52's defect in a second function -- it fixed\n"
+            "          // `search_page`'s walk for exactly this. The screen settles it: the\n"
+            "          // element's own innerText and Chrome's accessible name both carry\n"
+            "          // the break. `'\\n'` rather than `' '` because that is what a <br>\n"
+            "          // IS; the join below collapses it, so the name gets a space anyway.\n"
+            "          if (n.tagName === 'BR') { parts.push('\\n'); continue; }\n"
+            "          // \"EMPTY\" IS THE WRONG TRIGGER.",
+        ],
+    ),
 ]
 
 _CONTENTS_BLOCK = (
@@ -202,9 +340,14 @@ _CONTENTS_BLOCK = (
     "      }\n")
 
 
-def _collector_src(with_fix):
-    """`with_fix=False` returns the collector WITHOUT these two changes, `True` WITH them --
+def _collector_src(with_fix, only=None):
+    """`with_fix=False` returns the collector WITHOUT these changes, `True` WITH them --
     whichever side of the fix `extension/background.js` currently sits on.
+
+    `only` names the candidates to MOVE; every other one is left exactly as the source has
+    it. Without it an A/B run while two fixes are already shipped and a third is not would
+    silently measure all three at once -- which is not an isolation of anything, and is the
+    same "a count is not an inventory" shape one level up (PRINCIPLES 16).
 
     MEASUREMENT.md's rule for a probe whose arms come from patching source: it must
     construct the arm that does NOT exist yet, or it expires the moment the fix ships and
@@ -220,6 +363,40 @@ def _collector_src(with_fix):
     collector as the baseline. Nothing but checking the output caught it."""
     src = AGL.COLLECT
     for name, pre_re, post_re, pre_txt, post_txt in CANDIDATES:
+        if only is not None and name not in only:
+            continue
+        if isinstance(pre_txt, list):
+            # A MULTI-ANCHOR CANDIDATE IS ONE CHANGE. Every anchor must be on the same
+            # side, and the direction is taken from the LAST one (the behavioural line);
+            # a mixed state means the source is half-patched and measuring it would be
+            # measuring a build nobody runs.
+            sides = []
+            for a, b in zip(pre_txt, post_txt):
+                nb = src.count(b)
+                # THE UNFIXED TEXT OFTEN SURVIVES INSIDE THE FIXED BLOCK -- a candidate
+                # that INSERTS a line keeps the line it inserted before. Counting raw
+                # occurrences then reports pre=1 post=1 and the direction is undecidable.
+                # The same special case already exists for `contents-is-not-invisible`;
+                # this is it, generalised rather than written a second time (PRINCIPLES 17).
+                na = src.count(a) - nb * b.count(a)
+                if na == 1 and nb == 0:
+                    sides.append("pre")
+                elif nb == 1 and na == 0:
+                    sides.append("post")
+                else:
+                    raise AssertionError(
+                        "candidate %r anchor %d: pre=%d post=%d -- the patch would "
+                        "measure a build nobody runs" % (name, len(sides), na, nb))
+            if len(set(sides)) != 1:
+                raise AssertionError("candidate %r is half-applied in the source: %s"
+                                     % (name, sides))
+            if sides[0] == "pre" and with_fix:
+                for a, b in zip(pre_txt, post_txt):
+                    src = src.replace(a, b)
+            elif sides[0] == "post" and not with_fix:
+                for a, b in zip(pre_txt, post_txt):
+                    src = src.replace(b, a)
+            continue
         has_pre = len(re.findall(pre_re, src, re.M))
         has_post = len(re.findall(post_re, src, re.M))
         if name == "contents-is-not-invisible":
@@ -248,8 +425,13 @@ def _collector_src(with_fix):
     want = {
         "alt-before-title": "el.getAttribute('alt') || el.getAttribute('title')",
         "contents-is-not-invisible": "if (_disp === 'contents')",
+        "live-label-not-clone": "accessibleName = _contentName(wrap, el);",
+        "labelledby-non-html": "typeof n.innerText === 'string' ? n.innerText : n.textContent",
+        "br-is-a-separator": "parts.push('\\n'); continue;",
     }
     for name, marker in want.items():
+        if only is not None and name not in only:
+            continue
         present = marker in src
         assert present == bool(with_fix), (
             "arm with_fix=%s came back %s the %r marker" % (with_fix,
@@ -747,7 +929,7 @@ async def quoting_site(browser, name, url, arch, lang, nstages):
             pass
 
 
-async def candidate_ab(browser, name, url, arch, lang, nstages):
+async def candidate_ab(browser, name, url, arch, lang, nstages, only=None):
     """BOTH COLLECTORS ON THE SAME PAGE LOAD, scored against ONE oracle read.
 
     MEASUREMENT.md R3: block-structured A/B aligns run-order drift exactly with variant
@@ -760,7 +942,7 @@ async def candidate_ab(browser, name, url, arch, lang, nstages):
     improves is Pareto-positive; one that trades is a decision, not a fix (#41/#44)."""
     ctx = await browser.new_context(viewport=VIEWPORT, ignore_https_errors=True,
                                     locale="en-US")
-    base_src, cand_src = _collector_src(False), _collector_src(True)
+    base_src, cand_src = _collector_src(False, only), _collector_src(True, only)
 
     def js(src):
         return ("(function(){ " + src + ";"
@@ -1481,6 +1663,11 @@ def main():
     ap.add_argument("--candidate-ab", action="store_true",
                     help="both collectors on the SAME page load, one oracle read, "
                          "reporting improved/regressed rather than a level")
+    ap.add_argument("--ab-only", nargs="*", default=None,
+                    choices=[c[0] for c in CANDIDATES],
+                    help="isolate ONE candidate: every other one stays exactly as the "
+                         "source has it. Without this, an A/B run while two fixes are "
+                         "already shipped and a third is not measures all three at once.")
     ap.add_argument("--oracle-recheck", action="store_true",
                     help="re-read Chrome's AX tree after each comparison and count how "
                          "many REPORTED rows moved -- a direct bound on the page "
@@ -1559,7 +1746,8 @@ def main():
                 async def g(s):
                     async with sem:
                         try:
-                            return await asyncio.wait_for(candidate_ab(br, *s, a.stages), 200)
+                            return await asyncio.wait_for(
+                                candidate_ab(br, *s, a.stages, a.ab_only), 200)
                         except Exception as e:
                             return {"site": s[0], "error": "timeout/" + str(e)[:80]}
                 r = await asyncio.gather(*(g(s) for s in sites))

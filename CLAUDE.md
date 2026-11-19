@@ -112,7 +112,7 @@ ChromeBridge/
 │   └── utils/logger.py         # stderr logger (stdio-safe)
 │
 ├── tools/                      # SUITES (deterministic, offline) + PROBES (measurement)
-│   ├── run_tests.py            #   the runner — 21 suites, 1612 checks; --list is truth
+│   ├── run_tests.py            #   the runner — 21 suites, 1625 checks; --list is truth
 │   ├── README.md               #   per-suite inventory + groups + the test_gaps caveat
 │   ├── _extract.py             #   comment/string/regex-aware function slicer (shared)
 │   ├── capture_listings.py     #   SITES = the 106-site corpus definition (source of truth)
@@ -507,7 +507,7 @@ development: the project `.venv` (Python 3.12).
 ## Tests and CI
 
 ```powershell
-.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1612 checks, ~153s mac
+.venv\Scripts\python.exe tools\run_tests.py            # 21 suites, 1625 checks, ~153s mac
 .venv\Scripts\python.exe tools\run_tests.py --list     # the AUTHORITATIVE inventory
 .venv\Scripts\python.exe tools\run_tests.py --group unit   # browser-free only
 ```
@@ -10906,6 +10906,109 @@ granted in the side panel is refused with the same message the agent gets.
 
     Flow suite: **13/13 through a real Chrome and the real unpacked extension**,
     2 skipped as needing a public host the harness does not start (#86).
+114. **THE NAME RESIDUE, DISPOSITIONED — and half of it can never close,
+    which is a decision rather than a shortfall.** 0.9766 per-site median
+    against Chrome's own AX tree (#108) is this project's weakest headline, and
+    nobody had asked what the residue IS. `docs/research/NAME-RESIDUE-2026-11.md`.
+    The `src=name` slice is **1,491 rows of 20,199**:
+
+    | class | rows | share | what dominates it | verdict |
+    |---|---|---|---|---|
+    | `chrome-empty` | **758** | **51%** | Chrome's ROLE forbids a name: `image` 314, `generic` 245, wire keys 127 | **both right** |
+    | `disjoint` | 338 | 23% | `title` over name-from-content; ~56 the lost `<label>` | part ours |
+    | `ours-superset` | 215 | 14% | a `title` carrying a boilerplate affix | Chrome cleaner, ours not wrong |
+    | `chrome-superset` | 91 | 6% | #34, Chrome absorbs a descendant's NAME | known, unfixed |
+    | `punctuation-only` | 29 | 2% | U+200B, `::before` glyphs | **ours better** |
+
+    **THE PERMANENT FLOOR IS THE RESULT, not the fixes.** 758 of 1,491 are rows
+    where Chrome's role forbids a name and we print the author's own string — a
+    `generic`, a decorative `<img alt="">` (HTML declaring it decorative), a
+    `role=presentation` `<svg>`, a wire key we already mark `(post-key)`. #74 is
+    the proof that printing nothing there is the WORSE error: 118 elements once
+    sat in every presence metric and were unreachable by their own printed
+    label. **A metric reading 1.0 would mean we had stopped printing identities
+    the spec forbids and #74 requires — the rate would rise and the listing
+    would get worse.** That sentence converts 0.9766 from a shortfall into a
+    measured limit, and it is worth more than any of the three fixes below.
+
+    **CLASS F IS NOW A DECIDED DON'T-BUILD WITH A NUMBER.** #93 fixed `title`
+    over `alt` on ONE element and deliberately left `title` beating
+    name-from-content alone, on judgement. The measurement agrees with the
+    judgement and not with the spec: 139 distinct elements, **all 139 render no
+    text**, so the screen oracle abstains 139/139 — and **22 (16%) are rows
+    where Chrome's spec-correct name is a Private-Use-Area icon glyph**
+    (`ours: Facebook`, `Chrome: U+E978`). Following the spec would destroy a
+    real identity on a sixth of the class.
+
+    **THREE DEFECTS, and all three are one concept spelled twice (PRINCIPLES
+    17).**
+    - **A wrapping `<label>`'s name was computed on a DETACHED CLONE.**
+      I verified the mechanism myself rather than taking it: on a clone,
+      `checkVisibility({visibilityProperty:true})` is **false** for a plainly
+      visible `<span>` and `getComputedStyle(n).display` is **`""`**. So
+      `_namable` rejected every element child, only direct text nodes survived,
+      `<label><input><span>Text</span></label>` resolved to `''`, and the row
+      fell through to the HTML `name` attribute — **the wire key**. Twelve
+      `wc_webawesome` radios printed the identical `name="icon-family-tTQcQzZF"
+      (post-key)`; Yokohama's search box printed `name="q"` on a page declaring
+      サイト内検索. Chrome reports `nameFrom=relatedElement` on exactly these: it
+      read the `<label>` we could not. The exclusion is now by identity on the
+      LIVE tree, and the stale comment describing the clone went with it.
+    - **`aria-labelledby` resolved with `innerText`, which an SVG element does
+      not have.** `<svg aria-labelledby=d><desc id=d>handshake icon</desc>` gave
+      `(unlabeled-icon)`. #37 fixed this exact fact in `_contentName` and left
+      this spelling behind. `textContent` rather than `_deepText`, because
+      AccName 2A keeps a DIRECTLY REFERENCED hidden node and `_namable` rejects
+      an SVG `<desc>` outright.
+    - **`<br>` fused the lines either side** (`3420 Walnut StreetPhiladelphia`).
+      #52's defect in a second function; `innerText` and Chrome's name both
+      carry the break.
+
+    **`BREAKS_A_CORRECT_NAME` IS 0 AND THAT 0 IS A MEASUREMENT.** 129 rows
+    changed across three candidates, 100 improved, **0 broke a name Chrome has**
+    — and the counter was PLANTED against a sabotage candidate that discards
+    every wrapping-label name, which **fires at 2**. The 20 apparent
+    "regressions" are all rows where Chrome's role permits no name and ours
+    moved from `''` or a post key to the page's own label: `'language' → 'ไทย'`,
+    `'checkbox-57[]' → 'Συναινώ στην αποστολή ενημερώσεων.'`,
+    `'' → 'সকল সেবাসমূহ দেখুন'`. Five scripts, six sites.
+
+    **THE HEADLINE WILL NOT MOVE, AND THAT IS THE CORRECT OUTCOME.** Only 6 of
+    81, 1 of 82 and 3 of 82 sites move at all; the per-site median is **+0.0000
+    on five of the six runs**. A defect worth ~100 of 1,491 rows cannot move a
+    median over 168 sites, **and a change that DID move it would be changing
+    something other than a defect**. Where the shape exists the gain is large —
+    `w2_nationwide` **+6.9 points** from the `aria-labelledby` fix alone. No
+    drift floor is quoted because the design removes drift rather than bounding
+    it: both arms are `page.evaluate` calls milliseconds apart on one DOM,
+    scored against a single AX read.
+
+    **The eleventh vacuous fixture in this project, and the agent caught its
+    own.** Its first firing proof read 0 on BOTH arms, because the fixture used
+    `label[for]` — a different branch — so the sabotage never reached the code
+    under test. And LB3 was WRITTEN as a control and fails on HEAD, because
+    pre-fix the whole label is `''` so "the hidden text is absent" passes
+    vacuously; it is a fix-assertion now, with **LB3b** carrying the property in
+    both arms.
+
+    **Ablation observed directly rather than reconstructed:** before applying,
+    the main tree IS the pre-fix arm, and widgets read **284/289 with exactly
+    LB1, LB2, LB3, LBY1 and BR1 failing** — so the eight controls were among the
+    284. After applying, 289/289.
+
+    **A latent defect found and deliberately NOT fixed, now `OPEN.md` item 21.**
+    `__abSynthAttr` is set at five sites and cleared at none — **I checked that
+    myself** — so it survives between collector runs on one document, and a
+    control read once before its label exists keeps `(post-key)` for the life of
+    that document even after the page gives it a real `<label>`. A false
+    provenance claim in the one field whose purpose is provenance, pointing the
+    wrong way. It needs a prevalence number and a two-read fixture first, and
+    the falsifier is written down.
+
+    Suites: 1625 checks. New in `test_widgets.py` — LB1/LB2/LB3/LBY1/BR1
+    (the five fix assertions, all FAILING against the pre-fix collector) with
+    LB3b/LB4/LB5/LB6/LBY2/LBY3/BR2/BR3 as the eight controls that pass in BOTH
+    arms.
 
 ## Debugging starting points
 

@@ -2788,6 +2788,193 @@ async def main():
         check("TA2b CONTROL: with no alt, `title` is still used",
               "Only a tooltip" in nr5, f"present={'Only a tooltip' in nr5}")
 
+        # ---- LB: A WRAPPING <label>'S NAME WAS COMPUTED ON A DETACHED CLONE --
+        # The clone exists to implement AccName's "the labelled control's own
+        # subtree is not traversed". But `_contentName` applies `_namable` to
+        # every element child, and `_namable` asks `checkVisibility()` -- which
+        # a DETACHED node fails, because it has no box. MEASURED on a clone:
+        # `checkVisibility({visibilityProperty:true})` is FALSE for a plainly
+        # visible <span> and `getComputedStyle(n).display` comes back "".
+        #
+        # So only the label's DIRECT TEXT NODES survived, and
+        # `<label><input><span>Text</span></label>` -- the ordinary way to style
+        # a radio or checkbox label -- resolved to '' and fell through to the
+        # HTML `name` attribute, which is the POST KEY. On a radio GROUP every
+        # member shares that attribute, so twelve radios printed the identical
+        # `name="icon-family-tTQcQzZF" (post-key)` and Yokohama's search box
+        # printed `name="q"` where the page declares サイト内検索.
+        #
+        # Found by comparing our names against Chrome's own AX tree, which
+        # reports `nameFrom=relatedElement` for exactly these -- i.e. Chrome read
+        # the <label> we could not. Excluding the control by IDENTITY on the
+        # LIVE tree is what the spec rule says, and it keeps `_namable` asking
+        # its real question of real nodes.
+        await nrp.set_content(
+            "<style>.srhide{display:none}</style><main>"
+            "<label><input type=radio name=lang value=th id=la>"
+            "<span>Thai language</span></label>"
+            "<label><input type=radio name=lang2 value=en id=lb>English direct</label>"
+            "<label for=lc><span>For-label span</span></label>"
+            "<input type=radio name=lang3 id=lc>"
+            "<input type=text name=plain_post_key id=ld>"
+            "<label><span>Country</span><select id=le>"
+            "<option>France</option><option>Spain</option></select></label>"
+            "<label><input type=checkbox id=lg><span>Visible part</span>"
+            "<span class=srhide>HIDDEN MEGA MENU</span></label>"
+            "<label for=lh>Shown label<span class=srhide>HIDDEN FOR-LABEL</span></label>"
+            "<input type=checkbox id=lh>"
+            "<label><span id=li1 tabindex=0>$0.00 - 499.99</span>"
+            "<span id=li2 tabindex=0>28 products</span></label>"
+            "</main>")
+        await nrp.wait_for_timeout(150)
+        nr7 = str(await nrp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        # ASSERT OVER THE PARSED `name=` SLOT, NOT OVER THE WHOLE STRING. #93
+        # records three vacuous fixtures in one sitting, every one defeated by
+        # the words surviving elsewhere in the listing -- and this fixture
+        # reproduces that live: PRE-fix the unnamed checkbox picks up
+        # `near="CountryFranceSpain"`, so a substring test for the label text
+        # would match for a reason that is not the name.
+        _lb_names = set(re.findall(r'name="((?:[^"\\]|\\.)*)"', nr7))
+        check("LB1 a wrapping <label> whose text is inside an ELEMENT child "
+              "names its control — the clone made every element child fail the "
+              "box test, so only direct text nodes survived and the row fell "
+              "through to the HTML name attribute (the POST KEY)",
+              "Thai language" in _lb_names and "lang" not in _lb_names,
+              f"names={sorted(_lb_names)}")
+        # The exclusion is the whole reason the clone existed. On the live tree
+        # it has to be done by identity, and if it is not, a <select> inside a
+        # wrapping label eats its own option list into the label's name.
+        _lb_bad = [n for n in _lb_names if n.startswith("Country") and n != "Country"]
+        check("LB2 ...and the control's OWN subtree is still excluded — "
+              "`<label><span>Country</span><select>France…</select></label>` is "
+              "`Country`, never `Country France Spain`",
+              "Country" in _lb_names and not _lb_bad, f"bad={_lb_bad}")
+        # COMPOUND, because the obvious form is vacuous: asserting only that the
+        # hidden text is absent PASSES PRE-FIX, where the whole label resolved
+        # to ''. What separates the arms is that the visible half arrives AND
+        # the hidden half does not. This is a second assertion of the fix, not
+        # a control -- LB3b below is the control for the same property.
+        check("LB3 #37's eBay guard survives the move to the live tree — a "
+              "display:none child inside the label contributes NOTHING while "
+              "the visible part is named",
+              "Visible part" in _lb_names and "HIDDEN MEGA MENU" not in nr7,
+              f"visible={'Visible part' in _lb_names} "
+              f"leaked={'HIDDEN MEGA MENU' in nr7}")
+        # THE CONTROL for the same property, on the branch the change does not
+        # touch: a `label[for]` with a display:none child was already correct
+        # and must stay correct, so "stop testing visibility" fails here in BOTH
+        # arms while LB3 alone could not tell that apart.
+        check("LB3b CONTROL: a `label[for]` with a display:none child names the "
+              "control from the visible text only — true in both arms, so "
+              "'ignore visibility' cannot pass it",
+              "Shown label" in _lb_names and "HIDDEN FOR-LABEL" not in nr7,
+              f"shown={'Shown label' in _lb_names} "
+              f"leaked={'HIDDEN FOR-LABEL' in nr7}")
+        # Without these three, "always prefer a wrapping label" and "never use
+        # the name attribute" would both pass LB1 while changing unrelated rows.
+        check("LB4 CONTROL: a `label[for]` is untouched — that branch never used "
+              "the clone and must not start",
+              "For-label span" in _lb_names, f"for={'For-label span' in _lb_names}")
+        check("LB5 CONTROL: a control with NO label still falls through to the "
+              "HTML name attribute, marked as the post key it is (#41)",
+              "plain_post_key" in _lb_names and "(post-key)" in nr7,
+              f"postkey={'plain_post_key' in _lb_names}")
+        # #23's IKEA shape: two NON-labelable siblings inside one <label> must
+        # not adopt it, or they swap names. The `_labelable || !_ownText` gate is
+        # upstream of this change and must stay that way.
+        _lb_swap = {"$0.00 - 499.99", "28 products"} & _lb_names
+        check("LB6 CONTROL: #23's name-swap guard holds — two non-labelable "
+              "spans with their own text do not adopt the wrapping label",
+              not _lb_swap, f"adopted={sorted(_lb_swap)}")
+
+        # ---- LBY: aria-labelledby READ WITH `innerText`, WHICH AN SVG ELEMENT
+        # DOES NOT HAVE ------------------------------------------------------
+        # #37 established exactly this for `_contentName` -- "an SVG element has
+        # no innerText at all, so the name path fell through to textContent and
+        # swallowed the stylesheet" -- and fixed it THERE. The aria-labelledby
+        # resolver is the same question in a second spelling (PRINCIPLES 17) and
+        # was left behind: `(n.innerText || '')` on an SVG <desc> or <title> is
+        # `undefined || ''`, so a name the page DECLARED resolved to nothing and
+        # the row printed no identity at all -- the worst direction a name can
+        # fail in. Measured on a live design system: 40 icon rows, every one of
+        # them `<svg aria-labelledby><desc>`.
+        #
+        # `textContent` and NOT the composed walk, for the reason LBY2 pins:
+        # AccName 1.2 step 2A excludes a hidden node UNLESS it is DIRECTLY
+        # REFERENCED, and an aria-labelledby target is. `_namable` rejects an SVG
+        # <desc> outright (`checkVisibility() === false`, measured), so the
+        # composed walk cannot serve here. `textContent` is also what the two
+        # existing non-HTML label readers in this file already use.
+        await nrp.set_content(
+            "<main>"
+            "<a href=/a><svg id=sa width=24 height=24 viewBox='0 0 24 24' "
+            "role=img aria-labelledby='d1'><desc id='d1'>handshake icon</desc>"
+            "<path d='M1 1'/></svg></a>"
+            "<button id=sb aria-labelledby='h1'>x</button>"
+            "<span id=h1 hidden>Hidden name wins</span>"
+            "<button id=sc aria-labelledby='v1'>y</button>"
+            "<span id=v1>Visible target</span>"
+            "</main>")
+        await nrp.wait_for_timeout(150)
+        nr8 = str(await nrp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _lby_names = set(re.findall(r'name="((?:[^"\\]|\\.)*)"', nr8))
+        check("LBY1 an aria-labelledby pointing at an SVG <desc> names the "
+              "element — an SVG element has no innerText, so the declared name "
+              "resolved to '' and the row printed no identity at all",
+              "handshake icon" in _lby_names, f"names={sorted(_lby_names)}")
+        # AccName 1.2 step 2A: a hidden node that is DIRECTLY REFERENCED is
+        # still used. `innerText` falls back to textContent for a non-rendered
+        # HTML element, which is why this already works -- so the fix must not
+        # route the HTML branch through anything that applies a visibility test.
+        check("LBY2 CONTROL: an aria-labelledby pointing at HIDDEN HTML text "
+              "still resolves (AccName 2A: a directly-referenced node is used "
+              "even when hidden)",
+              "Hidden name wins" in _lby_names,
+              f"hidden={'Hidden name wins' in _lby_names}")
+        check("LBY3 CONTROL: an ordinary visible HTML target is unchanged",
+              "Visible target" in _lby_names,
+              f"visible={'Visible target' in _lby_names}")
+
+        # ---- BR: A <br> RENDERS A LINE BREAK AND CONTRIBUTED NOTHING --------
+        # `document.querySelector('br').innerText === ''` (measured), so
+        # `_contentName` dropped it and the two runs either side FUSED. This is
+        # #52's defect in a second function: #52 fixed `search_page`'s walk for
+        # exactly this -- "<br> has no children, so walk() returned '' and add()
+        # dropped it -- FUSING the lines" -- and `_contentName` has the
+        # identical hole.
+        #
+        # The screen oracle settles it: the element's own innerText is
+        # "3420 Walnut Street\nPhiladelphia, PA 19104-6206" and Chrome's
+        # accessible name carries the separator; ours did not.
+        await nrp.set_content(
+            "<main>"
+            "<a href=/1 id=br1>3420 Walnut Street<br>Philadelphia, PA 19104-6206</a>"
+            "<a href=/2 id=br2><span>Save</span><span>changes</span></a>"
+            "<a href=/3 id=br3>no break here</a>"
+            "</main>")
+        await nrp.wait_for_timeout(150)
+        nr9 = str(await nrp.evaluate(
+            "(function(){ " + COLLECT + "; return _collectInteractivePage(false); })()"))
+        _br_ok = "3420 Walnut Street Philadelphia" in nr9
+        _br_fused = "3420 Walnut StreetPhiladelphia" in nr9
+        check("BR1 a <br> separates the text either side of it — its innerText "
+              "is '' so it contributed nothing and the two lines fused into a "
+              "string that is on no screen",
+              _br_ok and not _br_fused, f"separated={_br_ok} fused={_br_fused}")
+        # Without this, "insert a space between every element child" would pass
+        # BR1 and undo #93's display-aware separator, which matched Chrome on
+        # all four of its shapes and exists because an unconditional space
+        # manufactures words the page never showed.
+        check("BR2 CONTROL: adjacent INLINE spans still fuse — #93's "
+              "display-aware rule is untouched, so `Save`+`changes` stays "
+              "`Savechanges`, which is what the screen paints",
+              "Savechanges" in nr9, f"fused={'Savechanges' in nr9}")
+        _br_plain = '"no break here"' in nr9
+        check("BR3 CONTROL: a link with no <br> is unchanged",
+              _br_plain, f"plain={_br_plain}")
+
         await nrp.close()
 
         # ---- SH1/SH1b: A HOST'S CONTENT IS ITS SHADOW CONTENT. #29 taught the child

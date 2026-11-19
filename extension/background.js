@@ -7252,10 +7252,11 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
     } catch (e) {}
     return true;
   };
-  const _deepText = (node, depth) => {
+  const _deepText = (node, depth, skip) => {
     const d = depth || 0;
     if (d > 6) return '';
     try {
+      if (skip && node === skip) return '';
       if (node.nodeType === 3) return node.nodeValue || '';
       if (node.nodeType !== 1) return '';
       if (node.tagName === 'SLOT' && node.assignedNodes) {
@@ -7265,6 +7266,8 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         if (s) return s;
       }
       if (!_namable(node)) return '';
+      // A <br> renders a line break and has no text -- see `_contentName`.
+      if (node.tagName === 'BR') return '\n';
       let s = '';
       const sr = node.shadowRoot || node.__abClosedRoot;
       if (sr) {
@@ -7308,7 +7311,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       return true;
     } catch (e) { return false; }
   };
-  const _contentName = (node) => {
+  const _contentName = (node, skip) => {
     try {
       // A HOST'S CONTENT IS ITS SHADOW CONTENT. #29 taught the child loop below to
       // cross a shadow boundary; the node being NAMED was never asked the same
@@ -7318,16 +7321,28 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       // `ref_149 | ciu-version-support`, with the version and the verdict — the
       // entire content of a support matrix — reachable nowhere on that row.
       if (node.shadowRoot || node.__abClosedRoot) {
-        const _own = _deepText(node).replace(/\s+/g, ' ').trim();
+        const _own = _deepText(node, 0, skip).replace(/\s+/g, ' ').trim();
         if (_own) return _own;
       }
       const parts = [];
       for (const n of node.childNodes) {
         if (n.nodeType === 3) parts.push(n.nodeValue || '');
         else if (n.nodeType === 1) {
+          // The excluded control, skipped by IDENTITY on the LIVE tree.
+          if (skip && n === skip) continue;
           // See `_namable`: a non-rendered child contributes nothing, and its
           // innerText is NOT what is on screen — it is textContent.
           if (!_namable(n)) continue;
+          // A <br> RENDERS A LINE BREAK AND CONTRIBUTES NO TEXT.
+          // `document.querySelector('br').innerText === ''` (measured), so it
+          // was dropped by the `if (t.trim())` gate below and the two runs
+          // either side FUSED: `3420 Walnut Street<br>Philadelphia` came back
+          // as one word. #52's defect in a second function -- it fixed
+          // `search_page`'s walk for exactly this. The screen settles it: the
+          // element's own innerText and Chrome's accessible name both carry
+          // the break. `'\n'` rather than `' '` because that is what a <br>
+          // IS; the join below collapses it, so the name gets a space anyway.
+          if (n.tagName === 'BR') { parts.push('\n'); continue; }
           // "EMPTY" IS THE WRONG TRIGGER. `innerText` stops at every shadow
           // boundary, so a node that mixes light text with a custom element returns
           // PART of what is on screen — and the deep walk was gated on the result
@@ -7349,7 +7364,13 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
           // only this child was not enough — the offender is a DESCENDANT of it — so
           // the non-HTML case goes through the composed walk, which applies
           // `_namable` at every level instead of only at the top.
-          let t = (typeof n.innerText === 'string') ? n.innerText : _deepText(n);
+          let t;
+          if (skip && n.contains && n.contains(skip)) {
+            // innerText cannot omit a descendant; the composed walk can.
+            t = _deepText(n, 0, skip);
+          } else {
+            t = (typeof n.innerText === 'string') ? n.innerText : _deepText(n, 0, skip);
+          }
           t = t || '';
           let _hasShadow = false;
           try {
@@ -7357,7 +7378,7 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
               || Array.prototype.some.call(n.querySelectorAll('*'), (x) => !!(x.shadowRoot || x.__abClosedRoot));
           } catch (e) {}
           if (!t.trim() || _hasShadow) {
-            const _d = _deepText(n);
+            const _d = _deepText(n, 0, skip);
             if (_d && _d.trim().length > t.trim().length) t = _d;
           }
           // SEPARATE ON BOX GENERATION, NOT UNCONDITIONALLY. #28 added a space
@@ -8883,8 +8904,23 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
       const idRoot = (el.getRootNode && el.getRootNode().getElementById) ? el.getRootNode() : document;
       const ariaLabelledBy = el.getAttribute('aria-labelledby');
       if (ariaLabelledBy) {
+        // AN SVG ELEMENT HAS NO `innerText`. #37 established that for
+        // `_contentName` ("the name path fell through to textContent and swallowed
+        // the stylesheet") and fixed it THERE; this resolver is the same question in
+        // a second spelling and was left behind. `(n.innerText || '')` on an SVG
+        // <desc> or <title> is `undefined || ''`, so a name the page DECLARED
+        // resolved to nothing and the row printed no identity at all -- measured on
+        // a live design system as 40 icon rows reading `(unlabeled-icon)`.
+        //
+        // `textContent` and NOT the composed walk: AccName 1.2 step 2A excludes a
+        // hidden node UNLESS it is DIRECTLY REFERENCED, and an aria-labelledby target
+        // is. `_namable` rejects an SVG <desc> outright (`checkVisibility() === false`,
+        // measured), so the composed walk returns '' here. It is also the reader the
+        // two other non-HTML label lookups in this file already use. The HTML branch
+        // is untouched, which is what keeps `<button aria-labelledby=hidden-span>`
+        // working (LBY2).
         accessibleName = ariaLabelledBy.split(/\s+/)
-          .map(id => { const n = idRoot.getElementById(id); return n ? (n.innerText || '').trim() : ''; })
+          .map(id => { const n = idRoot.getElementById(id); return n ? ((typeof n.innerText === 'string' ? n.innerText : n.textContent) || '').trim() : ''; })
           .filter(Boolean).join(' ');
       }
       if (!accessibleName) accessibleName = (el.getAttribute('aria-label') || '').trim();
@@ -8911,15 +8947,31 @@ function _collectInteractivePage(structured, scopeMmid, detail, ledger, geometry
         if (wrap && (_labelable || !_ownText)) {
           // Per the AccName spec, a wrapping <label>'s name EXCLUDES the
           // control's own subtree — <label>Country <select>…</select></label>
-          // must yield "Country", not "Country France". Clone-and-remove,
-          // falling back to raw innerText if anything goes sideways.
+          // must yield "Country", not "Country France". The exclusion is done by
+          // IDENTITY on the live tree, falling back to raw innerText if anything
+          // goes sideways.
+          // ON THE LIVE LABEL, NOT A DETACHED CLONE. `_contentName` applies
+          // `_namable` to every element child, and `_namable` asks
+          // `checkVisibility()` -- which a DETACHED node fails, because it has no
+          // box. MEASURED on a clone: `checkVisibility({visibilityProperty:true})`
+          // is FALSE for a plainly visible <span> and `getComputedStyle(n).display`
+          // comes back "".
+          //
+          // So only the label's DIRECT TEXT NODES survived, and
+          // `<label><input><span>Text</span></label>` -- the ordinary way to style
+          // a radio or checkbox label -- resolved to '' and fell through to the
+          // HTML `name` attribute below, which is the POST KEY. On a radio GROUP
+          // every member shares that attribute, so twelve radios printed the
+          // identical `name="icon-family-tTQcQzZF" (post-key)` and Yokohama's
+          // search box printed `name="q"` where the page declares サイト内検索.
+          //
+          // Found by comparing our names against Chrome's own AX tree, which reports
+          // `nameFrom=relatedElement` for exactly these -- Chrome read the <label>
+          // we could not. Excluding the control by identity on the LIVE tree is what
+          // the spec rule says, and it keeps `_namable` asking its real question of
+          // real nodes. Pinned by LB1-LB6 in tools/test_widgets.py.
           try {
-            const clone = wrap.cloneNode(true);
-            const ownMmid = el.getAttribute('mmid');
-            const own = ownMmid && clone.querySelector(`[mmid="${ownMmid}"]`);
-            if (own) own.remove();
-            else { const sameTag = clone.querySelector(el.tagName.toLowerCase()); if (sameTag) sameTag.remove(); }
-            accessibleName = _contentName(clone);
+            accessibleName = _contentName(wrap, el);
           } catch (e) {
             accessibleName = (wrap.innerText || '').trim();
           }
