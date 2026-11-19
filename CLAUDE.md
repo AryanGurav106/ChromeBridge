@@ -10783,6 +10783,81 @@ granted in the side panel is refused with the same message the agent gets.
     in the atoms) with RA2/RA3/RA5/RA6 as the four controls that pass in BOTH
     arms. Probes: `tools/audit_record_definition.py`,
     `tools/audit_record_cost_live.py`, both with `--selftest`.
+112. **"AT ANY STAGE" RE-MEASURED AT FULL SCALE ON TODAY'S CODE — and the
+    best thing in it is the probe saying it cannot see the axis the day's diff
+    moved.** #105 is first paint only. #89's post-interaction arm predates 49
+    commits, and #104 re-ran it at 30 sites. This is the successor at scale:
+    `docs/research/STAGE-GENERALITY-2026-11b.md`, run on `d844947` with the
+    source PINNED via `git archive HEAD` so the concurrent `background.js`
+    editor could not reach it (#73's hazard; it turned out precautionary and
+    the paper says so rather than implying it dodged something).
+
+    | stage | reads | strict candidates | entries | LOST core/deep/decl | no row |
+    |---|---|---|---|---|---|
+    | s0 | 258 | 34,528 | 70,540 | 0/0/0 | **0** |
+    | s1 | 158 | 17,669 | 37,168 | 0/0/0 | **0** |
+    | s2 | 84 | 9,225 | 21,004 | 0/0/0 | **0** |
+    | s3 | 55 | 6,283 | 13,466 | 0/0/0 | **0** |
+    | s4 | 41 | 4,982 | 10,677 | 0/0/0 | **0** |
+    | **total** | **596** | **72,687** | **152,855** | **0/0/0** | **0** |
+
+    **I re-derived the whole table from the raw artefact rather than the
+    report**, and it matches to the digit with no non-zero loss cell anywhere.
+    2,094 controls existed ONLY because of an interaction and none was lost; 0
+    across all 9 interaction kinds and all 14 script families; 252 overlapping
+    sites against #89 with **0 regressions**. The ledger claim is falsifiable on
+    the MAIN run for the first time — 1,161,807 drops, every one of 596 reads
+    greater than zero, none outside `SPEC_DELETES` — where #89 needed a separate
+    28-site subset to say it. 7 sites UNMEASURED and NAMED.
+
+    **THE INSTRUMENT IS BLIND TO EXACTLY THE AXIS THE DAY'S DIFF MOVED, and
+    that was DEMONSTRATED rather than inherited as a disclaimer.** The control
+    pair: strip a control's NAME but keep its row and all three arms report
+    **0**; strip the ROW and both lenient and strict fire. The mechanism is one
+    line in `inspect_site.PROBE` and I checked it at the source —
+    `const byRef = …; if (byRef) continue;` runs BEFORE the name test, so an
+    element that owns a row is never asked whether the name on it is right.
+    Confirmed on the real change too: a `<button>` labelled through a
+    `display:contents` span is absent from the #89-era listing and present at
+    HEAD, and **every arm reads 0 in both**.
+    Of the 13 collector hunks since #89, **only D1 is meaningfully covered by
+    this probe** — 5 are name-path, 2 are `recordAtoms` (flow descriptors, not
+    the listing), 1 is cross-origin frames, unreachable here. **So "the 49
+    commits are safe" would over-read this paper by the width of that coverage
+    table**, and the paper prints the table. #74 is the standing proof that this
+    matters: 118 elements once sat in every presence metric and were
+    unreachable by their own printed label.
+
+    **THE DRIFT FLOOR IS WIDER THAN #89'S AND IS REPORTED RATHER THAN
+    SMOOTHED.** 67 sites, two passes, code held constant: listing chars median
+    0.0% but **p90 3.06%** against #89's 0.72%, stage count identical 63/65
+    against 65/65. Losses 0 in both passes. The useful consequence is a
+    non-result: stage counts differ from #89 on **9 of 252 sites (3.6%)**
+    against a floor of **2 of 65 (3.1%)** — the same number, so those
+    differences carry no signal and nobody should go chasing them.
+
+    **#89's D1 CONFIRMED FIXED AT SCALE, by a prediction written before
+    looking.** The modal pass used to raise a banner on a non-modal `<dialog>`
+    and suppress the page beneath it. Predicted: banners should fall on
+    `wc_webawesome`. Result 2 → 0, and on exactly the two stages that flipped
+    the listing grew **+2,196 and +2,027 chars** (the page restored) against
+    +88…+258 on the three unaffected stages, with #89's own figure for the
+    affected read reproducing exactly as the starting point.
+
+    **One delta chased rather than waved at.** Entries fell 7.5% over the
+    overlap, and `w2_athens` is −10,272 of the −12,009: its CONTROL count fell
+    with it (1,013 → 625) at unchanged stage count, and controls are counted
+    from the DOM independently of the collector, so the page served less rather
+    than the collector emitting less. Excluding it, −1.2%, matching the control
+    delta.
+
+    **What this closes and what it does not.** It closes "works at any stage" at
+    full scale on current code. It does NOT close the name axis, which is where
+    5 of the 13 hunks landed, and the `display:contents` fix is measured firing
+    **2.8x more after an interaction** than at first paint — while
+    `audit_name_correctness.py` and `measure_findability.py` both run at first
+    paint only. A post-interaction name run is the highest-value next step and
+    is named here so it is not re-derived.
 
 ## Debugging starting points
 
