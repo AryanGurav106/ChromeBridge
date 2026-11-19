@@ -11231,6 +11231,98 @@ granted in the side panel is refused with the same message the agent gets.
     Suites: 1635 checks. New — CD1/CD1b/CD2/CD3 (the four fix assertions, all
     FAILING on HEAD) and CD4–CD9 as the six controls, CD6 being the one that
     fails on the unguarded arm and CD9 the one that fails without the 2A line.
+117. **FIVE CHANGES LANDED IN THE NAME PATH AND REACHABILITY DID NOT MOVE —
+    and the causal arm is what says so, not the cross-run table.** #114 shipped
+    three name fixes and #116 a fourth; `measure_findability_at_stage.py` asks
+    whether `find` can still reach a row by the identity the LISTING PRINTED,
+    and #74 is why that is a separate question — 118 elements once sat in every
+    presence metric and were unreachable by their own printed label. **Changing
+    what gets printed is exactly what can break it**, and the last run of that
+    ruler described a build from before any of it.
+
+    | stage | printed den | hit | **strict** | desc credit | anc credit |
+    |---|---|---|---|---|---|
+    | s0 | 2,828 | 2,828 | **1.0000** | 0 | 0 |
+    | s1 | 1,850 | 1,850 | **1.0000** | 0 | 0 |
+    | s2 | 978 | 978 | **1.0000** | 0 | 0 |
+    | s3 | 643 | 643 | **1.0000** | 0 | 0 |
+    | s4 | 439 | 439 | **1.0000** | 0 | 0 |
+    | **all** | **6,738** | **6,738** | **1.0000** | **0** | **0** |
+
+    257 usable sites of 265, 596 reads, 339 post-interaction, 14,073 probes,
+    `bridge_races` 0. Per-site median 1.0000 and **all 257 sites at 1.0000**;
+    all 14 script families; `new` (revealed by the interaction) 1,962/1,962, so
+    a revealed control is still no harder to reach. 251 overlapping sites
+    against the previous run: **251 identical, 0 regressed**.
+
+    **THE CROSS-RUN TABLE IS A SCREEN, NOT A VERDICT, and the agent ran the
+    causal arm instead:** both collectors — one byte-identical to the previous
+    run's — on the SAME DOM at the same stage, order rotated per site, over the
+    two biggest cross-run fallers plus four carriers of the name changes.
+    **Printed arm 518/518 and 511/511, both 1.0000.** That is causal rather
+    than inferred, and it is the sentence the result rests on.
+
+    **MY OWN READ OF THE ARTEFACT WAS WRONG FIRST, which is the fourth time
+    today.** Summing `tried` against `hit` gives 0.9925, and 105 probes appear
+    to vanish with no miss recorded — which reads as hidden failures. They are
+    CONTESTED probes, elements whose printed identity is shared with another,
+    excluded from the denominator by the tool's own documented rule (#80's bias
+    fix, reasoned in a comment at the formula). **I invented a denominator
+    instead of using the one the tool defines** — PRINCIPLES 17 pointed at a
+    reader rather than at code. The check that settles it is that **every one
+    of the 560 recorded misses carries a `blanked-*` class and none is in the
+    printed arm.**
+
+    **THE BLANKED ARM MOVED, 0.8908 → 0.8866, FOR TWO MEASURED REASONS AND
+    NEITHER IS A LOSS.** That arm asks a deliberately unfair question of rows
+    whose identity is removed for scoring (#74's rule), and the previous run
+    calls its query "a string the listing never showed anyone".
+    (a) The display-aware join now fuses tokens a block join separated —
+    `'NOV 02'` → `'NOV02'` on date chips — isolated on a fixture with a
+    block-children control unchanged in both arms. (b) **More competition in a
+    capped result list, because of a win on the printed arm this probe
+    structurally cannot score:** same DOM, same query, same entry count, and
+    **123 → 137 named rows, 14 having gained an identity** — `Twitter`,
+    `LinkedIn`, `Facebook` — icon controls that used to print `(unlabeled)`.
+    An identity under two characters is skipped, so those rows were never in
+    the base denominator at all. **The population SIZE is not the collector**:
+    `entries` and `blanked-entries` are identical in both arms, predicted from
+    source before the data because `subtreeName` counts text-contributing
+    children and the new rule only fires for children with no text.
+
+    **THE COVERAGE ANSWER, which is what this was really for.** Presence,
+    correctness and reachability are each measured at every stage, by a
+    different instrument, and each instrument's blind spot is now written down
+    beside it: stage generality cannot see THE NAME (re-verified at the line —
+    the mmid short-circuit runs before the name test), the name oracle reaches
+    **62.6%** of rows it meets, findability cannot see whether a name is RIGHT,
+    and the hover probe has no oracle arm at all. **Two things fall between,
+    and neither is one of the three:** DISCRIMINATION — telling two look-alike
+    rows apart — whose only instrument runs on static snapshots and whose
+    population is the 52% of probes every stage ruler sets aside as contested;
+    and name correctness on hover-revealed content.
+
+    **A CORRECTION TO MY OWN BRIEF.** I wrote "four changes landed in the name
+    path today". It is **five** since that ruler's baseline (#93 x3, #114,
+    #116), and **two of them change the printed identity STRING itself** rather
+    than whether a name exists — demonstrated causally on one DOM:
+    `'Save changes'` → `'Savechanges'`, `'36 Kr Krypton 83.798'` →
+    `'36KrKrypton83.798'`, and a Hebrew headline going from unparseable to
+    parseable. Those are the sharper hazard for a ruler that matches on the
+    printed string, and my framing did not name them.
+
+    **The agent's own least-sure, kept as the open question:** whether this run
+    had the POWER to find what it was looking for. It stride-samples 24 rows per
+    stage — **14,073 probes against 160,962 entries, 8.7%** — while the changes
+    under test are CONCENTRATED (#116 moves 24 of 251 sites). A defect confined
+    to a rare shape could sit entirely under the sampling. The A/B is the answer
+    and it is six sites, with the heaviest carrier at 1.0000 in both arms on
+    110/103 probes as the single most load-bearing cell. **What would settle it
+    is an A/B over all 24 of #116's touched sites.**
+
+    8 sites UNMEASURED and named; ~180 consent- and bot-walled candidates absent
+    before the probe starts; one path per site; cross-origin frames, logins and
+    hover not reached.
 
 ## Debugging starting points
 
