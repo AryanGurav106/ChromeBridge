@@ -11474,6 +11474,103 @@ granted in the side panel is refused with the same message the agent gets.
     in-root bound came back **76.6%**, not the 90.9% a 7-site smoke suggested,
     so ~23% of "revealed" controls may be lazy-load arrivals; the cut that
     removes them keeps the direction on n=89 reads.
+119. **THE LAST GAP: CAN A READER TELL TWO LOOK-ALIKE ROWS APART? MEASURED,
+    AND THE ANSWER IS DON'T BUILD.** #117 named three axes covered and two
+    shapes falling between them; #118 closed one. This is the other, and
+    #117 called it the one it would build next. Every ruler sets the
+    look-alikes aside — presence counts them present, the oracle can mark BOTH
+    of a pair exact, reachability excludes them from its denominator by design.
+    **Nobody had asked whether the listing prints enough to pick the one you
+    want.** `docs/research/DISCRIMINATION-2026-11.md`.
+
+    **I SAID THIS WAS A BUILD RATHER THAN A RUN AND I WAS WRONG** —
+    `audit_descriptors.py` has measured this shape for FLOW descriptors since
+    #49 and nobody had pointed it at the listing an agent reads.
+
+    | | rows | share |
+    |---|---|---|
+    | share a printed IDENTITY with another row | 10,713 | **26.1%** |
+    | **still share EVERY printed field** | 5,285 | **12.9%** |
+
+    239 live out-of-sample sites, 571 reads, 332 post-interaction, 40,961
+    actionable rows. **I re-derived the ladder from the raw artefact**: 4.6 /
+    73.4 / 84.5 / 85.1 / 86.9 against the paper's 4.7 / 73.8 / 84.8 / 85.4 /
+    87.1, and a residual of 13.1% against 12.9%.
+
+    | rung | unique | what it adds |
+    |---|---|---|
+    | tag+role | 4.7% | — |
+    | **+identity** | 73.8% | **+54.9pp** |
+    | **+ancestry (the TREE's indentation)** | **84.8%** | **+9.2pp** |
+    | +`near=` | 85.4% | +0.6pp |
+    | +state | 87.1% | +1.7pp |
+    | *opt-in* +href | 90.2% | |
+    | **CONTROL: +`ref_N`** | **100.0%** | **the falsifier** |
+
+    **#27'S TREE IS DOING REAL DISCRIMINATION WORK AND THIS IS THE FIRST TIME
+    IT HAS BEEN PRICED.** #27 shipped the tree on a NULL A/B, arguing a flat
+    list cannot express a row and accepting +8.7% tokens on judgement. Ancestry
+    resolves **4,479 of the 10,713 identity-contested rows, 41.8%** — second
+    only to identity itself, and nine times `near=` and state combined.
+
+    **THE BRIEF'S OWN EXPECTATION IS REFUTED: it does NOT get worse after an
+    interaction.** Paired within site rather than pooled (#115/#118's trap),
+    the median is **+0.0000 at every one of four depths in all three passes**,
+    and where sites move more improve than worsen.
+
+    **IT IS CONCENTRATED BY SURFACE, which is the finding that decides the
+    recommendation.** Ordinary row **9.9%** contested, fold 6.1%, **the entry
+    cap's OVERFLOW list 49.2%** — and on the frozen corpus 9.9 / 9.5 / **61.5**,
+    with the ordinary-row rate identical across both corpora. **The residue
+    does not live where a missing field could fix it.** It lives on the two
+    surfaces that drop per-member detail BY DESIGN and say so (#7's grid fold,
+    #27's positional fold, #27's overflow list).
+
+    **THE RESIDUAL IS SPLIT SIX WAYS, NOT POOLED, and the splits have opposite
+    answers.** 32.5% acting on any member does the same thing — **proved**, by a
+    shared `href` or a DOM `contains()` test over every pair, not assumed; 40.8%
+    declared but not printed; 21.7% nothing the document declares separates
+    them. Of the declared-but-not-printed, only `ours-absent` is an unambiguous
+    gap, at **2.7% of all actionable rows** — and **698 of its 1,117 rows are
+    unnamed clickable containers whose distinguishing text is printed as their
+    children one indent down**. **The sharp residue is ~400 rows, 1.0%.**
+
+    **DON'T BUILD, with #44's ratio doing the killing.** `href` is the only
+    shipped-but-opt-in rung: blanket `detail="brief"` takes uniqueness 74.9% →
+    79.7% for **×1.250 chars**, and **90 of 90 sites pay more than 1% while 56
+    of them (62%) gain nothing**, per-site median gain **+0.00%**. The targeted
+    arm buys +0.6pp because 79% of contested rows sit on a fold or the overflow
+    list where no per-row field has a slot. And `brief` only appears to help
+    partly because href breaks #29's collapse and **un-folds** rows — +284
+    across 42 of 90 sites, an unpriced second cost the agent found and named.
+
+    **THREE FIRING PROOFS FAILED BEFORE ONE WORKED**, each for a different
+    reason and each a real lesson: plants scattered across ancestries, plants
+    chosen off non-printed mmids, and a proof scored by differencing a count
+    that live-web churn moves. The one that works asks whether the PLANTED rows
+    come back as one crowd. **And the probe's own clean-decomposition tripwire
+    could not fire** — an empty identity candidate always peels, so it read 0
+    regardless. PRINCIPLES 15, inside the tool that prints it as evidence.
+
+    **A CITATION OF MINE, CORRECTED BY THE AGENT.** My brief said "#116
+    measured 29 of these on one site". #116 records those 29 identical `Remove`
+    buttons as a **confound in its own grading**, not as a measurement of
+    interchangeability. Verified: the only occurrence in this file is in that
+    sentence. A number quoted one entry later had already changed meaning.
+
+    **Its own least-sure is the right one and it refused a half-fix for it: a
+    reader can use POSITION and this ladder cannot.** Ancestry models where a
+    row sits UNDER, not what sits beneath or beside it, and **1,710 of 5,254
+    contested rows (33%) print no identity at all** and are distinguished by
+    their indented children. So **12.9% is an UPPER BOUND with unmeasured
+    slack**. A `+children` rung was considered and declined, because it needs a
+    fourth full pass and cannot fix the fold half at all — crediting positional
+    zipping would contradict #27/#30's own measurement that it silently
+    mispairs. **Half a fix to a bound is worse than a stated bound.**
+
+    **And `SITES`' three-tuples bit twice more, losing 59 sites** — verbatim the
+    failure #111 records killing all four existing descriptor probes at the
+    same index.
 
 ## Debugging starting points
 
