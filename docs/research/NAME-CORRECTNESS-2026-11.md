@@ -1,5 +1,25 @@
 # Is the name we PRINT the RIGHT name? Our AccName against Chrome's own
 
+> **CORRECTION 2026-11-19 (CLAUDE.md #108): `wc_webawesome`'s 28 rows are
+> MIS-ATTRIBUTED here.** This paper names that site for the slot defect. A
+> paired before/after across the slot fix shows it **byte-identical**, and a
+> live probe shows its slots are `display: flex` and VISIBLE
+> (`checkVisibility({visibilityProperty: true}) === true`), so `_namable`
+> passes them and the slot fix was never involved. The real cause is
+> `<wa-icon aria-label="Search">`: **AccName 2F concatenates each descendant's
+> NAME, while `_contentName` concatenates descendant TEXT.** Chrome reports
+> `ax_from: "contents"` for all 28. That is #34's documented mechanism in its
+> degenerate case — the element has no other text, so it lands in `ours-empty`
+> rather than `chrome-superset`. Not a new class; the attribution was wrong,
+> and it explains why that site did not move.
+>
+> **Also corrected: the prediction that `leg_tcl`, `w2_berlin` and `gov_au`
+> would get WORSE from the title fix.** All three IMPROVED (+0.200, +0.083,
+> +0.235). No contradiction — "worse" here was a USEFULNESS judgement about
+> particular rows, and this metric measures AGREEMENT WITH CHROME. Keep the two
+> apart: a rising agreement rate is not the same as better output for an agent.
+
+
 **Probe:** `tools/audit_name_correctness.py`
 **Reuses:** `tools/audit_stage_generality.py` (#89 — the interaction driver, verbatim) and
 `tools/audit_generality_live.py` (#85 — the collector, the sample, the out-of-sample guard)

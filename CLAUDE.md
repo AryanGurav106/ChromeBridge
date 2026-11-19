@@ -10452,6 +10452,91 @@ granted in the side panel is refused with the same message the agent gets.
     to compute and the first attempt reported "0 sites" and looked like missing
     data. Worth adding when this is next touched.
 
+108. **THE COMPARABLE NUMBER, AND A BETTER COMPARISON THAN THE ONE I ASKED
+    FOR.** #107 ran the independent oracle on 25 sites, got `src=name` per-site
+    median 0.9455 against #93's 0.9722, and could claim NOTHING from it — the
+    samples differ and #93 proves from inside its own corpus that pooled and
+    per-site median differ by 7pp from composition alone. Full scale closes it.
+
+    | | #93 (251 sites) | now (252 sites) |
+    |---|---|---|
+    | **`src=name` per-site MEDIAN** | 0.9722 / 169 sites | **0.9766 / 168 sites** |
+    | `src=name` pooled | 0.9134 | 0.9262 |
+    | …excluding `chrome-empty` | 0.9492 | 0.9623 |
+    | `fmt_drift` / `ax_failures` | — | **0 / 0** |
+
+    **So #107's 0.9455 was a composition artefact, confirmed — not a
+    regression, and it never was.** Verified from the artifact myself: median
+    0.9766 over 168 sites, 265 attempted / 252 usable, drift zero.
+
+    **AND THE PAIRED ARM, which I did not brief and which is strictly better.**
+    `temp/name_correctness/main/pass0.json` turned out to be #93's OWN 251-site
+    run, written at **17:16** — and the three commits that moved the name path
+    land at **17:51, 18:04 and 18:32**. I checked those four timestamps rather
+    than taking them: it is a genuine BEFORE/AFTER on one sample, pairable by
+    site, which removes composition entirely rather than arguing around it.
+
+    | paired, 163 sites with n>=20 in both | before | after |
+    |---|---|---|
+    | per-site median | 0.9728 | **0.9773** |
+    | improved / unchanged / regressed | — | 26 / 123 / 14 |
+    | page-stable subset (146 sites, n within ±10%) | 0.9714 | **0.9766** |
+
+    **THE EVIDENCE IS CATEGORICAL, NOT STATISTICAL, and the agent said so
+    itself rather than leaning on the p-value** (0.06–0.08, because 123 of 163
+    sites are exact ties and a sign test ignores magnitude). The mechanism the
+    fix targeted — `title` and `alt` on the SAME element, AccName 2E vs 2I —
+    went **54 → 1**, while the half deliberately left alone (title beating
+    name-from-content) is flat at 127 → 134. Site-level predictions were written
+    BEFORE the data: `w2_oebb` **+0.3308** with its `disjoint` count 93 → 14.
+
+    **I re-derived the class census independently and it holds — every targeted
+    class is DOWN in absolute terms while 1,091 MORE rows were compared:**
+    `ours-empty` **301 → 162** (the slot fix, halved), `whitespace-only`
+    **83 → 42** (the separator fix, halved), `disjoint` 681 → 555,
+    `chrome-superset` 1742 → 1601, `ours-superset` 304 → 278,
+    `partial-overlap` 107 → 87. `chrome-empty` and `punctuation-only` rise
+    roughly with the 1.1% more rows. **No new disagreement class.** Three
+    candidate mechanisms surfaced and all three disposition to documented
+    causes, including two ARIA roles (`listbox`, `menu`) that are Name-From-author
+    and that #93's own list had not enumerated.
+
+    **TWO CORRECTIONS TO #93, both from the paired arm.**
+    - **`wc_webawesome`'s 28 rows were mis-attributed to the slot defect.** That
+      site is byte-identical before and after, and probed live its slots are
+      `display: flex` and VISIBLE, so `_namable` passes them and the slot fix was
+      never involved. The real cause is `<wa-icon aria-label="Search">`: **AccName
+      2F concatenates each descendant's NAME; our `_contentName` concatenates
+      descendant TEXT.** That is #34's documented mechanism in its degenerate
+      case — no other text, so it lands in `ours-empty` rather than
+      `chrome-superset`. A fix is defensible and is NOT proposed, because #41/#44
+      require both halves measured first.
+    - **#93 predicted `leg_tcl`, `w2_berlin` and `gov_au` would get WORSE and all
+      three improved** (+0.200, +0.083, +0.235). No contradiction, and the
+      distinction is worth keeping: #93's "worse" was a USEFULNESS judgement
+      about particular rows, while this metric measures AGREEMENT WITH CHROME.
+      **A rising agreement rate is not the same as better output for an agent** —
+      `MEASUREMENT.md`'s own point that Chrome is an oracle, not ground truth.
+
+    **Three defects the agent found in its OWN instruments**, each by running
+    rather than reading, which is the pattern `ORCHESTRATION.md` was written
+    around: a shape-diff printing a confident `NONE / NONE` because #93's file
+    has no `cls_roles` field at all (it postdates that run); a restated
+    `usable()` that had already drifted from the probe's and returned the right
+    answer on the baseline **by luck**; and three confident `IDENTICAL`s from a
+    HEAD-to-HEAD comparison, because a shell variable resolved empty and
+    `git show :file` reads the index.
+
+    **What it still cannot say.** Chrome is an oracle, not ground truth — a name
+    BOTH derivations get wrong scores as agreement. The pooled 0.7545 over every
+    row printing an identity is not an error rate: 18,928 of those disagreements
+    are `chrome-empty`, where the role forbids a name and our row prints the
+    element's text, which #74 requires. ~180 consent- and bot-walled candidates
+    are absent before the pool starts. And #93's 0.0015 drift floor was measured
+    back-to-back while this spans ~19 hours of the live web, so the true noise
+    floor is larger — which is the reason to lean on the mechanism counts rather
+    than the rate delta.
+
 ## Debugging starting points
 
 | Symptom | Where to look |
