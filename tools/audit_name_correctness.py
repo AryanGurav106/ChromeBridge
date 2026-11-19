@@ -68,6 +68,7 @@ import asyncio
 import collections
 import json
 import re
+import statistics
 import sys
 import time
 import unicodedata
@@ -667,6 +668,26 @@ async def read_once(page, cdp, label, seen_names, want_examples, plant=False,
     # all for a role whose naming is prohibited (`generic`) or author-only (`listitem`), so
     # pooling the two makes a spec-correct silence look like a disagreement.
     by_src = collections.defaultdict(collections.Counter)
+    # POPULATION x SRC x CLASS, EXACT AND UNCAPPED -- the join `per_pop` could not make.
+    #
+    # #93 asked whether a control REVEALED by an interaction is named worse, got 0.6628
+    # against 0.7370, said most of it was composition, and left it unsettled; a smaller
+    # run with corrected code reversed the sign. Two things stopped that question being
+    # answerable, and both are shape rather than sample:
+    #
+    #   1. `per_pop` carries only `compared`/`exact` POOLED over every site, so one large
+    #      site dominates both arms and the comparison is between two different mixtures
+    #      of pages. The paired per-READ comparison is the one that removes that, and it
+    #      needs these counts to exist per read.
+    #   2. `per_pop`'s class breakdown is taken from `rd["rows"]`, which is CAPPED and in
+    #      document order -- a head slice of each page (PRINCIPLES 16). And it is not
+    #      split by `src` at all, so the HEADLINE population (`src=name`, the one
+    #      0.9766 quotes) has never been compared between revealed and carried.
+    #
+    # Keys are "pop|src" and "pop|src|cls" so this stays JSON-serialisable and rolls up
+    # by splitting, rather than becoming a third nesting level nobody walks (#107 records
+    # a rollup that existed only three levels down being read as missing data).
+    by_pop = collections.Counter()
     # EXACT, UNCAPPED role histogram per disagreement class. The `rows` list is capped for
     # file size and is in document order, so counting roles from it would be a head slice
     # of each page -- a count that is not an inventory (PRINCIPLES 16). Chrome's ROLE is
@@ -757,6 +778,14 @@ async def read_once(page, cdp, label, seen_names, want_examples, plant=False,
         counts[pop + "_compared"] += 1
         if cls == "exact":
             counts[pop + "_exact"] += 1
+        # The same three populations, now carrying `src` and `cls` so the headline
+        # `src=name` slice can be compared arm to arm and a difference can be attributed
+        # to a CLASS rather than left as a bare rate gap.
+        by_pop[pop + "|" + src + "|compared"] += 1
+        if cls == "exact":
+            by_pop[pop + "|" + src + "|exact"] += 1
+        else:
+            by_pop[pop + "|" + src + "|c:" + cls] += 1
         if mm in track:
             disp[mm] = "compared:" + cls + (":SENTINEL" if PLANT in theirs else "")
         if cls != "exact":
@@ -812,6 +841,7 @@ async def read_once(page, cdp, label, seen_names, want_examples, plant=False,
     return {
         "stage": label, "entries": len(ents), "ax_info": info, "fmt_drift": fmt_drift,
         "counts": dict(counts), "by_src": {k: dict(v) for k, v in by_src.items()},
+        "by_pop": dict(by_pop),
         "cls_roles": dict(cls_roles), "role_named": dict(role_named),
         "rows": rows[:want_examples], "rows_total": len(rows),
         "planted": planted, "planted_disposition": disp, "_all_ours": all_ours,
@@ -1241,6 +1271,17 @@ def aggregate(rs):
     per_kind = collections.defaultdict(collections.Counter)
     cls_rows = collections.defaultdict(list)
     per_src = collections.defaultdict(collections.Counter)
+    # PER STAGE x SRC, and PER POPULATION x SRC x CLASS. `per_stage` rolls up `counts`,
+    # which pools every `src` together, so the figure the headline quotes (`src=name`)
+    # could not be read per stage at all -- it had to be recomputed by walking three
+    # levels of the artefact. Both rollups live here now so the stage table and the
+    # revealed/carried table come from the same place as every other number.
+    per_stage_src = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
+    per_pop_src = collections.Counter()
+    # PAIRED WITHIN-READ, which is the design the pooled comparison cannot have. Both
+    # arms come from ONE read of ONE page, so site composition, page weight and the depth
+    # a site happened to reach cancel by construction rather than by argument.
+    paired_reads = []
     cls_role_tot = collections.Counter()
     role_named_tot = collections.Counter()
     fmt_drift = 0
@@ -1257,6 +1298,8 @@ def aggregate(rs):
             fmt_drift += rd.get("fmt_drift", 0)
             for k, v in (rd.get("by_src") or {}).items():
                 per_src[k].update(v)
+                per_stage_src[rd["stage"]][k].update(v)
+            per_pop_src.update(rd.get("by_pop") or {})
             cls_role_tot.update(rd.get("cls_roles") or {})
             role_named_tot.update(rd.get("role_named") or {})
             if (rd.get("ax_info") or {}).get("error"):
@@ -1275,6 +1318,22 @@ def aggregate(rs):
                 for pop in ("new", "carried", "unnamed"):
                     per_pop[pop]["compared"] += c.get(pop + "_compared", 0)
                     per_pop[pop]["exact"] += c.get(pop + "_exact", 0)
+                bp = rd.get("by_pop") or {}
+                paired_reads.append({
+                    "site": r["site"], "stage": rd["stage"], "kind": rd.get("kind") or "?",
+                    "new_c": c.get("new_compared", 0), "new_e": c.get("new_exact", 0),
+                    "car_c": c.get("carried_compared", 0), "car_e": c.get("carried_exact", 0),
+                    "new_name_c": bp.get("new|name|compared", 0),
+                    "new_name_e": bp.get("new|name|exact", 0),
+                    "car_name_c": bp.get("carried|name|compared", 0),
+                    "car_name_e": bp.get("carried|name|exact", 0),
+                    # `chrome-empty` is the permanent floor (#114: 51% of the residue is
+                    # a role that forbids a name, where printing the author's string is
+                    # what #74 requires). Carried separately so a rate gap can be shown
+                    # to be the floor's SHARE moving rather than names getting worse.
+                    "new_name_ce": bp.get("new|name|c:chrome-empty", 0),
+                    "car_name_ce": bp.get("carried|name|c:chrome-empty", 0),
+                })
             for row in rd["rows"]:
                 if idx > 0:
                     per_pop["new" if row.get("new") else "carried"][row["cls"]] += 1
@@ -1310,6 +1369,10 @@ def aggregate(rs):
         "totals": dict(tot), "per_stage": {k: dict(v) for k, v in sorted(per_stage.items())},
         "per_pop": {k: dict(v) for k, v in per_pop.items()},
         "per_src": {k: dict(v) for k, v in sorted(per_src.items())},
+        "per_stage_src": {st: {k: dict(v) for k, v in sorted(d.items())}
+                          for st, d in sorted(per_stage_src.items())},
+        "per_pop_src": dict(per_pop_src),
+        "paired_reads": paired_reads,
         "cls_roles": dict(cls_role_tot.most_common()),
         "role_named": dict(role_named_tot.most_common()),
         "per_script": {k: dict(v) for k, v in sorted(per_script.items())},
@@ -1340,6 +1403,169 @@ def _rate(c):
     if not comp:
         return None
     return round(c.get("exact", 0) / comp, 4)
+
+
+def stage_report(paths):
+    """THE NAME AXIS AT STAGE > 0, on the HEADLINE population and PAIRED.
+
+    `report()` already prints a `by stage` table and a `new`/`carried` row. Neither can
+    answer the two questions this mode exists for, and the reason is shape:
+
+      * `by stage` rolls up `counts`, which POOLS every `src`. The headline statistic is
+        `src=name` -- `src=text` is a row printing the element's own text, a weaker claim
+        the legend spells out, and Chrome has no name at all for the roles most of those
+        carry. A pooled stage table therefore moves with the text/name MIX per stage and
+        says nothing about the number 0.9766 quotes.
+      * `new` vs `carried` is POOLED over every site and read, so the arms are two
+        different mixtures of pages. #93 reported 0.6628 against 0.7370 from exactly that
+        shape, said most of it was composition, and could not settle it; a 34-site rerun
+        with corrected code reversed the sign.
+
+    So both tables here are built to remove composition rather than to argue about it:
+    the stage gradient is PAIRED PER SITE (a site's own s0 against its own deepest read,
+    so only sites that reached that depth contribute to both arms), and revealed/carried
+    is PAIRED PER READ (both arms from one read of one page). A pooled figure is printed
+    beside each one so the size of the composition effect is visible rather than implied.
+    """
+    rs = []
+    for p in paths:
+        rs += json.loads(Path(p).read_text(encoding="utf-8"))["sites"]
+    agg = aggregate(rs)
+    ok = [r for r in rs if usable(r)]
+    o = ["usable %d of %d attempted; fmt_drift=%d; ax_failures=%d" % (
+        agg["sites_usable"], agg["sites_attempted"], agg["fmt_drift"],
+        len(agg["ax_failures"]))]
+
+    pss = agg.get("per_stage_src") or {}
+    if not pss:
+        o.append("\n*(artefact predates `per_stage_src`; recomputing from reads)*")
+        pss = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
+        for r in ok:
+            for rd in r.get("reads") or []:
+                for k, v in (rd.get("by_src") or {}).items():
+                    pss[rd["stage"]][k].update(v)
+
+    o.append("\n### `src=name` per stage (pooled -- read with the paired table below)\n")
+    o.append("| stage | reads | name compared | name exact | **name agree** | "
+             "text compared | text agree |")
+    o.append("|---|---|---|---|---|---|---|")
+    nreads = collections.Counter(rd["stage"] for r in ok for rd in r.get("reads") or [])
+    for st in sorted(pss):
+        n = dict((pss[st].get("name") or {}))
+        t = dict((pss[st].get("text") or {}))
+        o.append("| %s | %d | %d | %d | **%s** | %d | %s |" % (
+            st, nreads.get(st, 0), n.get("compared", 0), n.get("exact", 0),
+            _rate(n), t.get("compared", 0), _rate(t)))
+
+    # THE STAGE GRADIENT, PAIRED. Deeper stages are reached by FEWER and DIFFERENT sites,
+    # so a pooled decline across the stage column is the sample changing under the
+    # statistic. Pairing a site against ITSELF is what separates the two.
+    pairs = []
+    for r in ok:
+        rds = r.get("reads") or []
+        if len(rds) < 2:
+            continue
+        def _nm(rd):
+            n = (rd.get("by_src") or {}).get("name") or {}
+            return n.get("compared", 0), n.get("exact", 0)
+        c0, e0 = _nm(rds[0])
+        cL, eL = _nm(rds[-1])
+        if c0 >= 20 and cL >= 20:
+            pairs.append((r["site"], rds[-1]["stage"], e0 / c0, eL / cL))
+    o.append("\n### the stage gradient, PAIRED per site (s0 vs that site's deepest read)\n")
+    if pairs:
+        diffs = [p[3] - p[2] for p in pairs]
+        w = sum(1 for x in diffs if x > 1e-9)
+        l = sum(1 for x in diffs if x < -1e-9)
+        o.append("| | |\n|---|---|")
+        o.append("| sites with >=20 `src=name` rows at both ends | %d |" % len(pairs))
+        o.append("| deeper read BETTER | %d |" % w)
+        o.append("| s0 better | %d |" % l)
+        o.append("| identical | %d |" % (len(pairs) - w - l))
+        o.append("| median difference | %+.4f |" % statistics.median(diffs))
+        o.append("| mean difference | %+.4f |" % statistics.mean(diffs))
+        worst = sorted(pairs, key=lambda p: p[3] - p[2])[:5]
+        o.append("\nLargest falls: " + ", ".join(
+            "`%s` %s %.3f->%.3f" % (p[0], p[1], p[2], p[3]) for p in worst))
+    else:
+        o.append("*(no site had >=20 `src=name` rows at both ends)*")
+
+    # REVEALED vs CARRIED, PAIRED PER READ.
+    pr = agg.get("paired_reads")
+    o.append("\n### is a control REVEALED by an interaction named worse? (paired per read)\n")
+    if not pr:
+        o.append("*(artefact predates `paired_reads` -- re-run to get this table)*")
+    else:
+        for label, kc, ke, cc, ce, floor in (
+                ("all `src`", "new_c", "new_e", "car_c", "car_e", None),
+                ("`src=name` only", "new_name_c", "new_name_e",
+                 "car_name_c", "car_name_e", ("new_name_ce", "car_name_ce"))):
+            rows = [x for x in pr if x[kc] >= 10 and x[cc] >= 10]
+            o.append("\n**%s**, reads with >=10 rows in BOTH arms: n=%d\n" % (label, len(rows)))
+            if not rows:
+                o.append("*(none)*")
+                continue
+            diffs = [x[ke] / x[kc] - x[ce] / x[cc] for x in rows]
+            w = sum(1 for x in diffs if x > 1e-9)
+            l = sum(1 for x in diffs if x < -1e-9)
+            nc = sum(x[kc] for x in rows); ne = sum(x[ke] for x in rows)
+            cc_ = sum(x[cc] for x in rows); ce_ = sum(x[ce] for x in rows)
+            o.append("| | |\n|---|---|")
+            o.append("| revealed BETTER than carried, in the same read | %d |" % w)
+            o.append("| carried better | %d |" % l)
+            o.append("| identical | %d |" % (len(rows) - w - l))
+            o.append("| **median paired difference** | **%+.4f** |" % statistics.median(diffs))
+            o.append("| mean paired difference | %+.4f |" % statistics.mean(diffs))
+            o.append("| sign test, two-tailed | p = %.4f |" % _sign_p(w, l))
+            o.append("| pooled over these reads: revealed | %d/%d = %.4f |" % (ne, nc, ne / nc))
+            o.append("| pooled over these reads: carried | %d/%d = %.4f |" % (ce_, cc_, ce_ / cc_))
+            if floor:
+                fn = sum(x[floor[0]] for x in rows); fc = sum(x[floor[1]] for x in rows)
+                dn = nc - ne; dcar = cc_ - ce_
+                o.append("| `chrome-empty` share of the revealed disagreements | %s |"
+                         % ("%d/%d = %.1f%%" % (fn, dn, 100 * fn / dn) if dn else "n/a"))
+                o.append("| `chrome-empty` share of the carried disagreements | %s |"
+                         % ("%d/%d = %.1f%%" % (fc, dcar, 100 * fc / dcar) if dcar else "n/a"))
+        pp = agg.get("per_pop") or {}
+        o.append("\n**The pooled figures for the same question** (what #93 reported), "
+                 "so the size of the composition effect is readable:\n")
+        o.append("| population | compared | exact | agree |\n|---|---|---|---|")
+        for k in ("s0", "post", "new", "carried", "unnamed"):
+            v = pp.get(k) or {}
+            if v.get("compared"):
+                o.append("| %s | %d | %d | %s |" % (k, v["compared"], v["exact"], _rate(v)))
+
+    # PER-POPULATION x SRC, pooled but EXACT (not the head-sliced `rows` list).
+    pps = agg.get("per_pop_src") or {}
+    if pps:
+        o.append("\n### population x src, exact and uncapped\n")
+        o.append("| population | src | compared | exact | agree | top disagreement classes |")
+        o.append("|---|---|---|---|---|---|")
+        seen = sorted({(k.split("|")[0], k.split("|")[1]) for k in pps})
+        for pop, src in seen:
+            n = pps.get("%s|%s|compared" % (pop, src), 0)
+            e = pps.get("%s|%s|exact" % (pop, src), 0)
+            if n < 20:
+                continue
+            cls = sorted(((k.split("|")[2][2:], v) for k, v in pps.items()
+                          if k.startswith("%s|%s|c:" % (pop, src))),
+                         key=lambda x: -x[1])[:3]
+            o.append("| %s | %s | %d | %d | %.4f | %s |" % (
+                pop, src, n, e, e / n if n else 0,
+                ", ".join("%s %d" % c for c in cls) or "-"))
+    return "\n".join(o)
+
+
+def _sign_p(w, l):
+    """Two-tailed sign test. Reported beside every paired count because a 38/38 split and
+    a 38/8 split read the same way in prose and are not the same evidence."""
+    n = w + l
+    if n == 0:
+        return 1.0
+    import math
+    k = min(w, l)
+    c = sum(math.comb(n, i) for i in range(k + 1))
+    return min(1.0, 2 * c / (2 ** n))
 
 
 def report(paths):

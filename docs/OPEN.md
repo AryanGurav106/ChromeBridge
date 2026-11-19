@@ -1396,7 +1396,30 @@ zero controls whose name provenance CHANGES between two reads of one document,
 this is a latent defect with no instances and should be recorded as such rather
 than fixed. `docs/research/NAME-RESIDUE-2026-11.md` section 9.
 
-### 20. The Claude-in-Chrome arm cannot run: its extension DEREGISTERED `BLOCKED ON A RELOAD`
+### 20. The Claude-in-Chrome arm cannot run — DEREGISTRATION CLEARED, a NEW block `BLOCKED ON THE USER`
+
+> **UPDATE 2026-11-19: the deregistration is GONE.** After the user's reload,
+> `list_connected_browsers` returns a live browser and `tabs_context_mcp`
+> answers in normal time, where it returned `[]` three times before.
+>
+> **A different and narrower block replaced it, with its cause measured rather
+> than guessed:** that extension cannot reach `http://localhost:8787`, where
+> every fixture flow and the eval-14 task live. Its `navigate` reports success
+> and then every page-touching tool fails with `Frame with ID 0 is showing
+> error page`. The decisive control is in
+> `tools/bench_turns/eval14/BLOCKED.md` — **same browser, same minute, same
+> URL: ChromeBridge loads it and reads the page, Claude-in-Chrome gets an error
+> page** — so it is not the fixture, the port, the host spelling, the network or
+> the browser. The cause is NOT established: either that extension's own site
+> access does not cover localhost, or Brave's localhost shield blocks it for
+> that extension, and its failure renders as a network-error page rather than a
+> permission message, which is exactly what makes the two indistinguishable
+> from outside. **The symmetric unblock is the user granting it localhost
+> access, as they grant origins for ours.**
+>
+> Moving the task to a public site is not a workaround: the four candidate
+> public origins are ungranted for ChromeBridge, so that trades one block for
+> another and changes the experiment as well.
 > `tools/bench_turns/eval13` has one arm and no comparison because the other
 > toolset never answered a single command — 8 calls, every one a timeout, 0
 > productive. Four things were ruled out, each by a measurement rather than a
