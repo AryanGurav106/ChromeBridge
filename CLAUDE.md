@@ -10858,6 +10858,54 @@ granted in the side panel is refused with the same message the agent gets.
     `audit_name_correctness.py` and `measure_findability.py` both run at first
     paint only. A post-interaction name run is the highest-value next step and
     is named here so it is not re-derived.
+113. **THE LIVE PASS, in the user's own Chrome, after a reload — and
+    limitation #12 fired on the way and its documented recovery worked.** #43
+    made a live pass non-optional after 15 fixtured fixes produced 7
+    regressions, and #97–#111 all shipped without one because the extension
+    could not be reloaded. Worker `s1xkxw`, age 13s, `bridge_ms_total` reset to
+    5.3 (so the stdio process respawned rather than the client re-handshaking),
+    and **both staleness reads silent** — which is the control direction (#87).
+
+    | fix | what the live run returned |
+    |---|---|
+    | **#97** `fill_form` typed into a popup trigger | the hidden `input[name=region]` **committed to `eu-west-1`**, and the server stored it |
+    | **#98** the picker enumerating a dialog's own buttons | `sample-options []` while the pick still landed `via harvest-clickable` |
+    | **#101** `NO EFFECT` on a navigating click | a trusted click on a **form submit** that navigated, **no warning** |
+    | **#111** rendered-text-only atoms | `live-atoms-resort` passes in the 13/13 flow run |
+    | #51 settle | `waited 24ms for the navigation step 1 started to finish loading its DOM — this step read the NEW page` |
+    | #61 href fallback | `step 3 computer: name 'Projects 4' is gone; matched href='/projects'` |
+    | #102 banner wording | `*** THE DOM CHANGED 27ms AGO ***` |
+
+    **#97's confirmation is the strongest available and it is not the tool's
+    own word for it.** The chain ran to the server: `search_page` on the
+    projects list returns `live-verify-111 | eu-west-1 | team | running`, so the
+    RECORD THE APPLICATION STORED carries the value `fill_form` claimed to set.
+    Pre-fix that field took the server default while the tool reported
+    `ok:true` with the value read back from the button it had typed into.
+    The trace shows both halves of #98 at once: `sample-options []` is clause 3
+    declining to ENUMERATE a trigger-containing container, and
+    `pick … "via":"harvest-clickable","pool":4` is the same container still
+    being CLICKED — the capability the blunt version of that rule destroyed.
+
+    **LIMITATION #12 FIRED ON THE LOGIN PAGE, which is exactly where it is
+    documented to fire.** A password manager injected its iframe when the
+    password field took focus, Chrome refused `chrome.debugger.attach` tab-wide,
+    and the message did its whole job: named the frame-tree rule, said retrying
+    on this tab will not help, listed what still works, and named the verified
+    recovery. `fill_form` then **submitted through the untrusted pointer path
+    and SAID SO** rather than silently degrading, and the very next trusted
+    click — on a page with no login field — worked, which is the message's own
+    prediction confirmed. An unplanned end-to-end test of a limitation the
+    README warns about.
+
+    **What is NOT live-verified, stated rather than implied.** #109
+    (`call_page_tool` refusing a name collision) needs a page declaring two
+    same-named WebMCP tools in different frames, which no real page does — it is
+    fixture-only by construction, and WM9/WM9b are the evidence. #99's
+    cross-frame ordinal refusal is likewise unexercised here.
+
+    Flow suite: **13/13 through a real Chrome and the real unpacked extension**,
+    2 skipped as needing a public host the harness does not start (#86).
 
 ## Debugging starting points
 
