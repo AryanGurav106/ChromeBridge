@@ -10672,8 +10672,14 @@ granted in the side panel is refused with the same message the agent gets.
     that as #25's rule about a sample. **Verified here by hand: 35 of the 106
     entries in `SITES` are `(name, url, settle_ms)` rather than `(name, url)`,
     the first at index 59** — so `for name, url in list(SITES)[:n]` raises the
-    moment `--sites` passes 59, and **every flow-descriptor figure this project
-    has ever published stopped at site 60.** The half it never reached holds
+    moment `--sites` passes 59. **CORRECTED AFTER FIRST WRITING THIS, because
+    the mechanism matters and I had it wrong: the published figures did not hit
+    the bug, they stopped short of it.** #49 used 26 sites, #61 28, #72 24, #83
+    39 — all drawn from the first half in order, all reported as subsets. What
+    the bug did was make the obvious next move impossible, so nobody who tried
+    to widen the sample could have, and nobody did. Either way **no
+    flow-descriptor figure in this project has ever seen the second half**,
+    which holds
     `adminlte`, `datatables`, `primevue`, `syncfusion_grid`, `jspreadsheet` and
     `premierleague` — the closest thing the corpus has to the admin tables both
     entries said it lacked. The limitation was real and its cause was ours.
