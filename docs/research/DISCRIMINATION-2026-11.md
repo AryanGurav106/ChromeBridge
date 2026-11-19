@@ -21,6 +21,12 @@ question on Mind2Web's static snapshots with human labels
 > list, **where no per-row field has a slot**: 79% of them on the frozen corpus the
 > pricing ran on, 47% on the live staged pool. No product change is proposed.
 >
+> **§13 splits the bound.** 12.9% is an upper bound; the CONTAINER half of its slack is
+> measured at **2.61pp** (so the bound is **10.1%**), and the FOLD half is named and
+> deliberately not credited, because the only discriminator there is positional zipping.
+> The rung that measures it resolves **0** rows on folds and overflow, by construction
+> and in the data.
+>
 > **Read §2 first.** Every row carries a unique `ref_N`, so the ladder is over printed
 > fields with the ref stripped; the falsifier that puts it back runs on every pass and
 > must read 100%. It does.
@@ -535,17 +541,14 @@ that matters, both pushing the reported contested share **up**:
   mispairs everything after a gap when the folds are unequal — so the discriminator is
   real and unsafe, and crediting it would be as wrong as ignoring it.
 
-So **12.9% is an upper bound on the share a reader cannot resolve**, and the amount of
-slack is not measured. The ordinary-row figure (9.9% live and frozen alike) carries the
-same caveat for the container case.
-
-**I could have closed the first half and chose not to**, which is worth stating rather
-than leaving as an omission: a `+children` rung — keying each row on its direct
-descendants' rows — is a printed, reader-visible fact and would move the headline down.
-It needs a fourth full pass to price, and the SECOND half cannot be closed that way at
-all: crediting fold-zipping would contradict #27 and #30's own measurement that zipping
-two unequal folds silently mispairs everything after the gap. Half a fix to a bound is
-worse than a stated bound.
+So **12.9% is an upper bound on the share a reader cannot resolve**. **§13 measures the
+first half and leaves the second refused**, so the slack is now two lines rather than
+one: the container half is **2.61pp** (the bound moves to **10.1%**), and the fold half
+is named, unmeasured and deliberately not credited — 57% of what is still contested
+sits on a fold or the overflow list, where the only reader-side discriminator is
+positional zipping, which #27 and #30 both measured silently mispairing everything after
+a gap. **Half a fix to a bound would be worse than a stated bound; a measured half and a
+named half is not that.**
 
 ---
 
@@ -651,8 +654,173 @@ sites identical**. The revived tripwire refused the same 41 rows in all three pa
 every one a landmark ref named only in the off-viewport region hint, which is not a row
 — so the fix is number-neutral on live markup as well as on the frozen corpus.
 
+| `mainD` | `17c9cec7…` | **+ the scoped children rung of §13** |
+| `frozenK` | `17c9cec7…` | §13's frozen cross-check |
+
 Artefacts:
-`temp/discrimination/{mainA,mainB,mainC,frozen}/pass0.json`, `cost.json`, `fire.json`.
+`temp/discrimination/{mainA,mainB,mainC,mainD,frozen,frozenK}/pass0.json`, `cost.json`,
+`fire.json`.
 The matched-population targeted/blanket arm of §8 is a throwaway that imports this
 probe's own `build_recs` and `_uniq_and_ties` so only the KEY changes between arms;
 its per-site rows are in `temp/discrimination/targeted.json`.
+
+---
+
+## 13. The container half of the slack, measured — and the fold half, still refused
+
+§10 reports 12.9% as an **upper bound with unmeasured slack**, and names two causes. One
+of them is reachable and this section measures it. The other is not, and the refusal
+below is unchanged — it is the same argument, stated once more because it is the
+load-bearing part.
+
+**This is not the `+children` rung §10 declines**, and the difference is scope. §10
+declines adding children *to the ladder* as a general fix, on the grounds that it cannot
+fix the fold half. That is an argument for SCOPING the measurement, not against making
+it. So: a number for the container half, a named unmeasurable for the fold half, two
+lines instead of one.
+
+### Why this cannot credit positional zipping — by construction, then measured
+
+The thing §10 refuses is crediting a reader for pairing member *k* of one fold with
+member *k* of another, which #27 and #30 both measured silently mispairing everything
+after a gap. The rung cannot reach it, and not because of a rule I had to get right:
+
+* it keys a row on the rows **indented beneath it** — a parent→child relation the tree
+  actually prints;
+* a **fold member and an overflow entry are not rows with children.** They are tokens on
+  one line. `children_index` skips any line carrying more than one ref, so those rows get
+  nothing at any value of the rung;
+* nothing in it ever looks at a **sibling**, which is where zipping lives.
+
+**Measured rather than left as an argument:** the probe reports
+`kids_resolved_by_surface` on every run and the analysis **asserts** that fold and
+overflow are zero. The canonical case is Hacker News, whose record spans two sibling
+`<tr>`s so the tree groups upvotes and titles into *separate* folds (#27) — the zipping
+shape exactly. There:
+
+| hn, first paint | |
+|---|---|
+| contested rows, by surface | fold **55**, overflow **57**, ordinary row **0** |
+| resolved by the children rung | **{}** — nothing |
+| full rung unique | **151 → 151** of 263 rows |
+
+The rung is worth precisely zero on the page the refusal was written about.
+
+### A child a reader cannot see is not a discriminator
+
+Children are read from the **listing's own indentation**, so they are printed by
+construction — never from the DOM. The cap's overflow list prints on a flat line at the
+end and is therefore never indented under anything, which excludes it automatically. A
+second variant (`kids_vis`) additionally drops a child whose row is tagged
+`(below-fold)` / `(above-fold)` / `(outside the viewport)` / `(off to the side)`, and
+both are reported — a sensitivity rather than a choice.
+
+### Firing proofs, run on this code
+
+| check | result |
+|---|---|
+| **CH1** two sibling containers colliding on every printed field, different children | separated: **4 → 6** unique |
+| **CH2 CONTROL** the same shape with IDENTICAL children | **0 → 0** — not separated |
+| **CH3 CONTROL** a fold's members | untouched, `resolved_by_surface` empty |
+| **ablation** — `children_index` forced to return nothing | **CH1 FAILS**, `(4 -> 4)` |
+| **planted violation** — `fold: 1` written into a copy of an artefact | the invariant **raises**: *"THE RUNG TOUCHED A FOLD OR OVERFLOW ROW — it has re-admitted zipping"* |
+| no `ref_N` and no `box(` in any child key | asserted per key; refs reduce to the constant token `ref`, which carries nothing |
+| the ref falsifier, still | **100.0%** |
+
+CH2 is the one that makes the number mean anything: without it, a rung that separated
+every container regardless would pass CH1 and measure nothing.
+
+### The number — and it is not a null
+
+Pass **`mainD`** (probe `17c9cec7…`), 237 usable sites of 265, 558 reads, **39,841
+actionable printed rows**. Its five shipped rungs reproduce pass C to within the drift
+floor (+0.0003 to +0.0032), which is what licenses reading the sixth.
+
+| | unique | contested | share |
+|---|---|---|---|
+| full rung, as shipped | 34,769 | 5,072 | **12.73%** |
+| **+ children printed under the row** | **35,810** | **4,031** | **10.12%** |
+| + children, off-viewport ones dropped | 35,810 | 4,031 | 10.12% |
+
+**The container half of §10's slack is 2.61pp** — the upper bound moves 12.7% → 10.1%.
+Against the B↔C drift floor of **0.0032 that is 8.2× the floor**, so it is a measurement
+and not noise. Requirement 4 does not apply, and I am not dressing it up either way.
+
+The off-viewport sensitivity is **exactly zero**: dropping children whose rows are
+tagged `(below-fold)` and friends changes the figure in neither direction, so the result
+does not depend on how generously "a reader can see it" is read.
+
+**Where it lands, which is the whole point of scoping it:**
+
+| surface | contested before | **resolved by the rung** | after |
+|---|---|---|---|
+| ordinary row | 2,767 | **1,041 (37.6%)** | 1,726 |
+| fold member | 453 | **0** | 453 |
+| the cap's OVERFLOW list | 1,852 | **0** | 1,852 |
+
+**It resolves 37.6% of the contested ORDINARY rows and nothing at all on the other two
+surfaces** — the container half exactly, and the fold half untouched. 9,590 of 39,841
+rows (24.1%) have printed children at all, which is the ceiling on what this rung could
+ever have moved.
+
+### The frozen cross-check, which moves the way the mechanism predicts
+
+Same probe, 91 frozen sites, first paint, 10,745 actionable rows:
+
+| | live (`mainD`) | frozen (`frozenK`) |
+|---|---|---|
+| container half of the slack | **+2.61pp** | **+1.61pp** |
+| contested ordinary rows it resolves | 1,041 / 2,767 = **37.6%** | 173 / 565 = **30.6%** |
+| resolved on fold / overflow | **0 / 0** | **0 / 0** |
+| share of contested rows on fold+overflow | 45% | **79%** |
+
+**It is worth LESS where more of the residue is out of its reach**, which is the
+mechanism rather than a coincidence: the frozen corpus is denser, hits the entry cap
+more often, and puts 79% of its contested rows on the two surfaces this rung
+structurally cannot touch. The ordinary-row resolution rate is the stable quantity
+(37.6% against 30.6%); the headline delta moves with composition, exactly as the surface
+table in §6 says it should.
+
+### The residual after the rung, classified the same way
+
+Sampled crowds, 4,971 → 3,936 rows (97% coverage, same verdicts, not re-probed):
+
+| verdict | outcome | rows before | **rows after** | share after |
+|---|---|---|---|---|
+| `interchangeable` | **(1)** | 1,634 | **1,490** | **37.9%** |
+| `page` | **(3)** | 1,068 | **995** | **25.3%** |
+| `ours-optin` | (2) | 352 | 346 | 8.8% |
+| `ours-elsewhere` | (2) | 573 | **294** | 7.5% |
+| **`ours-absent`** | **(2)** | 1,075 | **581** | **14.8%** |
+| `ours-devkey` | (2) | 16 | 2 | 0.1% |
+| `unresolved` | — | 253 | 228 | 5.8% |
+
+| outcome | before | after |
+|---|---|---|
+| **(1)** acting on any member does the same thing | 32.9% | **37.9%** |
+| **(2)** declared, not printed | 40.6% | **31.1%** |
+| **(3)** nothing the document declares separates them | 21.5% | **25.3%** |
+
+**The tighter bound's residual is LESS sharp, not more**, which is the answer to "a
+tighter bound whose residual is mostly interchangeable rows is a different result from
+one whose residual is sharp". Every class that could be a gap of ours shrinks — most of
+all `ours-elsewhere`, which halves (573 → 294), because "printed on another row" very
+often meant "printed as my own children". **`ours-absent` falls from 1,075 rows to 581 —
+from 2.7% of all actionable rows to 1.46%.**
+
+### So the slack is now two lines instead of one
+
+* **The container half: measured at 2.61pp.** The bound is **10.1%**, not 12.7%, and
+  what remains of that half is 1,726 contested ordinary rows.
+* **The fold half: still refused, in the same words.** 2,305 of the 4,031 rows still
+  contested (**57%**) sit on a fold or the overflow list. The only reader-side
+  discriminator there is pairing two sibling folds BY INDEX, and #27 and #30 both
+  measured that silently mispairing everything after a gap. Crediting it would buy a
+  smaller number by asserting something the project has already measured as unsafe, so
+  it is not credited and this half of the slack stays **named and unmeasured**.
+
+**What this does not become.** 10.1% is still an upper bound, now with a known interior:
+one half priced, one half declined for a reason rather than for lack of effort. And the
+rung is a MEASUREMENT, not a proposal — nothing is recommended for the product here, for
+the same reason §9 recommends nothing: the residue it would address is 1.46% of rows and
+most of it is on surfaces a per-row field cannot reach.

@@ -11572,6 +11572,82 @@ granted in the side panel is refused with the same message the agent gets.
     failure #111 records killing all four existing descriptor probes at the
     same index.
 
+    **THE SLACK IS NOW PRICED, AND THE AGENT'S OWN OBJECTION POINTED AT THE
+    ANSWER.** I asked it to stop reporting one bound with unknown slack and
+    report **two bounds with known scope** instead, and it replied that its
+    refusal — *"it cannot fix the fold half"* — is an argument for SCOPING the
+    measurement, not against making it. The other objection was cost, which is
+    payable.
+
+    | | unique | contested |
+    |---|---|---|
+    | the shipped rungs | 34,769 | **12.73%** |
+    | **+ children printed under the row** | **35,810** | **10.12%** |
+
+    **+2.61pp, which is 8.2x the B↔C drift floor of 0.0032 — not a null.** The
+    five shipped rungs reproduce the previous pass to within that floor, which
+    is what licenses reading the sixth. The frozen corpus gives **+1.61pp**,
+    smaller and in the PREDICTED direction, because it puts 79% of its
+    contested rows on fold/overflow against 45% live; the stable quantity is
+    the ordinary-row resolution rate, **37.6% live and 30.6% frozen**.
+
+    **ZIPPING IS PREVENTED BY CONSTRUCTION AND THEN MEASURED, and I verified
+    the measurement rather than the claim.** The rung keys a row on the rows
+    INDENTED BENEATH it; a fold member and an overflow entry are tokens on one
+    line rather than rows with children, so they get nothing at any value of
+    the rung, and nothing in it ever looks at a SIBLING — which is where
+    zipping lives. From the artefact: **resolved by surface is
+    `{'row': 1044}`, with fold 0 and overflow 0.**
+
+    **HACKER NEWS IS THE CANONICAL CASE AND THE RUNG IS WORTH EXACTLY ZERO ON
+    IT.** Its record spans two sibling `<tr>`s so the tree groups upvotes and
+    titles into SEPARATE folds (#27) — the zipping shape precisely. There:
+    contested rows are fold 55, overflow 57, **ordinary row 0**; resolved
+    `{}`; the full rung 151 → 151. The page the refusal was written about is
+    the page the rung cannot help, which is the refusal holding rather than
+    being worked around.
+
+    **AND THE RESIDUAL GETS LESS SHARP, NOT MORE.** Every class that could be a
+    gap of ours shrinks: `ours-elsewhere` **halves** (573 → 294), because
+    "printed on another row" very often meant "printed as my own children", and
+    **`ours-absent` falls from 2.7% to 1.46% of all actionable rows**. The
+    interchangeable share rises 32.9% → 37.9%. A tighter bound whose residual
+    is MORE interchangeable is a different and better result than one whose
+    residual sharpens.
+
+    **CH2 IS THE CHECK THAT MAKES THE NUMBER MEAN ANYTHING.** Two sibling
+    containers colliding on every printed field with DIFFERENT children
+    separate 4 → 6; the same shape with IDENTICAL children stays **0 → 0**.
+    Without the second, a rung that separated every container regardless would
+    pass the first and measure nothing. Ablating `children_index` makes CH1
+    fail at `(4 -> 4)`, and a planted `fold: 1` in an artefact copy makes the
+    invariant **raise** — *"THE RUNG TOUCHED A FOLD OR OVERFLOW ROW — it has
+    re-admitted zipping"* — and that invariant is printed on every run rather
+    than hidden behind a flag, so it cannot become a check nobody ran. The
+    agent removed a `--kidsfire` flag its own first docstring promised rather
+    than ship a phantom.
+
+    **THE BOUND IS TWO LINES NOW.** Container half: **measured at 2.61pp, so
+    the bound is 10.1% rather than 12.7%**, with 1,726 contested ordinary rows
+    left. Fold half: **refused, in the same words** — 2,305 of the 4,031 rows
+    still contested (57%) sit on a fold or the overflow list, where the only
+    reader-side discriminator is pairing two sibling folds by index, which #27
+    and #30 both measured silently mispairing everything after a gap.
+    **Crediting it would buy a smaller number by asserting something this
+    project has already measured as unsafe.**
+
+    **Three transcription slips were caught by re-deriving every figure from
+    the artefacts before finalising** (#48's class): a frozen share of 79%
+    written as 73%, 565 contested rows written as 567, and a live share of 45%
+    written as 46%.
+
+    **Still an upper bound, and the reason it stays one is the best sentence in
+    the report.** The rung keys on DIRECT children, so a container distinguished
+    only at depth two is still counted contested. The agent declined to chase
+    that: each extra level makes the key more nearly a whole-subtree hash, and
+    **a key that is unique because it is long is the ref falsifier wearing a
+    different hat.**
+
 ## Debugging starting points
 
 | Symptom | Where to look |

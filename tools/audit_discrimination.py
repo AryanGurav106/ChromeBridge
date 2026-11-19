@@ -405,6 +405,75 @@ def ancestry_index(listing):
     return anc
 
 
+_OFFSCREEN = ("(below-fold)", "(above-fold)", "(outside the viewport)",
+              "(off to the side")
+
+
+def children_index(listing):
+    """mmid -> (tuple of the DIRECT CHILD ROWS' keys, in printed order).
+
+    WHY THIS CANNOT CREDIT POSITIONAL ZIPPING, which is the whole reason it is allowed
+    to exist. The slack in section 10 has two halves and only one is reachable:
+
+      * a CONTAINER is distinguished by what is indented under it. That is a PARENT->
+        CHILD relation the tree really prints, and this reads it.
+      * two sibling FOLDS of equal length can be paired BY INDEX -- member k of one
+        against member k of the other. #27 and #30 both measured that silently
+        mispairing everything after a gap, so crediting it would re-admit the thing
+        section 10 refuses.
+
+    The two are separated BY CONSTRUCTION rather than by a rule I have to get right: a
+    fold MEMBER and an overflow entry are not rows with children -- they are tokens on
+    one line -- so this returns NOTHING for them and the rung cannot move them at any
+    value. Index correspondence between two sibling folds is never consulted, because
+    nothing here ever looks at a sibling. Verified empirically as well as argued: the
+    rung must resolve ZERO rows on the fold and overflow surfaces. That is asserted and
+    PRINTED on every run (`kids_resolved_by_surface` in the report), not behind a flag,
+    so it cannot be a check nobody ran. Hacker News is the canonical case to look at:
+    its record spans two sibling <tr>s, so the tree groups upvotes and titles into
+    SEPARATE folds (#27) -- exactly the zipping shape -- and this rung is correctly
+    worth nothing there.
+
+    A CHILD A READER CANNOT SEE IS NOT A DISCRIMINATOR, so children are taken from the
+    LISTING's own indentation -- printed by construction -- never from the DOM. An
+    overflow entry is printed on a flat line at the end and is therefore never indented
+    under anything, which excludes it automatically. `vis` additionally drops a child
+    whose row is tagged off-viewport, reported as a sensitivity rather than chosen.
+    """
+    body = (listing or "").split(MS._ACT_LINE, 1)
+    body = body[1] if len(body) > 1 else body[0]
+    if "\n" in body:
+        body = body.split("\n", 1)[1]
+    rows = []                              # (indent, key, [mmids on this row], offscreen)
+    for raw in body.split("\n"):
+        if not raw.strip() or raw.lstrip().startswith("- "):
+            continue
+        ids = _REF_IN_LINE.findall(raw) + _FOLD_IN_LINE.findall(raw)
+        rows.append((len(raw) - len(raw.lstrip(" ")), _row_key(raw), ids,
+                     any(t in raw for t in _OFFSCREEN)))
+    kids, kids_vis = {}, {}
+    for i, (ind, _k, ids, _off) in enumerate(rows):
+        if len(ids) != 1:
+            # A FOLD LINE OR THE OVERFLOW LIST: many refs on one row, so none of them is
+            # a row that can own children. Skipped, which is what keeps the fold half of
+            # the slack out of this rung entirely.
+            continue
+        direct, direct_vis = [], []
+        for j in range(i + 1, len(rows)):
+            jind, jkey, _jids, joff = rows[j]
+            if jind <= ind:
+                break
+            if jind == ind + 1:
+                direct.append(jkey)
+                if not joff:
+                    direct_vis.append(jkey)
+        if direct:
+            kids[ids[0]] = tuple(direct)
+            kids_vis[ids[0]] = tuple(direct_vis)
+    return kids, kids_vis
+
+
+
 # ======================================================================================
 # THE LADDER. Cumulative over PRINTED fields, in the order a reader reads a tree row.
 # Reported with a LEAVE-ONE-OUT marginal beside it, because a cumulative ladder's
@@ -666,6 +735,7 @@ def build_recs(compact, brief, listing, fails):
     """One record per PRINTED ROW of this listing, from that listing's own rows."""
     idx = MFS.listing_index(listing)
     anc = ancestry_index(listing)
+    kids, kids_vis = children_index(listing)
     recs, blanked, n_decomp_fail, n_collapsed, n_rolled = [], 0, 0, 0, 0
     # ONE PRINTED ROW IS ONE ROW. #29's collapse puts several refs on a single row when
     # label AND all four box fields are exactly equal -- one spot, printed once,
@@ -696,6 +766,11 @@ def build_recs(compact, brief, listing, fails):
             "mmid": mm, "tag": d["tag"], "role": d["role"], "ident": d["ident"],
             "near": d["near"], "state": d["state"], "section": d["section"],
             "anc": " > ".join(anc.get(mm, ())),
+            # SCOPED, NOT A LADDER RUNG. Reported apart in `kids_*`, never folded into
+            # FULL_FIELDS, because it reaches only the CONTAINER half of the slack.
+            "kids": " | ".join(kids.get(mm, ())),
+            "kids_vis": " | ".join(kids_vis.get(mm, ())),
+            "has_kids": mm in kids,
             "href": (b.get("href") or "") + "|" + (b.get("src") or ""),
             "box": "%s,%s,%s,%s" % (e.get("x"), e.get("y"), e.get("w"), e.get("h")),
             "act": bool(D._targetable(e)),
@@ -741,6 +816,29 @@ async def measure_stage(page, label, res, site, fails, groups_sink):
 
     # The residual, classified. Probed on the ACTIONABLE rows: a crowd of media rows or
     # containers is not a choice anyone has to make.
+    # ---- THE SCOPED CHILDREN RUNG -------------------------------------------------
+    # Reported as its own question rather than added to the ladder: it can only move a
+    # row that HAS printed children, so it addresses the container half of section 10's
+    # slack and is structurally incapable of touching the fold half.
+    if act:
+        for key, lbl in (("kids", "kids"), ("kids_vis", "kids_vis")):
+            u, ties = _uniq_and_ties(act, FULL_FIELDS + (key,))
+            row[lbl + "_uniq"] = u
+        row["rows_with_kids"] = sum(1 for r in act if r["has_kids"])
+        # Which contested rows the rung RESOLVES, split by surface, so "it moved nothing
+        # on folds" is a measurement rather than an argument.
+        before = contested_groups(act, FULL_FIELDS)
+        after = contested_groups(act, FULL_FIELDS + ("kids",))
+        still = {r["mmid"] for v in after.values() for r in v}
+        res = collections.Counter()
+        for v in before.values():
+            for r in v:
+                k = ("overflow" if r["tag"] == "<overflow>"
+                     else "fold" if r["tag"] == "<fold>" else "row")
+                if r["mmid"] not in still:
+                    res[k] += 1
+        row["kids_resolved_by_surface"] = dict(res)
+
     groups = contested_groups(act)
     row["contested_groups"] = len(groups)
     row["contested_rows"] = sum(len(v) for v in groups.values())
@@ -782,8 +880,11 @@ async def measure_stage(page, label, res, site, fails, groups_sink):
         verdicts[v] += 1
         verdict_rows[v] += len(g)
         if len(groups_sink) < 400:
+            _after = contested_groups(g, FULL_FIELDS + ("kids",))
+            _survive = sum(len(x) for x in _after.values())
             groups_sink.append({"site": site, "stage": label, "verdict": v,
-                                "size": len(g), "why": why.get("why", ""),
+                                "size": len(g), "survives_kids": _survive,
+                                "why": why.get("why", ""),
                                 "fields": why.get("fields", []),
                                 "ident": ms[0]["ident"][:80], "tag": ms[0]["tag"],
                                 "surface": ("overflow" if ms[0]["tag"] == "<overflow>"
@@ -1055,6 +1156,8 @@ def aggregate(rs):
     verdicts = collections.Counter()
     verdict_rows = collections.Counter()
     surf_cont, surf_all = collections.Counter(), collections.Counter()
+    kids_res = collections.Counter()
+    kids_tot = collections.Counter()
     tot = collections.Counter()
     per_site_rate = []
     ties_all = []
@@ -1099,6 +1202,10 @@ def aggregate(rs):
                       "inherited_pop", "inherited_shared"):
                 tot[k] += st.get(k, 0)
             tot["reads"] += 1
+            kids_res.update(st.get("kids_resolved_by_surface") or {})
+            for k in ("kids_uniq", "kids_vis_uniq", "rows_with_kids"):
+                if st.get(k) is not None:
+                    kids_tot[k] += st[k]
             surf_cont.update(st.get("contested_by_surface") or {})
             surf_all.update(st.get("rows_by_surface") or {})
             verdicts.update(st.get("verdicts") or {})
@@ -1115,6 +1222,7 @@ def aggregate(rs):
             "flat": dict(flat), "control_ref": dict(ctrl),
             "verdicts": dict(verdicts), "verdict_rows": dict(verdict_rows),
             "surface_contested": dict(surf_cont), "surface_rows": dict(surf_all),
+            "kids_resolved_by_surface": dict(kids_res), "kids_totals": dict(kids_tot),
             "tie_hist_at_full": dict(sorted(tie_hist.items())),
             "per_site_median": round(statistics.median(per_site_rate), 4) if per_site_rate else None,
             "per_site_worst": round(min(per_site_rate), 4) if per_site_rate else None,
@@ -1189,6 +1297,23 @@ def report(agg, rs=None):
                  + "  ".join(f"{a}x{b}" for a, b in list(th.items())[:10])
                  + (" …" if len(th) > 10 else "")
                  + f"   (crowds of <=3: {small} of {sum(th.values())} rows-in-ties)")
+    kt = agg.get("kids_totals") or {}
+    kr = agg.get("kids_resolved_by_surface") or {}
+    cst = agg["cum"].get(LEVELS[-1][0]) or {}
+    if kt.get("kids_uniq") and cst.get("n"):
+        n = cst["n"]
+        L.append("")
+        L.append("THE SCOPED CHILDREN RUNG — the CONTAINER half of the slack only")
+        L.append(f"  {'full rung (shipped)':<40}{cst['uniq']:>10}{cst['uniq']/n:>9.1%}")
+        L.append(f"  {'+ children printed under the row':<40}{kt['kids_uniq']:>10}"
+                 f"{kt['kids_uniq']/n:>9.1%}   delta {(kt['kids_uniq']-cst['uniq'])/n:+.4f}")
+        L.append(f"  {'+ children, off-viewport ones dropped':<40}{kt['kids_vis_uniq']:>10}"
+                 f"{kt['kids_vis_uniq']/n:>9.1%}   delta "
+                 f"{(kt['kids_vis_uniq']-cst['uniq'])/n:+.4f}")
+        L.append(f"  rows that HAVE printed children: {kt.get('rows_with_kids',0)}")
+        L.append(f"  contested rows it RESOLVES, by surface: "
+                 + "  ".join(f"{k} {kr.get(k,0)}" for k in ("row", "fold", "overflow"))
+                 + "   <- fold and overflow MUST be 0 (it cannot credit zipping)")
     sa, sc = agg.get("surface_rows") or {}, agg.get("surface_contested") or {}
     if sa:
         L.append("")
@@ -1256,6 +1381,24 @@ FIXTURE_OURS = """
  <li><button type=button title="Star sveltejs/svelte">Star</button></li>
  <li><button type=button title="Star angular/angular">Star</button></li>
 </ul></main>
+"""
+# TWO SIBLING CONTAINERS, DIFFERENT CONTENTS. Both print `ref_N | div` and nothing
+# else, so they collide on every printed field; what tells them apart is indented
+# underneath. This is the container half of section 10's slack, minimally.
+FIXTURE_CONTAINERS = """
+<main>
+ <div onclick="void 0"><a href="/a">Alpha link</a><a href="/b">Beta link</a></div>
+ <div onclick="void 0"><a href="/c">Gamma link</a><a href="/d">Delta link</a></div>
+</main>
+"""
+# THE CONTROL: the same shape with IDENTICAL children. The rung must NOT separate these,
+# or "key on the children" would be separating rows by something that does not
+# distinguish them and the measurement would be worthless.
+FIXTURE_SAME_CHILDREN = """
+<main>
+ <div onclick="void 0"><a href="/x">Shared link</a></div>
+ <div onclick="void 0"><a href="/x">Shared link</a></div>
+</main>
 """
 FIXTURE_DISTINCT = """
 <main><h1>Settings</h1>
@@ -1393,6 +1536,51 @@ async def selftest():
             fails.append("two links to the same destination were not classified "
                          f"interchangeable: {st4['verdicts']}")
         await ctx2.close()
+        await ctx.close()
+
+        # CH1. THE CONTAINER HALF. Two sibling containers that collide on every printed
+        #      field must be separated by what is indented under them.
+        ctx, page = await _fixture(browser, FIXTURE_CONTAINERS)
+        res = await page.evaluate(_collect_js())
+        stc = await measure_stage(page, "s0", res, "fixture-containers", [], [])
+        Lc = stc["actionable_ladder"]
+        base_u = Lc["cum"][-1]["uniq"]
+        notes.append({"check": "CH1 containers, different children",
+                      "rows": Lc["rows"], "full_rung_unique": base_u,
+                      "with_children": stc.get("kids_uniq"),
+                      "resolved_by_surface": stc.get("kids_resolved_by_surface")})
+        if not stc.get("kids_uniq") or stc["kids_uniq"] <= base_u:
+            fails.append("CH1: two containers with different children were not separated "
+                         f"by the children rung ({base_u} -> {stc.get('kids_uniq')})")
+        await ctx.close()
+
+        # CH2. THE CONTROL. Identical children must NOT separate them, or the rung is
+        #      separating rows by something that does not distinguish them.
+        ctx, page = await _fixture(browser, FIXTURE_SAME_CHILDREN)
+        res = await page.evaluate(_collect_js())
+        sts = await measure_stage(page, "s0", res, "fixture-same-children", [], [])
+        Ls = sts["actionable_ladder"]
+        notes.append({"check": "CH2 CONTROL, identical children",
+                      "rows": Ls["rows"], "full_rung_unique": Ls["cum"][-1]["uniq"],
+                      "with_children": sts.get("kids_uniq")})
+        if sts.get("kids_uniq", 0) > Ls["cum"][-1]["uniq"]:
+            fails.append("CH2: containers with IDENTICAL children were separated by the "
+                         "children rung — it is crediting something that does not "
+                         f"distinguish them ({Ls['cum'][-1]['uniq']} -> {sts['kids_uniq']})")
+        await ctx.close()
+
+        # CH3. THE ANTI-ZIPPING CONTROL. A fold's members must be untouched at any value
+        #      of the rung — that is the half section 10 refuses and this must not reach.
+        ctx, page = await _fixture(browser, FIXTURE_COLLIDING)
+        res = await page.evaluate(_collect_js())
+        stz = await measure_stage(page, "s0", res, "fixture-fold", [], [])
+        bys = stz.get("kids_resolved_by_surface") or {}
+        notes.append({"check": "CH3 CONTROL, fold members untouched",
+                      "resolved_by_surface": bys,
+                      "contested_by_surface": stz.get("contested_by_surface")})
+        if bys.get("fold", 0) or bys.get("overflow", 0):
+            fails.append("CH3: the children rung resolved rows on a FOLD or the OVERFLOW "
+                         f"list — it has re-admitted positional zipping: {bys}")
         await ctx.close()
 
         # 5. The decomposition tripwire must be CLEAN on a real page, or every number
