@@ -190,8 +190,18 @@ an anecdote with a p-value.**
 - **There is no successor dataset.** Mind2Web-Live ignores element changes;
   Online-Mind2Web is binary per-trajectory; Mind2Web 2 scores only a final
   answer. The 2023 release is the only family member with a per-step element
-  label, so our out-of-sample number **will not be independently corroborated**
-  by anything newer.
+  label. **The conclusion once drawn from that -- that our out-of-sample number
+  "will not be independently corroborated by anything newer" -- is withdrawn.**
+  It was a claim about the Mind2Web family being read as a claim about the
+  field. ComponentBench (2026) carries per-step element ground truth, verified
+  by hand in `tools/audit_componentbench.py` against an episode pack no paper
+  mentions: 7,773 steps with tag / id / testid / role / name / bbox, and the
+  step VALUE on every `type` step. Whether it can SERVE as a corroborating
+  ruler is a different and open question -- its traces were recorded in a
+  different render mode at viewports the harness does not use, so a ruler must
+  re-resolve each target by identity, and the rate at which that resolves
+  UNIQUELY on a live production page is unmeasured. Plausible and unproven;
+  `docs/research/COMPONENTBENCH-VERIFICATION-2026-11.md` section 7.
 - **No task-success measurement exists for our own ladder.** `detail` and
   `format` are priced on recall and tokens, never on end-to-end success with a
   strong model. Two 2026 results disagree about which way that cuts (one
